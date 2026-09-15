@@ -16,10 +16,10 @@ const IDENTITY_KEY = 'browser-seat-owner-v1';
 const textEncoder = new TextEncoder();
 
 const SIGNING_DOMAINS = Object.freeze({
-    username_update: textEncoder.encode('robinhood/leaderboards/1/username-update\0'),
+    username_update: textEncoder.encode('robinhood/leaderboards/2/username-update\0'),
     submission: textEncoder.encode('robinhood/leaderboards/2/submission\0'),
-    submission_owner_status: textEncoder.encode('robinhood/leaderboards/1/submission-owner-status\0'),
-    deletion_request: textEncoder.encode('robinhood/leaderboards/1/deletion-request\0'),
+    submission_owner_status: textEncoder.encode('robinhood/leaderboards/2/submission-owner-status\0'),
+    deletion_request: textEncoder.encode('robinhood/leaderboards/2/deletion-request\0'),
 });
 
 const SIGNING_LIMITS = Object.freeze({

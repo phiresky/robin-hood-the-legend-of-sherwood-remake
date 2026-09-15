@@ -3,11 +3,12 @@
 //! locally before it is returned.
 
 use super::{
-    GameIdentitySigner, LeaderboardSigningError, assemble_signed_submission, invalid_claim,
+    GameIdentitySigner, LeaderboardSigningError, assemble_signed_request, invalid_claim,
+    verify_signed_request,
 };
 use robin_run_protocol::{
-    PublicKey32, Signature64, SignedSubmissionV2, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionV2, Validate,
+    PublicKey32, Signature64, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2,
+    SubmissionOwnerStatusRequestV2, SubmissionV2, Validate,
 };
 
 const MAX_SIGNER_DOCUMENT_BYTES: usize = 128 * 1024;
@@ -153,29 +154,30 @@ impl GameIdentitySigner for BrowserSigner {
         }
         let signed: BrowserSubmissionSignature =
             decode_browser_result(OPERATION, &result.participant_signature_json)?;
-        assemble_signed_submission(submission, signed.public_key, signed.signature)
+        assemble_signed_request(submission, signed.public_key, signed.signature)
     }
 
     async fn sign_submission_owner_status(
-        challenge: SubmissionOwnerStatusChallengeV1,
-    ) -> Result<SubmissionOwnerStatusEnvelopeV1, LeaderboardSigningError> {
+        request: SubmissionOwnerStatusRequestV2,
+    ) -> Result<SignedSubmissionOwnerStatusRequestV2, LeaderboardSigningError> {
+        request.validate().map_err(invalid_claim)?;
         const OPERATION: &str = "sign_submission_owner_status";
         let response =
-            request_browser_operation(OPERATION, Some(encode_payload(&challenge)?)).await?;
+            request_browser_operation(OPERATION, Some(encode_payload(&request)?)).await?;
         let result: BrowserSignedDocumentResult = decode_browser_result(OPERATION, &response)?;
         if result.kind != "signed_document" {
             return Err(LeaderboardSigningError::Identity(format!(
                 "{OPERATION} response has the wrong kind"
             )));
         }
-        let signed: SubmissionOwnerStatusEnvelopeV1 =
+        let signed: SignedSubmissionOwnerStatusRequestV2 =
             decode_browser_result(OPERATION, &result.document_json)?;
-        signed.validate().map_err(invalid_claim)?;
-        if signed.challenge != challenge {
+        if signed.request != request {
             return Err(LeaderboardSigningError::InvalidClaim(
-                "signer changed the owner-status challenge".to_owned(),
+                "signer changed the owner-status request".to_owned(),
             ));
         }
+        verify_signed_request(&signed)?;
         Ok(signed)
     }
 }

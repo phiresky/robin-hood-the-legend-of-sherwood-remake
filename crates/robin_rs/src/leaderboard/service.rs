@@ -15,10 +15,8 @@ use crate::leaderboard_preferences::{
 use robin_run_protocol::ReplayArtifactV1;
 use robin_run_protocol::{
     Digest32, LeaderboardMetadataV2, LeaderboardPageV2, LeaderboardQueryV2,
-    RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionV2, SubmissionAcceptedV1,
-    SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1, UploadChallengeRequestV2,
-    UploadChallengeV1, Validate,
+    RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2,
+    SubmissionAcceptedV1, SubmissionOwnerStatusResponseV2, Validate,
 };
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -88,15 +86,9 @@ impl LeaderboardApi {
         )))
     }
 
-    pub fn upload_challenge(
-        &self,
-        request: &UploadChallengeRequestV2,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("upload-challenges", request)
-    }
-
     /// Upload one signed submission together with the exact replay bytes its
-    /// artifact reference names.
+    /// artifact reference names. The submission must be freshly signed: the
+    /// server only accepts recent `signed_at_unix_ms` values.
     pub fn submit(
         &self,
         submission: &SignedSubmissionV2,
@@ -104,7 +96,7 @@ impl LeaderboardApi {
     ) -> Result<HttpTask, LeaderboardServiceError> {
         submission.validate().map_err(invalid_protocol)?;
         validate_canonical_replay_bytes(&exact_replay_bytes)?;
-        let artifact = &submission.submission.replay.artifact;
+        let artifact = &submission.request.replay.artifact;
         if artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
             || u64::try_from(exact_replay_bytes.len()).ok() != Some(artifact.byte_length)
             || Digest32::digest_bytes(&exact_replay_bytes) != artifact.sha256
@@ -121,24 +113,17 @@ impl LeaderboardApi {
         )?)
     }
 
-    pub fn submission_owner_status_challenge(
-        &self,
-        request: &SubmissionOwnerStatusChallengeRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("submission-owner-status-challenges", request)
-    }
-
+    /// Read one submission's private lifecycle with a freshly signed request.
     pub fn submission_owner_status(
         &self,
-        envelope: &SubmissionOwnerStatusEnvelopeV1,
+        request: &SignedSubmissionOwnerStatusRequestV2,
     ) -> Result<HttpTask, LeaderboardServiceError> {
-        envelope.validate().map_err(invalid_protocol)?;
         self.post_json(
             &format!(
                 "submissions/{}/private-status",
-                path_segment(envelope.challenge.submission_id.as_str())
+                path_segment(request.request.submission_id.as_str())
             ),
-            envelope,
+            request,
         )
     }
 
@@ -193,12 +178,6 @@ pub fn decode_board(
         return Err(LeaderboardServiceError::BoardCursorMismatch);
     }
     Ok(page)
-}
-
-pub fn decode_upload_challenge(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<UploadChallengeV1, LeaderboardServiceError> {
-    decode_validated_json(result)
 }
 
 #[cfg(test)]
@@ -258,28 +237,13 @@ pub fn decode_submission_accepted(
     decode_validated_json_with_status(result, 202)
 }
 
-pub fn decode_submission_owner_status_challenge(
-    result: Result<HttpResponse, HttpTransportError>,
-    request: &SubmissionOwnerStatusChallengeRequestV1,
-) -> Result<SubmissionOwnerStatusChallengeV1, LeaderboardServiceError> {
-    let challenge: SubmissionOwnerStatusChallengeV1 = decode_validated_json(result)?;
-    if challenge.controller_public_key != request.controller_public_key
-        || challenge.submission_id != request.submission_id
-    {
-        return Err(LeaderboardServiceError::InvalidProtocol(
-            "owner-status challenge does not match the request".to_owned(),
-        ));
-    }
-    Ok(challenge)
-}
-
 pub fn decode_submission_owner_status(
     result: Result<HttpResponse, HttpTransportError>,
-    envelope: &SubmissionOwnerStatusEnvelopeV1,
-) -> Result<SubmissionOwnerStatusResponseV1, LeaderboardServiceError> {
-    let response: SubmissionOwnerStatusResponseV1 = decode_validated_json(result)?;
+    request: &SignedSubmissionOwnerStatusRequestV2,
+) -> Result<SubmissionOwnerStatusResponseV2, LeaderboardServiceError> {
+    let response: SubmissionOwnerStatusResponseV2 = decode_validated_json(result)?;
     response
-        .validate_against_envelope(envelope)
+        .validate_against_request(request)
         .map_err(invalid_protocol)?;
     Ok(response)
 }

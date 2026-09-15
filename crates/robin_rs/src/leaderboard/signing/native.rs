@@ -1,13 +1,12 @@
 //! Native durable identity: the persistent iroh game key signs in-process.
 //! Every operation completes without suspending.
 
-use super::{
-    GameIdentitySigner, LeaderboardSigningError, assemble_signed_submission, invalid_claim,
-};
+use super::{GameIdentitySigner, LeaderboardSigningError, assemble_signed_request};
 use ed25519_dalek::{Signer as _, SigningKey};
 use robin_run_protocol::{
-    PublicKey32, Signature64, SignatureAlgorithmV1, SignedSubmissionV2,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, SubmissionV2, Validate,
+    PublicKey32, Signature64, SignedRequestClaim, SignedRequestV2,
+    SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV2, SubmissionOwnerStatusRequestV2,
+    SubmissionV2,
 };
 
 pub struct NativeSigner;
@@ -22,25 +21,22 @@ fn public_key(key: &SigningKey) -> PublicKey32 {
     PublicKey32::from_bytes(key.verifying_key().to_bytes())
 }
 
-fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
-    Signature64::from_bytes(key.sign(bytes).to_bytes())
-}
-
-/// Bytes the uploader signs for `submission`, validating the claim first.
-fn submission_signing_bytes(submission: &SubmissionV2) -> Result<Vec<u8>, LeaderboardSigningError> {
-    SignedSubmissionV2::signing_bytes(submission)
-        .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))
-}
-
-fn sign_submission_with_key(
-    submission: SubmissionV2,
+/// Sign `request` with `key`, refusing a claim that names another identity.
+fn sign_with_key<T: SignedRequestClaim>(
+    request: T,
     key: &SigningKey,
-) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
-    if submission.uploader_public_key != public_key(key) {
+) -> Result<SignedRequestV2<T>, LeaderboardSigningError> {
+    if request.signer_public_key() != public_key(key) {
         return Err(LeaderboardSigningError::WrongIdentity);
     }
-    let signature = signature(key, &submission_signing_bytes(&submission)?);
-    assemble_signed_submission(submission, public_key(key), signature)
+    let bytes = SignedRequestV2::<T>::signing_bytes(&request).map_err(|error| match error {
+        robin_run_protocol::CanonicalDocumentError::Validation(error) => {
+            LeaderboardSigningError::InvalidClaim(error.to_string())
+        }
+        other => LeaderboardSigningError::Canonical(other.to_string()),
+    })?;
+    let signature = Signature64::from_bytes(key.sign(&bytes).to_bytes());
+    assemble_signed_request(request, public_key(key), signature)
 }
 
 impl GameIdentitySigner for NativeSigner {
@@ -51,46 +47,34 @@ impl GameIdentitySigner for NativeSigner {
     async fn sign_submission(
         submission: SubmissionV2,
     ) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
-        sign_submission_with_key(submission, &native_key()?)
+        sign_with_key(submission, &native_key()?)
     }
 
     async fn sign_submission_owner_status(
-        challenge: SubmissionOwnerStatusChallengeV1,
-    ) -> Result<SubmissionOwnerStatusEnvelopeV1, LeaderboardSigningError> {
-        challenge.validate().map_err(invalid_claim)?;
-        let key = native_key()?;
-        if challenge.controller_public_key != public_key(&key) {
-            return Err(LeaderboardSigningError::WrongIdentity);
-        }
-        let mut envelope = SubmissionOwnerStatusEnvelopeV1 {
-            schema_version: challenge.schema_version,
-            challenge,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        envelope.validate_signing_claim().map_err(invalid_claim)?;
-        let bytes = envelope
-            .signing_bytes()
-            .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))?;
-        envelope.signature = signature(&key, &bytes);
-        envelope.validate().map_err(invalid_claim)?;
-        Ok(envelope)
+        request: SubmissionOwnerStatusRequestV2,
+    ) -> Result<SignedSubmissionOwnerStatusRequestV2, LeaderboardSigningError> {
+        sign_with_key(request, &native_key()?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::signing::verify_signed_request_for_tests;
     use crate::leaderboard::test_fixtures::submission;
+    use robin_run_protocol::{OpaqueId, SCHEMA_VERSION_V2};
 
     #[test]
     fn native_submission_signature_binds_the_exact_v2_submission() {
         let key = SigningKey::from_bytes(&[0x43; 32]);
-        let signed = sign_submission_with_key(submission(public_key(&key)), &key).unwrap();
-        signed.verify_signature().unwrap();
+        let signed = sign_with_key(submission(public_key(&key)), &key).unwrap();
+        verify_signed_request_for_tests(&signed).unwrap();
         let mut substituted = signed.clone();
-        substituted.submission.mission_id = "Demo_Lin".to_owned();
-        assert!(substituted.verify_signature().is_err());
+        substituted.request.mission_id = "Demo_Lin".to_owned();
+        assert!(verify_signed_request_for_tests(&substituted).is_err());
+        let mut retimed = signed;
+        retimed.request.signed_at_unix_ms += 1;
+        assert!(verify_signed_request_for_tests(&retimed).is_err());
     }
 
     #[test]
@@ -98,8 +82,30 @@ mod tests {
         let key = SigningKey::from_bytes(&[0x43; 32]);
         let other = PublicKey32::from_bytes([0x44; 32]);
         assert_eq!(
-            sign_submission_with_key(submission(other), &key),
+            sign_with_key(submission(other), &key),
             Err(LeaderboardSigningError::WrongIdentity)
         );
+    }
+
+    #[test]
+    fn native_owner_status_signature_is_domain_separated_from_submissions() {
+        let key = SigningKey::from_bytes(&[0x43; 32]);
+        let request = SubmissionOwnerStatusRequestV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            public_key: public_key(&key),
+            signed_at_unix_ms: 1_800_000_000_000,
+            submission_id: OpaqueId::new("submission-1").unwrap(),
+        };
+        let signed = sign_with_key(request, &key).unwrap();
+        verify_signed_request_for_tests(&signed).unwrap();
+        let mut submission = submission(public_key(&key));
+        submission.signed_at_unix_ms = signed.request.signed_at_unix_ms;
+        let foreign = SignedRequestV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            request: submission,
+            algorithm: signed.algorithm,
+            signature: signed.signature,
+        };
+        assert!(verify_signed_request_for_tests(&foreign).is_err());
     }
 }
