@@ -363,6 +363,7 @@ impl EngineInner {
         .flatten();
         let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
             !validity_short_circuited
+                && !enter_swordfight_corpse_exit
                 && selected_owner_family == Some(ExecuteOwnerFamily::Ability)
                 && crate::abilities::selected_ability(
                     &self.world.entities,
