@@ -922,7 +922,7 @@ fn classify_service_error(error: LeaderboardServiceError) -> ReceiptWatcherOpera
         Error::Transport(transport) if transient_transport(transport) => {
             ReceiptWatcherOperationError::Transient(error.to_string())
         }
-        Error::HttpStatus { status }
+        Error::HttpStatus { status, .. }
             if matches!(*status, 408 | 425 | 429) || (500..600).contains(status) =>
         {
             ReceiptWatcherOperationError::Transient(error.to_string())

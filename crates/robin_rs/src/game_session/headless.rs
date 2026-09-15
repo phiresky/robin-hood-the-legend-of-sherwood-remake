@@ -67,11 +67,30 @@ impl HeadlessMission {
     pub(super) async fn run(
         &mut self,
         args: &crate::main_entry::MissionRequest,
-    ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
+    ) -> Result<HeadlessMissionOutcome, super::MissionError> {
+        let mut capture = args
+            .config
+            .cli
+            .replay_hash_output
+            .as_deref()
+            .map(crate::replay_upgrade::HashCapture::create)
+            .transpose()
+            .map_err(|error| super::MissionError::replay(error.to_string()))?;
+        self.runtime.timeline.replay_mut().recompute_marker_hashes = capture.is_some();
         loop {
-            let frame_result = self.run_frame(args)?;
+            let frame_result = self.run_frame_with_capture(args, capture.as_mut())?;
             match frame_result.outcome {
                 FrameOutcome::Exit(code) => {
+                    if let Some(capture) = capture.as_mut() {
+                        if frame_result.exit != Some(HeadlessFrameExit::ReplayComplete) {
+                            return Err(super::MissionError::replay(
+                                "upgrade playback exited before replay completion",
+                            ));
+                        }
+                        capture
+                            .finish()
+                            .map_err(|error| super::MissionError::replay(error.to_string()))?;
+                    }
                     return Ok(HeadlessMissionOutcome {
                         code,
                         exit: frame_result
@@ -98,10 +117,19 @@ impl HeadlessMission {
     /// contract. Modal automation and replay-completion remain explicit
     /// policy here; consuming campaign return and async host pacing remain in
     /// the outer driver.
+    #[cfg(test)]
     pub(super) fn run_frame(
         &mut self,
         args: &crate::main_entry::MissionRequest,
-    ) -> Result<HeadlessFrameResult, super::multiplayer::MultiplayerSessionError> {
+    ) -> Result<HeadlessFrameResult, super::MissionError> {
+        self.run_frame_with_capture(args, None)
+    }
+
+    fn run_frame_with_capture(
+        &mut self,
+        args: &crate::main_entry::MissionRequest,
+        mut capture: Option<&mut crate::replay_upgrade::HashCapture>,
+    ) -> Result<HeadlessFrameResult, super::MissionError> {
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
         let frame_started_at_ms = crate::window::process_uptime_ms();
@@ -144,9 +172,21 @@ impl HeadlessMission {
             let loads_state = player.load_back_for_frame(ordinal).is_some();
             self.modals
                 .checkpoint(ordinal, &self.runtime.world.view().host.effects);
-            self.runtime
-                .inject_next_replay_frame(&mut frame)
-                .unwrap_or_else(|error| panic!("headless replay boundary failed: {error}"));
+            let before_hash = capture.as_ref().map(|_| {
+                robin_engine::replay::state_hash(&self.runtime.world.view().manager.engine)
+            });
+            self.runtime.inject_next_replay_frame(&mut frame)?;
+            if let Some(capture) = capture.as_mut() {
+                let after_hash =
+                    robin_engine::replay::state_hash(&self.runtime.world.view().manager.engine);
+                capture
+                    .record(
+                        ordinal,
+                        before_hash.expect("capture sampled before load"),
+                        after_hash,
+                    )
+                    .map_err(|error| super::MissionError::replay(error.to_string()))?;
+            }
             if loads_state {
                 self.modals.after_load_back();
             }

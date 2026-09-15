@@ -29,8 +29,8 @@ pub enum LeaderboardServiceError {
     Endpoint(#[from] LeaderboardPreferencesError),
     #[error(transparent)]
     Transport(#[from] HttpTransportError),
-    #[error("leaderboard service returned HTTP {status}")]
-    HttpStatus { status: u16 },
+    #[error("leaderboard service returned HTTP {status}: {body:?}")]
+    HttpStatus { status: u16, body: String },
     #[error("leaderboard response is not valid JSON: {0}")]
     InvalidJson(String),
     #[error("leaderboard response failed protocol validation: {0}")]
@@ -59,6 +59,30 @@ pub struct LeaderboardApi {
 }
 
 impl LeaderboardApi {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn player_profile(
+        &self,
+        key: robin_run_protocol::PublicKey32,
+    ) -> Result<HttpTask, LeaderboardServiceError> {
+        self.spawn(HttpRequest::get_json(
+            self.route(&format!("players/{key}"))?,
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn update_username(
+        &self,
+        request: &robin_run_protocol::SignedUsernameUpdateV2,
+    ) -> Result<HttpTask, LeaderboardServiceError> {
+        request.validate().map_err(invalid_protocol)?;
+        let json = serde_json::to_vec(request)
+            .map_err(|e| LeaderboardServiceError::RequestEncoding(e.to_string()))?;
+        self.spawn(HttpRequest::json(
+            reqwest::Method::PUT,
+            self.route(&format!("players/{}/username", request.request.public_key))?,
+            json,
+        ))
+    }
     pub fn from_preferences(
         preferences: &LeaderboardPreferences,
     ) -> Result<Self, LeaderboardServiceError> {
@@ -208,9 +232,7 @@ fn decode_replay_download(
     expected.validate().map_err(invalid_protocol)?;
     let response = result?;
     if !(200..300).contains(&response.status) {
-        return Err(LeaderboardServiceError::HttpStatus {
-            status: response.status,
-        });
+        return Err(http_status_error(response));
     }
     let media_type = response
         .content_type
@@ -267,7 +289,7 @@ fn validate_canonical_replay_bytes(bytes: &[u8]) -> Result<String, LeaderboardSe
     Ok(engine_hash)
 }
 
-fn decode_validated_json<T>(
+pub(crate) fn decode_validated_json<T>(
     result: Result<HttpResponse, HttpTransportError>,
 ) -> Result<T, LeaderboardServiceError>
 where
@@ -275,9 +297,7 @@ where
 {
     let response = result?;
     if !(200..300).contains(&response.status) {
-        return Err(LeaderboardServiceError::HttpStatus {
-            status: response.status,
-        });
+        return Err(http_status_error(response));
     }
     decode_validated_success_body(response)
 }
@@ -291,11 +311,26 @@ where
 {
     let response = result?;
     if response.status != expected_status {
-        return Err(LeaderboardServiceError::HttpStatus {
-            status: response.status,
-        });
+        return Err(http_status_error(response));
     }
     decode_validated_success_body(response)
+}
+
+fn http_status_error(response: HttpResponse) -> LeaderboardServiceError {
+    const MAX_ERROR_CHARS: usize = 4096;
+    let text = String::from_utf8_lossy(&response.body);
+    let mut chars = text.chars();
+    let mut body: String = chars.by_ref().take(MAX_ERROR_CHARS).collect();
+    if chars.next().is_some() {
+        body.push_str("… [truncated]");
+    }
+    if body.is_empty() {
+        body.push_str("<empty response body>");
+    }
+    LeaderboardServiceError::HttpStatus {
+        status: response.status,
+        body,
+    }
 }
 
 fn decode_validated_success_body<T>(response: HttpResponse) -> Result<T, LeaderboardServiceError>
@@ -390,6 +425,39 @@ mod tests {
             ),
             Err(LeaderboardServiceError::InvalidCompactReplay(_))
         ));
+    }
+
+    #[test]
+    fn rejected_submission_includes_actual_server_error() {
+        let body = br#"{"schema_version":2,"error":{"code":"bad_request","message":"unsupported replay schema"}}"#;
+        let error =
+            decode_submission_accepted(Ok(response(400, "application/json", body.to_vec())))
+                .unwrap_err();
+        assert!(error.to_string().contains("HTTP 400"));
+        assert!(error.to_string().contains("unsupported replay schema"));
+        assert!(
+            matches!(error, LeaderboardServiceError::HttpStatus { body: returned, .. }
+            if returned.as_bytes() == body)
+        );
+    }
+
+    #[test]
+    fn error_response_handles_plain_text_empty_and_large_bodies() {
+        let error = decode_metadata(Ok(response(
+            502,
+            "text/plain",
+            b"proxy failed\nretry".to_vec(),
+        )))
+        .unwrap_err();
+        assert!(error.to_string().contains(r"proxy failed\nretry"));
+        assert!(!error.to_string().contains('\n'));
+        let error = http_status_error(response(500, "text/plain", Vec::new()));
+        assert!(error.to_string().contains("empty response body"));
+        let error = http_status_error(response(500, "text/plain", "é".repeat(5000).into_bytes()));
+        assert!(
+            matches!(error, LeaderboardServiceError::HttpStatus { body, .. }
+            if body == format!("{}… [truncated]", "é".repeat(4096)))
+        );
     }
 
     #[test]

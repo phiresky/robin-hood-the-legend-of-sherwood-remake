@@ -89,6 +89,7 @@ pub(in crate::game_session) struct ReplayLifecycle {
     /// by `TimelineRuntime`.
     pub(super) ordinal: ReplayFrameOrdinal,
     start_paused: bool,
+    pub(in crate::game_session) recompute_marker_hashes: bool,
     pub(in crate::game_session) finished_logged: bool,
     recording: RecordingState,
     bootstrap_save: Option<(ReplaySaveIdentity, ReplaySaveMarker)>,
@@ -116,6 +117,7 @@ impl ReplayLifecycle {
         Self {
             ordinal: ReplayFrameOrdinal::ZERO,
             start_paused,
+            recompute_marker_hashes: false,
             finished_logged: false,
             recording: recorder.map_or(RecordingState::Inactive, RecordingState::Recording),
             bootstrap_save: None,
@@ -578,7 +580,7 @@ impl ReplayLifecycle {
                 modals,
             ));
         }
-        super::apply_replay_timeline_events_at_boundary(
+        super::apply_replay_timeline_events_with_hash_policy(
             player,
             timeline,
             &mut self.pinned_saves,
@@ -587,6 +589,7 @@ impl ReplayLifecycle {
             game,
             manager,
             assets,
+            !self.recompute_marker_hashes,
         )
     }
 
