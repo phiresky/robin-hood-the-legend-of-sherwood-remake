@@ -243,6 +243,11 @@ fn resimulate_ranked_replay_inner(
                 outcome,
             });
         }
+        if terminal.is_some() {
+            // Save-only tail records have already had their marker and periodic
+            // hashes checked. They must not advance or re-finalize the engine.
+            continue;
+        }
         let output = engine.advance_frame(assets, input).map_err(|error| {
             RankedResimulationError::FrameAdvance {
                 frame,
@@ -304,7 +309,7 @@ fn resimulate_ranked_replay_inner(
     }
     let recorded_terminal = *recorded_terminals
         .last_key_value()
-        .expect("validated final terminal command")
+        .expect("validated terminal command")
         .1;
     if recorded_terminal != outcome {
         return Err(RankedResimulationError::TerminalCommandOutcomeMismatch {
@@ -355,6 +360,27 @@ fn validate_terminal_recorder_shape(
                 message: format!("replay frame {replay_ordinal} is absent"),
             }
         })?;
+        if recorded_terminal.is_some() {
+            let input = &frame.input;
+            let save_only = replay.save_marker_for_frame(replay_ordinal).is_some()
+                && frame.timeline_before == frame.timeline_after
+                && frame.host_controls.is_empty()
+                && !input.run_hourglass
+                && !input.simulation_body_allowed
+                && !input.run_post_initialize
+                && input.commands.is_empty()
+                && input.post_commands.is_empty()
+                && input.external_actions.is_empty()
+                && input.post_external_actions.is_empty()
+                && input.external_facts.is_empty();
+            if !save_only {
+                return Err(RankedResimulationError::TerminalCommandShape {
+                    message: format!(
+                        "post-terminal ordinal {replay_ordinal} is not a save-only boundary"
+                    ),
+                });
+            }
+        }
         if frame.input.commands.iter().any(|command| {
             matches!(
                 &command.player_input().command,
@@ -390,9 +416,9 @@ fn validate_terminal_recorder_shape(
             terminals.insert(replay_ordinal, *exit_code);
         }
     }
-    if !terminals.contains_key(&replay_frames.saturating_sub(1)) {
+    if recorded_terminal.is_none() {
         return Err(RankedResimulationError::TerminalCommandShape {
-            message: "EOF frame has no ApplyQuitMissionUpdates post-command".into(),
+            message: "replay ends without an active ApplyQuitMissionUpdates terminal".into(),
         });
     }
     Ok(terminals)
@@ -668,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_replay_rejects_extra_out_of_cadence_hashes() {
+    fn canonical_replay_accepts_extra_in_range_hashes() {
         let (engine, assets, mut replay) = fixture_with_inputs(true, |config| {
             vec![
                 SimulationFrameInput::no_hourglass(),
@@ -678,15 +704,10 @@ mod tests {
         replay
             .replace_state_hashes(BTreeMap::from([(0, state_hash(&engine)), (1, 0xfeed_face)]))
             .unwrap();
-        assert!(
-            replay
-                .validate_ranked_hash_coverage()
-                .unwrap_err()
-                .contains("out-of-cadence")
-        );
+        replay.validate_ranked_hash_coverage().unwrap();
         assert!(matches!(
             resimulate_canonical_ranked_replay(engine, &assets, &replay),
-            Err(RankedResimulationError::Admission { .. })
+            Err(RankedResimulationError::EofBeforeTerminal)
         ));
     }
 
@@ -735,6 +756,81 @@ mod tests {
             resimulate_canonical_ranked_replay(engine, &assets, &replay),
             Err(RankedResimulationError::TerminalCommandShape { .. })
         ));
+    }
+
+    #[test]
+    fn post_terminal_saves_preserve_result_and_validate_hashes_without_gameplay() {
+        let (engine, assets, base) = fixture_with_input(true, |config| {
+            let mut input = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                PlayerCommand::QuitMissionRequested,
+            )]);
+            input
+                .post_commands
+                .push(terminal_update(GameCode::LevelInterrupted, config.difficulty).into());
+            input
+        });
+        let expected = resimulate_canonical_ranked_replay(engine.clone(), &assets, &base).unwrap();
+        let mut file = ReplayFile::from(&base);
+        file.header.total_frames = 3;
+        for ordinal in 1..3 {
+            file.frames.insert(
+                ordinal,
+                ReplayFrame {
+                    timeline_before: 1,
+                    timeline_after: 1,
+                    input: SimulationFrameInput::no_hourglass().with_simulation_body_allowed(false),
+                    host_controls: Vec::new(),
+                },
+            );
+            file.save_markers.insert(
+                ordinal,
+                crate::replay::ReplaySaveMarker {
+                    state_hash: expected.final_deterministic_state_hash,
+                    timeline_frame: 1,
+                },
+            );
+        }
+        let replay = ReplayData::try_from(file.clone()).unwrap();
+        let actual = resimulate_canonical_ranked_replay(engine.clone(), &assets, &replay).unwrap();
+        assert_eq!(
+            actual.final_deterministic_state_hash,
+            expected.final_deterministic_state_hash
+        );
+        assert_eq!(actual.final_campaign_sha256, expected.final_campaign_sha256);
+        assert_eq!(
+            actual.active_simulation_ticks,
+            expected.active_simulation_ticks
+        );
+        assert_eq!(actual.outcome, expected.outcome);
+        assert_eq!(actual.replay_frames, 3);
+
+        let mut forged = file.clone();
+        forged.save_markers.get_mut(&2).unwrap().state_hash ^= 1;
+        assert!(matches!(
+            resimulate_canonical_ranked_replay(
+                engine.clone(),
+                &assets,
+                &forged.try_into().unwrap()
+            ),
+            Err(RankedResimulationError::StateHashMismatch { frame: 2, .. })
+        ));
+        for input in [
+            SimulationFrameInput::default(),
+            SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                PlayerCommand::CrouchDown,
+            )]),
+        ] {
+            let mut resumed = file.clone();
+            resumed.frames.get_mut(&2).unwrap().input = input;
+            assert!(matches!(
+                resimulate_canonical_ranked_replay(
+                    engine.clone(),
+                    &assets,
+                    &resumed.try_into().unwrap()
+                ),
+                Err(RankedResimulationError::TerminalCommandShape { .. })
+            ));
+        }
     }
 
     #[test]
