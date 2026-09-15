@@ -6114,13 +6114,11 @@ mod tests {
                 Some(target_id),
             ));
         engine.orders.sequence_manager.start_sequence_level(lower);
-        engine.select_sequence_element(target_id, Some((lower, 0)));
-        engine.dispatch_shield_command(
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             target_id,
-            Command::LowerShield,
             lower,
             0,
         );

@@ -1272,6 +1272,7 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let sector_number = crate::sector::SectorNumber::new(42);
     install_test_lift_sector(&mut engine, owner, sector_number);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
     engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
     let door = crate::gate::Door {
         door_type: crate::gate::DoorType::LiftHigh,
@@ -1337,6 +1338,7 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let sector_number = crate::sector::SectorNumber::new(42);
     install_test_lift_sector(&mut engine, owner, sector_number);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
     let door = crate::gate::Door {
         door_type: crate::gate::DoorType::LiftHighCrenel,
         sector_in: sector_number,
@@ -1376,6 +1378,7 @@ fn lift_wait_context_reserves_direction_before_terminating() {
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
     let sector_number = crate::sector::SectorNumber::new(42);
     install_test_lift_sector(&mut engine, owner, sector_number);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
     let door = crate::gate::Door {
         door_type: crate::gate::DoorType::LiftHigh,
         sector_in: sector_number,
