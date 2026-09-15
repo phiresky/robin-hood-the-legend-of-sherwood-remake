@@ -135,6 +135,8 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
 
     let (mut engine, carrier, body, _) =
         corpse_exit_initialization_fixture(Command::EnterSwordfight);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     assert_eq!(
         engine.get_entity(carrier).unwrap().posture(),
@@ -151,7 +153,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         "translation frame must retain the registered corpse-exit owner"
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let carrier_entity = engine.get_entity(carrier).unwrap();
     assert_eq!(carrier_entity.posture(), Posture::Upright);

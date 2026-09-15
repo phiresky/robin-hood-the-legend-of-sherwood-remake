@@ -238,6 +238,8 @@ fn interrupt_corpse_exit_initialization_aligns_body_from_selected_order() {
 
     let (mut engine, carrier, body, _) =
         corpse_exit_initialization_fixture(crate::element::Command::WhistleCmd);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let body_position = engine
         .get_entity(body)
         .unwrap()
@@ -253,7 +255,7 @@ fn interrupt_corpse_exit_initialization_aligns_body_from_selected_order() {
         Some(AbilityKind::Drop)
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 9);
@@ -279,7 +281,7 @@ fn interrupt_corpse_exit_initialization_aligns_body_from_selected_order() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(3);
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 3);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 3);
