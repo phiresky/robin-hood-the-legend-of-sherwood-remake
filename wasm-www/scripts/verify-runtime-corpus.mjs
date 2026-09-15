@@ -4,26 +4,20 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { verifyDatadirDeploymentReceipt } from './datadir-release-authority.mjs';
 import {
     CLOUDFLARE_ASSET_BYTES_LIMIT,
     CLOUDFLARE_FREE_ASSET_LIMIT,
     DEMO_PATH,
     RETAINED_DEMO_GENERATIONS,
-    retainedDemoDetails,
 } from './verify-datadir-corpus.mjs';
 import { DEPLOYMENT, validateRuntimeHeaders } from './verify-cloudflare-deployment.mjs';
 import { verifyRuntimeJavascriptModules } from './runtime-javascript-modules.mjs';
-import { verifyRuntimeSourceContract } from './verify-runtime-source-contract.mjs';
 
 export { CLOUDFLARE_ASSET_BYTES_LIMIT, CLOUDFLARE_FREE_ASSET_LIMIT, DEMO_PATH };
-export const DATADIR_BINDING_PATH = 'wasm/datadir-deployment.json';
-// Published builds from before AudioDurations.json joined the preload
-// closure. Their preload schema is only admitted with every byte pinned.
-// TODO: drop this once the retained runtime corpus no longer serves them.
-const RETAINED_PRE_AUDIO_RUNTIMES = JSON.parse(
-    await readFile(new URL('./retained-pre-audio-runtimes.json', import.meta.url), 'utf8'),
-);
+// Runtime uploads up to release-48005f9bb945 carried the removed datadir
+// deployment receipt. Assembly drops it from the next upload.
+// TODO: delete once no retained upload carries this file (after the next release).
+export const LEGACY_DATADIR_RECEIPT_PATH = 'wasm/datadir-deployment.json';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const SHORT_COMMIT = /^[0-9a-f]{12}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
@@ -123,7 +117,7 @@ export function enforceCloudflareCapacity(files) {
     };
 }
 
-function validatePath(path, addition) {
+function validatePath(path, addition, priorUpload) {
     if (!/^[\x21-\x7e]+$/u.test(path) || path.startsWith('/') || path.includes('\\')
         || path.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) {
         throw new Error(`runtime corpus has a non-canonical path: ${path}`);
@@ -135,7 +129,8 @@ function validatePath(path, addition) {
     if (!ALLOWED_EXTENSIONS.has(extname(path).toLowerCase())) {
         throw new Error(`runtime corpus has a non-public extension: ${path}`);
     }
-    if (path === 'wasm/latest.json' || path === DATADIR_BINDING_PATH) return;
+    if (path === 'wasm/latest.json') return;
+    if (path === LEGACY_DATADIR_RECEIPT_PATH && priorUpload && !addition) return;
     if (!/^wasm\/[0-9a-f]{12}\//u.test(path)) {
         throw new Error(`runtime corpus has an undeclared or non-wasm path: ${path}`);
     }
@@ -152,9 +147,7 @@ function json(bytes, label) {
     }
 }
 
-async function validateManifest(
-    root, manifestPath, files, demoAuthority, addition, expectedContract, retainedGenerations,
-) {
+async function validateManifest(root, manifestPath, files, addition, retainedGenerations) {
     const manifestBytes = await readFile(resolve(root, manifestPath));
     const manifest = json(manifestBytes, manifestPath);
     exactKeys(manifest, [
@@ -172,10 +165,6 @@ async function validateManifest(
     }
     positiveInteger(manifest.netProtocol, `${manifestPath} netProtocol`);
     positiveInteger(manifest.ticketSchema, `${manifestPath} ticketSchema`);
-    if (expectedContract !== undefined) {
-        exact(manifest.netProtocol, expectedContract.netProtocol, `${manifestPath} current netProtocol`);
-        exact(manifest.ticketSchema, expectedContract.ticketSchema, `${manifestPath} current ticketSchema`);
-    }
 
     const hasBrotli = Object.hasOwn(manifest.files, 'wasmBrotli');
     const hasAdmission = Object.hasOwn(manifest.files, 'replayAdmissionWasm');
@@ -202,6 +191,7 @@ async function validateManifest(
         exact(digest(decoded), manifest.sha256.wasm, `${manifestPath} Brotli decoded wasm digest`);
     }
     if (hasAdmission) verifyReplayAdmissionWasm(await readFile(resolve(root, `wasm/${manifest.short}/replay_admission_bg.wasm`)));
+    // The game checks this closure before a multiplayer join loads the build.
     await verifyRuntimeJavascriptModules(
         resolve(root, 'wasm', manifest.short),
         manifest.javascriptModules,
@@ -210,18 +200,8 @@ async function validateManifest(
 
     exactKeys(manifest.multiplayerContent, ['demo', 'full', 'schema'], `${manifestPath} multiplayerContent`);
     positiveInteger(manifest.multiplayerContent.schema, `${manifestPath} multiplayerContent schema`);
-    if (expectedContract !== undefined) {
-        exact(manifest.multiplayerContent.schema, expectedContract.contentSchema, `${manifestPath} current content schema`);
-    }
     const demo = manifest.multiplayerContent.demo;
     exactKeys(demo, ['byteLength', 'nativeContentSha256', 'sha256', 'url'], `${manifestPath} Demo content`);
-    // A retained build keeps the exact older Demo generation it was built for;
-    // a new addition must always bind the current generation.
-    const retainedDemo = addition ? undefined : retainedGenerations.map(retainedDemoDetails)
-        .find(details => details.datadir_url === demo.url);
-    if (retainedDemo === undefined) {
-        exact(demo.url, `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`, `${manifestPath} Demo URL`);
-    }
     if (!DIGEST.test(demo.sha256) || !DIGEST.test(demo.nativeContentSha256)) {
         throw new Error(`${manifestPath} has an invalid Demo content digest`);
     }
@@ -229,16 +209,16 @@ async function validateManifest(
     if (demo.byteLength > CLOUDFLARE_ASSET_BYTES_LIMIT) {
         throw new Error(`${manifestPath} Demo byteLength exceeds Cloudflare's 25 MiB limit`);
     }
-    if (!addition) {
-        const bound = retainedDemo ?? demoAuthority;
-        exact(demo.url, bound.datadir_url, `${manifestPath} deployed Demo URL`);
-        exact(demo.byteLength, bound.datadir_byte_length, `${manifestPath} deployed Demo byteLength`);
-        exact(demo.sha256, bound.datadir_sha256, `${manifestPath} deployed Demo digest`);
-        exact(
-            demo.nativeContentSha256,
-            bound.native_content_sha256,
-            `${manifestPath} deployed Demo native content identity`,
-        );
+    // A retained build keeps the exact older Demo generation it was built for;
+    // a new addition must always name the current generation.
+    const retained = addition ? undefined : retainedGenerations
+        .find(generation => `${DEPLOYMENT.publicOrigin}/${generation.datadirPath}` === demo.url);
+    if (retained === undefined) {
+        exact(demo.url, `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`, `${manifestPath} Demo URL`);
+    } else {
+        exact(demo.byteLength, retained.datadirByteLength, `${manifestPath} retained Demo byteLength`);
+        exact(demo.sha256, retained.datadirSha256, `${manifestPath} retained Demo digest`);
+        exact(demo.nativeContentSha256, retained.nativeContentSha256, `${manifestPath} retained Demo native content identity`);
     }
     if (manifest.multiplayerContent.full !== null) {
         exactKeys(manifest.multiplayerContent.full, ['manifestSha256'], `${manifestPath} Full content`);
@@ -252,26 +232,10 @@ async function validateManifest(
 async function validateBuildClosure(root, manifest, files) {
     const prefix = `wasm/${manifest.short}/`;
     const preloadPath = `${prefix}preload-assets.json`;
-    const retained = Object.hasOwn(RETAINED_PRE_AUDIO_RUNTIMES, manifest.commit)
-        ? RETAINED_PRE_AUDIO_RUNTIMES[manifest.commit]
-        : undefined;
-    if (retained !== undefined) {
-        const actual = [...files].filter(path => path.startsWith(prefix));
-        if (actual.length !== Object.keys(retained).length) {
-            throw new Error(`retained immutable runtime ${manifest.short} file count changed`);
-        }
-        for (const [name, expected] of Object.entries(retained)) {
-            exact(
-                digest(await readFile(resolve(root, 'wasm', manifest.short, name))),
-                expected,
-                `retained runtime ${manifest.short}/${name}`,
-            );
-        }
-    }
     if (!files.has(preloadPath)) throw new Error(`${prefix} is missing preload-assets.json`);
     const preload = json(await readFile(resolve(root, preloadPath)), preloadPath);
-    if (!Array.isArray(preload) || preload.length < 3) {
-        throw new Error(`${preloadPath} must contain audio timings, a font and at least one UI image`);
+    if (!Array.isArray(preload) || preload.length < 2) {
+        throw new Error(`${preloadPath} must contain a font and at least one UI image`);
     }
     const auxiliary = [];
     for (const [index, entry] of preload.entries()) {
@@ -284,11 +248,12 @@ async function validateBuildClosure(root, manifest, files) {
         auxiliary.push(entry.path);
     }
     const sorted = [...new Set(auxiliary)].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-    const leading = retained === undefined
-        ? auxiliary[0] !== 'Data/AudioDurations.json' || auxiliary[1] !== 'Data/Interface/Fonts/arial.ttf'
-        : auxiliary[0] !== 'Data/Interface/Fonts/arial.ttf';
-    if (leading || JSON.stringify(auxiliary) !== JSON.stringify(sorted)) {
-        throw new Error(`${preloadPath} must be unique, sorted, and begin with the required audio timings and font`);
+    // Builds published before AudioDurations.json joined the preload closure
+    // begin with the font.
+    const fontIndex = auxiliary[0] === 'Data/AudioDurations.json' ? 1 : 0;
+    if (auxiliary[fontIndex] !== 'Data/Interface/Fonts/arial.ttf'
+        || JSON.stringify(auxiliary) !== JSON.stringify(sorted)) {
+        throw new Error(`${preloadPath} must be unique, sorted, and begin with the optional audio timings and the font`);
     }
     const expected = new Set([
         `${prefix}manifest.json`, preloadPath,
@@ -305,43 +270,29 @@ async function validateBuildClosure(root, manifest, files) {
 }
 
 /**
- * `replacedHeaders`: the corpus is an already-deployed input whose `_headers`
- * assembly discards and restages from the checked-in policy. Its file must
- * exist, but an older header policy (e.g. from before cross-origin isolation)
- * must not block assembling the next release; the assembled output is always
- * verified with the current policy.
+ * `priorUpload`: the corpus is the already-deployed upload a release builds
+ * on. Assembly discards and restages its `_headers` from the checked-in policy
+ * and drops LEGACY_DATADIR_RECEIPT_PATH, so an older header policy (e.g. from
+ * before cross-origin isolation) or that file must not block the release. Its
+ * latest.json may still name the generation a datadir rebuild just retained.
+ * The assembled output is always verified strictly.
  */
 export async function verifyRuntimeCorpus(directory, {
     addition = false,
-    expectedContract,
-    datadirAuthorityPath,
     retainedGenerations = [],
-    replacedHeaders = false,
+    priorUpload = false,
 } = {}) {
     const root = runtimeRoot(directory);
     const facts = await regularFilesBelow(root);
     const metrics = enforceCloudflareCapacity(facts);
     const files = new Set(facts.map(file => file.path));
-    for (const file of facts) validatePath(file.path, addition);
+    for (const file of facts) validatePath(file.path, addition, priorUpload);
 
-    let datadirDeployment;
     if (addition) {
-        if (files.has('_headers') || files.has(DATADIR_BINDING_PATH)) {
-            throw new Error('runtime addition contains deployment controls or a datadir deployment receipt');
-        }
+        if (files.has('_headers')) throw new Error('runtime addition contains deployment controls');
     } else {
-        if (!files.has('_headers') || !files.has(DATADIR_BINDING_PATH)) {
-            throw new Error(`complete runtime corpus requires _headers and ${DATADIR_BINDING_PATH}`);
-        }
-        if (datadirAuthorityPath === undefined) {
-            throw new Error('complete runtime verification requires the external datadir release authority');
-        }
-        if (!replacedHeaders) validateRuntimeHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
-        datadirDeployment = await verifyDatadirDeploymentReceipt({
-            authorityPath: datadirAuthorityPath,
-            receiptPath: resolve(root, DATADIR_BINDING_PATH),
-            retainedGenerations,
-        });
+        if (!files.has('_headers')) throw new Error('complete runtime corpus requires _headers');
+        if (!priorUpload) validateRuntimeHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
     }
     if (!files.has('wasm/latest.json')) throw new Error('runtime corpus is missing wasm/latest.json');
 
@@ -351,12 +302,21 @@ export async function verifyRuntimeCorpus(directory, {
         throw new Error('runtime addition must contain exactly one immutable wasm build');
     }
     const manifests = new Map();
+    const currentDemoIdentities = new Map();
     for (const path of manifestPaths) {
-        const value = await validateManifest(
-            root, path, files, datadirDeployment?.receipt.demo, addition, undefined, retainedGenerations,
-        );
+        const value = await validateManifest(root, path, files, addition, retainedGenerations);
         await validateBuildClosure(root, value.manifest, files);
         manifests.set(value.manifest.short, value);
+        const demo = value.manifest.multiplayerContent.demo;
+        if (demo.url === `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`) {
+            currentDemoIdentities.set(`${demo.sha256}:${demo.byteLength}:${demo.nativeContentSha256}`, value.manifest.short);
+        }
+    }
+    // Objects under a generation path are immutable. Two builds naming the
+    // current path with different bytes mean a rebuild skipped the DEMO_ROOT
+    // bump and would break the older build.
+    if (currentDemoIdentities.size > 1) {
+        throw new Error(`builds ${[...currentDemoIdentities.values()].join(', ')} name different bytes for ${DEMO_PATH}; a changed datadir needs a new generation directory`);
     }
     const latestBytes = await readFile(resolve(root, 'wasm/latest.json'));
     const latest = json(latestBytes, 'wasm/latest.json');
@@ -364,43 +324,22 @@ export async function verifyRuntimeCorpus(directory, {
     if (selected === undefined || !latestBytes.equals(selected.bytes)) {
         throw new Error('wasm/latest.json must exactly equal one versioned manifest');
     }
-    if (datadirDeployment !== undefined
-        && selected.manifest.multiplayerContent.demo.url !== datadirDeployment.receipt.demo.datadir_url) {
-        throw new Error('wasm/latest.json must select the deployed Demo datadir generation');
+    if (!priorUpload
+        && selected.manifest.multiplayerContent.demo.url !== `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`) {
+        throw new Error('wasm/latest.json must select the current Demo datadir generation');
     }
-    if (expectedContract !== undefined) {
-        if (!Object.hasOwn(selected.manifest.files, 'replayAdmissionWasm')) throw new Error('latest current runtime is missing replay admission');
-        exact(selected.manifest.netProtocol, expectedContract.netProtocol, 'latest current netProtocol');
-        exact(selected.manifest.ticketSchema, expectedContract.ticketSchema, 'latest current ticketSchema');
-        exact(
-            selected.manifest.multiplayerContent.schema,
-            expectedContract.contentSchema,
-            'latest current content schema',
-        );
-    }
-    return { ...metrics, datadirDeployment, latest: selected.manifest };
+    return { ...metrics, latest: selected.manifest };
 }
 
 async function main() {
     const args = process.argv.slice(2);
     const addition = args.includes('--addition');
-    const currentSource = args.includes('--current-source');
-    const authorityIndex = args.indexOf('--datadir-authority');
-    let datadirAuthorityPath;
-    if (authorityIndex !== -1) {
-        datadirAuthorityPath = args[authorityIndex + 1];
-        if (datadirAuthorityPath === undefined) throw new Error('--datadir-authority requires a path');
-    }
-    const positionals = args.filter((value, index) => value !== '--addition'
-        && value !== '--current-source'
-        && value !== '--datadir-authority'
-        && index !== authorityIndex + 1);
+    const positionals = args.filter(value => value !== '--addition');
     if (positionals.length !== 1) {
-        throw new Error('usage: node scripts/verify-runtime-corpus.mjs [--addition] [--current-source] [--datadir-authority AUTHORITY] DIRECTORY');
+        throw new Error('usage: node scripts/verify-runtime-corpus.mjs [--addition] DIRECTORY');
     }
-    const expectedContract = currentSource ? await verifyRuntimeSourceContract() : undefined;
     const metrics = await verifyRuntimeCorpus(positionals[0], {
-        addition, expectedContract, datadirAuthorityPath, retainedGenerations: RETAINED_DEMO_GENERATIONS,
+        addition, retainedGenerations: RETAINED_DEMO_GENERATIONS,
     });
     console.log(`verified ${addition ? 'runtime addition' : 'complete wasm runtime corpus'}: ${metrics.assetCount} assets, ${metrics.totalBytes} bytes`);
 }

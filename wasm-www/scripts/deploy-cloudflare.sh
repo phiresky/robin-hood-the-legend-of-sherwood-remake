@@ -7,13 +7,10 @@
 #     wasm-www/scripts/deploy-cloudflare.sh [--datadir | --datadir-only] [--runtime]
 #
 # --datadir  also deploy wasm-www/datadir-dist (assembled beforehand with
-#            assemble-datadir-corpus.mjs); writes target/datadir-deployment.json
-#            when target/datadir-authority.json exists.
-# --datadir-only  deploy only the datadir Worker (as --datadir), then stop. A new
-#            runtime is assembled against the receipt this writes.
+#            assemble-datadir-corpus.mjs).
+# --datadir-only  deploy only the datadir Worker (as --datadir), then stop.
 # --runtime  also deploy wasm-www/runtime-dist (assembled beforehand with
-#            assemble-runtime-corpus.mjs; verify:runtime needs
-#            target/datadir-authority.json).
+#            assemble-runtime-corpus.mjs).
 # Without a flag, ROBINHOOD_DATADIR_VERSION_ID / ROBINHOOD_RUNTIME_VERSION_ID must
 # name the live Worker versions (`pnpm exec wrangler deployments list --config
 # deploy/wrangler-runtime.json`); route reconciliation proves they exist.
@@ -44,7 +41,6 @@ fi
 [[ $datadir_only == 1 ]] || : "${ROBINHOOD_WASM_BINDGEN:?}"
 
 cd "$(dirname "$0")/.."
-repository="$(cd .. && pwd -P)"
 test "$(pnpm exec wrangler --version)" = "4.131.1"
 
 # Deploy one Worker and print the version ID from Wrangler's NDJSON output.
@@ -85,12 +81,6 @@ if [[ $deploy_datadir == 1 ]]; then
     pnpm verify:datadir-wrangler
     ROBINHOOD_DATADIR_VERSION_ID="$(deploy_worker datadir robinhood-datadir-assets)"
     export ROBINHOOD_DATADIR_VERSION_ID
-    node scripts/sync-cloudflare-routes.mjs --prove-datadir
-    if [[ -f "$repository/target/datadir-authority.json" ]]; then
-        node scripts/datadir-release-authority.mjs receipt \
-            "$repository/target/datadir-authority.json" "$ROBINHOOD_DATADIR_VERSION_ID" \
-            "$repository/target/datadir-deployment.json"
-    fi
     if [[ $datadir_only == 1 ]]; then
         echo "deployed datadir=$ROBINHOOD_DATADIR_VERSION_ID"
         exit 0

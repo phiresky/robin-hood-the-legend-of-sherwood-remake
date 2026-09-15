@@ -5,22 +5,31 @@ import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildRuntime, buildReplayAdmission, requireSharedMemoryImport, run } from './build-runtime.mjs';
-import { DEMO_PATH } from './verify-datadir-corpus.mjs';
-import { verifyRuntimeSourceContract } from './verify-runtime-source-contract.mjs';
+import { readDatadirRelease } from './datadir-release.mjs';
 
 // Production runtimes are the threaded (shared-memory, rayon decode pool) build.
 // The page is cross-origin isolated by deploy/public-headers.txt; where it is
 // not, the runtime detects that and keeps sprite decode on its serial path.
 export const RUNTIME_ADDITION_BUILD = Object.freeze({ threads: true, optimize: false, requireIdentity: true });
 
-export function validateContentIdentity({ demoSha, nativeDemoSha, demoBytes, fullSha }) {
-    const digest = /^[0-9a-f]{64}$/u;
-    if (!digest.test(demoSha) || !digest.test(nativeDemoSha)) throw new Error('Demo identities must be lowercase SHA-256');
-    if (!/^[1-9][0-9]{0,7}$/u.test(String(demoBytes)) || Number(demoBytes) > 26214400) {
-        throw new Error('Demo object must be between 1 byte and 25 MiB');
+export function validateFullManifestSha256(fullSha) {
+    if (fullSha && !/^[0-9a-f]{64}$/u.test(fullSha)) throw new Error('Full manifest identity must be lowercase SHA-256');
+    return fullSha || null;
+}
+
+/**
+ * The compatibility numbers copied into manifest.json. The document itself is
+ * checked against the compiled Rust constants by `export_runtime_contract
+ * --check` below, which catches a stale netProtocol before publishing.
+ */
+export async function readRuntimeContract(repoRoot = resolve(import.meta.dirname, '..', '..')) {
+    const contract = JSON.parse(await readFile(resolve(repoRoot, 'wasm-www/runtime-contract.json'), 'utf8'));
+    for (const key of ['netProtocol', 'ticketSchema', 'contentSchema']) {
+        if (!Number.isSafeInteger(contract?.[key]) || contract[key] <= 0) {
+            throw new Error(`runtime-contract.json has an invalid ${key}`);
+        }
     }
-    if (fullSha && !digest.test(fullSha)) throw new Error('Full manifest identity must be lowercase SHA-256');
-    return { demoSha, nativeDemoSha, demoBytes: Number(demoBytes), fullSha: fullSha || null };
+    return contract;
 }
 
 function output(command, args) {
@@ -33,9 +42,15 @@ function output(command, args) {
     return run(command, args, { encoding: 'utf8', stdio: 'pipe', env }).stdout.trim();
 }
 
-export async function stageRuntimeAddition({ root = 'target/static-runtime-addition', bindgen = 'wasm-bindgen', ...input }) {
-    const identity = validateContentIdentity(input);
-    const contract = await verifyRuntimeSourceContract();
+export async function stageRuntimeAddition({
+    root = 'target/static-runtime-addition', bindgen = 'wasm-bindgen', datadirRelease, fullSha,
+}) {
+    if (datadirRelease === undefined) throw new Error('runtime staging requires --datadir-release');
+    const demo = await readDatadirRelease(datadirRelease);
+    const full = validateFullManifestSha256(fullSha);
+    const contract = await readRuntimeContract();
+    // `/wasm/<short>/` is the same 12-hex prefix Rust records as
+    // ROBIN_GIT_HASH in every replay, so viewers select a run's runtime by it.
     const commit = output('git', ['rev-parse', 'HEAD']);
     const short = commit.slice(0, 12);
     // Refuse to mix prior outputs or silently replace an immutable addition.
@@ -43,9 +58,8 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
     await mkdir(root, { recursive: false });
     const artifact = join(root, 'wasm', short);
     await mkdir(artifact, { recursive: true });
-    // Operator staging can run on an unreviewed checkout. Verify compiled
-    // owners here as well as in CI; validating JSON alone cannot detect a
-    // stale generated document after an engine protocol change.
+    // Operator staging can run on an unreviewed checkout. Validating JSON alone
+    // cannot detect a stale generated document after an engine protocol change.
     run('cargo', ['build', '--locked', '-p', 'robin_rs', '--example', 'export_runtime_contract'],
         { env: { ...process.env, ROBIN_REQUIRE_BUILD_IDENTITY: '1' } });
     run(resolve('target/debug/examples/export_runtime_contract'),
@@ -76,23 +90,29 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
         commit, short, builtAt: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'), netProtocol: contract.netProtocol,
         ticketSchema: contract.ticketSchema,
         multiplayerContent: { schema: contract.contentSchema,
-            demo: { url: `https://robinhood.phiresky.xyz/${DEMO_PATH}`,
-                sha256: identity.demoSha, byteLength: identity.demoBytes, nativeContentSha256: identity.nativeDemoSha },
-            full: identity.fullSha ? { manifestSha256: identity.fullSha } : null },
+            demo: { url: demo.url, sha256: demo.sha256, byteLength: demo.byte_length, nativeContentSha256: demo.native_content_sha256 },
+            full: full ? { manifestSha256: full } : null },
         files: { js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz', wasmBrotli: 'robin_bg.wasm.br', replayAdmissionJs: 'replay_admission.js', replayAdmissionWasm: 'replay_admission_bg.wasm' },
         javascriptModules, sha256: { wasm: await hash('robin_bg.wasm'), wasmGzip: await hash('robin_bg.wasm.gz'), wasmBrotli: await hash('robin_bg.wasm.br'), replayAdmissionJs: await hash('replay_admission.js'), replayAdmissionWasm: await hash('replay_admission_bg.wasm') },
     };
     await writeFile(join(artifact, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await copyFile(join(artifact, 'manifest.json'), join(root, 'wasm/latest.json'));
-    run(process.execPath, ['wasm-www/scripts/verify-runtime-corpus.mjs', '--addition', '--current-source', root]);
+    run(process.execPath, ['wasm-www/scripts/verify-runtime-corpus.mjs', '--addition', root]);
     return short;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-    const { values } = parseArgs({ options: { root: { type: 'string' }, bindgen: { type: 'string' } } });
+    const { values } = parseArgs({ options: {
+        root: { type: 'string' },
+        bindgen: { type: 'string' },
+        'datadir-release': { type: 'string' },
+        'full-content-manifest-sha256': { type: 'string' },
+    } });
+    // Resolve operator paths before moving to the repository root.
+    const datadirRelease = values['datadir-release'] === undefined ? undefined : resolve(values['datadir-release']);
+    const root = values.root === undefined ? undefined : resolve(values.root);
     process.chdir(resolve(import.meta.dirname, '../..'));
-    const short = await stageRuntimeAddition({ root: values.root, bindgen: values.bindgen,
-        demoSha: process.env.DEMO_ASSET_SHA256, nativeDemoSha: process.env.DEMO_CONTENT_IDENTITY_SHA256,
-        demoBytes: process.env.DEMO_ASSET_BYTE_LENGTH, fullSha: process.env.FULL_CONTENT_MANIFEST_SHA256 });
+    const short = await stageRuntimeAddition({ root, bindgen: values.bindgen, datadirRelease,
+        fullSha: values['full-content-manifest-sha256'] });
     console.log(`staged immutable runtime addition ${short}`);
 }

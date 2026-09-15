@@ -24,9 +24,15 @@ toolchain=$HOME/.local/share/robin_hood/deployment-toolchain
 staging=$HOME/.local/share/robin_hood/deployment-staging
 mkdir -p "$toolchain/wasm-bindgen-0.2.128/bin" "$staging/prior/runtime-dist" \
     "$staging/prior/datadir-dist" "$staging/prior/public-dist"
-echo '{}' >"$staging/prior/datadir-authority.json"
-printf '{"demo":{"datadir_sha256":"%064d","datadir_byte_length":12,"native_content_sha256":"%064d"},"worker_version_id":"datadir-old"}\n' \
-    0 0 >"$staging/prior/datadir-deployment.json"
+# The prior stage predates datadir-release.json: it carries only the removed
+# release authority and deployment receipt, like release-48005f9bb945.
+demo_url=https://robinhood.phiresky.xyz/datadirs/demo-leicester/v18/v18-web-opus-q80.rhdata.zst
+printf '{"demo":{"datadir_url":"%s","datadir_sha256":"%s","datadir_byte_length":12,"native_content_sha256":"%s"},"worker_version_id":"datadir-old"}\n' \
+    "$demo_url" "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" >"$staging/prior/datadir-deployment.json"
+printf '{"demo":{"datadir_url":"%s","datadir_sha256":"%s","datadir_byte_length":12,"native_content_sha256":"%s"}}\n' \
+    "$demo_url" "$(printf 'c%.0s' {1..64})" "$(printf 'd%.0s' {1..64})" >"$staging/prior/datadir-authority.json"
+expected_release=$(jq -n --arg url "$demo_url" --arg sha "$(printf 'a%.0s' {1..64})" --arg native "$(printf 'b%.0s' {1..64})" \
+    '{schema: 1, url: $url, sha256: $sha, byte_length: 12, native_content_sha256: $native}')
 ln -s prior "$staging/live"
 
 fake() {
@@ -122,11 +128,18 @@ in_order '==> checks' '[dry-run] git worktree add --detach' '[dry-run] docker ru
     '[dry-run] scp -F' "robin-highscores-$FAKE_MAIN.tar.zst robinhood-vps:releases-incoming/" \
     'sha256sum\ -c' "deploy-$FAKE_MAIN.sh" '127.0.0.1:8787/readyz' \
     '[dry-run] curl -fsS -o /dev/null https://robinhood.phiresky.xyz/api/v1/leaderboard-metadata' \
-    'runtime: runtime-old' 'web: datadir unchanged' '[dry-run] env DEMO_ASSET_SHA256=' \
-    'stage-runtime-addition.mjs --root' 'assemble-runtime-corpus.mjs --update' \
+    'runtime: runtime-old' 'web: datadir unchanged' \
+    "migration: deriving datadir-release.json from legacy $staging/prior/datadir-deployment.json" \
+    "[dry-run] write_file $staging/release-111111111111/datadir-release.json" \
+    'stage-runtime-addition.mjs --root' "--datadir-release $staging/release-111111111111/datadir-release.json" \
+    "assemble-runtime-corpus.mjs --update $staging/prior/runtime-dist $staging/release-111111111111/runtime-addition $staging/release-111111111111/runtime-dist" \
     '[dry-run] env ROBINHOOD_DATADIR_VERSION_ID=datadir-old ROBINHOOD_PUBLIC_RETAIN=' \
     'deploy-cloudflare.sh --runtime' '[dry-run] ln -sfn' '==> release 111111111111 done'
 reject build_web_shipping_datadir.sh
+reject datadir-authority
+reject datadir-release-authority
+reject full-content-manifest-sha256
+[[ ! -e $staging/release-111111111111 ]] || fail 'dry run created the stage directory'
 reject 'release FAILED'
 not_called scp
 not_called node
@@ -140,10 +153,14 @@ compgen -G "$HOME/.local/share/robin_hood/release-logs/*.log" >/dev/null || fail
 FAKE_LIVE_MAGIC=RHDDNA15 release --web-only --dry-run
 expect_status 0
 in_order 'building a new datadir generation' 'build_web_shipping_datadir.sh' \
-    'assemble-datadir-corpus.mjs --update' 'datadir-release-authority.mjs author' \
-    'deploy-cloudflare.sh --datadir-only' 'stage-runtime-addition.mjs' \
+    'assemble-datadir-corpus.mjs --update' \
+    "datadir-release.mjs write $staging/release-111111111111/datadir-dist $staging/release-111111111111/datadir-release.json" \
+    'deploy-cloudflare.sh --datadir-only' \
+    "stage-runtime-addition.mjs --root $staging/release-111111111111/runtime-addition" \
+    "--datadir-release $staging/release-111111111111/datadir-release.json" \
     'ROBINHOOD_DATADIR_VERSION_ID=\<new\ datadir\ version\>' 'deploy-cloudflare.sh --runtime'
 reject 'docker run'
+reject migration
 
 # 3. --rebuild-datadir forces the rebuild even when the header matches.
 release --web-only --rebuild-datadir --dry-run
@@ -191,11 +208,48 @@ not_called 'curl -fsS -o /dev/null'
 reject '==> web:'
 
 # 6. A failed web stage prints the recorded Worker versions to roll back to.
+# The one-time migration has already written datadir-release.json from the
+# legacy receipt, and runtime staging was pointed at it.
 release --web-only
 expect_status 1
 expect 'release FAILED'
 expect 'wrangler rollback --config deploy/wrangler-runtime.json runtime-old'
 expect 'wrangler rollback --config deploy/wrangler-public.json public-old'
+stage=$staging/release-111111111111
+[[ -f $stage/datadir-release.json ]] || fail 'migration did not write datadir-release.json'
+[[ $(jq -cS . "$stage/datadir-release.json") == "$(jq -cS . <<<"$expected_release")" ]] ||
+    fail "derived datadir-release.json differs: $(cat "$stage/datadir-release.json")"
+called "node wasm-www/scripts/stage-runtime-addition.mjs --root $stage/runtime-addition --bindgen $toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen --datadir-release $stage/datadir-release.json"
+called "node wasm-www/scripts/assemble-runtime-corpus.mjs --update $staging/prior/runtime-dist $stage/runtime-addition $stage/runtime-dist"
+rm -rf "$stage"
+
+# 6b. Without a receipt the migration falls back to the release authority.
+mv "$staging/prior/datadir-deployment.json" "$work/receipt.json"
+release --web-only --dry-run
+expect_status 0
+expect "migration: deriving datadir-release.json from legacy $staging/prior/datadir-authority.json"
+
+# 6c. A malformed legacy identity, or no identity at all, stops the release.
+cp "$staging/prior/datadir-authority.json" "$work/authority.json"
+echo '{"demo":{"datadir_url":"x","datadir_sha256":"short"}}' >"$staging/prior/datadir-authority.json"
+release --web-only --dry-run
+expect_status 1
+expect "cannot derive datadir-release.json from $staging/prior/datadir-authority.json"
+rm "$staging/prior/datadir-authority.json"
+release --web-only --dry-run
+expect_status 1
+expect 'has no datadir-release.json'
+reject 'stage-runtime-addition.mjs'
+
+# 6d. A stage written by the new flow is reused as is, without migration.
+printf '%s\n' "$expected_release" >"$staging/prior/datadir-release.json"
+release --web-only --dry-run
+expect_status 0
+expect "[dry-run] cp $staging/prior/datadir-release.json $staging/release-111111111111/datadir-release.json"
+reject migration
+mv "$work/receipt.json" "$staging/prior/datadir-deployment.json"
+mv "$work/authority.json" "$staging/prior/datadir-authority.json"
+rm "$staging/prior/datadir-release.json"
 
 # 7. Usage errors.
 release --server-only --web-only
