@@ -5,11 +5,10 @@
 //! changes what a test asserts.
 
 use robin_run_protocol::{
-    ArtifactRefV1, BoardMetricV1, BoardMissionV2, BoardSimulationPolicyV1, BoardV2,
-    ChallengeNonce32, Digest32, OfficialContentEditionV1, OpaqueId, ParticipantPublicDisclosureV1,
-    PublicKey32, RANKED_REPLAY_MEDIA_TYPE_V1, RankedSimulationDifficultyV1,
-    RankedSimulationPolicyV1, ReplayArtifactV1, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SubmissionV2,
-    UploadChallengeV1, ViewerContentRequirementV2,
+    ArtifactRefV1, BoardMetricV1, BoardMissionV2, BoardSimulationPolicyV1, BoardV2, Digest32,
+    OfficialContentEditionV1, OpaqueId, ParticipantPublicDisclosureV1, PublicKey32,
+    RANKED_REPLAY_MEDIA_TYPE_V1, RankedSimulationDifficultyV1, RankedSimulationPolicyV1,
+    ReplayArtifactV1, SCHEMA_VERSION_V3, SubmissionV3, ViewerContentRequirementV2,
 };
 use std::collections::BTreeMap;
 
@@ -101,18 +100,13 @@ pub(crate) fn standard_medium_policy() -> BoardSimulationPolicyV1 {
     }
 }
 
-/// A complete, valid V2 submission of the fixture replay by `uploader`.
+/// A complete, valid V3 submission of the fixture replay by `uploader`.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn submission(uploader: PublicKey32) -> SubmissionV2 {
-    SubmissionV2 {
-        schema_version: SCHEMA_VERSION_V2,
-        upload_challenge: UploadChallengeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            upload_challenge_id: OpaqueId::new("upload-1").unwrap(),
-            upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
-            expires_at_unix_ms: 1_800_000_000_000,
-        },
+pub(crate) fn submission(uploader: PublicKey32) -> SubmissionV3 {
+    SubmissionV3 {
+        schema_version: SCHEMA_VERSION_V3,
         uploader_public_key: uploader,
+        signed_at_unix_ms: 1_800_000_000_000,
         public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
         board_id: OpaqueId::new("demo-standard-normal").unwrap(),
         mission_id: MISSION_ID.to_owned(),

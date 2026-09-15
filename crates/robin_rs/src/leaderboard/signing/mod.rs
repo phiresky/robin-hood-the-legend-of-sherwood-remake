@@ -7,10 +7,15 @@
 //!
 //! Both platforms implement the one async [`GameIdentitySigner`] surface.
 //! Native futures never suspend; browser futures complete on a later frame.
+//!
+//! Every player request is a [`SignedRequestClaim`] carrying the player key and
+//! the wall-clock `signed_at_unix_ms`; callers build a fresh claim for each
+//! network attempt because the server only accepts recently signed requests.
 
 use robin_run_protocol::{
-    PublicKey32, Signature64, SignatureAlgorithmV1, SignedSubmissionV2,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, SubmissionV2, Validate,
+    PublicKey32, Signature64, SignatureAlgorithmV1, SignedRequestClaim, SignedRequestV2,
+    SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3, SubmissionOwnerStatusRequestV2,
+    SubmissionV3, Validate,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -68,35 +73,57 @@ pub(crate) trait GameIdentitySigner {
 
     /// Sign one replay submission whose `uploader_public_key` is this identity.
     async fn sign_submission(
-        submission: SubmissionV2,
-    ) -> Result<SignedSubmissionV2, LeaderboardSigningError>;
+        submission: SubmissionV3,
+    ) -> Result<SignedSubmissionV3, LeaderboardSigningError>;
 
+    /// Sign one private status read whose `public_key` is this identity.
     async fn sign_submission_owner_status(
-        challenge: SubmissionOwnerStatusChallengeV1,
-    ) -> Result<SubmissionOwnerStatusEnvelopeV1, LeaderboardSigningError>;
+        request: SubmissionOwnerStatusRequestV2,
+    ) -> Result<SignedSubmissionOwnerStatusRequestV2, LeaderboardSigningError>;
 }
 
-/// Assemble a signed submission and verify the signature locally, so a
-/// misbehaving signer can never hand an unverifiable upload to the network.
-fn assemble_signed_submission(
-    submission: SubmissionV2,
+/// Assemble a signed request and verify the signature locally, so a
+/// misbehaving signer can never hand an unverifiable request to the network.
+fn assemble_signed_request<T: SignedRequestClaim>(
+    request: T,
     signer_public_key: PublicKey32,
     signature: Signature64,
-) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
-    if signer_public_key != submission.uploader_public_key {
+) -> Result<SignedRequestV2<T>, LeaderboardSigningError> {
+    if signer_public_key != request.signer_public_key() {
         return Err(LeaderboardSigningError::WrongIdentity);
     }
-    let signed = SignedSubmissionV2 {
+    let signed = SignedRequestV2 {
         schema_version: robin_run_protocol::SCHEMA_VERSION_V2,
-        submission,
+        request,
         algorithm: SignatureAlgorithmV1::Ed25519,
         signature,
     };
-    signed.validate().map_err(invalid_claim)?;
-    signed.verify_signature().map_err(invalid_claim)?;
+    verify_signed_request(&signed)?;
     Ok(signed)
+}
+
+/// Structural validation plus a strict Ed25519 check by the claim's own key.
+/// Freshness is the server's decision and is deliberately not checked here.
+fn verify_signed_request<T: SignedRequestClaim>(
+    signed: &SignedRequestV2<T>,
+) -> Result<(), LeaderboardSigningError> {
+    signed.validate().map_err(invalid_claim)?;
+    let bytes = SignedRequestV2::<T>::signing_bytes(&signed.request).map_err(invalid_claim)?;
+    robin_run_protocol::verify_ed25519_strict(
+        signed.request.signer_public_key().as_bytes(),
+        signed.signature.as_bytes(),
+        &bytes,
+    )
+    .map_err(invalid_claim)
 }
 
 fn invalid_claim(error: impl std::fmt::Display) -> LeaderboardSigningError {
     LeaderboardSigningError::InvalidClaim(error.to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn verify_signed_request_for_tests<T: SignedRequestClaim>(
+    signed: &SignedRequestV2<T>,
+) -> Result<(), LeaderboardSigningError> {
+    verify_signed_request(signed)
 }

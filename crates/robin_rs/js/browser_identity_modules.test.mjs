@@ -22,10 +22,22 @@ test('vault accepts only the closed typed signing domains', () => {
     ];
     assert.deepEqual(Object.keys(vault.signingDomains).sort(), expected);
     assert.deepEqual(Object.keys(vault.signingLimits).sort(), expected);
-    assert.deepEqual(
-        vault.signingDomains.submission,
-        encoder.encode('robinhood/leaderboards/2/submission\0'),
-    );
+    const currentDomains = {
+        deletion_request: [2, 'deletion-request'],
+        submission: [3, 'submission'],
+        submission_owner_status: [2, 'submission-owner-status'],
+        username_update: [2, 'username-update'],
+    };
+    for (const [operation, [version, name]] of Object.entries(currentDomains)) {
+        assert.deepEqual(
+            vault.signingDomains[operation],
+            encoder.encode(`robinhood/leaderboards/${version}/${name}\0`),
+        );
+        for (let legacyVersion = 1; legacyVersion < version; legacyVersion += 1) {
+            const legacy = encoder.encode(`robinhood/leaderboards/${legacyVersion}/${name}\0{}`);
+            assert.throws(() => vault.validateSigningMessage(operation, legacy), /does not use/u);
+        }
+    }
     for (const operation of expected) {
         const domain = vault.signingDomains[operation];
         const message = new Uint8Array(domain.byteLength + 2);

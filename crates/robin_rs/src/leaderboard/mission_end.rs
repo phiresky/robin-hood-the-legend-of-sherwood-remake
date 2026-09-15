@@ -7,21 +7,20 @@
 //! attempts; a submission is offered only for a prepared eligible recording.
 //!
 //! One upload is one replay signed by the uploader's durable identity: the
-//! backend requests a one-use upload challenge, signs the exact
-//! [`SubmissionV2`] and posts it together with the canonical compact replay.
+//! backend signs the exact [`SubmissionV3`] with the current wall-clock time
+//! and posts it together with the canonical compact replay in one request.
+//! Every attempt (including a user retry) signs afresh, so a retry never
+//! reuses a signature that may have aged out of the server's window.
 //! The server re-simulates the replay; nothing here is trusted as a result.
 
 use crate::leaderboard::task::PollTask;
 use crate::leaderboard_preferences::{LeaderboardPreferences, LeaderboardTab};
-use crate::leaderboard_service::{
-    LeaderboardApi, decode_board, decode_submission_accepted, decode_upload_challenge,
-};
+use crate::leaderboard_service::{LeaderboardApi, decode_board, decode_submission_accepted};
 use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, Digest32, LeaderboardPageV2, LeaderboardQueryV2, OpaqueId,
     ParticipantPublicDisclosureV1, PublicKey32, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-    SCHEMA_VERSION_V2, SubmissionAcceptedV1, SubmissionV2, TickDurationV1,
-    UploadChallengeRequestV2, UploadChallengeV1, Validate as _,
+    SCHEMA_VERSION_V3, SubmissionAcceptedV1, SubmissionV3, TickDurationV1, Validate as _,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -92,8 +91,8 @@ impl MissionEndBoard {
     }
 }
 
-/// Everything locally selected for one upload except the server challenge
-/// and the signature: the board chosen from published metadata and the
+/// Everything locally selected for one upload except the signing time and
+/// the signature: the board chosen from published metadata and the
 /// exact identity of the canonical compact replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -128,16 +127,16 @@ impl MissionEndSubmissionInput {
         Ok(())
     }
 
-    /// The exact document the uploader signs for one issued challenge.
+    /// The exact document the uploader signs at `signed_at_unix_ms`.
     pub fn submission(
         &self,
-        upload_challenge: UploadChallengeV1,
         uploader_public_key: PublicKey32,
-    ) -> SubmissionV2 {
-        SubmissionV2 {
-            schema_version: SCHEMA_VERSION_V2,
-            upload_challenge,
+        signed_at_unix_ms: u64,
+    ) -> SubmissionV3 {
+        SubmissionV3 {
+            schema_version: SCHEMA_VERSION_V3,
             uploader_public_key,
+            signed_at_unix_ms,
             public_disclosure: self.public_disclosure,
             board_id: self.board_id.clone(),
             mission_id: self.mission_id.clone(),
@@ -216,7 +215,7 @@ pub trait MissionEndLeaderboardBackend {
         query: LeaderboardQueryV2,
     ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV2>>, String>;
 
-    /// Obtain a challenge, sign and upload `replay` for `input`.
+    /// Sign and upload `replay` for `input`.
     fn submit(
         &mut self,
         input: MissionEndSubmissionInput,
@@ -803,7 +802,10 @@ impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
     }
 }
 
-/// Challenge, sign and upload one recorded replay.
+/// Sign (at the current wall-clock time) and upload one recorded replay.
+// TODO: a retry after a transport error whose first upload actually reached
+// the server is rejected as a duplicate replay hash; there is no owner lookup
+// by replay hash yet, so the retry surfaces as a failed submission.
 async fn upload_recorded_replay(
     api: &LeaderboardApi,
     input: &MissionEndSubmissionInput,
@@ -812,18 +814,12 @@ async fn upload_recorded_replay(
     let uploader_public_key = PlatformSigner::public_key()
         .await
         .map_err(|error| error.to_string())?;
-    let challenge_request = UploadChallengeRequestV2 {
-        schema_version: SCHEMA_VERSION_V2,
-        public_key: uploader_public_key,
-    };
-    let challenge_task = api
-        .upload_challenge(&challenge_request)
-        .map_err(|error| error.to_string())?;
-    let challenge =
-        decode_upload_challenge(challenge_task.take().await).map_err(|error| error.to_string())?;
-    let signed = PlatformSigner::sign_submission(input.submission(challenge, uploader_public_key))
-        .await
-        .map_err(|error| error.to_string())?;
+    let signed_at_unix_ms =
+        crate::leaderboard_receipt_watcher::now_unix_ms().map_err(|error| error.to_string())?;
+    let signed =
+        PlatformSigner::sign_submission(input.submission(uploader_public_key, signed_at_unix_ms))
+            .await
+            .map_err(|error| error.to_string())?;
     let upload = api
         .submit(&signed, replay)
         .map_err(|error| error.to_string())?;
@@ -892,9 +888,11 @@ mod tests {
     use super::*;
     use crate::leaderboard::test_fixtures::{MISSION_ID, compact_replay_bytes};
     use ed25519_dalek::Signer as _;
-    use robin_run_protocol::{ChallengeNonce32, SignatureAlgorithmV1, SignedSubmissionV2};
+    use robin_run_protocol::{SCHEMA_VERSION_V2, SignatureAlgorithmV1, SignedSubmissionV3};
     use robin_run_protocol::{Signature64, SubmissionLifecycleV1};
     use std::sync::Mutex;
+
+    const SIGNED_AT_UNIX_MS: u64 = 1_800_000_000_000;
 
     #[test]
     fn replay_exporter_diagnostics_cannot_restore_export_authority() {
@@ -966,17 +964,16 @@ mod tests {
                 Digest32::digest_bytes(&replay),
                 input.replay.artifact.sha256
             );
-            let submission = input.submission(challenge(), uploader_public_key());
+            let submission = input.submission(uploader_public_key(), SIGNED_AT_UNIX_MS);
             let signature =
-                uploader().sign(&SignedSubmissionV2::signing_bytes(&submission).unwrap());
-            let signed = SignedSubmissionV2 {
+                uploader().sign(&SignedSubmissionV3::signing_bytes(&submission).unwrap());
+            let signed = SignedSubmissionV3 {
                 schema_version: SCHEMA_VERSION_V2,
-                submission,
+                request: submission,
                 algorithm: SignatureAlgorithmV1::Ed25519,
                 signature: Signature64::from_bytes(signature.to_bytes()),
             };
-            signed
-                .verify_signature()
+            crate::leaderboard::signing::verify_signed_request_for_tests(&signed)
                 .map_err(|error| error.to_string())?;
             self.calls.lock().unwrap().uploads += 1;
             Ok(Box::new(DelayedTask {
@@ -991,15 +988,6 @@ mod tests {
                     uploader_public_key: uploader_public_key(),
                 })),
             }))
-        }
-    }
-
-    fn challenge() -> UploadChallengeV1 {
-        UploadChallengeV1 {
-            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
-            upload_challenge_id: OpaqueId::new("upload-1").unwrap(),
-            upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
-            expires_at_unix_ms: 1_800_000_000_000,
         }
     }
 
@@ -1298,8 +1286,9 @@ mod tests {
     fn submission_document_carries_the_exact_local_selection() {
         let fixture = fixture(MissionEndOutcome::Won);
         let input = fixture.bundle.eligible_submission.unwrap();
-        let submission = input.submission(challenge(), uploader_public_key());
+        let submission = input.submission(uploader_public_key(), SIGNED_AT_UNIX_MS);
         submission.validate().unwrap();
+        assert_eq!(submission.signed_at_unix_ms, SIGNED_AT_UNIX_MS);
         assert_eq!(submission.board_id, input.board_id);
         assert_eq!(submission.replay, input.replay);
         assert_eq!(submission.requested_metrics, input.requested_metrics);
