@@ -529,8 +529,7 @@ struct VerifierReportedInfrastructureFailure {
     private_detail_code: Option<String>,
 }
 
-/// Private, bounded failure detail persisted for operators. Verifier-authored
-/// text never reaches the service journal.
+/// Bounded operator diagnostics persisted with the failed job.
 fn private_failure_detail(error: &anyhow::Error) -> String {
     let detail =
         if let Some(failure) = error.downcast_ref::<VerifierReportedInfrastructureFailure>() {
@@ -565,11 +564,18 @@ fn log_verification_job_failure(
     exhausted: bool,
 ) {
     let error_code = safe_worker_error_code(error);
+    let process_detail = error
+        .downcast_ref::<ProcessError>()
+        .and_then(|process| match process {
+            ProcessError::Exit(_) => Some(bounded_private_detail(&process.to_string())),
+            _ => None,
+        });
     if exhausted {
         tracing::error!(
             submission_id,
             attempts,
             error_code,
+            process_detail = ?process_detail,
             "verification job exhausted its bounded retry policy"
         );
     } else {
@@ -577,6 +583,7 @@ fn log_verification_job_failure(
             submission_id,
             attempts,
             error_code,
+            process_detail = ?process_detail,
             "verification job failed; scheduling retry"
         );
     }
@@ -928,6 +935,21 @@ mod tests {
         let bounded = bounded_private_detail(&detail);
         assert!(bounded.len() <= 2000);
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn verifier_exit_status_and_stderr_are_logged_for_retry_and_exhaustion() {
+        let error = anyhow::Error::new(ProcessError::Exit(
+            "exit status: 1; stderr: sandbox startup failed".to_owned(),
+        ));
+        for exhausted in [false, true] {
+            log_verification_job_failure("submission-exit-test", 3, &error, exhausted);
+        }
+        assert!(logs_contain("exit status: 1"));
+        assert!(logs_contain("sandbox startup failed"));
+        assert!(logs_contain("scheduling retry"));
+        assert!(logs_contain("exhausted its bounded retry policy"));
     }
 
     #[tracing_test::traced_test]
