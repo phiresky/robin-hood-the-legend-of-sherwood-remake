@@ -498,6 +498,37 @@ fn dispatch_crowded_cross_sector_swordfight(
     let opponent_sector = crate::position_interface::SectorHandle::new(2);
     assert_ne!(owner_sector, opponent_sector);
 
+    for (number, min_x, max_x) in [(1, -100.0, 30.0), (2, 30.0, 100.0)] {
+        let sector_number = crate::sector::SectorNumber::new(number);
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        level
+            .sector_number_map
+            .insert(sector_number, level.sectors.len());
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: vec![
+                crate::coordinates::MapPoint::new(min_x, 0.0),
+                crate::coordinates::MapPoint::new(max_x, 0.0),
+                crate::coordinates::MapPoint::new(max_x, 200.0),
+                crate::coordinates::MapPoint::new(min_x, 200.0),
+            ],
+            bounding_box: crate::coordinates::MapBBox::from_coords(min_x, 0.0, max_x, 200.0),
+            sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            layer: 0,
+            sector_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+    }
+
     let owner = engine.add_test_entity(make_pc(wp(0.0, 100.0), owner_sector));
     let opponent = engine.add_test_entity(make_soldier(wp(60.0, 100.0), opponent_sector));
     for index in 0..crowding {
