@@ -950,7 +950,63 @@ impl ActorAnimationStepCtx<'_> {
         }
         let motion = self.apply_post_perform_effects(&view, &prep, motion, weak_sword_held);
         let anim_type = view.anim_type;
+        if motion.is_some()
+            && self
+                .engine
+                .expect_entity(self.entity_id, "carry animation owner")
+                .is_pc()
+        {
+            match anim_type {
+                OrderType::WaitingWithCorpse
+                | OrderType::TransitionWaitingUprightCarryingCorpse
+                | OrderType::TransitionCarryingCorpseWaitingUpright => {
+                    crate::abilities::sync_corpse_animation_for_carrier(
+                        &mut self.engine.world.entities,
+                        &self.assets.profile_manager,
+                        self.entity_id,
+                        anim_type,
+                    );
+                }
+                OrderType::WaitingOnShoulders => {
+                    let carrier = self
+                        .engine
+                        .expect_entity(self.entity_id, "waiting rider")
+                        .human_data()
+                        .and_then(|human| human.carrier)
+                        .expect("waiting rider has no carrier");
+                    let sprite = &mut self
+                        .engine
+                        .world
+                        .entities
+                        .get_mut(self.entity_id)
+                        .expect("waiting rider disappeared")
+                        .element_data_mut()
+                        .sprite;
+                    sprite.display_order_ref = Some(carrier);
+                    sprite.behind_display_order_ref = false;
+                }
+                _ => {}
+            }
+        }
         self.apply_motion_side_effects(seq_id, elem_idx, view, &prep, motion);
+        if anim_type == OrderType::WaitingWithCorpse && motion == Some(MotionState::Start) {
+            let carried = self
+                .engine
+                .expect_entity(self.entity_id, "waiting corpse carrier")
+                .pc_data()
+                .and_then(|pc| pc.carried)
+                .expect("waiting corpse carrier has no body");
+            let body = self
+                .engine
+                .world
+                .entities
+                .get_mut(carried)
+                .expect("carried body disappeared");
+            body.set_posture(crate::element::Posture::Carried);
+            body.actor_data_mut()
+                .expect("carried body must be actor")
+                .action_state = crate::element::ActionState::Waiting;
+        }
         self.finish_selected_order(seq_id, elem_idx, anim_type, motion)
     }
 
@@ -1061,11 +1117,70 @@ impl ActorAnimationStepCtx<'_> {
         // Execute path below.
         let jump_airborne_step = super::jump::jump_step_is_airborne(entity, anim_type);
         let order_is_initialising = actor.execute_order_initialising;
+        if owner_is_pc && anim_type == OrderType::WaitingWithCorpse && order_is_initialising {
+            let carried = entity
+                .pc_data()
+                .and_then(|pc| pc.carried)
+                .expect("waiting corpse carrier has no body");
+            self.engine
+                .actor_freeze_execution(self.sim, self.assets, carried);
+        }
+        let entity = self.engine.expect_entity(entity_id, "animation owner");
         if order_is_initialising
             && anim_type == OrderType::WaitingCarryingOnShoulders
             && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
         {
             self.engine.actor_wait(self.sim, self.assets, carried_id);
+        }
+        if anim_type == OrderType::TransitionHelpingClimbingDown {
+            let carried = self
+                .engine
+                .expect_entity(entity_id, "shoulder dismount helper")
+                .pc_data()
+                .and_then(|pc| pc.carried);
+            if let Some(carried) = carried {
+                if order_is_initialising {
+                    self.engine
+                        .actor_freeze_execution(self.sim, self.assets, carried);
+                    self.engine
+                        .world
+                        .entities
+                        .get_mut(carried)
+                        .expect("shoulder rider disappeared")
+                        .actor_data_mut()
+                        .expect("shoulder rider must be actor")
+                        .installed_order = None;
+                }
+                let direction = (self
+                    .engine
+                    .expect_entity(entity_id, "shoulder helper")
+                    .element_data()
+                    .direction()
+                    + 8)
+                    & 15;
+                self.engine
+                    .world
+                    .entities
+                    .get_mut(carried)
+                    .expect("shoulder rider disappeared")
+                    .element_data_mut()
+                    .set_direction_goal(direction);
+            }
+        }
+        if anim_type == OrderType::WaitingCarryingOnShoulders {
+            let carrier = self
+                .engine
+                .expect_entity(entity_id, "waiting shoulder carrier");
+            if let Some(carried) = carrier.pc_data().and_then(|pc| pc.carried) {
+                let direction = (carrier.element_data().direction() + 8) & 15;
+                self.engine
+                    .world
+                    .entities
+                    .get_mut(carried)
+                    .expect("waiting shoulder rider disappeared")
+                    .element_data_mut()
+                    .set_direction_instantly(direction);
+            }
         }
         let entity = self
             .engine

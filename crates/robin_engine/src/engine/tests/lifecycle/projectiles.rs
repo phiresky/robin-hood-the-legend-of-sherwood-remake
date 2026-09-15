@@ -1160,8 +1160,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     );
 
     for _ in 0..10 {
-        let mut display = CameraDisplayState::default();
-        engine.tick_actor_owner_envelopes_with_display(&sim, &mut display, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
     }
 
     assert_eq!(engine.world.entities.projectiles().count(), 1);

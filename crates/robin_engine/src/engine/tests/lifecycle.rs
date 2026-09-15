@@ -153,6 +153,14 @@ fn corpse_exit_initialization_fixture(
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
+    let mut body_conversion = crate::engine::test_support::unmapped_conversion();
+    body_conversion[OrderType::BeingDroppedPeasantC as usize] = 0;
+    let body_entity = engine.get_entity_mut(body).unwrap();
+    body_entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script.clone(); 16]),
+        std::sync::Arc::new(body_conversion),
+    );
+    body_entity.element_data_mut().set_direction_instantly(4);
     engine
         .get_entity_mut(carrier)
         .unwrap()

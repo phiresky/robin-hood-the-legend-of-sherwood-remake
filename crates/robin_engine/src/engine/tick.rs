@@ -11,7 +11,6 @@ use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
 use super::*;
-use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
 use crate::game_operation::GameCode;
 use crate::messenger::{MessageType, SimpleMessage};
@@ -805,9 +804,7 @@ pub(super) fn assert_execute_owner_handler_is_linked(family: ExecuteOwnerFamily)
         ExecuteOwnerFamily::Bow => {
             let _ = EngineInner::tick_bow_shot_for;
         }
-        ExecuteOwnerFamily::Ability => {
-            let _ = EngineInner::tick_ability_for;
-        }
+        ExecuteOwnerFamily::Ability => {}
         ExecuteOwnerFamily::Beggar => {
             let _ = EngineInner::tick_beggar_bid_for;
         }
@@ -1624,7 +1621,7 @@ impl EngineInner {
             time_hourglass_phase(HourglassPhase::Entities, || self.hourglass_phase_entities());
 
         time_hourglass_phase(HourglassPhase::EntitySystems, || {
-            self.hourglass_phase_entity_systems(sim, display, assets)
+            self.hourglass_phase_entity_systems(sim, assets)
         });
 
         time_hourglass_phase(HourglassPhase::Npcs, || self.hourglass_phase_npcs());
@@ -2382,13 +2379,12 @@ impl EngineInner {
     /// compact creation-ordered loop, including removals and callback-spawned
     /// tail elements; this hook closes the derived tail before it increments
     /// the slot.
-    pub(super) fn tick_actor_owner_envelopes_with_display(
+    pub(crate) fn tick_actor_owner_envelopes(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) {
-        self.tick_actor_owner_envelopes_with_owner_hook(sim, display, assets, |_, _| {})
+        self.tick_actor_owner_envelopes_with_owner_hook(sim, assets, |_, _| {})
     }
 
     #[cfg(test)]
@@ -2398,14 +2394,12 @@ impl EngineInner {
         assets: &LevelAssets,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
-        let mut display = CameraDisplayState::default();
-        self.tick_actor_owner_envelopes_with_owner_hook(sim, &mut display, assets, owner_hook);
+        self.tick_actor_owner_envelopes_with_owner_hook(sim, assets, owner_hook);
     }
 
     fn tick_actor_owner_envelopes_with_owner_hook(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        display: &mut CameraDisplayState,
         assets: &LevelAssets,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
@@ -2597,7 +2591,7 @@ impl EngineInner {
                     // well would let the short looping sprite terminate the
                     // order and enter the exit transition early.
                     if !listen_counting && !listen_advanced {
-                        engine.tick_ability_for(sim, display, assets, owner);
+                        engine.tick_selected_ability(sim, assets, owner, engine.actors_frozen());
                     }
                 }
                 if let Some(order_id) = selected_beggar {
@@ -2662,16 +2656,6 @@ impl EngineInner {
                 owner_hook(engine, owner);
             },
         );
-    }
-
-    #[cfg(test)]
-    pub(super) fn tick_actor_owner_envelopes(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let mut display = CameraDisplayState::default();
-        self.tick_actor_owner_envelopes_with_display(sim, &mut display, assets);
     }
 
     /// Dispatch the exact original-game per-frame update chain for a live
@@ -3049,38 +3033,11 @@ impl EngineInner {
         use crate::order::OrderType;
         use crate::sprite::MotionState;
 
-        let helper_direction = self
-            .get_entity(dismount.helper_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "shoulder-dismount helper {:?} vanished during Execute",
-                    dismount.helper_id
-                )
-            })
-            .element_data()
-            .direction();
-        let carried_direction = (helper_direction + 8) & 15;
-
-        if dismount.initialising {
-            // FreezeExecution interrupts the rider's selected sequence. Its
-            // cached installed order is the Rust mirror of Original's
-            // detached actor order and must disappear at the same owner boundary.
-            self.actor_freeze_execution(sim, assets, dismount.carried_id);
-            if let Some(carried) = self.get_entity_mut(dismount.carried_id)
-                && let Some(actor) = carried.actor_data_mut()
-            {
-                actor.installed_order = None;
-            }
-        }
-
         let Some(carried) = self.get_entity_mut(dismount.carried_id) else {
             // The original game permits the carried-actor reference to become empty while the transition
             // runs and simply finishes the helper animation in that case.
             return;
         };
-        carried
-            .element_data_mut()
-            .set_direction_goal(carried_direction);
         let carried_sprite_direction = u16::try_from(carried.element_data().direction())
             .expect("PC shoulder rider has a negative direction");
         let sprite = &mut carried.element_data_mut().sprite;
@@ -3150,38 +3107,51 @@ impl EngineInner {
             }
         };
 
-        if let Some(carried) = self.get_entity_mut(dismount.carried_id) {
+        {
+            let carried = self
+                .get_entity_mut(dismount.carried_id)
+                .expect("shoulder rider disappeared before landing");
             carried
                 .element_data_mut()
                 .set_position_map_delayed(landing_position);
             carried.set_posture(Posture::Upright);
-            // Clearing a human actor's carrier restores the old
-            // carrier's heading as the released rider's direction goal
-            // before clearing the back-reference
-            // as part of the drop.
             carried
-                .element_data_mut()
-                .set_direction_goal(helper_direction);
-            if let Some(human) = carried.human_data_mut() {
-                human.carrier = None;
-            }
-            if let Some(actor) = carried.actor_data_mut() {
-                actor.execution_frozen = false;
-                actor.action_state = ActionState::Waiting;
-            }
-            let sprite = &mut carried.element_data_mut().sprite;
-            sprite.display_order_ref = None;
-            sprite.behind_display_order_ref = false;
+                .actor_data_mut()
+                .expect("shoulder rider must be actor")
+                .action_state = ActionState::Waiting;
         }
-        if let Some(helper) = self.get_entity_mut(dismount.helper_id)
-            && let Some(pc) = helper.pc_data_mut()
-        {
-            pc.carried = None;
-            pc.set_live_carried_posture(Posture::Lying);
-        }
-        // The original game makes the carried actor wait, not the helper, before
-        // releasing the final carrier/carried references.
+        // Waiting can synchronously change the relationship. Release the
+        // helper's then-current rider and use that rider's live carrier heading.
         self.actor_wait(sim, assets, dismount.carried_id);
+        let carried_id = self
+            .expect_entity(dismount.helper_id, "shoulder helper after rider wait")
+            .pc_data()
+            .and_then(|pc| pc.carried)
+            .expect("shoulder helper lost its rider during wait");
+        let carrier = self
+            .expect_entity(carried_id, "shoulder rider after wait")
+            .human_data()
+            .expect("shoulder rider must be human")
+            .carrier;
+        if let Some(carrier) = carrier {
+            let direction = self
+                .expect_entity(carrier, "rider carrier before release")
+                .element_data()
+                .direction();
+            let carried = self
+                .get_entity_mut(carried_id)
+                .expect("shoulder rider disappeared before release");
+            carried.element_data_mut().set_direction_goal(direction);
+            carried
+                .human_data_mut()
+                .expect("shoulder rider must be human")
+                .carrier = None;
+        }
+        self.get_entity_mut(dismount.helper_id)
+            .expect("shoulder helper disappeared before release")
+            .pc_data_mut()
+            .expect("shoulder helper must be PC")
+            .carried = None;
     }
 }
 

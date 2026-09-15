@@ -580,6 +580,37 @@ impl MovementStepCtx<'_> {
         } = self.order;
         let entity_id = self.entity_id;
         let ft = self.final_tolerance;
+        let entity = self.engine.expect_entity(entity_id, "movement owner");
+        let execute_order_initialising = entity
+            .actor_data()
+            .expect("movement owner lost actor initialization state")
+            .execute_order_initialising;
+        if execute_order_initialising
+            && self.traits.is_pc
+            && matches!(
+                order_action,
+                OrderType::WalkingWithCorpse | OrderType::WalkingCarryingOnShoulders
+            )
+        {
+            let carried = entity
+                .pc_data()
+                .and_then(|pc| pc.carried)
+                .expect("carrying movement has no carried actor");
+            self.engine
+                .actor_freeze_execution(self.sim, self.assets, carried);
+            if order_action == OrderType::WalkingCarryingOnShoulders {
+                let sprite = &mut self
+                    .engine
+                    .world
+                    .entities
+                    .get_mut(carried)
+                    .expect("shoulder rider disappeared during initialization")
+                    .element_data_mut()
+                    .sprite;
+                sprite.force_animation(OrderType::WaitingOnShoulders, 0);
+                sprite.reset_sprite_frame(false);
+            }
+        }
         let entity = self
             .engine
             .world
@@ -630,10 +661,6 @@ impl MovementStepCtx<'_> {
 
         let soldier_attentive = matches!(entity, crate::element::Entity::Soldier(_))
             && entity.enemy_ai().is_some_and(|enemy| enemy.attentive);
-        let execute_order_initialising = entity
-            .actor_data()
-            .expect("movement owner lost actor initialization state")
-            .execute_order_initialising;
         if execute_order_initialising && is_authored_climb_action(order_action) {
             // Every climb execution sets the facing to the lift direction
             // and disables direction computation for the selected order during
@@ -1657,6 +1684,20 @@ impl MovementStepCtx<'_> {
                 entity_id,
             );
         }
+        if self.traits.is_pc && order_action == OrderType::WalkingCarryingOnShoulders {
+            crate::abilities::step_shoulder_rider(
+                self.sim,
+                &mut self.engine.world.entities,
+                entity_id,
+            );
+            if !self
+                .engine
+                .check_walking_shoulder_clearance(self.sim, self.assets, entity_id)
+            {
+                self.deferred.completion = Some(MotionState::Aborted);
+                return;
+            }
+        }
         if is_sword_motion {
             self.engine
                 .quit_swordfight_with_far_opponents(self.sim, self.assets, entity_id);
@@ -1691,6 +1732,28 @@ impl MovementStepCtx<'_> {
                 .actor_data_mut()
                 .expect("movement Execute owner must be actor")
                 .action_state = action_state;
+        }
+        if self.traits.is_pc
+            && order_action == OrderType::WalkingWithCorpse
+            && motion_state == MotionState::Start
+            && start_survives
+        {
+            let carried = self
+                .engine
+                .expect_entity(entity_id, "walking corpse carrier")
+                .pc_data()
+                .and_then(|pc| pc.carried)
+                .expect("walking corpse carrier has no body");
+            let body = self
+                .engine
+                .world
+                .entities
+                .get_mut(carried)
+                .expect("carried body disappeared");
+            body.set_posture(crate::element::Posture::Carried);
+            body.actor_data_mut()
+                .expect("carried body must be actor")
+                .action_state = crate::element::ActionState::Waiting;
         }
         if plan.facing.executes_sword_movement
             && motion_state == MotionState::Start
@@ -1767,11 +1830,6 @@ impl MovementStepCtx<'_> {
             }
         }
         if self.traits.is_pc {
-            self.engine.tick_shouldered_carry_ceiling(
-                self.sim,
-                self.assets,
-                &[(entity_id, order_action)],
-            );
             if is_sword_motion {
                 self.engine
                     .abort_pinched_pc_sword_movement(entity_id, &mut self.deferred.completion);

@@ -4,22 +4,16 @@
 //!    `Command::*` sequence element to an actor.  It validates the actor
 //!    and target, then appends the animation order to that element.
 //!
-//! 2. [`tick_ability`] runs from the selected actor's legacy owner slot and
-//!    drives its sprite via `perform_action`. `Done` emits the one-shot
-//!    effect; `Terminated` releases the selected sequence element.
-//!
-//! 3. The engine applies cross-entity effects (posture changes, HP
-//!    restoration, etc.) from the returned [`AbilityTickResult`] values
-//!    *after* the mutable entity borrow is released.
-
-use std::collections::BTreeMap;
+//! The engine executes each selected animation and its effects directly in
+//! the actor's creation-order slot, releasing entity borrows before callbacks.
 
 use crate::coordinates::MapPoint;
-use crate::element::{ActionState, Command, Entity, EntityId, GameMaterial, Posture};
+use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::entities::Entities;
 use crate::movement::AbilityKind;
 use crate::order::{Order, OrderType};
 use crate::sequence::{SequenceId, SequenceManager};
+#[cfg(test)]
 use crate::sprite::MotionState as SpriteMotionState;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -100,227 +94,6 @@ pub enum BeginResult {
     Started,
     /// Actor or target not in a valid state; mark element `Impossible`.
     Impossible,
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Tick result — returned to the engine for cross-entity effects
-// ═══════════════════════════════════════════════════════════════════
-
-/// Describes what happened when an ability animation completed.
-///
-/// The engine applies these effects after the mutable entity borrow
-/// is released, avoiding double-borrow issues.
-pub enum AbilityTickResult {
-    /// A previously completed selected ability reached terminated motion and
-    /// may now release its driving sequence element.
-    Terminated {
-        actor_id: EntityId,
-        kind: AbilityKind,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    Aborted {
-        actor_id: EntityId,
-        kind: AbilityKind,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        order_id: Option<NonZeroU32>,
-    },
-    /// Little John finished picking up a body.
-    CarryDone {
-        carrier_id: EntityId,
-        target_id: EntityId,
-        /// Posture the target had before being picked up (to restore on drop).
-        carried_posture: Posture,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// Little John finished dropping a body.
-    DropDone { carrier_id: EntityId },
-    /// PC finished tying up an unconscious enemy.
-    TieDone {
-        actor_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// PC finished releasing a tied NPC.
-    UntieDone {
-        actor_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// Friar Tuck finished healing a wounded PC.
-    HealDone {
-        healer_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// Robin Hood finished whistling.
-    WhistleDone {
-        actor_id: EntityId,
-        position: MapPoint,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC's Listen entry transition animation completed — the PC
-    /// is now in `ActionState::Listening` with the countdown order selected.
-    /// The engine handler sends `PcMessage::SelectAction(Listen)` so
-    /// the portrait/action-bar reflects the active ability.
-    ListenEntered { actor_id: EntityId },
-    /// A PC's Listen exit transition animation completed — clean up:
-    /// terminate the driving sequence element and send
-    /// `PcMessage::UnselectAction`.
-    ListenDone {
-        actor_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// Stuteley finished the net throw animation.
-    ThrowNetDone {
-        actor_id: EntityId,
-        /// 2D target position for the net projectile.
-        target_pos: MapPoint,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// Stuteley finished the wasp nest throw animation.
-    ThrowWaspNestDone {
-        actor_id: EntityId,
-        target_pos: MapPoint,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the purse-throw animation.  The engine handler
-    /// spawns the purse projectile; its impact handler scatters coins.
-    ThrowPurseDone {
-        actor_id: EntityId,
-        /// 2D ground target the purse arcs toward.
-        target_pos: MapPoint,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the apple throw animation.  The engine handler
-    /// spawns a bursting apple projectile and decrements apple ammo.
-    ThrowAppleDone {
-        actor_id: EntityId,
-        /// Antagonist entity (soldier, civilian, or FX target) — the
-        /// apple is aimed at this entity's eyes / center.
-        target: Option<EntityId>,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the stone throw animation.  The engine handler
-    /// spawns a bursting stone projectile and decrements stone ammo.
-    ThrowStoneDone {
-        actor_id: EntityId,
-        target: Option<EntityId>,
-        /// Set only for the extension's ground-targeted distraction throw.
-        /// Entity-targeted original throws continue to use `target`.
-        ground_target: Option<crate::coordinates::WorldPoint3D>,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A VIP PC finished the `Paying` animation on a beggar.  The
-    /// engine handler subtracts [`BEGGAR_SALARY`] from the ransom and
-    /// launches a [`Command::ReceivePurse`] sequence element on the
-    /// beggar.
-    ///
-    /// [`BEGGAR_SALARY`]: crate::engine::BEGGAR_SALARY
-    /// [`Command::ReceivePurse`]: crate::element::Command::ReceivePurse
-    PayDone {
-        pc_id: EntityId,
-        beggar_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A beggar civilian finished the middle `WaitingWithPurse`
-    /// animation of the `ReceivePurse` chain.  The engine handler runs
-    /// [`EngineInner::reveal_scrolls`] at this point so the minimap
-    /// delayed-highlight fires on the Waiting→Transition boundary.
-    /// The sequence element is *not* terminated yet — the `Transition`
-    /// animation still has to play, ending with
-    /// [`AbilityTickResult::ReceivePurseDone`].
-    ///
-    /// [`EngineInner::reveal_scrolls`]: crate::engine::EngineInner::reveal_scrolls
-    ReceivePurseRevealing { beggar_id: EntityId },
-    /// A beggar civilian finished the final `Transition` animation of
-    /// the `ReceivePurse` chain.  The engine handler terminates the
-    /// driving sequence element.
-    ReceivePurseDone {
-        beggar_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the `Hitting` animation.  The engine handler
-    /// launches a [`Command::ReceiveHitDamage`] damage element on the
-    /// target with concussion 80 / 150 depending on whether the
-    /// attacker's profile carries the HIT_HARD action slot.
-    ///
-    /// [`Command::ReceiveHitDamage`]: crate::element::Command::ReceiveHitDamage
-    HitDone {
-        actor_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the `Strangling` animation.  The engine handler
-    /// launches a full-life-points [`Command::ReceiveDamage`] element
-    /// to kill the victim (or, for non-stranglable soldiers, dispatches
-    /// an `EventGotHit` stimulus so the soldier retaliates instead).
-    ///
-    /// [`Command::ReceiveDamage`]: crate::element::Command::ReceiveDamage
-    StrangleDone {
-        actor_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    StrangleSetupDone {
-        actor_id: EntityId,
-        target_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the `Eating` animation.  The engine handler
-    /// decrements the Eat / Guzzle ammo counter and adds 40 (Eat) or
-    /// 80 (Guzzle) life points, capped at `LIFEPOINTS_PC`.
-    EatDone {
-        actor_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the `ClimbingUpOnShoulders` animation.  By the time
-    /// the engine handler runs the postures are already paired
-    /// (`OnShoulders` on the climber, `CarryingOnShoulders` on the
-    /// helper) — the first Execute of the climbing order did the latch so
-    /// that pairing exists while the animation runs.  The handler terminates
-    /// the driving sequence element and parks the helper on a low-priority Wait
-    /// so its AI re-enters the idle loop while frozen-on-shoulders.
-    ClimbOnShouldersDone {
-        /// The PC that climbed up (executor of the order).
-        climber_id: EntityId,
-        /// The HelpingToClimb partner now carrying the climber.
-        helper_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
-    /// A PC finished the `ClimbingDownFromShoulders` animation.  The
-    /// engine handler resets postures (`Upright` on the climber,
-    /// `HelpingToClimb` on the helper), severs the `pc.carried` /
-    /// `human.carrier` cross-references, parks the helper on a Wait,
-    /// and relocates the climber to an authorized landing position next
-    /// to the helper.
-    ClimbDownFromShouldersDone {
-        /// The PC that climbed down (executor of the order).
-        climber_id: EntityId,
-        /// The HelpingToClimb partner that was carrying the climber.
-        helper_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -454,14 +227,8 @@ pub(crate) fn initialize_carry_relationship(
     // The original game assigns the carried-actor reference unconditionally. This intentionally replaces
     // a stale/restored link to another body after the Execute-time validity
     // check has accepted the new target.
-    let acquiring_target = pc.carried != Some(target_id);
     pc.carried = Some(target_id);
-    if acquiring_target {
-        // This helper may be reached again while the pickup animation remains
-        // active. The original game assigns it only during initialization, so
-        // do not resnapshot after CarryDone changes the target to Carried.
-        pc.set_live_carried_posture(target_posture);
-    }
+    pc.set_live_carried_posture(target_posture);
 
     let target = entities
         .get_mut(target_id)
@@ -719,7 +486,7 @@ pub(crate) fn initialize_climb_on_shoulders_relationship(
 /// (carrier) is identified via the climber's `human.carrier`
 /// back-reference latched by [`initialize_climb_on_shoulders_relationship`].
 /// Posture reset, carrier-link severance and landing-position resolution
-/// happen in the [`AbilityTickResult::ClimbDownFromShouldersDone`] consumer
+/// happen in the engine's shoulder-dismount completion
 /// after the animation reaches its terminated state.
 pub fn begin_climb_down_from_shoulders(
     entities: &mut Entities,
@@ -1011,7 +778,7 @@ pub fn begin_whistle(
 /// Called when `Command::EatCmd` is dispatched.  The dispatcher (tick.rs)
 /// checks Eat ammo > 0 before calling this; on success we queue the
 /// `Eating` animation order, and the post-animation effect is applied
-/// by the [`AbilityTickResult::EatDone`] handler in `engine::archery`.
+/// directly by the engine's eating execution.
 pub fn begin_eat(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1050,8 +817,7 @@ pub fn begin_eat(
 /// Called when `Command::HitCmd` is dispatched.
 ///
 /// The attacker plays the `Hitting` animation; on completion
-/// [`tick_ability`] emits [`AbilityTickResult::HitDone`], and the
-/// engine handler (`engine::archery`) launches a
+/// the engine launches a
 /// [`Command::ReceiveHitDamage`] damage element on the target with
 /// concussion 80 (`Action::Hit`) or 150 (`Action::HitHard`) based on
 /// whether the attacker's profile carries the HitHard action slot.
@@ -1118,8 +884,7 @@ pub fn begin_hit(
 /// Called when `Command::StrangleCmd` is dispatched.
 ///
 /// The attacker plays the `Strangling` animation; on completion
-/// [`tick_ability`] emits [`AbilityTickResult::StrangleDone`], and
-/// the engine handler launches a full-life-points
+/// the engine launches a full-life-points
 /// [`Command::ReceiveDamage`] element that kills the victim.
 ///
 /// [`Command::ReceiveDamage`]: crate::element::Command::ReceiveDamage
@@ -1313,7 +1078,7 @@ pub fn begin_throw_net(
 ///
 /// Called when `Command::ThrowApple` is dispatched.  The apple itself
 /// is spawned when the animation completes — see
-/// [`AbilityTickResult::ThrowAppleDone`] and the engine-side handler.
+/// the engine's direct apple-throw execution.
 pub fn begin_throw_apple(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1576,7 +1341,7 @@ pub fn begin_throw_purse(
 /// Installs the Paying order without changing the PC's facing. Original
 /// translation only constructs the order; the live validity check, facing
 /// change, and "give money" speech belong to the order's first Execute.
-/// On completion, [`AbilityTickResult::PayDone`] deducts the beggar salary
+/// On completion, the engine deducts the beggar salary
 /// and launches a `ReceivePurse` sequence element on the beggar.
 pub fn begin_pay(
     entities: &mut Entities,
@@ -1722,7 +1487,7 @@ pub(crate) fn ability_order_type(kind: AbilityKind) -> OrderType {
         AbilityKind::ClimbOnShoulders => OrderType::ClimbingUpOnShoulders,
         AbilityKind::ClimbDownFromShoulders => OrderType::ClimbingDownFromShoulders,
         AbilityKind::Listen | AbilityKind::ReceivePurse => unreachable!(
-            "{kind:?} is handled inline in tick_ability — \
+            "{kind:?} is handled by its selected order — \
              ability_order_type should never be called for it"
         ),
     }
@@ -1803,817 +1568,7 @@ pub(crate) fn selected_ability(
     })
 }
 
-/// Advance the active ability for one actor.
-///
-/// This is the per-owner unit used by the engine's creation-ordered element
-/// pass.
-pub fn tick_ability(
-    sim: &crate::sim_rng::SimulationContext,
-
-    entities: &mut Entities,
-    sequence_manager: &SequenceManager,
-    requested_actor: EntityId,
-    sprite_frozen: bool,
-) -> Vec<AbilityTickResult> {
-    let mut results = Vec::new();
-    let entity = entities
-        .get(requested_actor)
-        .unwrap_or_else(|| panic!("ability owner {requested_actor:?} disappeared"));
-    assert!(
-        entity.actor_data().is_some(),
-        "ability owner {requested_actor:?} is not an actor"
-    );
-    let entity_id = requested_actor;
-    let Some(ability) = selected_ability(entities, sequence_manager, requested_actor) else {
-        return results;
-    };
-    let kind = ability.kind;
-
-    if let Some(results) = tick_pre_action(sim, entities, requested_actor, &ability, sprite_frozen)
-    {
-        return results;
-    }
-
-    let entity = entities
-        .get_mut(requested_actor)
-        .unwrap_or_else(|| panic!("ability owner {requested_actor:?} disappeared after setup"));
-
-    // ── Listen: phase-aware animation dispatch ──
-    //
-    // Listen has three animation phases tracked by
-    // the current order. The entry and exit transitions
-    // are one-shot animations driven here; the middle CountingDown
-    // phase is a loop driven by the idle-pose animation driver
-    // plus the `listen_wait_time` countdown in
-    // the selected PC owner arm.
-    if kind == AbilityKind::Listen {
-        return tick_listen(sim, entity, entity_id, &ability, sprite_frozen);
-    }
-
-    // ── ReceivePurse: phase-aware animation dispatch ──
-    //
-    // Three sequential one-shot animations play back-to-back:
-    // `ReceivingPurse` → `WaitingWithPurse` → transition-back.  On
-    // the Waiting→Transition boundary we emit
-    // `ReceivePurseRevealing` so the engine can run
-    // `reveal_scrolls`; on Transition→Inactive we emit
-    // `ReceivePurseDone` to terminate the driving sequence element.
-    if kind == AbilityKind::ReceivePurse {
-        return tick_receive_purse(sim, entity, entity_id, &ability, sprite_frozen);
-    }
-
-    let order_id = Some(ability.order_id);
-    // Self-heal swaps Healing → Eating; all other abilities use
-    // the canonical per-kind animation.
-    let entity_id_here = entity_id;
-    let order_type = if kind == AbilityKind::Heal && ability.target == Some(entity_id_here) {
-        OrderType::Eating
-    } else {
-        ability_order_type(kind)
-    };
-    // These ability arms turn progressively toward the direction installed at
-    // Execute-time initialization. The throws, `Hit` and `Pay` freeze the first
-    // sprite frame until alignment; the rest turn for its side effect and
-    // advance the action unconditionally. `Carry`, `Drop`, `Whistle` and
-    // `ClimbDownFromShoulders` do not turn at all.
-    let turning = matches!(
-        kind,
-        AbilityKind::Hit
-            | AbilityKind::Heal
-            | AbilityKind::Pay
-            | AbilityKind::Tie
-            | AbilityKind::Untie
-            | AbilityKind::Eat
-            | AbilityKind::ClimbOnShoulders
-            | AbilityKind::ThrowApple
-            | AbilityKind::ThrowStone
-            | AbilityKind::ThrowPurse
-            | AbilityKind::ThrowWaspNest
-            | AbilityKind::ThrowNet
-    ) && entity.position_iface_mut().turn();
-    let frame_progression = if kind == AbilityKind::Untie {
-        crate::sprite::FrameProgression::Reversed
-    } else if matches!(
-        kind,
-        AbilityKind::Hit
-            | AbilityKind::Pay
-            | AbilityKind::ThrowApple
-            | AbilityKind::ThrowStone
-            | AbilityKind::ThrowPurse
-            | AbilityKind::ThrowWaspNest
-            | AbilityKind::ThrowNet
-    ) && turning
-    {
-        crate::sprite::FrameProgression::FrozenFirstFrame
-    } else {
-        crate::sprite::FrameProgression::Default
-    };
-    let direction = u16::try_from(entity.element_data().direction())
-        .unwrap_or_else(|_| panic!("{kind:?} owner {entity_id:?} has invalid animation direction"));
-    // Drive the animation through the sprite state machine.
-    let motion = if sprite_frozen {
-        SpriteMotionState::InProgress
-    } else {
-        let elem = entity.element_data_mut();
-        elem.sprite.perform_action(
-            sim,
-            order_id,
-            order_type,
-            direction,
-            frame_progression,
-            false,
-        )
-    };
-
-    // Whistle wait-time countdown.  Drives the expanding
-    // noise-ellipse render in `render_listen_ping`; armed to
-    // `TIME_LISTEN_WAIT` in `begin_whistle`.
-    if kind == AbilityKind::Whistle {
-        let actor = entity.actor_data_mut().unwrap();
-        if actor.whistle_wait_time != 0 {
-            actor.whistle_wait_time -= 1;
-        }
-        if actor.wait_time != 0 {
-            actor.wait_time -= 1;
-        }
-        actor.seek_refresh_wait = actor.wait_time;
-    }
-
-    // Only act on completion states.
-    if !matches!(
-        motion,
-        SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
-    ) {
-        return results;
-    }
-
-    let seq_id = ability.sequence_id;
-    let elem_idx = ability.element_index;
-    if motion == SpriteMotionState::Aborted {
-        results.push(AbilityTickResult::Aborted {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-            order_id: Some(ability.order_id),
-        });
-        return results;
-    }
-    if motion == SpriteMotionState::Terminated {
-        match kind {
-            AbilityKind::Drop => results.push(AbilityTickResult::DropDone {
-                carrier_id: entity_id,
-            }),
-            AbilityKind::ClimbOnShoulders => {
-                results.push(AbilityTickResult::ClimbOnShouldersDone {
-                    climber_id: entity_id,
-                    helper_id: ability.target.expect("climb helper"),
-                    seq_id,
-                    elem_idx,
-                })
-            }
-            AbilityKind::ClimbDownFromShoulders => {
-                results.push(AbilityTickResult::ClimbDownFromShouldersDone {
-                    climber_id: entity_id,
-                    helper_id: ability.target.expect("dismount helper"),
-                    seq_id,
-                    elem_idx,
-                })
-            }
-            AbilityKind::Strangle => results.push(AbilityTickResult::StrangleDone {
-                actor_id: entity_id,
-                target_id: ability.target.expect("strangle target"),
-                seq_id,
-                elem_idx,
-            }),
-            _ => {}
-        }
-        results.push(AbilityTickResult::Terminated {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-        });
-        return results;
-    }
-
-    if matches!(
-        kind,
-        AbilityKind::Drop | AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders
-    ) {
-        return results;
-    }
-
-    results.push(completion_result(
-        entity,
-        entity_id,
-        &ability,
-        sequence_manager,
-    ));
-    results
-}
-
-fn tick_pre_action(
-    sim: &crate::sim_rng::SimulationContext,
-    entities: &mut Entities,
-    requested_actor: EntityId,
-    ability: &SelectedAbility,
-    sprite_frozen: bool,
-) -> Option<Vec<AbilityTickResult>> {
-    let entity_id = requested_actor;
-    let kind = ability.kind;
-    let mut results = Vec::new();
-    // Player-character tying execution revalidates the antagonist every
-    // frame. The DONE callback itself changes Lying -> Tied, so the next
-    // Execute deliberately fails this check and aborts/releases the Tie
-    // element instead of playing the unused animation tail.
-    if kind == AbilityKind::Tie {
-        let target_id = ability
-            .target
-            .expect("active Tie ability must retain its antagonist");
-        let target_valid = entities.get(target_id).is_some_and(|target| {
-            target.human_data().is_some_and(|human| human.unconscious)
-                && target.element_data().posture() == Posture::Lying
-        });
-        if !target_valid {
-            results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id: ability.sequence_id,
-                elem_idx: ability.element_index,
-                order_id: Some(ability.order_id),
-            });
-            return Some(results);
-        }
-    }
-    if kind == AbilityKind::Untie && !ability.order_done {
-        let target_id = ability
-            .target
-            .expect("active Untie ability must retain its antagonist");
-        let target_valid = entities.get(target_id).is_some_and(|target| {
-            target.is_active()
-                && target.is_npc()
-                && !target.is_dead()
-                && target.human_data().is_some()
-                && target.element_data().posture() == Posture::Tied
-        });
-        if !target_valid {
-            results.push(AbilityTickResult::Aborted {
-                actor_id: entity_id,
-                kind,
-                seq_id: ability.sequence_id,
-                elem_idx: ability.element_index,
-                order_id: Some(ability.order_id),
-            });
-            return Some(results);
-        }
-    }
-
-    // Original-game strangling uses left-to-right conditional ordering:
-    // attacker fast turning runs first, and the victim is not advanced until a
-    // later tick where the attacker was already aligned. Action processing is
-    // likewise deferred until both calls return false. Direction goals and
-    // the victim FREEZE lock are installed by the engine at the original
-    // post-translation initialization boundary.
-    if kind == AbilityKind::Strangle {
-        let victim_id = ability
-            .target
-            .expect("active Strangle ability must retain its antagonist");
-        if entities
-            .get_mut(requested_actor)
-            .expect("validated strangle owner vanished before fast turning")
-            .position_iface_mut()
-            .turn_fast()
-        {
-            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
-            return Some(results);
-        }
-        let victim = entities
-            .get_mut(victim_id)
-            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished while turning"));
-        assert!(
-            victim.actor_data().is_some(),
-            "strangle victim {victim_id:?} lost required actor state while turning"
-        );
-        if victim.position_iface_mut().turn_fast() {
-            advance_pre_action_strangle_victim_if_due(sim, entities, requested_actor, victim_id);
-            return Some(results);
-        }
-    }
-
-    if kind == AbilityKind::ClimbOnShoulders {
-        let helper_id = ability
-            .target
-            .expect("active ClimbOnShoulders ability must retain its helper");
-        let helper_direction = entities
-            .get(helper_id)
-            .unwrap_or_else(|| {
-                panic!("climb-on-shoulders helper {helper_id:?} vanished during Execute")
-            })
-            .element_data()
-            .direction();
-        // Original reissues this progressive facing goal before Turn on every
-        // execution of the shoulder-climbing animation.
-        entities
-            .get_mut(requested_actor)
-            .expect("climb-on-shoulders owner vanished before facing update")
-            .element_data_mut()
-            .set_direction_goal((helper_direction + 8) & 15);
-    }
-
-    if kind == AbilityKind::Carry && !sprite_frozen {
-        let order_id = ability.order_id;
-        let target_id = ability.target.expect("active Carry ability target");
-        initialize_carry_relationship(entities, requested_actor, target_id);
-        let carrier = entities
-            .get(requested_actor)
-            .expect("validated Carry owner vanished before initialization");
-        if carrier.element_data().sprite.last_processed_order_id != order_id.get() {
-            let carrier_position = carrier.element_data().position_map();
-            let carried_direction = carrier.element_data().direction().wrapping_sub(4) & 15;
-            let target = entities
-                .get_mut(target_id)
-                .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"));
-            let element = target.element_data_mut();
-            element.set_position_map(carrier_position);
-            element.set_direction_instantly(carried_direction);
-        }
-    }
-
-    None
-}
-
-fn tick_listen(
-    sim: &crate::sim_rng::SimulationContext,
-    entity: &mut Entity,
-    entity_id: EntityId,
-    ability: &SelectedAbility,
-    sprite_frozen: bool,
-) -> Vec<AbilityTickResult> {
-    let mut results = Vec::new();
-    let kind = AbilityKind::Listen;
-    let order_type = ability.order_type;
-    // All three listen arms call `Turn()` ahead of their sprite action, so
-    // the row played this tick belongs to the already-stepped direction.
-    let _ = entity.position_iface_mut().turn();
-    let direction = u16::try_from(entity.element_data().direction())
-        .unwrap_or_else(|_| panic!("Listen owner {entity_id:?} has invalid animation direction"));
-    let order_id = Some(ability.order_id);
-
-    let motion = if sprite_frozen {
-        // The original-game sprite action returns an in-progress state while
-        // FreezeAll is active, and the PC
-        // The execution wrapper publishes that return through the actor update
-        // without advancing any sprite operand. The specialized Rust
-        // owner reads this transient field after `tick_ability` returns,
-        // so replace a stale pre-freeze DONE edge explicitly.
-        entity.element_data_mut().sprite.last_motion_state = Some(SpriteMotionState::InProgress);
-        SpriteMotionState::InProgress
-    } else {
-        let elem = entity.element_data_mut();
-        elem.sprite.perform_action(
-            sim,
-            order_id,
-            order_type,
-            direction,
-            crate::sprite::FrameProgression::Default,
-            false,
-        )
-    };
-    if !matches!(
-        motion,
-        SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
-    ) {
-        return results;
-    }
-    let actor = entity
-        .actor_data_mut()
-        .unwrap_or_else(|| panic!("asserted Listen owner {entity_id:?} lost required actor state"));
-    let seq_id = ability.sequence_id;
-    let elem_idx = ability.element_index;
-    match motion {
-        SpriteMotionState::Done => {
-            if order_type == OrderType::TransitionWaitingUprightListening {
-                // Switch to the listening pose (driven by
-                // animation.rs idle-pose fallback) and hand off
-                // to the ai.rs countdown.
-                actor.action_state = ActionState::Listening;
-                actor.listen_wait_time = crate::abilities::TIME_LISTEN_WAIT;
-                results.push(AbilityTickResult::ListenEntered {
-                    actor_id: entity_id,
-                });
-            } else if order_type == OrderType::TransitionListeningWaitingUpright {
-                actor.action_state = ActionState::Waiting;
-                actor.listen_wait_time = 0;
-                results.push(AbilityTickResult::ListenDone {
-                    actor_id: entity_id,
-                    seq_id,
-                    elem_idx,
-                });
-            }
-        }
-        SpriteMotionState::Terminated => results.push(AbilityTickResult::Terminated {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-        }),
-        SpriteMotionState::Aborted => results.push(AbilityTickResult::Aborted {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-            order_id: Some(ability.order_id),
-        }),
-        _ => {}
-    }
-    return results;
-}
-
-fn tick_receive_purse(
-    sim: &crate::sim_rng::SimulationContext,
-    entity: &mut Entity,
-    entity_id: EntityId,
-    ability: &SelectedAbility,
-    sprite_frozen: bool,
-) -> Vec<AbilityTickResult> {
-    let mut results = Vec::new();
-    let kind = AbilityKind::ReceivePurse;
-    let order_type = ability.order_type;
-    let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
-        panic!("ReceivePurse owner {entity_id:?} has invalid animation direction")
-    });
-    let order_id = Some(ability.order_id);
-
-    let motion = if sprite_frozen {
-        SpriteMotionState::InProgress
-    } else {
-        let elem = entity.element_data_mut();
-        elem.sprite.perform_action(
-            sim,
-            order_id,
-            order_type,
-            direction,
-            crate::sprite::FrameProgression::Default,
-            false,
-        )
-    };
-    if !matches!(
-        motion,
-        SpriteMotionState::Terminated | SpriteMotionState::Aborted
-    ) {
-        return results;
-    }
-
-    let actor = entity.actor_data_mut().unwrap_or_else(|| {
-        panic!("asserted ReceivePurse owner {entity_id:?} lost required actor state")
-    });
-    let seq_id = ability.sequence_id;
-    let elem_idx = ability.element_index;
-    if motion == SpriteMotionState::Aborted {
-        results.push(AbilityTickResult::Aborted {
-            actor_id: entity_id,
-            kind,
-            seq_id,
-            elem_idx,
-            order_id: Some(ability.order_id),
-        });
-        return results;
-    }
-    match order_type {
-        OrderType::ReceivingPurse => {}
-        OrderType::WaitingWithPurse => {
-            results.push(AbilityTickResult::ReceivePurseRevealing {
-                beggar_id: entity_id,
-            });
-        }
-        OrderType::TransitionWaitingWithPurseWaitingUpright => {
-            actor.action_state = ActionState::Waiting;
-            results.push(AbilityTickResult::ReceivePurseDone {
-                beggar_id: entity_id,
-                seq_id,
-                elem_idx,
-            });
-        }
-        _ => unreachable!("selected purse order changed kind"),
-    }
-    results.push(AbilityTickResult::Terminated {
-        actor_id: entity_id,
-        kind,
-        seq_id,
-        elem_idx,
-    });
-    return results;
-}
-
-fn completion_result(
-    entity: &mut Entity,
-    entity_id: EntityId,
-    ability: &SelectedAbility,
-    sequence_manager: &SequenceManager,
-) -> AbilityTickResult {
-    let kind = ability.kind;
-    let seq_id = ability.sequence_id;
-    let elem_idx = ability.element_index;
-    // Animation finished: collect the effect for this selected order.
-    let actor_pos = entity.element_data().position_map();
-
-    let actor = entity.actor_data_mut().unwrap();
-    // Whistle countdown should already be 0 by the time the
-    // animation completes (TIME_LISTEN_WAIT < whistle anim length),
-    // but clamp defensively so a follow-up whistle can re-arm
-    // cleanly in `begin_whistle`.
-    if kind == AbilityKind::Whistle {
-        actor.whistle_wait_time = 0;
-    }
-
-    let target = || {
-        ability
-            .target
-            .expect("target-bearing completion requires its antagonist")
-    };
-    match kind {
-        AbilityKind::Carry => {
-            let carried_posture = entity
-                .pc_data()
-                .unwrap_or_else(|| {
-                    panic!("Carry owner {entity_id:?} requires PC carried-posture state")
-                })
-                .live_carried_posture();
-            // Set carrier posture (target posture set by engine).
-            entity.set_posture(Posture::CarryingCorpse);
-            AbilityTickResult::CarryDone {
-                carrier_id: entity_id,
-                target_id: target(),
-                carried_posture,
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::Drop => unreachable!("drop completion runs at animation termination"),
-        AbilityKind::Tie => AbilityTickResult::TieDone {
-            actor_id: entity_id,
-            target_id: target(),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Untie => AbilityTickResult::UntieDone {
-            actor_id: entity_id,
-            target_id: target(),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Heal => AbilityTickResult::HealDone {
-            healer_id: entity_id,
-            target_id: target(),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Whistle => AbilityTickResult::WhistleDone {
-            actor_id: entity_id,
-            position: actor_pos,
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Pay => AbilityTickResult::PayDone {
-            pc_id: entity_id,
-            beggar_id: ability
-                .target
-                .expect("AbilityKind::Pay must carry a beggar target (set in begin_pay)"),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Listen | AbilityKind::ReceivePurse => unreachable!(
-            "{kind:?} is handled by the phase-aware inline branch earlier \
-                 in tick_ability and never reaches the generic completion match"
-        ),
-        AbilityKind::ThrowNet => {
-            // Target position was stored in the order on the
-            // owning sequence element.
-            let target_pos = sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|e| e.current_order())
-                .map(|o| MapPoint {
-                    x: o.target_x,
-                    y: o.target_y,
-                })
-                .unwrap_or_else(|| panic!("ThrowNet selected without its required live order"));
-            AbilityTickResult::ThrowNetDone {
-                actor_id: entity_id,
-                target_pos,
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::ThrowWaspNest => {
-            let target_pos = sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|e| e.current_order())
-                .map(|o| MapPoint {
-                    x: o.target_x,
-                    y: o.target_y,
-                })
-                .unwrap_or_else(|| {
-                    panic!("ThrowWaspNest selected without its required live order")
-                });
-            AbilityTickResult::ThrowWaspNestDone {
-                actor_id: entity_id,
-                target_pos,
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::ThrowPurse => {
-            let target_pos = sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|e| e.current_order())
-                .map(|o| MapPoint {
-                    x: o.target_x,
-                    y: o.target_y,
-                })
-                .unwrap_or_else(|| panic!("ThrowPurse selected without its required live order"));
-            AbilityTickResult::ThrowPurseDone {
-                actor_id: entity_id,
-                target_pos,
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::ThrowApple => AbilityTickResult::ThrowAppleDone {
-            actor_id: entity_id,
-            target: ability.target,
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::ThrowStone => {
-            let ground_target = ability.target.is_none().then(|| {
-                sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .and_then(|element| {
-                        element.get_property(crate::sequence::Field::NoiseDistractionTarget)
-                    })
-                    .and_then(|value| match value {
-                        crate::sequence::FieldValue::Point3D { x, y, z } => {
-                            Some(crate::coordinates::WorldPoint3D::new(*x, *y, *z))
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| {
-                        panic!("ground ThrowStone selected without its required 3D target")
-                    })
-            });
-            AbilityTickResult::ThrowStoneDone {
-                actor_id: entity_id,
-                target: ability.target,
-                ground_target,
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::Hit => AbilityTickResult::HitDone {
-            actor_id: entity_id,
-            target_id: ability
-                .target
-                .expect("AbilityKind::Hit must carry a target (set in begin_hit)"),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Strangle => AbilityTickResult::StrangleSetupDone {
-            actor_id: entity_id,
-            target_id: ability
-                .target
-                .expect("AbilityKind::Strangle must carry a target (set in begin_strangle)"),
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::Eat => AbilityTickResult::EatDone {
-            actor_id: entity_id,
-            seq_id,
-            elem_idx,
-        },
-        AbilityKind::ClimbOnShoulders => {
-            // Postures were latched on init; nothing to flip here.
-            // Helper is parked on a Wait by the engine handler so
-            // its frozen-execution doesn't block subsequent
-            // climb-down arbitration.
-            AbilityTickResult::ClimbOnShouldersDone {
-                climber_id: entity_id,
-                helper_id: ability.target.expect(
-                    "AbilityKind::ClimbOnShoulders must carry a helper target \
-                         (set in begin_climb_on_shoulders)",
-                ),
-                seq_id,
-                elem_idx,
-            }
-        }
-        AbilityKind::ClimbDownFromShoulders => {
-            // Posture reset / carrier-link severance / landing-pos
-            // resolution happen in the engine consumer (only on
-            // animation-terminated, not the per-frame Done states).
-            AbilityTickResult::ClimbDownFromShouldersDone {
-                climber_id: entity_id,
-                helper_id: ability.target.expect(
-                    "AbilityKind::ClimbDownFromShoulders must carry a helper target \
-                         (set in begin_climb_down_from_shoulders)",
-                ),
-                seq_id,
-                elem_idx,
-            }
-        }
-    }
-}
-
-/// Match the strangling tail while its attacker-and-victim fast-turn guard
-/// short-circuits before action processing.
-///
-/// The original game still checks whether the attacker's retained action is unfinished
-/// sprite row and advances the victim's frame without other side effects. This is
-/// observable when Strangle follows an already-done walk-to-wait transition:
-/// the victim's independent turning animation advances a second time in the
-/// same frame even though the Strangling animation has not started yet.
-fn advance_pre_action_strangle_victim_if_due(
-    sim: &crate::sim_rng::SimulationContext,
-    entities: &mut Entities,
-    attacker_id: EntityId,
-    victim_id: EntityId,
-) {
-    let due = {
-        let attacker = entities
-            .get(attacker_id)
-            .unwrap_or_else(|| panic!("strangle attacker {attacker_id:?} vanished while turning"));
-        let sprite = attacker.sprite();
-        !sprite.current_scripts().is_empty()
-            && sprite.current_frame >= sprite.action_done_for_row(sprite.current_row)
-    };
-    if due {
-        entities
-            .get_mut(victim_id)
-            .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished before increment"))
-            .element_data_mut()
-            .sprite
-            .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Carried entity position sync
-// ═══════════════════════════════════════════════════════════════════
-
-/// Snapshot of carrier state needed to drive the carried entity's
-/// sprite each frame.  Collected in one pass, then applied in a second
-/// pass to avoid overlapping mutable borrows on the entity slice.
-struct CarrierSnapshot {
-    carrier_id: EntityId,
-    target_id: EntityId,
-    pos: MapPoint,
-    carrier_dir: i16,
-    layer: u16,
-    /// Carrier's current sector (copied onto the carried entity so
-    /// sector-driven systems agree on which sector both occupy).
-    sector: Option<crate::position_interface::SectorHandle>,
-    /// Carrier's current material (derived from its obstacle).
-    material: GameMaterial,
-    /// The carrier's current sprite animation — determines which carry
-    /// phase (lift / waiting / walking / drop) the carried entity plays.
-    carrier_last_action: OrderType,
-    /// Frame state to synchronize with for lift/waiting/drop phases.
-    carrier_frame: u16,
-    carrier_frame_count: u16,
-    /// True if the carrier has `Action::LittleJohnCarry` as a contextual
-    /// action — selects the LittleJohn-style carry animations (vs
-    /// peasant-C style).
-    little_john_style: bool,
-    /// Posture stored on the carrier's `pc.carried_posture` — determines
-    /// whether this is a corpse-carry (target on `Posture::Carried` /
-    /// `DeadBack` / etc.) or a shoulder-mount (`Posture::OnShoulders`).
-    /// The two modes share position/obstacle/plane copy but differ in
-    /// animation sync direction (helper drives climber for carry; climber
-    /// drives helper for climb-up).
-    carried_posture: Posture,
-    /// Climber's current sprite state — used in the OnShoulders branch
-    /// to drive the helper's `TransitionHelpingClimbingUp` synchronized
-    /// animation.  Read from the carried entity's sprite during the
-    /// snapshot pass.
-    target_last_action: OrderType,
-    target_frame: u16,
-    target_frame_count: u16,
-    /// The climber is still executing the animation that owns helper-side
-    /// synchronization, including the terminal Execute edge before its
-    /// per-tick sprite motion latch is cleared. A stale sprite row alone is
-    /// not enough: the original game synchronizes animation only from the live
-    /// climbing Execute arm.
-    target_live_shoulder_ability: bool,
-}
-
-/// Keep carried entities positioned on top of their carrier and drive
-/// their sprite animation synchronized with the carrier.
-///
-/// Called every frame from the engine tick.  For each PC that has
-/// `PcData.carried == Some(target_id)`, copies the carrier's map
-/// position/direction to the carried entity and forces the carried's
-/// sprite to play the appropriate `BeingLifted*` / `BeingCarried*` /
-/// `BeingDropped*` animation depending on which carry phase the carrier
-/// is in (lift transition / waiting / walking / drop transition).
+/// Select the carried-body animation set from the carrier's contextual action.
 fn uses_little_john_carry(
     profiles: &crate::profiles::ProfileManager,
     profile_index: crate::profiles::CharacterProfileIdx,
@@ -2625,463 +1580,152 @@ fn uses_little_john_carry(
         .contains(&crate::profiles::Action::LittleJohnCarry)
 }
 
-pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profiles::ProfileManager) {
-    // Collect carrier snapshots first to avoid borrow conflicts.
-    let mut snapshots: Vec<CarrierSnapshot> = Vec::new();
-    for (pc_id, entity) in entities.pcs() {
-        let carrier_id = EntityId::Pc(pc_id);
-        let pc = &entity.pc;
-        let Some(target_id) = pc.carried else {
-            continue;
-        };
-        let elem = &entity.element;
-
-        // Only the LittleJohnCarry contextual action selects the
-        // LittleJohn carried-animation set. FarmerCarry grants the same
-        // *ability* (carry availability checks accept either), but a
-        // FarmerCarry carrier still plays the PeasantC lift/carry/drop
-        // rows on the body it carries.
-        let little_john_style = uses_little_john_carry(profiles, pc.profile_index);
-
-        let (last_action, frame, frame_count) = {
-            let s = &elem.sprite;
-            (s.last_action, s.current_frame, s.frame_count)
-        };
-
-        let carried_posture = pc.live_carried_posture();
-
-        // Snapshot the carried entity's sprite too so the OnShoulders
-        // branch can sync the helper's `TransitionHelpingClimbingUp` to
-        // the climber's `ClimbingUpOnShoulders`.  For corpse-carry this is
-        // unused; the carrier-driven path overwrites these fields anyway.
-        let (target_last_action, target_frame, target_frame_count, target_live_shoulder_ability) =
-            entities
-                .get(target_id)
-                .map(|e| {
-                    let s = &e.element_data().sprite;
-                    let live_shoulder_ability = e.actor_data().is_some_and(|actor| {
-                        actor.installed_order.is_some_and(|order| {
-                            matches!(
-                                order.order_type,
-                                OrderType::ClimbingUpOnShoulders
-                                    | OrderType::ClimbingDownFromShoulders
-                            )
-                        })
-                    });
-                    (
-                        s.last_action,
-                        s.current_frame,
-                        s.frame_count,
-                        live_shoulder_ability,
-                    )
-                })
-                .unwrap_or((OrderType::WaitingUpright, 0, 0, false));
-
-        snapshots.push(CarrierSnapshot {
-            carrier_id,
-            target_id,
-            pos: elem.position_map(),
-            carrier_dir: elem.direction(),
-            layer: elem.layer(),
-            sector: elem.sector(),
-            material: elem.material(),
-            carrier_last_action: last_action,
-            carrier_frame: frame,
-            carrier_frame_count: frame_count,
-            little_john_style,
-            carried_posture,
-            target_last_action,
-            target_frame,
-            target_frame_count,
-            target_live_shoulder_ability,
-        });
-    }
-
-    // Apply to each carried entity.
-    for snap in snapshots {
-        let on_shoulders = snap.carried_posture == Posture::OnShoulders;
-        let walking_with_corpse = matches!(snap.carrier_last_action, OrderType::WalkingWithCorpse);
-
-        let Some(target) = entities.get_mut(snap.target_id) else {
-            continue;
-        };
-
-        // For corpse-carry, the carried body's facing lags the carrier
-        // by 4 sectors `(carrier_dir - 4) & 15`.  For climb-on-shoulders
-        // the climber faces the *opposite* direction
-        // `(carrier_dir + 8) & 15`.
-        let carried_dir_i16 = if on_shoulders {
-            (snap.carrier_dir + 8) & 15
-        } else {
-            snap.carrier_dir.wrapping_sub(4) & 15
-        };
-        let carried_dir_u16 = carried_dir_i16 as u16;
-
-        // Shoulder riders follow the carrier continuously. Corpse carry only
-        // rewrites the body's transform during WALKING_WITH_CORPSE; lift
-        // initialization performs the one-shot initial alignment above, and
-        // wait/drop/unrelated carrier actions only synchronize animation and
-        // display order in the Original.
-        if on_shoulders {
-            let elem = target.element_data_mut();
-            elem.set_position_map(snap.pos);
-            elem.set_layer(snap.layer);
-            // A live climb owns the rider's direction progressively. Original
-            // reissues the carrier direction plus eight sectors
-            // and then calls `Turn()` from the climbing Execute arm
-            // during the climbing action. Snapping here after execution
-            // skips that intermediate direction whenever the rider has not
-            // yet converged on the carrier-opposite goal.
-            if !snap.target_live_shoulder_ability {
-                elem.set_direction_instantly(carried_dir_i16);
-            }
-            elem.set_sector(snap.sector);
-            elem.set_material(snap.material);
-            // Pin the carried's display_order just in front of the
-            // carrier every frame (lift/wait/walk/drop) so the two
-            // sprites stay stacked correctly when other entities cross
-            // the draw list.
-            let sprite = &mut elem.sprite;
-            sprite.display_order_ref = Some(snap.carrier_id);
-            sprite.behind_display_order_ref = false;
-        } else if walking_with_corpse {
-            let elem = target.element_data_mut();
-            elem.set_position_map(snap.pos);
-            elem.set_direction_instantly(carried_dir_i16);
-            elem.sprite.display_order_ref = Some(snap.carrier_id);
-            elem.sprite.behind_display_order_ref = false;
-        } else {
-            let sprite = &mut target.element_data_mut().sprite;
-            sprite.display_order_ref = Some(snap.carrier_id);
-            sprite.behind_display_order_ref = false;
-        }
-
-        // Update the carried entity's `PositionInterface` with the
-        // carrier's material and the new map position, then reproject.
-        //
-        // The carried body keeps its OWN surface: no per-frame carry
-        // animation — lift, idle-with-corpse, walk-with-corpse, or
-        // walk-carrying-on-shoulders — copies the carrier's obstacle
-        // onto it.  They only restamp the map position and re-project
-        // through whatever plane the body already had (from where it
-        // fell, or from the last explicit hand-over).  The obstacle
-        // *is* copied on the one-shot hand-overs: dropping the corpse
-        // and teleporting the carrier, both of which live elsewhere.
-        // Copying it here instead flattened a body held above ground
-        // to elevation 0 whenever the carrier itself stood on plain
-        // ground.
-        if on_shoulders {
-            let pi = target.position_iface_mut();
-            pi.set_material(snap.material);
-            pi.set_map_position(snap.pos);
-        }
-
-        // ── Climb-on-shoulders branch ──────────────────────────
-        // Animation sync direction is *inverted* compared to corpse-
-        // carry: the climber drives `ClimbingUpOnShoulders` from
-        // `tick_ability`, and the helper syncs onto it via
-        // `TransitionHelpingClimbingUp`.  Once the climb finishes both
-        // PCs sit on posture-driven idle poses (climber →
-        // WaitingOnShoulders, helper → WaitingCarryingOnShoulders);
-        // during the helper's `WalkingCarryingOnShoulders` we force
-        // `WaitingOnShoulders` on the climber.
-        if on_shoulders {
-            let carried_anim = match snap.carrier_last_action {
-                // Helper walking with PC on shoulders — climber rides idle.
-                OrderType::WalkingCarryingOnShoulders => Some(OrderType::WaitingOnShoulders),
-                // A live climb is driven by tick_ability. Once both PCs are
-                // idle, the rider's own WaitingOnShoulders Execute owns its
-                // independent action timer; the original game does not sync it
-                // to WaitingCarryingOnShoulders.
-                _ => None,
-            };
-            if let Some(anim) = carried_anim {
-                let sprite = &mut target.element_data_mut().sprite;
-                let is_walking = matches!(
-                    snap.carrier_last_action,
-                    OrderType::WalkingCarryingOnShoulders
-                );
-                if is_walking {
-                    // TODO(original-parity): WalkingCarryingOnShoulders does
-                    // Force the animation and reset its frame only on initialization,
-                    // then processes the rider's action every frame
-                    // during the action. This per-frame force
-                    // remains a separate walking-ownership gap.
-                    sprite.force_animation(anim, carried_dir_u16);
-                } else {
-                    sprite.force_sprite_row(anim, carried_dir_u16);
-                    sprite.synchronize_anim(snap.carrier_frame, snap.carrier_frame_count);
-                }
-            }
-
-            // The `target` borrow is no longer used past this point, so
-            // NLL releases the `entities` borrow and the helper lookup
-            // below can take a fresh `&mut entities[carrier_id]`.
-            //
-            // While the climber plays `ClimbingUpOnShoulders` /
-            // `ClimbingDownFromShoulders`, force the helper to the
-            // matching `TransitionHelpingClimbing*` row synchronized to
-            // the climber's frame.
-            let helper_anim = snap
-                .target_live_shoulder_ability
-                .then_some(match snap.target_last_action {
-                    OrderType::ClimbingUpOnShoulders => {
-                        Some(OrderType::TransitionHelpingClimbingUp)
-                    }
-                    OrderType::ClimbingDownFromShoulders => {
-                        Some(OrderType::TransitionHelpingClimbingDown)
-                    }
-                    _ => None,
-                })
-                .flatten();
-            if let Some(anim) = helper_anim
-                && let Some(helper) = entities.get_mut(snap.carrier_id)
-            {
-                let helper_dir = u16::try_from(helper.element_data().direction())
-                    .expect("shoulder helper has negative animation direction");
-                let sprite = &mut helper.element_data_mut().sprite;
-                sprite.force_sprite_row(anim, helper_dir);
-                sprite.synchronize_anim(snap.target_frame, snap.target_frame_count);
-            }
-            continue;
-        }
-
-        // ── Corpse-carry branch (default) ──────────────────────
-        // Pick the carried animation based on the carrier's current
-        // phase and carry style.
-        let carried_anim = match snap.carrier_last_action {
-            // Lifting the corpse — synced with carrier's lift anim.
-            OrderType::TransitionWaitingUprightCarryingCorpse => {
-                if snap.little_john_style {
-                    Some(OrderType::BeingLiftedLittleJohn)
-                } else {
-                    Some(OrderType::BeingLiftedPeasantC)
-                }
-            }
-            // Dropping the corpse — synced with carrier's drop anim.
-            OrderType::TransitionCarryingCorpseWaitingUpright => {
-                if snap.little_john_style {
-                    Some(OrderType::BeingDroppedLittleJohn)
-                } else {
-                    Some(OrderType::BeingDroppedPeasantC)
-                }
-            }
-            // Walking with corpse — forced animation (frame reset
-            // with direction); we force the animation rather than
-            // synchronizing it so the frame starts at 0.
-            OrderType::WalkingWithCorpse => {
-                if snap.little_john_style {
-                    Some(OrderType::BeingCarriedLittleJohn)
-                } else {
-                    Some(OrderType::BeingCarriedPeasantC)
-                }
-            }
-            // Waiting with corpse — synced with carrier's sprite.
-            OrderType::WaitingWithCorpse => {
-                if snap.little_john_style {
-                    Some(OrderType::BeingCarriedLittleJohn)
-                } else {
-                    Some(OrderType::BeingCarriedPeasantC)
-                }
-            }
-            // `pc.carried` is latched while TakeCorpse is translated, before
-            // the transition order reaches Execute. Original does not set
-            // the carried-actor reference or publish a carried-body animation until that
-            // transition initializes.
-            // Unrelated/pre-transition carrier actions therefore leave the
-            // body's existing animation untouched.
-            _ => None,
-        };
-
-        if let Some(anim) = carried_anim {
-            // For WalkingWithCorpse use `force_animation` which resets
-            // frame/frame_count to 0.  Everything else forces the
-            // sprite row and then syncs the frame with the carrier.
-            if walking_with_corpse {
-                let sprite = &mut target.element_data_mut().sprite;
-                sprite.force_animation(anim, carried_dir_u16);
-            } else {
-                let existing_direction = u16::try_from(target.element_data().direction())
-                    .unwrap_or_else(|_| panic!("carried corpse has negative direction"));
-                let sprite = &mut target.element_data_mut().sprite;
-                sprite.force_sprite_row(anim, existing_direction);
-                sprite.synchronize_anim(snap.carrier_frame, snap.carrier_frame_count);
-            }
-        }
-    }
-}
-
-/// Preserve the final animation synchronization performed by a shoulder-climb
-/// `Execute` before order completion clears the climber's motion latch.
-///
-/// This deliberately updates only the helper sprite. The general carried
-/// transform pass remains after order propagation: moving that whole pass
-/// earlier changes the rider's movement result on the terminal tick.
-pub fn sync_terminal_shoulder_animations(
+/// Synchronize the body immediately after its carrier performs a lift, wait, or drop.
+pub(crate) fn sync_corpse_animation_for_carrier(
     entities: &mut Entities,
-    original_creation_orders: &BTreeMap<EntityId, u32>,
+    profiles: &crate::profiles::ProfileManager,
+    carrier_id: EntityId,
+    carrier_order: OrderType,
 ) {
-    let terminal_syncs: Vec<(EntityId, OrderType, u16, u16)> = entities
-        .pcs()
-        .filter_map(|(helper_pc_id, helper)| {
-            let target_id = helper.pc.carried?;
-            if helper.pc.live_carried_posture() != Posture::OnShoulders {
-                return None;
-            }
-            let target = entities.get(target_id)?;
-            let sprite = &target.element_data().sprite;
-            if sprite.last_motion_state != Some(crate::sprite::MotionState::Terminated) {
-                return None;
-            }
-            let helper_anim = match sprite.last_action {
-                OrderType::ClimbingUpOnShoulders => OrderType::TransitionHelpingClimbingUp,
-                OrderType::ClimbingDownFromShoulders => OrderType::TransitionHelpingClimbingDown,
-                _ => return None,
-            };
-            let helper_id = EntityId::Pc(helper_pc_id);
-            let helper_order = original_creation_orders
-                .get(&helper_id)
-                .copied()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "shoulder helper {helper_id} has no authoritative Original creation order"
-                    )
-                });
-            let target_order = original_creation_orders
-                .get(&target_id)
-                .copied()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "shoulder climber {target_id} has no authoritative Original creation order"
-                    )
-                });
-            assert_ne!(
-                helper_order, target_order,
-                "shoulder helper and climber cannot share an Original creation order"
-            );
-
-            // Original executes actors in creation order. This end-of-batch
-            // sync emulates the climber's Execute, so it is needed only when
-            // the helper already ran. If the helper runs later, its Wait
-            // action must remain the final sprite state for this frame
-            // as the transition completes.
-            if helper_order > target_order {
-                return None;
-            }
-            Some((
-                helper_id,
-                helper_anim,
-                sprite.current_frame,
-                sprite.frame_count,
-            ))
-        })
-        .collect();
-
-    for (helper_id, helper_anim, frame, frame_count) in terminal_syncs {
-        let Some(helper) = entities.get_mut(helper_id) else {
-            continue;
-        };
-        let helper_dir = u16::try_from(helper.element_data().direction())
-            .expect("shoulder helper has negative animation direction");
-        let sprite = &mut helper.element_data_mut().sprite;
-        sprite.force_sprite_row(helper_anim, helper_dir);
-        sprite.synchronize_anim(frame, frame_count);
-    }
+    let carrier = entities
+        .get(carrier_id)
+        .expect("corpse carrier disappeared");
+    let pc = carrier.pc_data().expect("corpse carrier must be a PC");
+    let target_id = pc.carried.expect("corpse carrier has no body");
+    let little_john = uses_little_john_carry(profiles, pc.profile_index);
+    let animation = match (carrier_order, little_john) {
+        (OrderType::TransitionWaitingUprightCarryingCorpse, true) => {
+            OrderType::BeingLiftedLittleJohn
+        }
+        (OrderType::TransitionWaitingUprightCarryingCorpse, false) => {
+            OrderType::BeingLiftedPeasantC
+        }
+        (OrderType::TransitionCarryingCorpseWaitingUpright, true) => {
+            OrderType::BeingDroppedLittleJohn
+        }
+        (OrderType::TransitionCarryingCorpseWaitingUpright, false) => {
+            OrderType::BeingDroppedPeasantC
+        }
+        (OrderType::WaitingWithCorpse, true) => OrderType::BeingCarriedLittleJohn,
+        (OrderType::WaitingWithCorpse, false) => OrderType::BeingCarriedPeasantC,
+        _ => panic!("unsupported corpse synchronization order {carrier_order:?}"),
+    };
+    let frame = carrier.sprite().current_frame;
+    let frame_count = carrier.sprite().frame_count;
+    let target = entities
+        .get_mut(target_id)
+        .expect("carried body disappeared");
+    let direction =
+        u16::try_from(target.element_data().direction()).expect("invalid carried direction");
+    let sprite = &mut target.element_data_mut().sprite;
+    sprite.force_sprite_row(animation, direction);
+    sprite.synchronize_anim(frame, frame_count);
+    sprite.display_order_ref = Some(carrier_id);
+    sprite.behind_display_order_ref = false;
 }
 
-/// Synchronize the corpse carried by one PC from inside that PC's
-/// `WalkingWithCorpse` Execute arm.
-///
-/// The original game performs this immediately after movement, before the
-/// carrier returns from its actor slot.
-/// The broad end-of-frame carry pass remains authoritative for the other
-/// carry phases whose exact owner boundary has not been established.
+/// The climber's action drives the frozen helper, including the terminal frame.
+pub(crate) fn sync_shoulder_climb_animation(
+    entities: &mut Entities,
+    climber_id: EntityId,
+    climb_order: OrderType,
+) {
+    let climber = entities
+        .get(climber_id)
+        .expect("shoulder climber disappeared");
+    let helper_id = climber
+        .human_data()
+        .and_then(|human| human.carrier)
+        .expect("shoulder climber has no helper");
+    let frame = climber.sprite().current_frame;
+    let frame_count = climber.sprite().frame_count;
+    let animation = match climb_order {
+        OrderType::ClimbingUpOnShoulders => OrderType::TransitionHelpingClimbingUp,
+        OrderType::ClimbingDownFromShoulders => OrderType::TransitionHelpingClimbingDown,
+        _ => panic!("unsupported shoulder synchronization order {climb_order:?}"),
+    };
+    let helper = entities
+        .get_mut(helper_id)
+        .expect("shoulder helper disappeared");
+    let direction =
+        u16::try_from(helper.element_data().direction()).expect("invalid helper direction");
+    let sprite = &mut helper.element_data_mut().sprite;
+    sprite.force_sprite_row(animation, direction);
+    sprite.synchronize_anim(frame, frame_count);
+    let sprite = &mut entities
+        .get_mut(climber_id)
+        .expect("shoulder climber disappeared")
+        .element_data_mut()
+        .sprite;
+    sprite.display_order_ref = Some(helper_id);
+    sprite.behind_display_order_ref = false;
+}
+
+/// Walking moves the body on its own surface and resets its carried animation.
 pub(crate) fn sync_walking_corpse_for_carrier(
     entities: &mut Entities,
     profiles: &crate::profiles::ProfileManager,
     carrier_id: EntityId,
 ) {
-    let Some(carrier) = entities.get(carrier_id) else {
-        panic!("WalkingWithCorpse carrier {carrier_id:?} disappeared during Execute")
-    };
-    let Some(pc) = carrier.pc_data() else {
-        panic!("WalkingWithCorpse owner {carrier_id:?} is not a PC")
-    };
-    let Some(target_id) = pc.carried else {
-        panic!("WalkingWithCorpse carrier {carrier_id:?} has no carried actor")
-    };
+    let carrier = entities
+        .get(carrier_id)
+        .expect("walking corpse carrier disappeared");
+    let pc = carrier
+        .pc_data()
+        .expect("walking corpse carrier must be a PC");
+    let target_id = pc.carried.expect("walking corpse carrier has no body");
     let position = carrier.element_data().position_map();
-    let carrier_direction = carrier.element_data().direction();
-    let little_john_style = uses_little_john_carry(profiles, pc.profile_index);
-
-    let target = entities.get_mut(target_id).unwrap_or_else(|| {
-        panic!("WalkingWithCorpse carrier {carrier_id:?} references missing actor {target_id:?}")
-    });
-    let carried_direction = carrier_direction.wrapping_sub(4) & 15;
-    let carried_direction_u16 = u16::try_from(carried_direction)
-        .unwrap_or_else(|_| panic!("carried corpse has negative direction"));
+    let direction = carrier.element_data().direction().wrapping_sub(4) & 15;
+    let little_john = uses_little_john_carry(profiles, pc.profile_index);
+    let target = entities
+        .get_mut(target_id)
+        .expect("walking carried body disappeared");
     let element = target.element_data_mut();
     element.set_position_map(position);
-    element.set_direction_instantly(carried_direction);
-    element.sprite.display_order_ref = Some(carrier_id);
-    element.sprite.behind_display_order_ref = false;
+    element.set_direction_instantly(direction);
     element.sprite.force_animation(
-        if little_john_style {
+        if little_john {
             OrderType::BeingCarriedLittleJohn
         } else {
             OrderType::BeingCarriedPeasantC
         },
-        carried_direction_u16,
+        direction as u16,
     );
+    element.sprite.display_order_ref = Some(carrier_id);
+    element.sprite.behind_display_order_ref = false;
 }
 
-/// Synchronize the carried body's final drop frame from the carrier before
-/// `DropCorpse` severs their link.
-///
-/// The ordinary end-of-frame carry pass cannot provide this edge: Original's
-/// PC execution synchronizes animation and then drops the body synchronously,
-/// while Rust drains the terminal side effect before that later global pass.
-pub(crate) fn sync_terminal_corpse_drop_animation(
+/// Walking advances the frozen rider's own action after moving the carrier.
+pub(crate) fn step_shoulder_rider(
+    sim: &crate::sim_rng::SimulationContext,
     entities: &mut Entities,
-    profiles: &crate::profiles::ProfileManager,
     carrier_id: EntityId,
 ) {
-    let (target_id, profile_index, carrier_frame, carrier_frame_count) = {
-        let carrier = entities
-            .get(carrier_id)
-            .unwrap_or_else(|| panic!("terminal corpse-drop carrier {carrier_id:?} disappeared"));
-        let pc = carrier
-            .pc_data()
-            .unwrap_or_else(|| panic!("terminal corpse-drop carrier {carrier_id:?} is not a PC"));
-        let target_id = pc.carried.unwrap_or_else(|| {
-            panic!("terminal corpse-drop carrier {carrier_id:?} has no carried body")
-        });
-        let sprite = &carrier.element_data().sprite;
-        (
-            target_id,
-            pc.profile_index,
-            sprite.current_frame,
-            sprite.frame_count,
-        )
-    };
-    let little_john_style = uses_little_john_carry(profiles, profile_index);
-    let animation = if little_john_style {
-        OrderType::BeingDroppedLittleJohn
-    } else {
-        OrderType::BeingDroppedPeasantC
-    };
-    let target = entities.get_mut(target_id).unwrap_or_else(|| {
-        panic!("terminal corpse-drop carrier {carrier_id:?} lost body {target_id:?}")
-    });
-    // Animation synchronization forces `anim` with the carried
-    // element's current direction. DropCorpse rotates the body relative to the
-    // carrier only afterward.
-    let carried_direction = u16::try_from(target.element_data().direction()).unwrap_or_else(|_| {
-        panic!("terminal corpse-drop body {target_id:?} has negative direction")
-    });
-    let sprite = &mut target.element_data_mut().sprite;
-    sprite.force_sprite_row(animation, carried_direction);
-    sprite.synchronize_anim(carrier_frame, carrier_frame_count);
+    let carrier = entities
+        .get(carrier_id)
+        .expect("walking shoulder carrier disappeared");
+    let target_id = carrier
+        .pc_data()
+        .and_then(|pc| pc.carried)
+        .expect("walking shoulder carrier has no rider");
+    let position = carrier.element_data().position_map();
+    let direction = (carrier.element_data().direction() + 8) & 15;
+    let rider = entities
+        .get_mut(target_id)
+        .expect("shoulder rider disappeared");
+    let element = rider.element_data_mut();
+    element.set_position_map(position);
+    element.set_direction_instantly(direction);
+    element.sprite.perform_action(
+        sim,
+        None,
+        OrderType::WaitingOnShoulders,
+        direction as u16,
+        crate::sprite::FrameProgression::Default,
+        false,
+    );
+    element.sprite.display_order_ref = Some(carrier_id);
+    element.sprite.behind_display_order_ref = false;
 }
 
 #[cfg(test)]
@@ -3120,6 +1764,10 @@ mod tests {
     ) -> SequenceId {
         let seq_id = manager.insert_element(SequenceElement::new(1, command, Some(owner)));
         manager.start_sequence_level(seq_id);
+        manager
+            .get_sequence_mut(seq_id)
+            .unwrap()
+            .increase_elements_in_progress();
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();
@@ -3353,21 +2001,6 @@ mod tests {
             entities.get(target).unwrap().human_data().unwrap().carrier,
             Some(carrier)
         );
-        entities
-            .get_mut(target)
-            .unwrap()
-            .set_posture(Posture::Carried);
-        initialize_carry_relationship(&mut entities, carrier, target);
-        assert_eq!(
-            entities
-                .get(carrier)
-                .unwrap()
-                .pc_data()
-                .unwrap()
-                .live_carried_posture(),
-            Posture::Lying,
-            "later Execute calls must not replace the first-Execute posture with Carried"
-        );
         assert_eq!(
             entities
                 .get(old_target)
@@ -3492,44 +2125,6 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_carrier_action_preserves_corpse_transform_and_facing_row() {
-        let (mut entities, _carrier, body) =
-            corpse_carry_fixture(OrderType::TransitionWaitingUprightHelpingClimbing);
-        {
-            let sprite = &mut entities.get_mut(body).unwrap().element_data_mut().sprite;
-            sprite.force_sprite_row_raw(777);
-            sprite.last_action = OrderType::BeingTied;
-            sprite.current_frame = 3;
-            sprite.frame_count = 9;
-        }
-        let before = entities.get(body).unwrap().element_data();
-        let position = before.position_map();
-        let direction = before.direction();
-        let sprite = (
-            before.sprite.current_row,
-            before.sprite.last_action,
-            before.sprite.current_frame,
-            before.sprite.frame_count,
-        );
-
-        sync_carried_positions(&mut entities, &carry_profiles());
-
-        let body = entities.get(body).unwrap();
-        assert_eq!(body.element_data().position_map(), position);
-        assert_eq!(body.element_data().direction(), direction);
-        assert_eq!(
-            (
-                body.element_data().sprite.current_row,
-                body.element_data().sprite.last_action,
-                body.element_data().sprite.current_frame,
-                body.element_data().sprite.frame_count,
-            ),
-            sprite,
-            "a latched carry link must not publish a carried visual before the lift executes"
-        );
-    }
-
-    #[test]
     fn waiting_with_corpse_publishes_idle_carried_visual() {
         let (mut entities, carrier, body) = corpse_carry_fixture(OrderType::WaitingWithCorpse);
         {
@@ -3538,7 +2133,12 @@ mod tests {
             carrier_sprite.frame_count = 7;
         }
 
-        sync_carried_positions(&mut entities, &carry_profiles());
+        sync_corpse_animation_for_carrier(
+            &mut entities,
+            &carry_profiles(),
+            carrier,
+            OrderType::WaitingWithCorpse,
+        );
 
         let sprite = &entities.get(body).unwrap().element_data().sprite;
         assert_eq!(sprite.last_action, OrderType::BeingCarriedPeasantC);
@@ -3565,7 +2165,12 @@ mod tests {
             sprite.scripts = std::sync::Arc::new(scripts);
         }
 
-        sync_carried_positions(&mut entities, &carry_profiles());
+        sync_corpse_animation_for_carrier(
+            &mut entities,
+            &carry_profiles(),
+            carrier,
+            OrderType::TransitionWaitingUprightCarryingCorpse,
+        );
 
         let sprite = &entities.get(body).unwrap().element_data().sprite;
         assert_eq!(sprite.last_action, OrderType::BeingLiftedPeasantC);
@@ -3581,7 +2186,7 @@ mod tests {
         let sector = before.sector();
         let material = before.material();
 
-        sync_carried_positions(&mut entities, &carry_profiles());
+        sync_walking_corpse_for_carrier(&mut entities, &carry_profiles(), carrier);
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().position_map(), carrier_position);
@@ -3610,7 +2215,12 @@ mod tests {
 
         // The body still faces 4 while the carrier faces 9. Original selects
         // the drop row with 4 here; DropCorpse changes the body to 5 later.
-        sync_terminal_corpse_drop_animation(&mut entities, &carry_profiles(), carrier);
+        sync_corpse_animation_for_carrier(
+            &mut entities,
+            &carry_profiles(),
+            carrier,
+            OrderType::TransitionCarryingCorpseWaitingUpright,
+        );
 
         let body = entities.get(body).unwrap();
         assert_eq!(body.element_data().direction(), 4);
@@ -3813,8 +2423,8 @@ mod tests {
             std::sync::Arc::new(vec![tying_script; 16]),
             std::sync::Arc::new(conversion),
         );
-        let mut entities = Entities::new();
-        entities.push(Some(Entity::Pc(ActorPc {
+        let mut engine = crate::engine::EngineInner::new();
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: owner_element,
             actor: Default::default(),
             human: HumanData::default(),
@@ -3822,8 +2432,8 @@ mod tests {
                 life_points: 100,
                 ..Default::default()
             },
-        })));
-        entities.push(Some(Entity::Civilian(ActorCivilian {
+        }));
+        let target = engine.add_test_entity(Entity::Civilian(ActorCivilian {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
                 initial_element.kind = ElementKind::ActorCivilian;
@@ -3833,13 +2443,14 @@ mod tests {
             actor: Default::default(),
             human: HumanData {
                 unconscious: true,
+                concussion_of_the_brain: 100,
+                concussion_healing_timeout: 100,
                 ..Default::default()
             },
             npc: NpcData::default(),
             civilian: CivilianData::default(),
-        })));
-        let owner = entities.id_at_legacy_slot(0).unwrap();
-        let target = entities.id_at_legacy_slot(1).unwrap();
+        }));
+        let mut entities = std::mem::take(&mut engine.world.entities);
         let mut manager = SequenceManager::new();
         let seq_id = manager.insert_element(SequenceElement::new_interaction(
             1,
@@ -3848,6 +2459,10 @@ mod tests {
             Some(target),
         ));
         manager.start_sequence_level(seq_id);
+        manager
+            .get_sequence_mut(seq_id)
+            .unwrap()
+            .increase_elements_in_progress();
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();
@@ -3871,48 +2486,77 @@ mod tests {
             BeginResult::Started
         );
 
+        engine.world.entities = entities;
+        engine.orders.sequence_manager = manager;
+        let mut assets = engine.test_runtime_assets();
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
+            crate::profiles::Action::Tie;
+        engine.control.sim_config.enable_unbinding = true;
         let sim = crate::sim_rng::test_context();
-        assert!(tick_ability(&sim, &mut entities, &manager, owner, false).is_empty());
+        engine.tick_actor_owner_envelopes(&sim, &assets);
         assert_eq!(
-            entities
-                .get(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .current_frame,
+            engine.get_entity(owner).unwrap().sprite().current_frame,
             3,
             "the reverse action must begin on the tying animation's last frame"
         );
 
-        let done = (0..8).find_map(|_| {
-            tick_ability(&sim, &mut entities, &manager, owner, false)
-                .into_iter()
-                .find(|result| matches!(result, AbilityTickResult::UntieDone { .. }))
+        let released = (0..8).any(|_| {
+            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.get_entity(target).unwrap().posture() != Posture::Tied
         });
+        assert!(released, "reversed Tying must release the target at DONE");
         assert!(
-            done.is_some(),
-            "reversed Tying must reach its DONE boundary"
+            engine
+                .get_entity(target)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .unconscious
         );
-        manager
-            .get_element_mut(seq_id, 0)
-            .unwrap()
-            .orders
-            .front_mut()
-            .unwrap()
-            .done = true;
-        entities.get_mut(target).unwrap().untie_human();
+        assert!(
+            selected_ability(
+                &engine.world.entities,
+                &engine.orders.sequence_manager,
+                owner
+            )
+            .is_some(),
+            "the release must retain the unfinished reverse animation"
+        );
 
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .done,
+            "the owner envelope must commit the DONE boundary"
+        );
+        let mut tail_frames = Vec::new();
         let terminated = (0..8).any(|_| {
-            tick_ability(&sim, &mut entities, &manager, owner, false)
-                .into_iter()
-                .any(|result| matches!(result, AbilityTickResult::Terminated { .. }))
+            engine.tick_actor_owner_envelopes(&sim, &assets);
+            tail_frames.push(engine.get_entity(owner).unwrap().sprite().current_frame);
+            selected_ability(
+                &engine.world.entities,
+                &engine.orders.sequence_manager,
+                owner,
+            )
+            .is_none()
         });
         assert!(
             terminated,
-            "the successful release must play the rest of the reverse animation"
+            "the release must play the rest of the reverse animation"
+        );
+        assert!(
+            tail_frames.contains(&1),
+            "reverse tail must advance past DONE: {tail_frames:?}"
         );
         assert_eq!(
-            entities
+            engine
+                .world
+                .entities
                 .get(owner)
                 .unwrap()
                 .element_data()
@@ -4233,11 +2877,15 @@ mod tests {
             ),
             BeginResult::Started
         );
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.entities = entities;
+        engine.orders.sequence_manager = manager;
+        let assets = crate::engine::LevelAssets::new();
         let sim = crate::sim_rng::test_context();
 
         for expected_direction in [2, 3, 4] {
-            assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
-            let entity = entities.get(attacker).unwrap();
+            engine.tick_selected_ability(&sim, &assets, attacker, false);
+            let entity = engine.world.entities.get(attacker).unwrap();
             assert_eq!(entity.element_data().direction(), expected_direction);
             assert_eq!(
                 entity.element_data().sprite.current_frame,
@@ -4305,26 +2953,64 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .execute_order_initialising = false;
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.entities = entities;
+        engine.orders.sequence_manager = manager;
+        let assets = crate::engine::LevelAssets::new();
         let sim = crate::sim_rng::test_context();
 
         for expected_attacker in [2, 4] {
-            assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
+            engine.tick_selected_ability(&sim, &assets, attacker, false);
             assert_eq!(
-                entities.get(attacker).unwrap().element_data().direction(),
+                engine
+                    .world
+                    .entities
+                    .get(attacker)
+                    .unwrap()
+                    .element_data()
+                    .direction(),
                 expected_attacker
             );
-            assert_eq!(entities.get(victim).unwrap().element_data().direction(), 8);
+            assert_eq!(
+                engine
+                    .world
+                    .entities
+                    .get(victim)
+                    .unwrap()
+                    .element_data()
+                    .direction(),
+                8
+            );
         }
-        assert!(tick_ability(&sim, &mut entities, &manager, attacker, false).is_empty());
+        engine.tick_selected_ability(&sim, &assets, attacker, false);
         assert_eq!(
-            entities.get(attacker).unwrap().element_data().direction(),
+            engine
+                .world
+                .entities
+                .get(attacker)
+                .unwrap()
+                .element_data()
+                .direction(),
             4
         );
-        assert_eq!(entities.get(victim).unwrap().element_data().direction(), 6);
         assert_eq!(
-            selected_ability(&entities, &manager, attacker)
+            engine
+                .world
+                .entities
+                .get(victim)
                 .unwrap()
-                .sequence_id,
+                .element_data()
+                .direction(),
+            6
+        );
+        assert_eq!(
+            selected_ability(
+                &engine.world.entities,
+                &engine.orders.sequence_manager,
+                attacker
+            )
+            .unwrap()
+            .sequence_id,
             seq_id,
             "turning must retain the exact owner/sequence/element/order identity",
         );
@@ -4457,18 +3143,23 @@ mod tests {
             sprite.action_done_counter,
         );
 
-        assert!(
-            tick_ability(
-                &crate::sim_rng::test_context(),
-                &mut entities,
-                &manager,
-                owner,
-                true,
-            )
-            .is_empty()
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.entities = entities;
+        engine.orders.sequence_manager = manager;
+        engine.tick_selected_ability(
+            &crate::sim_rng::test_context(),
+            &crate::engine::LevelAssets::new(),
+            owner,
+            true,
         );
 
-        let sprite = &entities.get(owner).unwrap().element_data().sprite;
+        let sprite = &engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .element_data()
+            .sprite;
         assert_eq!(
             (
                 sprite.current_row,
@@ -4494,6 +3185,7 @@ mod tests {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
                 initial_element
             },
             actor: Default::default(),
@@ -4521,6 +3213,7 @@ mod tests {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Dead);
                 initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
                 initial_element
             },
             actor: Default::default(),
@@ -4532,7 +3225,7 @@ mod tests {
         };
         target_entity
             .element
-            .set_position_map(MapPoint::new(10.0, 20.0));
+            .set_position_map(MapPoint::new(70.0, 80.0));
         target_entity.element.set_direction_instantly(4);
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::BeingLiftedPeasantC as usize] = 100;
@@ -4550,6 +3243,16 @@ mod tests {
             crate::element::Command::TakeCorpse,
             carrier,
         );
+        manager.get_element_mut(seq_id, 0).unwrap().data =
+            crate::sequence::SequenceElementData::Interaction {
+                antagonist: Some(target),
+            };
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = true;
         let mut next_id = 300;
 
         assert_eq!(
@@ -4578,21 +3281,32 @@ mod tests {
         );
         assert_eq!(
             target_entity.element_data().position_map(),
-            MapPoint::new(10.0, 20.0)
+            MapPoint::new(70.0, 80.0)
         );
         assert_eq!(target_entity.element_data().direction(), 4);
 
-        let _ = tick_ability(
+        let mut engine = crate::engine::EngineInner::new();
+        engine.world.entities = entities;
+        engine.orders.sequence_manager = manager;
+        let mut assets = crate::engine::LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(carry_profiles());
+        engine.tick_selected_ability(
             &crate::sim_rng::SimulationContext::with_seed(1),
-            &mut entities,
-            &manager,
+            &assets,
             carrier,
             false,
         );
 
-        let target_entity = entities.get(target).unwrap();
+        let target_entity = engine.world.entities.get(target).unwrap();
         assert_eq!(
-            entities.get(carrier).unwrap().pc_data().unwrap().carried,
+            engine
+                .world
+                .entities
+                .get(carrier)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .carried,
             Some(target)
         );
         assert_eq!(target_entity.human_data().unwrap().carrier, Some(carrier));
@@ -4602,7 +3316,11 @@ mod tests {
         );
         assert_eq!(target_entity.element_data().direction(), 5);
 
-        let element = manager.get_element_mut(seq_id, 0).unwrap();
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, 0)
+            .unwrap();
         let order = element.pop_current_order().expect("canonical Carry order");
         assert_eq!(
             (order.order_type, order.order_id.get()),
@@ -4610,15 +3328,20 @@ mod tests {
         );
         assert!(element.pop_current_order().is_none());
 
-        let carrier_entity = entities.get_mut(carrier).unwrap();
+        let carrier_entity = engine.world.entities.get_mut(carrier).unwrap();
         carrier_entity
             .element_data_mut()
             .set_position_map(MapPoint::new(120.0, 140.0));
         carrier_entity
             .element_data_mut()
             .set_direction_instantly(12);
-        sync_carried_positions(&mut entities, &carry_profiles());
-        let target_entity = entities.get(target).unwrap();
+        sync_corpse_animation_for_carrier(
+            &mut engine.world.entities,
+            &carry_profiles(),
+            carrier,
+            OrderType::TransitionWaitingUprightCarryingCorpse,
+        );
+        let target_entity = engine.world.entities.get(target).unwrap();
         assert_eq!(
             target_entity.element_data().position_map(),
             MapPoint::new(80.0, 90.0),
@@ -4868,7 +3591,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_shoulder_sync_does_not_restore_stale_helper_transition() {
+    fn shoulder_animation_sync_obeys_explicit_execution_order() {
         let mut entities = Entities::new();
         let mut climber = ActorPc {
             element: {
@@ -4923,42 +3646,16 @@ mod tests {
             .unwrap()
             .carrier = Some(helper_id);
 
-        sync_carried_positions(&mut entities, &carry_profiles());
-
-        let helper = entities.get(helper_id).unwrap().element_data();
-        assert_eq!(
-            (
-                helper.sprite.last_action,
-                helper.sprite.current_row,
-                helper.sprite.current_frame,
-                helper.sprite.frame_count,
-            ),
-            (OrderType::WaitingCarryingOnShoulders, 777, 0, u16::MAX),
-            "a terminated climber's stale sprite action must not overwrite the helper's new idle"
-        );
-
-        {
-            let climber = entities.get_mut(climber_id).unwrap();
-            // The broad shoulder-position synchronization has just applied
-            // the rider's carrier-relative direction, which resets its
-            // sprite frame. Prime the terminal Execute boundary itself.
-            climber.element_data_mut().sprite.current_frame = 5;
-            climber.element_data_mut().sprite.last_motion_state =
-                Some(crate::sprite::MotionState::Terminated);
-        }
-        let mut original_creation_orders = BTreeMap::new();
-        original_creation_orders.insert(helper_id, 1);
-        original_creation_orders.insert(climber_id, 2);
-        sync_terminal_shoulder_animations(&mut entities, &original_creation_orders);
+        sync_shoulder_climb_animation(&mut entities, climber_id, OrderType::ClimbingUpOnShoulders);
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
             (
                 helper.sprite.current_row,
                 helper.sprite.current_frame,
-                helper.sprite.frame_count,
+                helper.sprite.frame_count
             ),
             (100, 5, 1),
-            "the terminal climb Execute must synchronize the helper once before its motion latch clears"
+            "the climber's terminal execution must synchronize its helper immediately"
         );
 
         {
@@ -4968,39 +3665,6 @@ mod tests {
             helper.sprite.current_frame = 0;
             helper.sprite.frame_count = u16::MAX;
         }
-        original_creation_orders.insert(climber_id, 1);
-        original_creation_orders.insert(helper_id, 2);
-        sync_terminal_shoulder_animations(&mut entities, &original_creation_orders);
-        let helper = entities.get(helper_id).unwrap().element_data();
-        assert_eq!(
-            (
-                helper.sprite.last_action,
-                helper.sprite.current_row,
-                helper.sprite.current_frame,
-                helper.sprite.frame_count,
-            ),
-            (OrderType::WaitingCarryingOnShoulders, 777, 0, u16::MAX),
-            "a helper that executes after the climber must keep its later idle animation"
-        );
-
-        {
-            let rider = entities.get_mut(climber_id).unwrap().element_data_mut();
-            rider.sprite.last_action = OrderType::WaitingOnShoulders;
-            rider.sprite.current_frame = 2;
-            rider.sprite.frame_count = u16::MAX;
-            rider.sprite.last_motion_state = None;
-        }
-        sync_carried_positions(&mut entities, &carry_profiles());
-        let rider = entities.get(climber_id).unwrap().element_data();
-        assert_eq!(
-            (
-                rider.sprite.last_action,
-                rider.sprite.current_frame,
-                rider.sprite.frame_count,
-            ),
-            (OrderType::WaitingOnShoulders, 2, u16::MAX),
-            "idle shoulder sync must preserve the rider's independently driven action timer"
-        );
 
         {
             let climber = entities.get_mut(climber_id).unwrap();
@@ -5014,7 +3678,7 @@ mod tests {
                     order_type: OrderType::ClimbingUpOnShoulders,
                 });
         }
-        sync_carried_positions(&mut entities, &carry_profiles());
+        sync_shoulder_climb_animation(&mut entities, climber_id, OrderType::ClimbingUpOnShoulders);
         let helper = entities.get(helper_id).unwrap().element_data();
         assert_eq!(
             helper.sprite.last_action,
@@ -5025,6 +3689,76 @@ mod tests {
             (helper.sprite.current_frame, helper.sprite.frame_count),
             (5, 1)
         );
+    }
+
+    #[test]
+    fn walking_shoulder_rider_advances_its_animation_on_its_own_surface() {
+        let (mut entities, carrier, rider, _) = take_corpse_translation_fixture();
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .pc_data_mut()
+            .unwrap()
+            .carried = Some(rider);
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .element_data_mut()
+            .set_position_map(MapPoint::new(80.0, 90.0));
+        entities
+            .get_mut(carrier)
+            .unwrap()
+            .element_data_mut()
+            .set_direction_instantly(3);
+        let rider_element = entities.get_mut(rider).unwrap().element_data_mut();
+        rider_element.set_layer(3);
+        rider_element.set_sector(Some(
+            crate::position_interface::SectorHandle::new(7).unwrap(),
+        ));
+        rider_element.set_material(crate::element::GameMaterial::Wood);
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[OrderType::WaitingOnShoulders as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingOnShoulders as u16,
+            frame_ids: vec![0, 1, 2, 3, 4, 5, 6, 7],
+            delays: vec![0; 8],
+            distances: vec![0; 8],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
+            sound_ids: vec![0; 8],
+            ..SpriteScript::default()
+        };
+        rider_element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+        let surface = (
+            rider_element.layer(),
+            rider_element.sector(),
+            rider_element.material(),
+        );
+        let sim = crate::sim_rng::test_context();
+        let frames = (0..4)
+            .map(|_| {
+                step_shoulder_rider(&sim, &mut entities, carrier);
+                entities.get(rider).unwrap().sprite().current_frame
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            frames.windows(2).all(|pair| pair[1] > pair[0]),
+            "walking must advance the rider's animation instead of resetting it: {frames:?}"
+        );
+        let rider_element = entities.get(rider).unwrap().element_data();
+        assert_eq!(rider_element.position_map(), MapPoint::new(80.0, 90.0));
+        assert_eq!(rider_element.direction(), 11);
+        assert_eq!(
+            (
+                rider_element.layer(),
+                rider_element.sector(),
+                rider_element.material()
+            ),
+            surface
+        );
+        assert_eq!(rider_element.sprite.display_order_ref, Some(carrier));
     }
 
     #[test]
@@ -5043,6 +3777,12 @@ mod tests {
         };
         helper.element.set_position_map(MapPoint::new(30.0, 40.0));
         helper.element.set_direction_instantly(3);
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[OrderType::TransitionHelpingClimbingUp as usize] = 0;
+        helper.element.sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![SpriteScript::default(); 16]),
+            std::sync::Arc::new(conversion),
+        );
 
         let mut climber = ActorPc {
             element: {
@@ -5079,27 +3819,16 @@ mod tests {
             .unwrap()
             .carrier = Some(helper_id);
 
-        sync_carried_positions(&mut entities, &carry_profiles());
+        let position = entities
+            .get(climber_id)
+            .unwrap()
+            .element_data()
+            .position_map();
+        sync_shoulder_climb_animation(&mut entities, climber_id, OrderType::ClimbingUpOnShoulders);
 
         let climber = entities.get(climber_id).unwrap();
-        assert_eq!(
-            climber.element_data().position_map(),
-            MapPoint::new(30.0, 40.0)
-        );
+        assert_eq!(climber.element_data().position_map(), position);
         assert_eq!(climber.element_data().direction(), 12);
         assert_eq!(i16::from(climber.position_iface().get_direction_goal()), 11);
-
-        entities
-            .get_mut(climber_id)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = None;
-        sync_carried_positions(&mut entities, &carry_profiles());
-        assert_eq!(
-            entities.get(climber_id).unwrap().element_data().direction(),
-            11,
-            "a settled shoulder rider must still copy the carrier-opposite facing"
-        );
     }
 }
