@@ -64,7 +64,7 @@ fn retired_seek_crossing_preserves_increment_and_direction() {
                 elem_idx: 0,
                 order_id: std::num::NonZeroU32::new(order_id.get()).unwrap(),
             },
-            MovementCompletion::default(),
+            None,
         );
         let pi = engine.get_entity(owner).unwrap().position_iface();
         if state == SequenceState::Terminated {

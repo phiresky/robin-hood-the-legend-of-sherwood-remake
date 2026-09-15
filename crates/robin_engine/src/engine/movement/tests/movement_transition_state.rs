@@ -1790,7 +1790,7 @@ mod suite {
     }
 
     #[test]
-    fn terminal_door_pass_goal_clear_follows_crossing_recompute() {
+    fn retiring_selected_door_pass_clears_goal_after_crossing_recompute() {
         let mut entity = Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
@@ -1818,7 +1818,30 @@ mod suite {
             "fixture must retain Save042's eastward terminal trajectory"
         );
 
-        clear_terminal_door_pass_goal(&mut entity);
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(entity);
+        let movement = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let seq_id = engine.orders.sequence_manager.insert_element(movement);
+        engine.select_sequence_element(owner, Some((seq_id, 0)));
+        engine.send_condolation_card(
+            &crate::sim_rng::test_context(),
+            crate::sequence::CondolationCard {
+                owner,
+                command: Command::PassDoor,
+                terminal_state: SequenceState::Terminated,
+                seq_id,
+                elem_idx: 0,
+                from_halt: true,
+            },
+            &LevelAssets::new(),
+            &mut Vec::new(),
+        );
+        let entity = engine.get_entity(owner).unwrap();
 
         assert_eq!(entity.position_iface().map_goal(), MapPoint::ZERO);
         assert_eq!(

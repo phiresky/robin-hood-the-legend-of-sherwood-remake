@@ -317,7 +317,6 @@ mod tests;
 // visibility.
 #[path = "animation_step.rs"]
 mod animation_step;
-use animation_step::ActorAnimationStepCtx;
 
 /// Whether a soldier is "attentive" for sprite-row purposes.  Reads
 /// the soldier's attentive flag, which the completion handler for
@@ -2488,15 +2487,6 @@ fn dispatch_arm_completion(
     ExecuteOutcome::Forward(motion)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct ShoulderHelperDismount {
-    pub helper_id: EntityId,
-    pub carried_id: EntityId,
-    pub motion: MotionState,
-    pub helper_frame: u16,
-    pub helper_frame_count: u16,
-}
-
 /// The base-Actor completion control that must remain unresolved until every
 /// synchronous callback inside the derived Execute arm has returned.
 /// TERMINATED targets the owner's then-live sequence element; ABORTED retains
@@ -2507,262 +2497,6 @@ pub(super) struct ActorExecuteResult {
     pub entry_seq_id: crate::sequence::SequenceId,
     pub entry_elem_idx: usize,
     pub motion: MotionState,
-}
-
-/// Selected order operands retained while its motion branches execute.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-struct ActorMotionPhase {
-    entity_id: EntityId,
-    anim_type: OrderType,
-    motion_state: MotionState,
-    antagonist: Option<EntityId>,
-}
-
-impl ActorMotionPhase {
-    fn execute(
-        &self,
-        engine: &mut EngineInner,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        order_is_initialising: bool,
-        current_element_script_driven: bool,
-        taking_net_order_was_done: bool,
-        principal_frames_from_now: Option<i16>,
-        tiredness_probe: Option<(u32, u32)>,
-        striking_down_sword_direction_goal: Option<i16>,
-        cur_command: Option<Command>,
-        reusable_cloaks_enabled: bool,
-    ) {
-        let Self {
-            entity_id,
-            anim_type,
-            motion_state,
-            antagonist,
-        } = *self;
-        if anim_type == OrderType::TransitionHelpingClimbingDown {
-            let dismount = engine.world.entities.get(entity_id).and_then(|entity| {
-                entity
-                    .pc_data()
-                    .and_then(|pc| pc.carried)
-                    .map(|carried_id| {
-                        let sprite = entity.sprite();
-                        ShoulderHelperDismount {
-                            helper_id: entity_id,
-                            carried_id,
-                            motion: motion_state,
-                            helper_frame: sprite.current_frame,
-                            helper_frame_count: sprite.frame_count,
-                        }
-                    })
-            });
-            if let Some(dismount) = dismount {
-                engine.apply_helper_driven_shoulder_dismount(sim, assets, dismount);
-            }
-        }
-        let entity = engine.expect_entity(entity_id, "animation owner");
-        let owner_is_pc = entity.is_pc();
-        if owner_is_pc
-            && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
-            && motion_state == MotionState::Terminated
-        {
-            engine.execute_corpse_drop_done(sim, assets, entity_id);
-        }
-        apply_soldier_execute_side_effects(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-        );
-        apply_npc_execute_side_effects(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-        );
-        let entity = engine
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("animation owner disappeared");
-        apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
-        super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
-        let rejected_posture =
-            rejected_dead_idle_posture_callback_required(entity, anim_type, motion_state);
-        apply_active_animation_start_state_side_effect(entity, anim_type, motion_state);
-        let equip_bow = forwards_pc_bow_action_on_start(
-            entity,
-            anim_type,
-            motion_state,
-            current_element_script_driven,
-        );
-        if rejected_posture {
-            engine.process_rejected_nonlying_posture_request_for(entity_id);
-        }
-        if equip_bow {
-            engine.execute_pc_bow_equip_action(sim, assets, entity_id);
-        }
-        if owner_is_pc
-            && motion_state == MotionState::Start
-            && matches!(
-                anim_type,
-                OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
-            )
-        {
-            engine.execute_pc_bow_unequip_action(
-                sim,
-                assets,
-                (entity_id, current_element_script_driven),
-            );
-        }
-        if owner_is_pc && motion_state == MotionState::Done {
-            if matches!(
-                anim_type,
-                OrderType::DroppingAle | OrderType::DroppingAleCrouched
-            ) {
-                engine.execute_drop_ale_done(assets, entity_id);
-            }
-            match anim_type {
-                OrderType::TransitionWaitingUprightSimulatingBeggar
-                | OrderType::TransitionSimulatingBeggarWaitingUpright => {
-                    let entering = anim_type == OrderType::TransitionWaitingUprightSimulatingBeggar;
-                    engine.execute_beggar_wait_handoffs(sim, assets, (entity_id, entering));
-                    engine.execute_beggar_coin_flags(assets, (entity_id, entering));
-                }
-                OrderType::TransitionWaitingUprightHelpingClimbing => {
-                    engine.execute_pc_helping_climb_action(sim, assets, entity_id);
-                }
-                _ => {}
-            }
-        }
-        if owner_is_pc
-            && matches!(
-                anim_type,
-                OrderType::TransitionCrouchingUp | OrderType::TransitionCrouchingDown
-            )
-            && matches!(motion_state, MotionState::Done | MotionState::Terminated)
-        {}
-        apply_taking_net_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-            taking_net_order_was_done,
-        );
-        apply_waking_up_done_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-        );
-        apply_pc_taking_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-        );
-        apply_pc_target_interaction_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            entity_id,
-        );
-        let entity = engine
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("animation owner disappeared");
-        apply_sword_parry_side_effect(entity, anim_type, motion_state, principal_frames_from_now);
-        apply_under_net_termination_side_effect(entity, anim_type, motion_state);
-        apply_smalltalk_start_and_recovery_side_effect(
-            entity,
-            anim_type,
-            motion_state,
-            &assets.profile_manager,
-            tiredness_probe,
-        );
-        apply_striking_down_sword_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            antagonist,
-            striking_down_sword_direction_goal,
-            entity_id,
-        );
-        let entity = engine
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("animation owner disappeared");
-        apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
-        apply_shield_transition_side_effect(entity, anim_type, motion_state);
-        if anim_type == OrderType::RaisingShield && motion_state == MotionState::Done {
-            crate::bow_shot::refresh_retained_shield_obstacle(entity, &assets.profile_manager);
-        }
-        apply_pc_disguise_exit_side_effect(
-            engine,
-            sim,
-            assets,
-            anim_type,
-            motion_state,
-            cur_command,
-            reusable_cloaks_enabled,
-            entity_id,
-        );
-        let entity = engine
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("animation owner disappeared");
-        apply_standing_up_start_side_effect(entity, anim_type, motion_state);
-        apply_carried_start_side_effect(entity, anim_type, motion_state);
-        apply_falling_start_side_effect(entity, anim_type, motion_state);
-        apply_falling_completion_side_effect(entity, anim_type, motion_state);
-        apply_dying_start_side_effect(entity, anim_type, motion_state);
-        apply_being_dead_start_side_effect(entity, anim_type, motion_state);
-        apply_combat_injury_side_effect(engine, sim, assets, anim_type, motion_state, entity_id);
-        if motion_state == MotionState::Done {
-            let strike = match anim_type {
-                OrderType::StrikingLeftSmalltalk | OrderType::StrikingLowLeftSmalltalk => {
-                    Some(crate::weapons::SwordStrike::SmalltalkLeft)
-                }
-                OrderType::StrikingRightSmalltalk | OrderType::StrikingLowRightSmalltalk => {
-                    Some(crate::weapons::SwordStrike::SmalltalkRight)
-                }
-                _ => None,
-            };
-            if let Some(strike) = strike {
-                engine.execute_smalltalk_strikes(
-                    sim,
-                    assets,
-                    (
-                        entity_id,
-                        antagonist.expect("smalltalk strike order must retain its antagonist"),
-                        strike,
-                    ),
-                );
-            }
-        }
-    }
 }
 
 /// Resolve the arm's return after its callbacks. The actor update applies
@@ -2905,31 +2639,14 @@ impl EngineInner {
 
         self.initialize_actor_animation_placement(assets, entity_id);
 
-        // Original-game human execution advances the
-        // STRIKING_DOWN_SWORD sprite and then revalidates the selected
-        // SwordstrikeDown element without a distance check. Snapshot the
-        // non-sprite operands immediately before the exclusive actor borrow;
-        // Action processing and turning cannot mutate any of them. The result is
-        // applied below immediately after `perform_action` and before motion
-        // side effects, preserving the Original boundary.
-        let striking_down_sword_valid_after_perform =
-            self.striking_down_sword_valid_after_perform(assets, entity_id);
-
-        let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
-        let frame_counter = self.control.frame_counter;
-        ActorAnimationStepCtx {
-            engine: self,
+        self.execute_actor_animation(
             sim,
             assets,
             entity_id,
-            frame_counter,
-            reusable_cloaks_enabled,
             selected_generic_order,
             entry,
             operands,
-            striking_down_sword_valid_after_perform,
-        }
-        .run()
+        )
     }
 
     /// Initialize live takeoff and death placement before generic sprite dispatch.
@@ -3105,6 +2822,154 @@ impl EngineInner {
 #[cfg(test)]
 mod soldier_take_drink_parity_tests {
     use super::*;
+    use crate::order::Order;
+    use crate::sequence::SequenceElement;
+
+    fn three_frame_animation(action: OrderType) -> crate::sprite::Sprite {
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[action as usize] = 0;
+        let script = crate::sprite_script::SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 1],
+            distances: vec![0; 3],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0; 3],
+        };
+        crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        )
+    }
+
+    #[test]
+    fn drinking_only_adds_alcohol_after_successful_sprite_tail() {
+        for removed_at_tick in [Some(0), Some(1), None] {
+            let sim = crate::sim_rng::test_context();
+            let mut engine = EngineInner::new();
+            let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+                crate::element::Camp::Lacklandists,
+            );
+            soldier.element_data_mut().sprite = three_frame_animation(OrderType::DrinkingAle);
+            let owner = engine.add_test_entity(soldier);
+            let bottle = engine.add_test_entity(Entity::Bonus(crate::element::ElementBonus {
+                element: {
+                    let mut element = crate::element::ElementData::default();
+                    element.kind = crate::element::ElementKind::ObjectOther;
+                    element.active = true;
+                    element
+                },
+                object: crate::element::ObjectData {
+                    object_type: crate::element::ObjectType::Ale,
+                    ..Default::default()
+                },
+            }));
+            let mut assets = engine.test_runtime_assets();
+            let profile = engine
+                .get_entity(owner)
+                .unwrap()
+                .soldier_data()
+                .unwrap()
+                .soldier_profile_index;
+            std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[profile.0 as usize]
+                .beer = 40;
+            let mut element =
+                SequenceElement::new_interaction(1, Command::Wait, Some(owner), Some(bottle));
+            element.orders.push_back(
+                Order::test_new(OrderType::DrinkingAle, 0.0, 0.0).with_antagonist(bottle),
+            );
+            let sequence = engine.orders.sequence_manager.insert_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
+            engine.select_sequence_element(owner, Some((sequence, 0)));
+
+            let mut terminated = false;
+            let mut saw_done = false;
+            for tick in 0..8 {
+                if removed_at_tick == Some(tick) {
+                    engine
+                        .get_entity_mut(bottle)
+                        .unwrap()
+                        .element_data_mut()
+                        .active = false;
+                }
+                let result = engine
+                    .tick_actor_animation_for(&sim, &assets, owner)
+                    .expect("selected drinking order must execute");
+                saw_done |= result.motion == MotionState::Done;
+                let alcohol = engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .npc_data()
+                    .unwrap()
+                    .ai_brain
+                    .base()
+                    .unwrap()
+                    .blood_alcohol;
+                if result.motion == MotionState::Terminated {
+                    assert_eq!(alcohol, if removed_at_tick.is_none() { 40 } else { 0 });
+                    terminated = true;
+                    break;
+                }
+                assert_eq!(alcohol, 0, "taking the bottle is not the drinking tail");
+                engine
+                    .get_entity_mut(owner)
+                    .unwrap()
+                    .actor_data_mut()
+                    .unwrap()
+                    .execute_order_initialising = false;
+            }
+            assert!(terminated);
+            assert_eq!(saw_done, removed_at_tick.is_none());
+            assert!(!engine.get_entity(bottle).unwrap().is_active());
+        }
+    }
+
+    #[test]
+    fn attentive_turning_plays_entry_direction_and_returns_turn_completion() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        );
+        soldier.enemy_ai_mut().unwrap().attentive = true;
+        soldier.element_data_mut().sprite = three_frame_animation(OrderType::TurningAlerted);
+        soldier.element_data_mut().set_direction_instantly(3);
+        soldier.element_data_mut().set_direction_goal(5);
+        let owner = engine.add_test_entity(soldier);
+        let assets = engine.test_runtime_assets();
+        let mut element = SequenceElement::new(1, Command::Turn, Some(owner));
+        element
+            .orders
+            .push_back(Order::test_new(OrderType::Turning, 0.0, 0.0));
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
+        engine.select_sequence_element(owner, Some((sequence, 0)));
+
+        for (entry_direction, direction, expected) in [
+            (3, 4, MotionState::InProgress),
+            (4, 5, MotionState::InProgress),
+            (5, 5, MotionState::Terminated),
+        ] {
+            let result = engine
+                .tick_actor_animation_for(&sim, &assets, owner)
+                .unwrap();
+            let actor = engine.get_entity(owner).unwrap();
+            assert_eq!(actor.sprite().current_row, entry_direction);
+            assert_eq!(actor.element_data().direction(), direction);
+            assert_eq!(result.motion, expected);
+            assert_eq!(actor.sprite().last_motion_state, Some(expected));
+        }
+    }
 
     #[test]
     fn play_anim_property_only_applies_to_the_custom_wrapper_order() {

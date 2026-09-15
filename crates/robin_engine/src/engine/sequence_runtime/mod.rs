@@ -934,9 +934,6 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_turn_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -1485,9 +1482,6 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_npc_state_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -2483,9 +2477,6 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_object_interaction_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -3123,15 +3114,7 @@ mod sequence_phase_context_tests {
             );
             engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-            engine.dispatch_object_interaction_command(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::default(),
-                &mut Vec::new(),
-                owner,
-                command,
-                seq_id,
-                0,
-            );
+            engine.dispatch_object_interaction_command(owner, command, seq_id, 0);
 
             assert_eq!(
                 engine
@@ -3177,15 +3160,7 @@ mod sequence_phase_context_tests {
             ),
         );
         engine.orders.sequence_manager.start_sequence_level(seq_id);
-        engine.dispatch_object_interaction_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
-            &mut Vec::new(),
-            owner,
-            Command::Take,
-            seq_id,
-            0,
-        );
+        engine.dispatch_object_interaction_command(owner, Command::Take, seq_id, 0);
         assert_eq!(
             engine
                 .get_entity(owner)

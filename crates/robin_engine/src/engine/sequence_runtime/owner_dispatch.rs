@@ -531,28 +531,14 @@ impl EngineInner {
             // read CameraPoint / Direction from the
             // element and push Turning onto the order
             // queue; only Upright posture is legal.
-            Command::Turn | Command::TurnFast => self.dispatch_turn_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            Command::Turn | Command::TurnFast => {
+                self.dispatch_turn_command(owner, cmd, seq_id, elem_idx)
+            }
 
             // Face the element's antagonist, then push
             // Turning.  Carried by
             // `SequenceElementData::Interaction`.
-            Command::TurnElement => self.dispatch_turn_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            Command::TurnElement => self.dispatch_turn_command(owner, cmd, seq_id, elem_idx),
 
             // Owner-ful Freeze pushes a `Freezing` order
             // onto the element.  The engine-side
@@ -560,15 +546,7 @@ impl EngineInner {
             // (`dispatch_engine_or_execute_immediate`)
             // handles non-owner Freeze
             // (which collapses into FreezeAll).
-            Command::Freeze => self.dispatch_turn_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            Command::Freeze => self.dispatch_turn_command(owner, cmd, seq_id, elem_idx),
 
             // ── Point / GatherSoldiers ─────────────
             // Each pushes a single one-shot animation
@@ -579,15 +557,9 @@ impl EngineInner {
             // no direction.  Both terminate the sequence
             // element on animation completion, wired via
             // `AiAnimCompletion::SequenceElement`.
-            Command::Point | Command::GatherSoldiers => self.dispatch_turn_command(
-                sim,
-                assets,
-                active_scripts,
-                owner,
-                cmd,
-                seq_id,
-                elem_idx,
-            ),
+            Command::Point | Command::GatherSoldiers => {
+                self.dispatch_turn_command(owner, cmd, seq_id, elem_idx)
+            }
 
             // ── Wait (soldier-specific override) ───
             //   - attentive + upright + waiting + alive →
@@ -630,7 +602,7 @@ impl EngineInner {
             // already been queued ahead of the command's own
             // animation.
             Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
-                self.dispatch_npc_state_command(sim, assets, active_scripts, cmd, seq_id, elem_idx)
+                self.dispatch_npc_state_command(cmd, seq_id, elem_idx)
             }
             // ── Menace / Sleep transitions ─────────
             // Each pushes a fixed sequence of transition
@@ -644,9 +616,7 @@ impl EngineInner {
             | Command::StopMenace
             | Command::StopSleep
             | Command::LowerBowLeanOut
-            | Command::RaiseBowLeanOut => {
-                self.dispatch_npc_state_command(sim, assets, active_scripts, cmd, seq_id, elem_idx)
-            }
+            | Command::RaiseBowLeanOut => self.dispatch_npc_state_command(cmd, seq_id, elem_idx),
             // ── DrinkAle / Take ────────────────────
             // DrinkAle / Take push a single interaction
             // order whose animation (DRINKING_ALE /
@@ -659,15 +629,7 @@ impl EngineInner {
             // `apply_soldier_execute_side_effects`
             // handler picks up the target.
             Command::DrinkAle | Command::Take => {
-                self.dispatch_object_interaction_command(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    cmd,
-                    seq_id,
-                    elem_idx,
-                );
+                self.dispatch_object_interaction_command(owner, cmd, seq_id, elem_idx);
             }
 
             // ── UnlockDoor ─────────────────────────
@@ -681,9 +643,7 @@ impl EngineInner {
             // happen on animation end.  Target door is
             // read from the `Field::Door` property set
             // by `launch_gate_movement_sequence`.
-            Command::UnlockDoor => {
-                self.instruct_unlock_door(sim, assets, active_scripts, owner, seq_id, elem_idx)
-            }
+            Command::UnlockDoor => self.instruct_unlock_door(owner, seq_id, elem_idx),
 
             // ── Jump ────────────────────────────────
             Command::JumpCmd => {

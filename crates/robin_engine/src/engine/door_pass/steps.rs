@@ -216,12 +216,6 @@ pub(in crate::engine) enum DoorPassAdvance {
     },
 }
 
-pub(in crate::engine) fn clear_terminal_door_pass_goal(entity: &mut Entity) {
-    entity
-        .position_iface_mut()
-        .set_map_goal(crate::coordinates::MapPoint::ZERO);
-}
-
 impl EngineInner {
     /// Advance through door-pass steps after a walk step completes.
     ///

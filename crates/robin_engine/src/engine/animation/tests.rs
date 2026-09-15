@@ -1706,6 +1706,15 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
         .life_points = 0;
     let second_result = engine.tick_actor_animation_for(&sim, &assets, owner);
     assert_eq!(
+        engine
+            .get_entity(owner)
+            .expect("owner")
+            .sprite()
+            .current_frame,
+        2,
+        "the invalid target is checked after advancing the strike sprite"
+    );
+    assert_eq!(
         second_result.map(|result| result.motion),
         Some(MotionState::Terminated),
         "the post-action validity check must retire the stale strike"

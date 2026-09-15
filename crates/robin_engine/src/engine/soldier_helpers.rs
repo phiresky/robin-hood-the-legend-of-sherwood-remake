@@ -455,15 +455,7 @@ impl EngineInner {
         // NPC-only — the PC has no `ai_controller` for
         // `fire_self_stimulus` to land on).
         if self.world.entities.get(owner).is_some_and(|e| e.is_pc()) {
-            self.send_condolation_card_pc(
-                sim,
-                owner,
-                command,
-                seq_id,
-                elem_idx,
-                assets,
-                active_scripts,
-            );
+            self.send_condolation_card_pc(sim, owner, command, seq_id, elem_idx, assets);
         }
 
         // The human actor's completion callback always completes an
@@ -830,7 +822,6 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: u16,
         assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) {
         match command {
             Command::StrangleCmd => {

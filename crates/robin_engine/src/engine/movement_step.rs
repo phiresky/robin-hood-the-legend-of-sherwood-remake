@@ -50,7 +50,6 @@ pub(super) struct MovementStepCtx<'a> {
     pub(super) entity_id: EntityId,
     pub(super) final_tolerance: FinalTol,
     pub(super) prepared: &'a LiveMobileGeometry,
-    pub(super) deferred: &'a mut MovementCompletion,
     pub(super) seek_operands: MovementSeekOperands,
     pub(super) traits: MovementActorTraits,
     pub(super) order: SelectedMovementOrder,
@@ -107,7 +106,7 @@ impl MovementMotionPlan {
 /// Sprite-motion results (formerly the first/second fast-call accumulators).
 #[derive(Clone, Copy)]
 pub(super) struct MovementMotionStep {
-    motion_state: MotionState,
+    pub(super) motion_state: MotionState,
     frame_dist_raw: f32,
     first_frame_dist_raw: f32,
     first_direction_differs_from_goal: bool,
@@ -124,7 +123,7 @@ pub(super) struct MovementStepEffects {
     pub(super) speed: f32,
     split_motion_speeds: Option<(f32, f32)>,
     entity_target_seek: bool,
-    state_effect_motion: MotionState,
+    pub(super) state_effect_motion: MotionState,
 }
 
 /// Order-list facts re-read after terminal transition cleanup.
@@ -388,8 +387,8 @@ impl MovementStepCtx<'_> {
     }
 
     /// FREEZING and PASSING_DOOR tokens return without sprite motion.
-    /// Returns `true` when the Execute is complete.
-    pub(super) fn execute_non_sprite_movement_action(&mut self) -> bool {
+    /// Returns the action's motion result when no sprite execution is needed.
+    pub(super) fn execute_non_sprite_movement_action(&mut self) -> Option<MotionState> {
         let SelectedMovementOrder {
             goal,
             is_final_waypoint,
@@ -400,7 +399,7 @@ impl MovementStepCtx<'_> {
             ..
         } = self.order;
         if !matches!(order_action, OrderType::Freezing | OrderType::PassingDoor) {
-            return false;
+            return None;
         }
         let owner = self.entity_id;
         self.engine
@@ -412,7 +411,7 @@ impl MovementStepCtx<'_> {
             .sprite
             .last_motion_state = non_sprite_movement_motion(order_action);
         if order_action == OrderType::Freezing {
-            return true;
+            return Some(MotionState::InProgress);
         }
         let has_active_pass = self
             .engine
@@ -563,8 +562,7 @@ impl MovementStepCtx<'_> {
                     .set_anti_collision_on(true);
             }
         }
-        self.deferred.completion = Some(MotionState::Terminated);
-        true
+        Some(MotionState::Terminated)
     }
 
     /// Sample pre-motion seek tolerance, age the seek refresh countdown and
@@ -1643,8 +1641,8 @@ impl MovementStepCtx<'_> {
         &mut self,
         plan: &MovementMotionPlan,
         step: &MovementMotionStep,
-        effects: &MovementStepEffects,
-    ) {
+        mut motion_state: MotionState,
+    ) -> MotionState {
         let SelectedMovementOrder {
             door_pass_anim,
             order_action,
@@ -1659,24 +1657,6 @@ impl MovementStepCtx<'_> {
             ..
         } = *plan;
         let entity_id = self.entity_id;
-        let motion_state = if self.deferred.refreshed_seek_in_progress {
-            MotionState::InProgress
-        } else if self.deferred.post_seek_reentrant_order_advance {
-            MotionState::Terminated
-        } else {
-            self.deferred.completion.unwrap_or_else(|| {
-                if plan.is_transition_without_tolerance_arrival() {
-                    movement_execute_visible_motion(
-                        order_action,
-                        step.motion_state,
-                        false,
-                        effects.entity_target_seek,
-                    )
-                } else {
-                    effects.state_effect_motion
-                }
-            })
-        };
         if self.traits.is_pc && order_action == OrderType::WalkingWithCorpse {
             crate::abilities::sync_walking_corpse_for_carrier(
                 &mut self.engine.world.entities,
@@ -1694,8 +1674,7 @@ impl MovementStepCtx<'_> {
                 .engine
                 .check_walking_shoulder_clearance(self.sim, self.assets, entity_id)
             {
-                self.deferred.completion = Some(MotionState::Aborted);
-                return;
+                return MotionState::Aborted;
             }
         }
         if is_sword_motion {
@@ -1809,7 +1788,8 @@ impl MovementStepCtx<'_> {
                 .apply_door_pass_transition_done_side_effects(self.assets, entity_id);
         }
         if plan.is_transition_without_tolerance_arrival()
-            && !self.deferred.refreshed_seek_in_progress
+            && !(step.motion_state == MotionState::Terminated
+                && motion_state == MotionState::InProgress)
         {
             self.finish_transition_execution(plan, step);
         }
@@ -1832,9 +1812,10 @@ impl MovementStepCtx<'_> {
         if self.traits.is_pc {
             if is_sword_motion {
                 self.engine
-                    .abort_pinched_pc_sword_movement(entity_id, &mut self.deferred.completion);
+                    .abort_pinched_pc_sword_movement(entity_id, &mut motion_state);
             }
         }
+        motion_state
     }
 
     /// Scale the raw frame distance and decide which Execute state effects
@@ -1888,7 +1869,6 @@ impl MovementStepCtx<'_> {
             profiles: &self.assets.profile_manager,
         };
         let mover = super::anti_collision::CollisionMover::new(self.entity_id, collision_entity);
-        let deferred = &mut *self.deferred;
         let sprite = &mut collision_entity.element_data_mut().sprite;
         // Motion processing applies the sequence speed factor before its
         // turn slowdown and 0.7-unit minimum. The order is observable:
@@ -1971,11 +1951,6 @@ impl MovementStepCtx<'_> {
             motion_state,
             reaches_goal_this_step,
             entity_target_seek,
-        );
-        deferred.post_completion_motion_override = committed_arrival_post_completion_override(
-            motion_state,
-            state_effect_motion,
-            reaches_goal_this_step,
         );
         tracing::trace!(
             entity = ?entity_id,
@@ -2121,15 +2096,9 @@ impl MovementStepCtx<'_> {
         plan: &MovementMotionPlan,
         step: &mut MovementMotionStep,
         effects: &MovementStepEffects,
-    ) {
+    ) -> MotionState {
         let goal_reached = self.commit_transition_displacement(plan, step, effects);
         if matches!(step.motion_state, MotionState::Terminated) {
-            if let Some((external_direction, movement_direction)) =
-                self.terminal_pc_external_direction_goal
-            {
-                self.deferred.terminal_direction_restore =
-                    Some((external_direction, movement_direction));
-            }
             let mut discarded_lazy_door_followers = false;
             // TillLastFrame can exhaust its animation before its
             // distance target is reached (notably the short
@@ -2142,14 +2111,21 @@ impl MovementStepCtx<'_> {
             if !goal_reached {
                 discarded_lazy_door_followers = self.insert_transition_distance_continuation();
             }
-            let Some(cleanup) = self.hand_off_terminated_transition_seek(plan) else {
-                return;
+            let cleanup = match self.hand_off_terminated_transition_seek(plan) {
+                std::ops::ControlFlow::Break(motion) => return motion,
+                std::ops::ControlFlow::Continue(cleanup) => cleanup,
             };
-            if self.hand_off_actor_owned_post_seek(cleanup) {
-                return;
+            if let Some(motion) = self.hand_off_actor_owned_post_seek(cleanup) {
+                return motion;
             }
             self.retire_terminated_transition(discarded_lazy_door_followers);
         }
+        movement_execute_visible_motion(
+            self.order.order_action,
+            step.motion_state,
+            false,
+            effects.entity_target_seek,
+        )
     }
 
     /// Commit TillLastFrame displacement and its goal-arrival snap.
@@ -2567,12 +2543,12 @@ impl MovementStepCtx<'_> {
         discarded_lazy_door_followers
     }
 
-    /// Entity-seek handoff after a terminated transition. `None` means the
-    /// Execute is complete.
+    /// Entity-seek handoff after a terminated transition. A break returns the
+    /// actual seeking motion; otherwise transition cleanup continues.
     fn hand_off_terminated_transition_seek(
         &mut self,
         plan: &MovementMotionPlan,
-    ) -> Option<TransitionSeekCleanup> {
+    ) -> std::ops::ControlFlow<MotionState, TransitionSeekCleanup> {
         let SelectedMovementOrder {
             move_seq_id,
             move_elem_idx,
@@ -2591,7 +2567,6 @@ impl MovementStepCtx<'_> {
             .entities
             .get_mut(self.entity_id)
             .expect("movement owner disappeared during execution");
-        let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Seeking wraps the transition animation too. When
         // the last stop transition terminates, Original checks
@@ -2643,14 +2618,14 @@ impl MovementStepCtx<'_> {
             // strands the actor at a standstill, and the refresh
             // then reads that as a walk rather than the run it was
             // already doing.
-            deferred.refreshed_seek_in_progress = self.engine.refresh_movement_transition_seek(
+            self.engine.refresh_movement_transition_seek(
                 self.sim,
                 self.assets,
                 eid,
                 move_seq_id,
                 move_elem_idx,
             );
-            return None;
+            return std::ops::ControlFlow::Break(MotionState::InProgress);
         }
         // Motion through the last frame can mutate the order list
         // before returning TERMINATED: when a startup transition
@@ -2689,7 +2664,7 @@ impl MovementStepCtx<'_> {
             let reach =
                 (f32::from(entity.sprite().distance_for_animation(next_action)) + ft.tol) * 1.05;
             if dx * dx + dy * dy > reach * reach {
-                deferred.refreshed_seek_in_progress = self.engine.refresh_movement_transition_seek(
+                self.engine.refresh_movement_transition_seek(
                     self.sim,
                     self.assets,
                     eid,
@@ -2702,7 +2677,7 @@ impl MovementStepCtx<'_> {
                     reach,
                     "tick_move: looped transition exposed stale stop; refreshing seek",
                 );
-                return None;
+                return std::ops::ControlFlow::Break(MotionState::InProgress);
             }
         }
         // A Hit can be attached to a Seek whose authored stop
@@ -2756,37 +2731,41 @@ impl MovementStepCtx<'_> {
             // instructed; the later ABORTED result does not
             // restore any of it. Mirror that pre-abort teardown.
             actor.abort_out_of_range_hit_seek();
-            deferred.completion = Some(MotionState::Terminated);
-            return None;
+            return std::ops::ControlFlow::Break(MotionState::Terminated);
         }
         if final_entity_seek_arrival == Some(true) {
             let actor = entity.actor_data_mut().expect("actor-only branch");
             if actor.post_seek_sequence.is_some() && actor.active_door_pass.is_none() {
                 actor.active_door_pass = None;
-                deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
+                if self.engine.start_post_seek_sequence(
                     self.sim,
                     self.assets,
                     &mut Vec::new(),
                     eid,
                     Some((move_seq_id, move_elem_idx)),
-                );
+                ) {
+                    return std::ops::ControlFlow::Break(MotionState::Terminated);
+                }
             } else {
                 // No action consumes the arrival yet. Match
                 // seeking's frozen refresh arm rather than
                 // exhausting the final transition order.
                 actor.seek_refresh_wait = 0;
             }
-            return None;
+            return std::ops::ControlFlow::Break(MotionState::InProgress);
         }
-        Some(TransitionSeekCleanup {
+        std::ops::ControlFlow::Continue(TransitionSeekCleanup {
             is_final_waypoint_after_transition_cleanup,
             movement_is_last_sequence_element,
         })
     }
 
     /// Point-seek and actor-owned entity-seek post-seek handoff after a
-    /// terminated transition. Returns `true` when the Execute is complete.
-    fn hand_off_actor_owned_post_seek(&mut self, cleanup: TransitionSeekCleanup) -> bool {
+    /// terminated transition. Returns the completed seeking motion, if any.
+    fn hand_off_actor_owned_post_seek(
+        &mut self,
+        cleanup: TransitionSeekCleanup,
+    ) -> Option<MotionState> {
         let SelectedMovementOrder {
             is_final_waypoint,
             move_seq_id,
@@ -2809,7 +2788,6 @@ impl MovementStepCtx<'_> {
             .entities
             .get_mut(self.entity_id)
             .expect("movement owner disappeared during execution");
-        let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Point-target Seek reaches this early transition arm
         // after its authored stop transition terminates. Original
@@ -2888,22 +2866,26 @@ impl MovementStepCtx<'_> {
 
             let actor = entity.actor_data_mut().expect("actor-only branch");
             actor.abort_out_of_range_hit_seek();
-            deferred.completion = Some(MotionState::Terminated);
-            return true;
+            return Some(MotionState::Terminated);
         }
         let actor = entity.actor_data_mut().expect("actor-only branch");
         if final_actor_owned_post_seek_arrival {
             actor.active_door_pass = None;
-            deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
-                self.sim,
-                self.assets,
-                &mut Vec::new(),
-                eid,
-                Some((move_seq_id, move_elem_idx)),
+            return Some(
+                if self.engine.start_post_seek_sequence(
+                    self.sim,
+                    self.assets,
+                    &mut Vec::new(),
+                    eid,
+                    Some((move_seq_id, move_elem_idx)),
+                ) {
+                    MotionState::Terminated
+                } else {
+                    MotionState::InProgress
+                },
             );
-            return true;
         }
-        false
+        None
     }
 
     /// Retire the terminated transition order and, on the final waypoint,
@@ -2917,7 +2899,6 @@ impl MovementStepCtx<'_> {
             ..
         } = self.order;
         let is_swordfighting = self.traits.is_swordfighting;
-        let deferred = &mut *self.deferred;
         let eid = self.entity_id;
         // Re-borrow of the actor already checked by the post-seek handoff.
         let actor = self
@@ -2928,13 +2909,11 @@ impl MovementStepCtx<'_> {
             .expect("movement owner disappeared during execution")
             .actor_data_mut()
             .expect("actor-only branch");
-        deferred.completion = Some(MotionState::Terminated);
         // Last order of the Move element just completed — flip
         // back to Waiting.
         // Matches the `DoorPassAdvance::Done` arm below but for
         // the transition-terminated path.
         if is_final_waypoint {
-            let mut clear_completed_movement_goal = false;
             let advance = if actor.active_door_pass.is_some() {
                 EngineInner::advance_door_pass(
                     actor,
@@ -2995,7 +2974,6 @@ impl MovementStepCtx<'_> {
                         crate::element::ActionState::Waiting
                     };
                     actor.active_door_pass = None;
-                    clear_completed_movement_goal = true;
                     if let Some((door_index, direct)) =
                         completed_door_pass_to_commit(discarded_lazy_door_followers, completed)
                     {
@@ -3015,9 +2993,6 @@ impl MovementStepCtx<'_> {
                         "DoorPass: transition-terminated movement lost active pass"
                     );
                 }
-            }
-            if clear_completed_movement_goal {
-                deferred.clear_terminal_door_goal = true;
             }
         }
     }
@@ -3135,15 +3110,14 @@ impl MovementStepCtx<'_> {
     /// goal arrival. Re-enter the shared tail after that commit while
     /// retaining (not recomputing) the pre-motion seek predicate.
     ///
-    /// `Break` means the Execute is complete; `Continue` carries whether the
-    /// arrival already queued the line crossings.
+    /// Returns a motion result when arrival or collision ends this step.
     pub(super) fn run_movement_arrival_loop(
         &mut self,
         plan: &MovementMotionPlan,
         step: &MovementMotionStep,
         effects: &MovementStepEffects,
         point_seek_post_arrival: &mut bool,
-    ) -> std::ops::ControlFlow<(), bool> {
+    ) -> Option<MotionState> {
         let is_final_waypoint = self.order.is_final_waypoint;
         let MovementMotionPlan {
             seek: MovementSeekEntry {
@@ -3172,10 +3146,9 @@ impl MovementStepCtx<'_> {
         let live_seek_target = self.seek_operands.live_seek_target;
         let mut post_step_arrival = dist <= f32::EPSILON || tolerance_arrival;
         let mut arrived_after_committed_step = false;
-        let mut arrival_crossing_queued = false;
         'arrival: loop {
             if post_step_arrival {
-                match self.engine.settle_movement_waypoint(
+                return Some(self.engine.settle_movement_waypoint(
                     self.sim,
                     self.assets,
                     self.final_tolerance,
@@ -3188,14 +3161,7 @@ impl MovementStepCtx<'_> {
                         is_sword_motion,
                         live_seek_target,
                     },
-                    self.deferred,
-                ) {
-                    std::ops::ControlFlow::Break(()) => return std::ops::ControlFlow::Break(()),
-                    std::ops::ControlFlow::Continue(crossing_queued) => {
-                        arrival_crossing_queued |= crossing_queued;
-                        break 'arrival;
-                    }
-                }
+                ));
             } else {
                 // Move toward waypoint.
                 //
@@ -3253,11 +3219,10 @@ impl MovementStepCtx<'_> {
                     self.prepared,
                     &self.engine.world.fast_grid,
                     &mut self.engine.feedback.titbit_manager,
-                    self.deferred,
                 );
 
                 if movement_aborted {
-                    break 'arrival;
+                    return Some(MotionState::Aborted);
                 }
 
                 // Collision-aware position updates have now committed the
@@ -3300,7 +3265,7 @@ impl MovementStepCtx<'_> {
                 break 'arrival;
             }
         }
-        std::ops::ControlFlow::Continue(arrival_crossing_queued)
+        None
     }
 
     /// Record the committed ordinary step for parity movement diagnostics.

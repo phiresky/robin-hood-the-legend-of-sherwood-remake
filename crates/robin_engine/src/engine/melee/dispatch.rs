@@ -779,22 +779,15 @@ impl EngineInner {
                 self.dispatch_raise_shield(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             Command::RaiseShieldInstantly => {
-                self.dispatch_raise_shield_instantly(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                );
+                self.dispatch_raise_shield_instantly(owner, seq_id, elem_idx);
                 None
             }
             Command::LowerShield => {
-                self.dispatch_lower_shield(sim, assets, active_scripts, owner, seq_id, elem_idx);
+                self.dispatch_lower_shield(owner, seq_id, elem_idx);
                 None
             }
             Command::ParryShield => {
-                self.dispatch_parry_shield(sim, assets, active_scripts, owner, seq_id, elem_idx);
+                self.dispatch_parry_shield(owner, seq_id, elem_idx);
                 None
             }
             _ => unreachable!("non-shield command passed to shield command context"),
@@ -1020,9 +1013,6 @@ impl EngineInner {
     /// Sets `HoldingShield` immediately without a raising animation.
     fn dispatch_raise_shield_instantly(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1052,9 +1042,6 @@ impl EngineInner {
     /// Transitions out of shield state to `Waiting` with a lowering animation.
     fn dispatch_lower_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -1091,9 +1078,6 @@ impl EngineInner {
     /// Transitions to `ParryingShield` from a shield-holding state.
     fn dispatch_parry_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,

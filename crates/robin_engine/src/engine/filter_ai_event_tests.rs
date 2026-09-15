@@ -4844,7 +4844,7 @@ fn npc_searching_animation_allows_missing_antagonist() {
 }
 
 #[test]
-#[should_panic(expected = "required Searching antagonist")]
+#[should_panic(expected = "missing (animation antagonist)")]
 fn npc_searching_animation_rejects_present_stale_antagonist() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();

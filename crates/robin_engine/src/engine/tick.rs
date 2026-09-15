@@ -3023,21 +3023,30 @@ impl EngineInner {
             )
     }
 
-    pub(super) fn apply_helper_driven_shoulder_dismount(
+    pub(super) fn execute_helper_shoulder_dismount(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        dismount: super::animation::ShoulderHelperDismount,
+        helper_id: EntityId,
+        motion: crate::sprite::MotionState,
     ) {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType;
         use crate::sprite::MotionState;
 
-        let Some(carried) = self.get_entity_mut(dismount.carried_id) else {
-            // The original game permits the carried-actor reference to become empty while the transition
-            // runs and simply finishes the helper animation in that case.
+        let helper = self.expect_entity(helper_id, "shoulder dismount helper");
+        let Some(carried_id) = helper
+            .pc_data()
+            .expect("shoulder helper must be PC")
+            .carried
+        else {
             return;
         };
+        let helper_frame = helper.sprite().current_frame;
+        let helper_frame_count = helper.sprite().frame_count;
+        let carried = self
+            .get_entity_mut(carried_id)
+            .expect("shoulder rider disappeared before synchronization");
         let carried_sprite_direction = u16::try_from(carried.element_data().direction())
             .expect("PC shoulder rider has a negative direction");
         let sprite = &mut carried.element_data_mut().sprite;
@@ -3045,44 +3054,44 @@ impl EngineInner {
             OrderType::ClimbingDownFromShoulders,
             carried_sprite_direction,
         );
-        sprite.synchronize_anim(dismount.helper_frame, dismount.helper_frame_count);
-        sprite.display_order_ref = Some(dismount.helper_id);
+        sprite.synchronize_anim(helper_frame, helper_frame_count);
+        sprite.display_order_ref = Some(helper_id);
         sprite.behind_display_order_ref = false;
 
-        if dismount.motion == MotionState::Done {
+        if motion == MotionState::Done {
             carried.set_posture(Posture::Upright);
             carried
                 .actor_data_mut()
                 .expect("PC has actor data")
                 .action_state = ActionState::Waiting;
         }
-        if dismount.motion != MotionState::Terminated {
+        if motion != MotionState::Terminated {
             return;
         }
 
         let helper_position = self
-            .get_entity(dismount.helper_id)
+            .get_entity(helper_id)
             .expect("shoulder-dismount helper vanished before termination")
             .element_data()
             .position_map();
         let helper_current_point = self
-            .get_entity(dismount.helper_id)
+            .get_entity(helper_id)
             .expect("shoulder-dismount helper vanished before landing search")
             .current_gameplay_point_map()
             .unwrap_or_else(|| {
                 panic!(
                     "shoulder-dismount helper {:?} has no current action point",
-                    dismount.helper_id
+                    helper_id
                 )
             });
         let helper_layer = self
-            .get_entity(dismount.helper_id)
+            .get_entity(helper_id)
             .expect("shoulder-dismount helper vanished before termination")
             .element_data()
             .layer();
         let landing_position = {
             let carried_box = self
-                .get_entity(dismount.carried_id)
+                .get_entity(carried_id)
                 .expect("shoulder rider vanished before landing search")
                 .position_iface()
                 .get_move_box()
@@ -3109,7 +3118,7 @@ impl EngineInner {
 
         {
             let carried = self
-                .get_entity_mut(dismount.carried_id)
+                .get_entity_mut(carried_id)
                 .expect("shoulder rider disappeared before landing");
             carried
                 .element_data_mut()
@@ -3122,9 +3131,9 @@ impl EngineInner {
         }
         // Waiting can synchronously change the relationship. Release the
         // helper's then-current rider and use that rider's live carrier heading.
-        self.actor_wait(sim, assets, dismount.carried_id);
+        self.actor_wait(sim, assets, carried_id);
         let carried_id = self
-            .expect_entity(dismount.helper_id, "shoulder helper after rider wait")
+            .expect_entity(helper_id, "shoulder helper after rider wait")
             .pc_data()
             .and_then(|pc| pc.carried)
             .expect("shoulder helper lost its rider during wait");
@@ -3147,7 +3156,7 @@ impl EngineInner {
                 .expect("shoulder rider must be human")
                 .carrier = None;
         }
-        self.get_entity_mut(dismount.helper_id)
+        self.get_entity_mut(helper_id)
             .expect("shoulder helper disappeared before release")
             .pc_data_mut()
             .expect("shoulder helper must be PC")
