@@ -38,10 +38,6 @@ enum Command {
     SupportedSchemaVersion,
     /// Create the durable cursor key without printing or otherwise exposing it.
     InitializeCursorKey,
-    /// Create the durable Ed25519 seed used only for scheduled-run grants.
-    InitializeCompetitionRunGrantKey,
-    /// Create the durable Ed25519 seed used only for run-preflight grants.
-    InitializeRunPreflightGrantKey,
     Reports {
         #[arg(long)]
         state: Option<String>,
@@ -73,32 +69,6 @@ pub(super) async fn run() -> anyhow::Result<()> {
             let config = load_secret_bootstrap_config(&arguments.config, "cursor_secret_path")?;
             config.load_or_create_cursor_key()?;
             println!("cursor key is initialized");
-        }
-        Command::InitializeCompetitionRunGrantKey => {
-            let config = load_secret_bootstrap_config(
-                &arguments.config,
-                "competition_run_grant_secret_path",
-            )?;
-            let secret = config.load_or_create_competition_run_grant_key()?;
-            let public = ed25519_dalek::SigningKey::from_bytes(&secret)
-                .verifying_key()
-                .to_bytes();
-            println!(
-                "competition run grant key is initialized; manifest public key: {}",
-                hex::encode(public)
-            );
-        }
-        Command::InitializeRunPreflightGrantKey => {
-            let config =
-                load_secret_bootstrap_config(&arguments.config, "run_preflight_grant_secret_path")?;
-            let secret = config.load_or_create_run_preflight_grant_key()?;
-            let public = ed25519_dalek::SigningKey::from_bytes(&secret)
-                .verifying_key()
-                .to_bytes();
-            println!(
-                "run preflight grant key is initialized; ruleset manifest public key: {}",
-                hex::encode(public)
-            );
         }
         Command::SnapshotDb { path } => {
             let config = ServerConfig::load(&arguments.config)?;
@@ -183,6 +153,8 @@ pub(super) async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read only one secret path from a possibly incomplete bootstrap config, so a
+/// fresh host can create its secrets before the final configuration exists.
 fn load_secret_bootstrap_config(path: &Path, field: &str) -> anyhow::Result<ServerConfig> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -213,12 +185,6 @@ fn load_secret_bootstrap_config(path: &Path, field: &str) -> anyhow::Result<Serv
     let mut config = ServerConfig::default();
     match field {
         "cursor_secret_path" => config.cursor_secret_path = secret_path,
-        "competition_run_grant_secret_path" => {
-            config.competition_run_grant_secret_path = secret_path;
-        }
-        "run_preflight_grant_secret_path" => {
-            config.run_preflight_grant_secret_path = secret_path;
-        }
         _ => anyhow::bail!("unsupported bootstrap secret field"),
     }
     Ok(config)

@@ -40,11 +40,11 @@ RestrictAddressFamilies=AF_UNIX AF_NETLINK
 # Do not add RestrictNamespaces or a narrow SystemCallFilter here: bubblewrap
 # needs unprivileged user/mount/PID/network namespaces. Its fixed argv, the
 # read-only mounts and the prlimit policy form the verifier sandbox.
-# The verifier binary, catalog and ranked content live under the `authority`
-# release, readable through ProtectHome=read-only.
+# The verifier binary lives in the verifier release named by the `authority`
+# symlink and the raw Demo/Full trees under raw-content/; both are readable
+# through ProtectHome=read-only and bound read-only into each sandbox.
 ReadWritePaths=%h/.local/share/robin-highscores/database
 ReadWritePaths=%h/.local/share/robin-highscores/replays
-ReadWritePaths=%h/.local/share/robin-highscores/campaign-states
 InaccessiblePaths=%h/.local/share/robin-highscores/api-secrets
 InaccessiblePaths=%h/.local/share/robin-highscores/backups
 

@@ -5,8 +5,7 @@ compile_error!("robin-highscores-server is Linux-only");
 
 use clap::Parser;
 use robin_highscores::{
-    CampaignStore, Database, ReplayStore, ServerConfig, garbage_collect_campaigns,
-    garbage_collect_replays, reconcile_campaign_inventory, reconcile_replay_inventory,
+    Database, ReplayStore, ServerConfig, garbage_collect_replays, reconcile_replay_inventory,
     safe_error_code,
     web::{AppState, ChallengeRateLimiter, router},
 };
@@ -69,12 +68,9 @@ where
 async fn perform_storage_maintenance(
     database: &Database,
     replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
     config: &ServerConfig,
-    campaign_retention: Duration,
 ) -> anyhow::Result<()> {
     replay_store.readiness_check().await?;
-    campaign_store.readiness_check().await?;
     let recovered_uploads = database.recover_upload_reservations().await?;
     tracing::info!(
         recovered_uploads,
@@ -84,42 +80,21 @@ async fn perform_storage_maintenance(
     tracing::debug!(reconciled, "reconciled replay inventory");
     let collected = garbage_collect_replays(database, replay_store, config, 1_000).await?;
     tracing::info!(collected, "completed replay garbage collection");
-    let reconciled_campaigns = reconcile_campaign_inventory(database, campaign_store).await?;
-    tracing::debug!(reconciled_campaigns, "reconciled campaign inventory");
-    let collected_campaigns =
-        garbage_collect_campaigns(database, campaign_store, campaign_retention, 1_000).await?;
-    tracing::info!(collected_campaigns, "completed campaign garbage collection");
     Ok(())
 }
 
 async fn initialize_api_storage(
     database: &Database,
     config: &ServerConfig,
-    campaign_retention: Duration,
-) -> anyhow::Result<(ReplayStore, CampaignStore)> {
+) -> anyhow::Result<ReplayStore> {
     run_with_maintenance_write_lease(database, "robin-highscores-api-startup", async {
         if let Some(parent) = config.replay_directory.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
-        if let Some(parent) = config.campaign_state_directory.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
         let replay_store =
             ReplayStore::create(config.replay_directory.clone(), config.max_replay_bytes).await?;
-        let campaign_store = CampaignStore::create(
-            config.campaign_state_directory.clone(),
-            config.max_campaign_bytes,
-        )
-        .await?;
-        perform_storage_maintenance(
-            database,
-            &replay_store,
-            &campaign_store,
-            config,
-            campaign_retention,
-        )
-        .await?;
-        Ok((replay_store, campaign_store))
+        perform_storage_maintenance(database, &replay_store, config).await?;
+        Ok(replay_store)
     })
     .await
 }
@@ -189,7 +164,7 @@ async fn initialize_api(
     config_path: &std::path::Path,
     notifier: &impl StartupStatusNotifier,
 ) -> anyhow::Result<ApiRuntime> {
-    notifier.status("Loading server configuration and signing authorities")?;
+    notifier.status("Loading server configuration and boards")?;
     let config = ServerConfig::load(config_path)?;
     notifier.status("Opening database and recovering upload reservations")?;
     let database = Database::connect(&config).await?;
@@ -209,57 +184,16 @@ async fn initialize_connected_api(
     notifier: &impl StartupStatusNotifier,
 ) -> anyhow::Result<ApiRuntime> {
     let cursor_hmac_key = config.load_cursor_key()?;
-    let competition_run_grant_secret_key = if config.competitions.is_empty() {
-        None
-    } else {
-        let secret = config.load_competition_run_grant_key()?;
-        let public = ed25519_dalek::SigningKey::from_bytes(&secret)
-            .verifying_key()
-            .to_bytes();
-        for competition in config.manifests.competitions.values() {
-            anyhow::ensure!(
-                competition.competition_run_grant_public_key.as_bytes() == &public,
-                "competition {} pins a different scheduled-run grant authority key",
-                competition.competition_id.as_str()
-            );
-        }
-        Some(secret)
-    };
-    let run_preflight_grant_secret_key = if config.admission_profiles.is_empty() {
-        None
-    } else {
-        let secret = config.load_run_preflight_grant_key()?;
-        let public = ed25519_dalek::SigningKey::from_bytes(&secret)
-            .verifying_key()
-            .to_bytes();
-        for published in config.manifests.rulesets.values() {
-            anyhow::ensure!(
-                published.manifest.run_preflight_grant_public_key.as_bytes() == &public,
-                "ruleset {} pins a different run-preflight authority key",
-                published.manifest.display_name
-            );
-        }
-        Some(secret)
-    };
-    let campaign_retention = Duration::from_secs(
-        config
-            .orphan_replay_retention_hours
-            .checked_mul(60 * 60)
-            .ok_or_else(|| anyhow::anyhow!("campaign retention overflows"))?,
-    );
-    notifier.status("Opening stores and reconciling object inventories under maintenance lease")?;
-    let (replay_store, campaign_store) =
-        initialize_api_storage(&database, &config, campaign_retention).await?;
+    notifier
+        .status("Opening the replay store and reconciling its inventory under maintenance lease")?;
+    let replay_store = initialize_api_storage(&database, &config).await?;
 
     notifier.status("Building API routes and binding the listener")?;
     let state = AppState {
         config: config.clone(),
         database: database.clone(),
         replay_store: replay_store.clone(),
-        campaign_store: campaign_store.clone(),
         cursor_hmac_key,
-        competition_run_grant_secret_key,
-        run_preflight_grant_secret_key,
         challenge_rate_limiter: ChallengeRateLimiter::new(
             config.challenge_requests_per_minute_per_ip,
         ),
@@ -271,7 +205,6 @@ async fn initialize_connected_api(
     let gc_config = Arc::new(config);
     let gc_database = database.clone();
     let gc_store = replay_store.clone();
-    let gc_campaign_store = campaign_store.clone();
     let gc_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
         interval.tick().await;
@@ -279,7 +212,6 @@ async fn initialize_connected_api(
             interval.tick().await;
             let operation_database = gc_database.clone();
             let operation_store = gc_store.clone();
-            let operation_campaign_store = gc_campaign_store.clone();
             let operation_config = Arc::clone(&gc_config);
             // Run in an owned task so aborting the scheduler on shutdown does
             // not cancel a purge between its filesystem and database steps.
@@ -291,9 +223,7 @@ async fn initialize_connected_api(
                         perform_storage_maintenance(
                             &operation_database,
                             &operation_store,
-                            &operation_campaign_store,
                             &operation_config,
-                            campaign_retention,
                         )
                         .await
                     },
@@ -376,7 +306,6 @@ mod tests {
         let mut config = ServerConfig::default();
         config.database_path = directory.path().join("highscores.sqlite3");
         config.replay_directory = directory.path().join("objects/replays");
-        config.campaign_state_directory = directory.path().join("objects/campaigns");
         let database = Database::migrate(&config).await.unwrap();
         let held = database
             .acquire_maintenance_write_lease(
@@ -387,11 +316,10 @@ mod tests {
             .await
             .unwrap();
 
-        let result = initialize_api_storage(&database, &config, Duration::from_secs(60)).await;
+        let result = initialize_api_storage(&database, &config).await;
 
         assert!(result.is_err());
         assert!(!config.replay_directory.exists());
-        assert!(!config.campaign_state_directory.exists());
         assert!(!directory.path().join("objects").exists());
         assert!(
             database

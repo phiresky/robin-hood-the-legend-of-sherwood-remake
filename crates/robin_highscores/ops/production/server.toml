@@ -1,0 +1,514 @@
+# Production leaderboard API configuration (installed as
+# ~/.config/robin-highscores/server.toml). Boards were derived from the last
+# manifest-based release (48005f9bb945): 7 rulesets x {Demo, Full}; the Full
+# boards list every field mission that had an individual-level profile.
+# Sherwood headquarters was campaign-continuation-only and is not a board.
+bind = "127.0.0.1:8787"
+database_path = "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3"
+replay_directory = "/home/robinhood/.local/share/robin-highscores/replays"
+cursor_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key"
+moderation_bearer_token_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token"
+moderation_operator_id = "production-operator"
+allowed_origins = []
+trusted_proxy_cidrs = ["127.0.0.1/32", "::1/128"]
+challenge_requests_per_minute_per_ip = 120
+abuse_reports_per_hour_per_ip = 10
+abuse_reports_per_hour_per_key = 25
+abuse_reports_per_hour_per_target = 10
+max_replay_bytes = 16777216
+max_metadata_bytes = 65536
+max_pending_submissions = 10000
+max_concurrent_requests = 256
+max_concurrent_uploads = 32
+upload_timeout_seconds = 120
+upload_reservation_ttl_seconds = 1800
+max_page_size = 100
+challenge_ttl_seconds = 600
+database_busy_timeout_ms = 5000
+tombstone_retention_days = 30
+rejected_replay_retention_hours = 24
+orphan_replay_retention_hours = 24
+minimum_storage_free_bytes = 1073741824
+
+[[boards]]
+board_id = "demo-any"
+display_name = "Demo / Any ruleset"
+edition = "demo"
+preset_id = "any"
+preset_name = "Any ruleset"
+difficulty_id = "any"
+difficulty_name = "Any difficulty"
+simulation_policy = { kind = "any_config" }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-original-easy"
+display_name = "Demo / Original / Easy"
+edition = "demo"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "easy"
+difficulty_name = "Easy"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "easy" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-original-hard"
+display_name = "Demo / Original / Hard"
+edition = "demo"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "hard"
+difficulty_name = "Hard"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "hard" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-original-normal"
+display_name = "Demo / Original / Normal"
+edition = "demo"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "medium" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-standard-easy"
+display_name = "Demo / Standard / Easy"
+edition = "demo"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "easy"
+difficulty_name = "Easy"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "easy" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-standard-hard"
+display_name = "Demo / Standard / Hard"
+edition = "demo"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "hard"
+difficulty_name = "Hard"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "hard" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "demo-standard-normal"
+display_name = "Demo / Standard / Normal"
+edition = "demo"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "medium" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [
+  { mission_id = "Dem_Lei_MP", display_name = "Official DEMO Dem_Lei_MP" },
+]
+
+[[boards]]
+board_id = "full-any"
+display_name = "Full / Any ruleset"
+edition = "full"
+preset_id = "any"
+preset_name = "Any ruleset"
+difficulty_id = "any"
+difficulty_name = "Any difficulty"
+simulation_policy = { kind = "any_config" }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-original-easy"
+display_name = "Full / Original / Easy"
+edition = "full"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "easy"
+difficulty_name = "Easy"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "easy" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-original-hard"
+display_name = "Full / Original / Hard"
+edition = "full"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "hard"
+difficulty_name = "Hard"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "hard" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-original-normal"
+display_name = "Full / Original / Normal"
+edition = "full"
+preset_id = "original"
+preset_name = "Original"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "original_parity", difficulty = "medium" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-standard-easy"
+display_name = "Full / Standard / Easy"
+edition = "full"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "easy"
+difficulty_name = "Easy"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "easy" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-standard-hard"
+display_name = "Full / Standard / Hard"
+edition = "full"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "hard"
+difficulty_name = "Hard"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "hard" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]
+
+[[boards]]
+board_id = "full-standard-normal"
+display_name = "Full / Standard / Normal"
+edition = "full"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "medium" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [
+  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
+  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
+  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
+  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
+  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
+  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
+  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
+  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
+  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
+  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
+  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
+  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
+  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
+  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
+  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
+  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
+  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
+  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
+  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
+  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
+  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
+  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
+  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
+  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
+  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
+  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
+  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
+  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
+  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
+  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
+  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
+  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
+  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
+  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
+  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
+  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
+  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
+  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
+]

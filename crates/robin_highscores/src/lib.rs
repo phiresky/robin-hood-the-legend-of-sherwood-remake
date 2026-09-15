@@ -5,20 +5,18 @@
 //! The HTTP process never decides that a run is valid. It admits signed replay
 //! bytes only after a bounded lexical compact-envelope check; it never
 //! base64/zstd/bitcode decodes them. A separate worker process leases jobs,
-//! executes the exact-build verifier, and publishes only verifier-derived
-//! results. This separation is deliberate: there is no debug or loopback HTTP
-//! endpoint capable of promoting a submission.
+//! resimulates each replay in a sandboxed verifier against raw game content,
+//! and publishes only verifier-derived results. There is no debug or loopback
+//! HTTP endpoint capable of promoting a submission.
 
-// Every authority path (openat2 confinement, statx mount identity, procfs,
+// Every storage path (openat2 confinement, statx mount identity, procfs,
 // systemd readiness) is Linux-specific; nothing builds this crate elsewhere.
 #[cfg(not(target_os = "linux"))]
 compile_error!("robin_highscores is Linux-only (openat2, statx, procfs, systemd)");
 
 mod authentication;
-pub mod campaign_store;
 pub mod config;
 pub mod db;
-pub mod deployment;
 pub mod error;
 pub mod identity;
 pub mod model;
@@ -32,12 +30,11 @@ mod submission;
 pub mod test_support;
 pub mod verifier;
 pub mod web;
+pub mod worker_config;
 
-pub use campaign_store::{CampaignInventoryEntry, CampaignStore, CampaignStoreError};
 pub use config::ServerConfig;
 pub use db::Database;
 pub use replay_store::ReplayStore;
-use std::time::Duration;
 
 /// Reduce an internal error chain to a stable operational category without
 /// formatting private verifier diagnostics, database details, or filesystem
@@ -46,8 +43,6 @@ pub fn safe_error_code(error: &anyhow::Error) -> &'static str {
     if let Some(error) = error.downcast_ref::<db::DbError>() {
         error.safe_log_code()
     } else if let Some(error) = error.downcast_ref::<replay_store::StoreError>() {
-        error.safe_log_code()
-    } else if let Some(error) = error.downcast_ref::<campaign_store::CampaignStoreError>() {
         error.safe_log_code()
     } else if let Some(error) = error.downcast_ref::<storage_admission::StorageAdmissionError>() {
         error.safe_log_code()
@@ -153,59 +148,6 @@ pub async fn garbage_collect_replays(
     Ok(completed)
 }
 
-/// Register all verified private campaign objects after a crash between file
-/// promotion and the database transaction.
-pub async fn reconcile_campaign_inventory(
-    database: &Database,
-    store: &CampaignStore,
-) -> anyhow::Result<usize> {
-    let entries = store.inventory().await?;
-    for entry in &entries {
-        database
-            .register_campaign_object(&entry.sha256, entry.bytes)
-            .await?;
-    }
-    Ok(entries.len())
-}
-
-/// Retain accepted live chains and age-gate rejected/forked/deleted objects.
-/// Token-specific quarantine makes every purge resumable without reviving a
-/// path that an older collector could later delete.
-pub async fn garbage_collect_campaigns(
-    database: &Database,
-    store: &CampaignStore,
-    orphan_retention: Duration,
-    batch_size: u32,
-) -> anyhow::Result<usize> {
-    let now = u64::try_from(model::now_epoch_ms()?)?;
-    let cutoff = now.saturating_sub(u64::try_from(orphan_retention.as_millis())?);
-    let mut candidates = database.claimed_campaign_purges(batch_size).await?;
-    let remaining =
-        batch_size.saturating_sub(u32::try_from(candidates.len()).unwrap_or(batch_size));
-    if remaining > 0 {
-        candidates.extend(
-            database
-                .claim_campaign_gc_candidates(now, cutoff, remaining)
-                .await?,
-        );
-    }
-    let mut completed = 0;
-    for candidate in candidates {
-        let quarantine = store
-            .quarantine_for_purge(&candidate.sha256, &candidate.claim_token)
-            .await?;
-        store.remove_quarantined(&quarantine).await?;
-        if !database
-            .finish_campaign_purge(&candidate.sha256, &candidate.claim_token, now)
-            .await?
-        {
-            anyhow::bail!("campaign purge claim was lost before finalization");
-        }
-        completed += 1;
-    }
-    Ok(completed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,8 +218,8 @@ mod tests {
         assert_eq!(state, "purged");
     }
 
-    /// `ops/backup.sh` snapshots the DB first and copies the object trees
-    /// afterwards, so a restore can pair a DB with slightly different trees:
+    /// `ops/backup.sh` snapshots the DB first and copies the object tree
+    /// afterwards, so a restore can pair a DB with a slightly different tree:
     /// an orphan purged in between is missing, and an object stored in between
     /// has no row. Startup reconcile + GC must accept both.
     #[tokio::test]
@@ -318,8 +260,6 @@ mod tests {
             .unwrap();
         database.close().await;
 
-        // Restored layout: snapshot DB plus an object tree that lost the purged
-        // orphan and gained an object written after the snapshot.
         let restored = ServerConfig {
             database_path: directory.path().join("restored/highscores.sqlite3"),
             replay_directory: directory.path().join("restored/replays"),
