@@ -132,11 +132,15 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
     let (outgoing, _) = make_carrier();
     let (nested, nested_order) = make_carrier();
     assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+    let mut pending = SequenceElement::new(1, Command::Generic, Some(owner));
+    pending.priority = SequencePriority::Normal;
+    let pending = engine.launch_element(&sim, &assets, pending);
     let goal = crate::coordinates::MapPoint::new(23.0, 41.0);
     let callback_assets = assets.clone();
     EngineInner::with_condolation_callback(
         move |engine, card| {
-            if card.seq_id == outgoing {
+            if card.seq_id == pending {
+                assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
                 assert!(engine.instruct_owner(
                     &crate::sim_rng::test_context(),
                     &callback_assets,
