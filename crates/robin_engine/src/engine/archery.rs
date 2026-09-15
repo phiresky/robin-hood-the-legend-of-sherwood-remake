@@ -481,13 +481,13 @@ impl EngineInner {
             .expect("selected bow order must exist")
             .order_type;
         let target_id = match element.data {
-            crate::sequence::SequenceElementData::Interaction {
-                antagonist: Some(target),
-            } => target,
-            _ => panic!("selected bow element must have an interaction target"),
+            crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
+            _ => None,
         };
         let script_driven = element.script_driven;
         if bow_shot::is_shoot_order(order_type) && actor.execute_order_initialising {
+            let target_id =
+                target_id.expect("shooting initialization requires an interaction target");
             let target = self.expect_entity(target_id, "bow initialization target");
             let (target_position, shooter_position) =
                 if order_type == OrderType::ShootingWithBowLeaningOut {
@@ -551,6 +551,7 @@ impl EngineInner {
                 );
             }
         } else if motion == MotionState::Done {
+            let target_id = target_id.expect("bow release requires an interaction target");
             let shoot_mode = match shooter.actor_data().unwrap().action_state {
                 ActionState::AimingWithBow => crate::weapons::ShootMode::Normal,
                 ActionState::AimingWithBowUp => crate::weapons::ShootMode::Long,
@@ -4229,8 +4230,7 @@ impl EngineInner {
         actor_id: EntityId,
     ) {
         // Entry transition animation just finished; the
-        // PC is now in ActionState::Listening /
-        // ListenPhase::CountingDown.  Forward
+        // PC is now executing the Listening order. Forward
         // PcMessage::SelectAction(Listen) so HUD/UI
         // reflects the active listen.
         // The message's gameplay half runs inline, the same way

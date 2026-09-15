@@ -3106,6 +3106,7 @@ fn tick_active_pc_equip_start(script_driven: bool) -> Action {
     let mut sm = SequenceManager::new();
     let mut element = build_shoot_bow_element(shooter, target);
     element.script_driven = script_driven;
+    element.data = SequenceElementData::Interaction { antagonist: None };
     let mut next_order_id = 1;
     let order_id = crate::order::alloc_order_id(&mut next_order_id);
     element.orders.push_back(Order::new(
