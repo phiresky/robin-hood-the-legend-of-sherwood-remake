@@ -1,7 +1,8 @@
 # Ranked leaderboard simplification plan
 
-Status: inventory complete (2026-09-15), implementation in progress on branch
-`rip-ranked-projection`.
+Status: implemented on branch `rip-ranked-projection` (2026-09-15). Not yet
+deployed: the server, worker, verifier release and web site must be redeployed
+together (protocol V2, DB migration 0006, network protocol 53).
 
 ## Decision
 
