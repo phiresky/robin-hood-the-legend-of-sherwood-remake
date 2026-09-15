@@ -59,15 +59,6 @@ impl HttpTask {
         self.task.poll(|| HttpTransportError::WorkerClosed)
     }
 
-    /// A task that already holds `result`, so polling consumers can be unit
-    /// tested without a transport worker.
-    #[cfg(test)]
-    pub(crate) fn ready(result: Result<HttpResponse, HttpTransportError>) -> Self {
-        Self {
-            task: PollTask::ready(result),
-        }
-    }
-
     /// Await completion during pre-frame mission admission. This consumes the
     /// one-shot task, retains the same bounded transport, and never blocks a
     /// native executor thread or the browser event loop.

@@ -3,7 +3,6 @@
 
 use super::{
     GameIdentitySigner, LeaderboardSigningError, assemble_signed_submission, invalid_claim,
-    submission_signing_bytes,
 };
 use ed25519_dalek::{Signer as _, SigningKey};
 use robin_run_protocol::{
@@ -25,6 +24,12 @@ fn public_key(key: &SigningKey) -> PublicKey32 {
 
 fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
+}
+
+/// Bytes the uploader signs for `submission`, validating the claim first.
+fn submission_signing_bytes(submission: &SubmissionV2) -> Result<Vec<u8>, LeaderboardSigningError> {
+    SignedSubmissionV2::signing_bytes(submission)
+        .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))
 }
 
 fn sign_submission_with_key(

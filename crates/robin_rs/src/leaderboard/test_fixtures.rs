@@ -58,6 +58,7 @@ pub(crate) fn compact_replay_bytes() -> Vec<u8> {
         .into_bytes()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn replay_artifact(bytes: &[u8]) -> ReplayArtifactV1 {
     ReplayArtifactV1 {
         artifact: ArtifactRefV1 {
@@ -101,6 +102,7 @@ pub(crate) fn standard_medium_policy() -> BoardSimulationPolicyV1 {
 }
 
 /// A complete, valid V2 submission of the fixture replay by `uploader`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn submission(uploader: PublicKey32) -> SubmissionV2 {
     SubmissionV2 {
         schema_version: SCHEMA_VERSION_V2,

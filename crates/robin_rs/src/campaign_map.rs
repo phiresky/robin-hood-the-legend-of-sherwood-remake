@@ -673,21 +673,25 @@ impl CampaignMapModalState {
             {
                 return Err("Only successful mission recordings can be submitted.".into());
             }
-            let key = play.attempt.key(
-                play.campaign_run_id
-                    .ok_or("Recording has no campaign identity")?,
-            );
-            #[cfg(not(target_arch = "wasm32"))]
-            let edition = crate::game_session::leaderboard_runtime::installed_content_edition(
-                &self.application,
-            );
+            let campaign_run_id = play
+                .campaign_run_id
+                .ok_or("Recording has no campaign identity")?;
             #[cfg(target_arch = "wasm32")]
-            return Err("Local replay submission is unavailable in this browser.".into());
+            {
+                let _ = campaign_run_id;
+                Err("Local replay submission is unavailable in this browser.".into())
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
+                let edition = crate::game_session::leaderboard_runtime::installed_content_edition(
+                    &self.application,
+                );
                 self.recording_index.submit_recording(
                     path,
-                    (key, play.attempt.completed_at_unix_seconds()),
+                    (
+                        play.attempt.key(campaign_run_id),
+                        play.attempt.completed_at_unix_seconds(),
+                    ),
                     edition,
                 )?;
                 Ok("Submission started. Check the replay status below.".into())

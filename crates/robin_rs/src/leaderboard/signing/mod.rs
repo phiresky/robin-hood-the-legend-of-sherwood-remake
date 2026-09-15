@@ -33,6 +33,9 @@ pub enum LeaderboardSigningError {
     InvalidClaim(String),
     #[error("leaderboard signing claim names a different public key")]
     WrongIdentity,
+    /// Only the in-process native signer canonicalizes documents; the
+    /// browser signer origin does this itself.
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("canonical leaderboard signing failed: {0}")]
     Canonical(String),
     #[cfg(target_arch = "wasm32")]
@@ -49,7 +52,9 @@ impl LeaderboardSigningError {
     pub fn is_transient(&self) -> bool {
         match self {
             Self::Identity(_) => true,
-            Self::WrongIdentity | Self::InvalidClaim(_) | Self::Canonical(_) => false,
+            Self::WrongIdentity | Self::InvalidClaim(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Canonical(_) => false,
             #[cfg(target_arch = "wasm32")]
             Self::DocumentTooLarge { .. } | Self::InvalidJson(_) => false,
         }
@@ -69,12 +74,6 @@ pub(crate) trait GameIdentitySigner {
     async fn sign_submission_owner_status(
         challenge: SubmissionOwnerStatusChallengeV1,
     ) -> Result<SubmissionOwnerStatusEnvelopeV1, LeaderboardSigningError>;
-}
-
-/// Bytes the uploader signs for `submission`, validating the claim first.
-fn submission_signing_bytes(submission: &SubmissionV2) -> Result<Vec<u8>, LeaderboardSigningError> {
-    SignedSubmissionV2::signing_bytes(submission)
-        .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))
 }
 
 /// Assemble a signed submission and verify the signature locally, so a
