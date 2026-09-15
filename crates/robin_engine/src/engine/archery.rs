@@ -3655,28 +3655,8 @@ impl EngineInner {
                 target_id,
                 ..
             } => self.apply_ability_carry_done(carrier_id, target_id),
-            AbilityTickResult::DropDone {
-                carrier_id,
-                target_id,
-                drop_posture,
-                carrier_pos,
-                carrier_direction,
-                ..
-            } => {
-                crate::abilities::sync_terminal_corpse_drop_animation(
-                    &mut self.world.entities,
-                    &assets.profile_manager,
-                    carrier_id,
-                );
-                self.apply_completed_corpse_drop(
-                    sim,
-                    assets,
-                    carrier_id,
-                    target_id,
-                    drop_posture,
-                    carrier_pos,
-                    carrier_direction,
-                );
+            AbilityTickResult::DropDone { carrier_id } => {
+                self.execute_corpse_drop_done(sim, assets, carrier_id);
             }
             AbilityTickResult::TieDone {
                 actor_id,

@@ -136,17 +136,7 @@ pub enum AbilityTickResult {
         elem_idx: usize,
     },
     /// Little John finished dropping a body.
-    DropDone {
-        carrier_id: EntityId,
-        target_id: EntityId,
-        /// Posture to restore on the dropped body.
-        drop_posture: Posture,
-        /// Position to place the dropped body at.
-        carrier_pos: MapPoint,
-        carrier_direction: u16,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    },
+    DropDone { carrier_id: EntityId },
     /// PC finished tying up an unconscious enemy.
     TieDone {
         actor_id: EntityId,
@@ -1970,29 +1960,10 @@ pub fn tick_ability(
         return results;
     }
     if motion == SpriteMotionState::Terminated {
-        let actor_pos = entity.element_data().position_map();
         match kind {
-            AbilityKind::Drop => {
-                let actor_direction = u16::try_from(entity.element_data().direction())
-                    .unwrap_or_else(|_| {
-                        panic!("Drop owner {entity_id:?} has invalid terminal direction")
-                    });
-                let carried_posture = entity
-                    .pc_data()
-                    .unwrap_or_else(|| {
-                        panic!("Drop owner {entity_id:?} requires PC carried-posture state")
-                    })
-                    .live_carried_posture();
-                results.push(AbilityTickResult::DropDone {
-                    carrier_id: entity_id,
-                    target_id: ability.target.expect("Drop target"),
-                    drop_posture: carried_posture,
-                    carrier_pos: actor_pos,
-                    carrier_direction: actor_direction,
-                    seq_id,
-                    elem_idx,
-                })
-            }
+            AbilityKind::Drop => results.push(AbilityTickResult::DropDone {
+                carrier_id: entity_id,
+            }),
             AbilityKind::ClimbOnShoulders => {
                 results.push(AbilityTickResult::ClimbOnShouldersDone {
                     climber_id: entity_id,
@@ -2379,26 +2350,7 @@ fn completion_result(
                 elem_idx,
             }
         }
-        AbilityKind::Drop => {
-            let actor_direction = u16::try_from(entity.element_data().direction())
-                .unwrap_or_else(|_| panic!("Drop owner {entity_id:?} has invalid Done direction"));
-            let carried_posture = entity
-                .pc_data()
-                .unwrap_or_else(|| {
-                    panic!("Drop owner {entity_id:?} requires PC carried-posture state")
-                })
-                .live_carried_posture();
-            entity.set_posture(Posture::Upright);
-            AbilityTickResult::DropDone {
-                carrier_id: entity_id,
-                target_id: target(),
-                drop_posture: carried_posture,
-                carrier_pos: actor_pos,
-                carrier_direction: actor_direction,
-                seq_id,
-                elem_idx,
-            }
-        }
+        AbilityKind::Drop => unreachable!("drop completion runs at animation termination"),
         AbilityKind::Tie => AbilityTickResult::TieDone {
             actor_id: entity_id,
             target_id: target(),
