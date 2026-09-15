@@ -1,5 +1,5 @@
 fn main() {
-    // Limits precede even argv/path and config parsing: hostile bitcode can
+    // Limits precede even argv/path and job parsing: hostile bitcode can
     // request an allocation large enough to abort rather than unwind.
     if let Err(error) = robin_replay_verifier::worker_process::apply_bootstrap_resource_limits(
         robin_replay_verifier::worker_process::BootstrapResourceLimits::default(),
