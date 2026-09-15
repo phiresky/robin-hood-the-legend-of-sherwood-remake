@@ -137,7 +137,11 @@ impl EngineInner {
         let input = extract_exact_forecast_input(
             self,
             self.expect_entity(target, "visibility loss forecast target"),
-            selected_actor_is_passing_door(&self.orders.sequence_manager, target),
+            selected_actor_is_passing_door(
+                &self.world.entities,
+                &self.orders.sequence_manager,
+                target,
+            ),
         )
         .expect("visibility loss forecast requires an actor");
         let direction = self

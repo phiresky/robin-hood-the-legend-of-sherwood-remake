@@ -346,10 +346,7 @@ impl crate::engine::EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> Option<MotionState> {
-        let (seq_id, elem_idx) = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)?;
+        let (seq_id, elem_idx) = self.world.entities.current_element_for_actor(owner)?;
         let (action, flags) = self
             .orders
             .sequence_manager
@@ -420,12 +417,7 @@ impl crate::engine::EngineInner {
     /// detaches active mechanics; preserve the same observable cleanup at the
     /// exact seek-refresh boundary.
     fn stop_selected_seek_for_refresh(&mut self, owner: EntityId) {
-        // The initial Translate(SEEK) wrapper is semantically selected in
-        // Original before it reaches seek refresh, but Rust deliberately
-        // leaves ordered elements Todo until concrete movement dispatch.
-        // Therefore manager `current_element_for_actor` cannot recognize the
-        // initial wrapper here. Callers have already identified the selected
-        // Seek; this cleanup only clears its owner's active mechanics.
+        // The selected Seek remains installed while refresh clears its active mechanics.
         let frame = self.control.frame_counter;
         if let Some(entity) = self.get_entity_mut(owner) {
             tracing::trace!(
@@ -671,12 +663,7 @@ impl crate::engine::EngineInner {
         let actor = entity.actor_data()?;
         let seq_id = actor.active_movement.sequence_id?;
         let elem_idx = actor.active_movement.element_index;
-        if self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)
-            != Some((seq_id, elem_idx))
-        {
+        if self.world.entities.current_element_for_actor(owner) != Some((seq_id, elem_idx)) {
             return None;
         }
         let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;

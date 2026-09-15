@@ -1631,13 +1631,7 @@ impl EngineInner {
         OwnerActionBarrier::Reach
     }
 
-    /// Internal carrier for a pre-built animation order.
-    /// `launch_single_order_sequence_stamped` normally
-    /// promotes these synchronously, but a postponed
-    /// carrier returns here as Todo when its blocker
-    /// completes.  The order is already attached; keep the
-    /// element alive so the actor animation driver can
-    /// consume it instead of dropping the visible action.
+    /// Execute an animation carrier whose orders were authored at registration.
     pub(super) fn instruct_generic(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1671,7 +1665,8 @@ impl EngineInner {
                 .expect("accepted empty Generic lost its actor")
                 .continuation
                 .motion_state = crate::sprite::MotionState::InProgress;
-            self.orders.sequence_manager.set_translating_element(None);
+            self.select_sequence_element(owner, None);
+            self.publish_selected_order_as_installed(owner);
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
             self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);

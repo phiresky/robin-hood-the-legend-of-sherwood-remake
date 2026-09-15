@@ -31,16 +31,6 @@ fn required_options_reject_omission_but_preserve_null_and_populated_values() {
 
     let actor = EntityId::new(3, crate::entity_id::EntityIdKind::Pc);
     check(
-        crate::sequence::SequenceManager::new(),
-        "",
-        "actor_translating",
-        serde_json::to_value((
-            actor,
-            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(7), 2),
-        ))
-        .unwrap(),
-    );
-    check(
         crate::macro_store::QaReplayCommand::SwordStrike {
             target: actor,
             command: crate::element_kinds::Command::SwordstrikeThrustA,

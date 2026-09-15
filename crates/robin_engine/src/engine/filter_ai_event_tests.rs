@@ -338,7 +338,7 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(actor)
+            .current_order_for_actor(&engine.world.entities, actor)
             .is_none(),
         "the just-completed animation has no live order even though the sprite retains its row"
     );
@@ -370,8 +370,8 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
     );
     assert_eq!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(actor)
             .and_then(|(sequence, index)| engine
                 .orders
@@ -1770,6 +1770,7 @@ fn install_test_action(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1798,6 +1799,7 @@ fn install_test_wait_timer(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.dispatch_wait_command(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1861,6 +1863,7 @@ fn install_test_order_queue(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1918,6 +1921,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
+        engine.select_sequence_element(unlocker, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -2268,8 +2272,8 @@ fn animation_execution_gates_do_not_skip_action_change() {
             OrderType::WaitingUpright,
         );
         let (seq_id, elem_idx) = engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(actor)
             .expect("skipped actor has a current element");
         engine
@@ -2459,6 +2463,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
+        engine.select_sequence_element(actor, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -2543,7 +2548,7 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(later)
+            .current_order_for_actor(&engine.world.entities, later)
             .is_some(),
         "the later actor must initialize and dispatch its Wait only upon reaching its own slot"
     );
@@ -2831,6 +2836,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
+            engine.select_sequence_element(later, Some((sequence, 0)));
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -2996,7 +3002,7 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(actor)
+            .current_order_for_actor(&engine.world.entities, actor)
             .is_none(),
         "the original game does not create fallback waiting after same-slot order exhaustion"
     );
@@ -3045,10 +3051,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     );
 
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(actor),
+        engine.world.entities.current_element_for_actor(actor),
         Some((successor, 0))
     );
     assert_eq!(
@@ -3099,10 +3102,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         SequenceState::Terminated
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(actor),
+        engine.world.entities.current_element_for_actor(actor),
         None,
         "empty accepted carrier must complete in the same Instruct call"
     );
@@ -3144,6 +3144,7 @@ fn turning_selects_sprite_row_after_the_direction_step() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3205,6 +3206,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3409,6 +3411,7 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3524,6 +3527,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
+            engine.select_sequence_element(actor, Some((sequence, 0)));
             engine.dispatch_wait_command(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -3609,6 +3613,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                     .orders
                     .sequence_manager
                     .start_sequence_level(sequence);
+                engine.select_sequence_element(target, Some((sequence, 0)));
                 engine.dispatch_wait_command(
                     &crate::sim_rng::test_context(),
                     &assets,
@@ -3901,6 +3906,7 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
         .sequence_manager
         .start_sequence_level(sequence);
     let assets = LevelAssets::new();
+    engine.select_sequence_element(soldier, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4497,8 +4503,8 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
             // state settles back to Waiting.
             assert_eq!(
                 engine
-                    .orders
-                    .sequence_manager
+                    .world
+                    .entities
                     .current_element_for_actor(actor)
                     .and_then(|(sequence, index)| engine
                         .orders
@@ -4773,7 +4779,7 @@ fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
     let (sequence, element, _) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(rescuer)
+        .current_order_for_actor(&engine.world.entities, rescuer)
         .expect("rescuer has its WakingUp order");
     engine
         .orders
@@ -5631,6 +5637,7 @@ fn select_unrelated_pass_door_fixture(
         .orders
         .sequence_manager
         .start_sequence_level(pass_sequence);
+    engine.select_sequence_element(door_actor, Some((pass_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -5648,7 +5655,11 @@ fn resolve_test_actor_forecast(
     let input = crate::engine::ai::extract_exact_forecast_input(
         engine,
         engine.get_entity(owner).expect("forecast actor exists"),
-        crate::engine::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner),
+        crate::engine::ai::selected_actor_is_passing_door(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner,
+        ),
     )
     .expect("forecast owner is an actor");
     crate::ai::prepare_forecast_destination_for_ia(
@@ -5734,7 +5745,11 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(actor);
     assert!(
-        !super::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner),
+        !super::ai::selected_actor_is_passing_door(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        ),
         "a live saved door outside selected PassDoor must use the current-position forecast"
     );
     assert_eq!(
@@ -5755,6 +5770,7 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -5762,8 +5778,11 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         sequence_id,
         0,
     );
-    let selected_pass_door =
-        super::ai::selected_actor_is_passing_door(&engine.orders.sequence_manager, owner);
+    let selected_pass_door = super::ai::selected_actor_is_passing_door(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        owner,
+    );
     assert!(selected_pass_door);
 
     let input = super::ai::extract_forecast_input(
@@ -7237,6 +7256,7 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
             crate::order::OrderType::WalkingUpright,
         ),
     );
+    engine.select_sequence_element(owner, Some((selected, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

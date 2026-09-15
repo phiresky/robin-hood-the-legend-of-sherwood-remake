@@ -2,7 +2,7 @@ use super::scenarios::assets_with_test_pc_profile;
 use super::*;
 
 #[test]
-fn instruct_publication_reads_the_translated_element_not_owner_wide_selection() {
+fn instruction_publication_follows_actor_selection_before_progress_promotion() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -40,7 +40,16 @@ fn instruct_publication_reads_the_translated_element_not_owner_wide_selection() 
     let incoming_sequence =
         engine.launch_element(&crate::sim_rng::test_context(), &assets, incoming);
 
-    engine.publish_instructed_order_as_installed(owner, incoming_sequence, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(crate::sequence::SequenceElementRef::new(
+        incoming_sequence,
+        0,
+    ));
+    engine.publish_selected_order_as_installed(owner);
 
     assert_eq!(
         engine
@@ -95,6 +104,7 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
         wait_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
@@ -165,6 +175,7 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
         wait_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
@@ -228,6 +239,7 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
         wait_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
@@ -445,6 +457,7 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
         live_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((live_sequence, 0)));
     engine.publish_selected_order_as_installed(owner);
 
     // CrouchUp cannot retain the soldier's attentive action state. With a
@@ -484,7 +497,7 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
     let (selected_sequence, selected_index, selected_order) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .expect("the pre-existing live owner element remains selected");
     assert_eq!((selected_sequence, selected_index), (live_sequence, 0));
     assert_eq!(selected_order.order_id, live_order_id);
@@ -533,6 +546,7 @@ fn retained_waiting_sword_handoff_preserves_running_sprite_identity() {
         sequence,
         0,
     );
+    engine.select_sequence_element(soldier, Some((sequence, 0)));
 
     engine.publish_selected_order_as_installed(soldier);
 
@@ -2563,6 +2577,7 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
         outgoing_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((outgoing_sequence, 0)));
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.position_iface_mut().set_map_goal(retained_goal);
@@ -2946,10 +2961,7 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
         "the non-animation RefreshingSeek arm must not fabricate a sprite motion"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         None,
         "the attached post-seek sequence waits for the later manager phase"
     );
@@ -3009,6 +3021,7 @@ fn point_refreshing_seek_returns_terminated_without_refreshing() {
         sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
 
     assert_eq!(
         engine.tick_refreshing_seek_for_owner(
@@ -3060,6 +3073,7 @@ fn entity_refreshing_seek_with_cleared_actor_target_terminates_without_refreshin
         sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
 
     assert_eq!(
         engine.tick_refreshing_seek_for_owner(
@@ -3121,14 +3135,12 @@ fn point_refreshing_seek_with_successor_projects_back_to_in_progress() {
         sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
 
     engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::default());
 
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((sequence, 0)),
         "order advancement keeps the same element selected when another order is available"
     );
@@ -3279,6 +3291,7 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
         incoming_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((incoming_sequence, 0)));
 
     let (accepted, cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
         EngineInner::with_condolation_callback(
@@ -3460,62 +3473,98 @@ fn stop_parry_sword_queues_exit_transition() {
     );
 }
 
-/// A LeaningOut soldier that receives a command requiring Upright
-/// (e.g. `Move`) must snap to Upright and queue the
-/// `TransitionLeaningOutWaitingAlerted` animation so the lean-out-
-/// window unstick transition plays.
 #[test]
-fn soldier_leaning_out_to_upright_on_move() {
+fn posture_transition_orders_preserve_live_pose_until_execution() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
 
-    let mut engine = EngineInner::new();
-    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
+    for (posture, command, predicted, animation) in [
+        (
+            Posture::LeaningOut,
+            Command::Move,
+            Posture::Upright,
+            Some(OrderType::TransitionLeaningOutWaitingAlerted),
+        ),
+        (Posture::Upright, Command::Move, Posture::Upright, None),
+        (
+            Posture::LeaningOut,
+            Command::ShootBow,
+            Posture::LeaningOut,
+            None,
+        ),
+        (
+            Posture::Sitting,
+            Command::Point,
+            Posture::Upright,
+            Some(OrderType::TransitionSittingWaitingUpright),
+        ),
+        (
+            Posture::Leisure,
+            Command::EnterLeisure,
+            Posture::Leisure,
+            None,
+        ),
+        (
+            Posture::Leisure,
+            Command::Point,
+            Posture::Upright,
+            Some(OrderType::TransitionSpecialWaitingUpright),
+        ),
+    ] {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(make_test_soldier(posture));
+        let element = if command == Command::Move {
+            SequenceElement::new_movement(1, command, Some(owner), OrderType::WalkingUpright)
+        } else {
+            SequenceElement::new_generic(1, command, Some(owner))
+        };
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine.stamp_element_transition_state(owner, sequence, 0);
+        assert!(
+            engine.generate_transition(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                &mut Vec::new(),
+                owner,
+                sequence,
+                0,
+            ),
+            "{posture:?} {command:?}"
+        );
 
-    let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::Move);
-    assert!(changed, "auto-leave should fire for LeaningOut + Move");
-
-    let entity = engine.get_entity(soldier_id).expect("soldier present");
-    assert_eq!(
-        entity.element_data().posture(),
-        Posture::Upright,
-        "posture should snap to Upright"
-    );
-
-    let next_order = engine
-        .orders
-        .sequence_manager
-        .current_order_for_actor(soldier_id)
-        .map(|(_, _, o)| o.order_type);
-    assert_eq!(
-        next_order,
-        Some(OrderType::TransitionLeaningOutWaitingAlerted),
-        "lean-out transition animation should be queued"
-    );
-}
-
-/// An Upright soldier invoked with a posture-neutral command should
-/// not be touched by `auto_leave_disguise_if_needed`.
-#[test]
-fn soldier_upright_move_skips_auto_leave() {
-    use crate::element::{Command, Posture};
-
-    let mut engine = EngineInner::new();
-    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::Upright));
-
-    let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::Move);
-    assert!(!changed, "no transition needed for an Upright soldier");
-
-    let entity = engine.get_entity(soldier_id).expect("soldier present");
-    assert_eq!(entity.element_data().posture(), Posture::Upright);
-    assert!(
-        engine
+        let element = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(soldier_id)
-            .is_none(),
-        "no animation should be queued"
-    );
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(element.posture_after_transition, predicted, "{command:?}");
+        assert_eq!(
+            engine.get_entity(owner).unwrap().element_data().posture(),
+            posture
+        );
+        let posture_orders: Vec<_> = element
+            .orders
+            .iter()
+            .filter(|order| {
+                matches!(
+                    order.order_type,
+                    OrderType::TransitionLeaningOutWaitingAlerted
+                        | OrderType::TransitionSittingWaitingUpright
+                        | OrderType::TransitionSpecialWaitingUpright
+                )
+            })
+            .collect();
+        assert_eq!(
+            posture_orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            animation.into_iter().collect::<Vec<_>>(),
+            "{posture:?} {command:?}",
+        );
+        assert!(posture_orders.iter().all(|order| !order.compute_direction));
+    }
 }
 
 #[test]
@@ -3546,7 +3595,7 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
     let order = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .map(|(_, _, order)| order.order_type);
     assert_eq!(order, Some(OrderType::Sitting));
     assert_eq!(
@@ -3591,8 +3640,8 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
     assert_eq!(future.state, SequenceState::Todo);
     assert!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .is_none(),
         "a future command level is not the actor's current order"
@@ -3607,8 +3656,8 @@ fn idle_wait_runs_while_future_owner_action_is_behind_ownerless_timer() {
     engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
 
     let (wait_sequence, wait_index) = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(owner)
         .expect("idle actor must execute a default Wait");
     let wait = engine
@@ -3796,7 +3845,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     let active = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(soldier_id)
+        .current_order_for_actor(&engine.world.entities, soldier_id)
         .map(|(_, _, o)| o.order_type);
     assert_eq!(
         active,
@@ -3810,9 +3859,8 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
 /// when an enemy spots the PC) must queue the alerted-transition
 /// animation.  The previous bug left
 /// `SequenceElement::posture_after_transition` at `Posture::Undefined`
-/// because only `ensure_wait_element` and `auto_leave_disguise_if_needed`
-/// stamped it; `arbitrate_instruct` now stamps it unconditionally
-/// (`set_posture_after_transition(get_posture())`).
+/// because instruction admission did not consistently stamp the actor's
+/// live posture before generating transition orders.
 #[test]
 fn set_soldier_attentive_mode_plays_transition_from_upright() {
     let mut display = HostDisplayState::default();
@@ -3850,7 +3898,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     let active = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(soldier_id)
+        .current_order_for_actor(&engine.world.entities, soldier_id)
         .map(|(_, _, o)| o.order_type);
     assert_eq!(
         active,
@@ -3957,6 +4005,7 @@ fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
             selected,
             0,
         );
+        engine.select_sequence_element(owner, Some((selected, 0)));
 
         let handled = engine.execute_ai_combat_expected_event(
             &sim,
@@ -4012,6 +4061,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
         movement_sequence,
         0,
     );
+    engine.select_sequence_element(soldier_id, Some((movement_sequence, 0)));
 
     {
         let launch_assets = engine.test_runtime_assets();
@@ -4058,7 +4108,7 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     let (attentive_seq, attentive_idx, front) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(soldier_id)
+        .current_order_for_actor(&engine.world.entities, soldier_id)
         .expect("attentive element should be current after the postpone");
     assert_eq!(
         front.order_type,
@@ -4243,6 +4293,7 @@ fn arbitration_ignores_serialized_order_ai_lock_like_original() {
         current_seq,
         0,
     );
+    engine.select_sequence_element(owner, Some((current_seq, 0)));
 
     let mut incoming = SequenceElement::new(1, Command::Turn, Some(owner));
     incoming.priority = SequencePriority::Preference;
@@ -4304,6 +4355,7 @@ fn injury_postpones_nonterminating_lift_wait_despite_done_sprite_cycle() {
             current_seq,
             0,
         );
+        engine.select_sequence_element(owner, Some((current_seq, 0)));
 
         let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(owner));
         injury.priority = SequencePriority::Injury;
@@ -4431,10 +4483,7 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
         outgoing_sequence,
         0,
     );
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, outgoing_sequence, 0);
+    engine.select_sequence_element(owner, Some((outgoing_sequence, 0)));
 
     let mut incoming = SequenceElement::new(1, Command::ReceiveDamage, Some(owner));
     incoming.priority = SequencePriority::Lethal;
@@ -4447,25 +4496,16 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
         incoming_sequence,
         0
     ));
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .end_instruct_callback(owner, outgoing_sequence, 0),
+    assert_ne!(
+        engine.world.entities.current_element_for_actor(owner),
+        Some((outgoing_sequence, 0)),
         "the reentrant lethal instruction must permanently supersede the outgoing injury callback"
     );
 
     // A nested callback sees the accepted lethal instruction selected.
     // Its Wait must postpone behind that instruction.
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, incoming_sequence, 0);
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((incoming_sequence, 0)),
         "the outgoing state-change callback must observe incoming lethal damage as selected"
     );
@@ -4492,70 +4532,10 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
         Some((nested_sequence, 0))
     );
 
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .end_instruct_callback(owner, incoming_sequence, 0),
+    assert_eq!(
+        engine.world.entities.current_element_for_actor(owner),
+        Some((incoming_sequence, 0)),
         "rejected recursive work must not supersede the incoming selection"
-    );
-}
-
-#[test]
-fn nested_instruct_callback_permanently_supersedes_its_parent_selection() {
-    let assets = LevelAssets::default();
-    use crate::element::{Command, Posture};
-    use crate::sequence::SequenceElement;
-
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    let outer = engine.launch_element(
-        &crate::sim_rng::test_context(),
-        &assets,
-        SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
-    );
-    let nested = engine.launch_element(
-        &crate::sim_rng::test_context(),
-        &assets,
-        SequenceElement::new(1, Command::LookLeft, Some(owner)),
-    );
-
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, outer, 0);
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, nested, 0);
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
-        Some((nested, 0))
-    );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .end_instruct_callback(owner, nested, 0),
-        "the recursive selection itself remains current"
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
-        None,
-        "returning from recursive Instruct must not restore the overwritten parent pointer"
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .end_instruct_callback(owner, outer, 0),
-        "the outer Instruct must detect that recursive work superseded it"
     );
 }
 
@@ -4613,6 +4593,7 @@ fn done_propagation_requires_the_current_order_identity() {
         replacement_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((replacement_sequence, 0)));
 
     {
         let sprite = &mut engine
@@ -4815,6 +4796,7 @@ fn postponed_held_pc_shot_leaves_human_fifo_owned_by_sequence_manager() {
         blocker_seq,
         0,
     );
+    engine.select_sequence_element(pc, Some((blocker_seq, 0)));
 
     engine
         .get_entity_mut(pc)
@@ -4965,7 +4947,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     let (selected_seq, _, selected_order) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(pc)
+        .current_order_for_actor(&engine.world.entities, pc)
         .expect("the live bow Wait must remain selected");
     assert_eq!(selected_seq, wait_seq);
     assert_eq!(selected_order.order_id, wait_order_id);
@@ -5018,6 +5000,7 @@ fn started_pass_door_rejects_new_move() {
         pass_seq,
         0,
     );
+    engine.select_sequence_element(owner, Some((pass_seq, 0)));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -5072,6 +5055,7 @@ fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
         sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
 
     assert!(
         engine
@@ -5111,6 +5095,7 @@ fn executing_pass_door_postpones_new_move() {
         pass_seq,
         0,
     );
+    engine.select_sequence_element(owner, Some((pass_seq, 0)));
     // Execute clears this flag at the end of the actor's frame.
     engine
         .get_entity_mut(owner)
@@ -5186,7 +5171,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     let front = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(soldier_id)
+        .current_order_for_actor(&engine.world.entities, soldier_id)
         .map(|(_, _, o)| o.order_type);
     assert_eq!(
         front,
@@ -5546,74 +5531,6 @@ fn waypoint_script_heap_round_trips_through_serde() {
     );
 }
 
-/// Leaning-out soldiers that receive `Command::ShootBow` must keep
-/// the lean-out pose — transition-flag calculation pairs `MUST_BE_UPRIGHT`
-/// with `CAN_BE_LEANING_OUT` for SHOOT_BOW, so the auto-leave should
-/// skip.
-#[test]
-fn soldier_leaning_out_keeps_pose_for_shoot_bow() {
-    use crate::element::{Command, Posture};
-
-    let mut engine = EngineInner::new();
-    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
-
-    let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::ShootBow);
-    assert!(
-        !changed,
-        "ShootBow + LeaningOut must stay in lean-out pose (CAN_BE_LEANING_OUT)"
-    );
-
-    let entity = engine.get_entity(soldier_id).expect("soldier present");
-    assert_eq!(entity.element_data().posture(), Posture::LeaningOut);
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(soldier_id)
-            .is_none(),
-        "no unstick animation should be queued"
-    );
-}
-
-/// The `auto_leave_disguise_if_needed` path should set
-/// `posture_after_transition` and `action_state_after_transition`
-/// on the in-flight sequence element.
-#[test]
-fn soldier_leaning_out_updates_sequence_element_fields() {
-    let assets = LevelAssets::default();
-    use crate::element::{ActionState, Command, Posture};
-    use crate::sequence::SequenceElement;
-
-    let mut engine = EngineInner::new();
-    let soldier_id = engine.add_test_entity(make_test_soldier(Posture::LeaningOut));
-
-    // Launch a Move sequence element so there's an element to decorate.
-    let elem = SequenceElement::new_movement(
-        1,
-        Command::Move,
-        Some(soldier_id),
-        crate::order::OrderType::WalkingUpright,
-    );
-    let seq_id = {
-        let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, elem)
-    };
-
-    let changed = engine.auto_leave_disguise_if_needed(soldier_id, Command::Move);
-    assert!(changed);
-
-    // Locate the element and verify the post-transition fields snap.
-    let found = engine
-        .orders
-        .sequence_manager
-        .sequences_iter()
-        .find(|s| s.id == seq_id)
-        .and_then(|s| s.elements.iter().find(|e| e.command == Command::Move));
-    let elem = found.expect("sequence element present");
-    assert_eq!(elem.posture_after_transition, Posture::Upright);
-    assert_eq!(elem.action_state_after_transition, ActionState::Waiting);
-}
-
 /// Regression: synchronous instruction handling fires inside
 /// `launch_element` for owned elements, so an element launched
 /// mid-tick should be dispatched and reach `InProgress` during the
@@ -5763,7 +5680,7 @@ fn assert_npc_translate_books(
     let (order_seq, _, order_type) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(actor)
+        .current_order_for_actor(&engine.world.entities, actor)
         .map(|(s, e, o)| (s, e, o.order_type))
         .expect("front order should be set");
     assert_eq!(
@@ -5823,7 +5740,7 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     let (order_seq, order_elem, order) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(rescuer)
+        .current_order_for_actor(&engine.world.entities, rescuer)
         .expect("WakeUp should queue an animation order");
     assert_eq!(order_seq, seq_id);
     assert_eq!(order.order_type, OrderType::Turning);
@@ -5877,7 +5794,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(target)
+            .current_order_for_actor(&engine.world.entities, target)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::BeingUnconscious)
     );
@@ -5912,7 +5829,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
     let (fresh_wait, current_order) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(target)
+        .current_order_for_actor(&engine.world.entities, target)
         .map(|(seq_id, _, order)| (seq_id, order.order_type))
         .expect("fresh recovery Wait should be current");
     assert_eq!(current_order, OrderType::StandingUp);
@@ -6177,64 +6094,6 @@ fn npc_sit_down_anim_completion_flips_posture_to_sitting() {
     );
 }
 
-/// A sitting NPC who receives `Point` first stands up: the auto-leave
-/// path snaps the posture to `Upright` and queues the
-/// `TransitionSittingWaitingUpright` animation on the actor's
-/// `order_queue` so the visible stand-up plays before the gesture.
-#[test]
-fn sitting_npc_point_auto_stands_up() {
-    use crate::element::{Command, Posture};
-    use crate::order::OrderType;
-
-    let mut engine = EngineInner::new();
-    let actor = engine.add_test_entity(make_test_soldier(Posture::Sitting));
-
-    let changed = engine.auto_leave_disguise_if_needed(actor, Command::Point);
-    assert!(changed, "auto-leave should fire for Sitting + Point");
-
-    let entity = engine.get_entity(actor).expect("entity present");
-    assert_eq!(entity.element_data().posture(), Posture::Upright);
-
-    let next_order = engine
-        .orders
-        .sequence_manager
-        .current_order_for_actor(actor)
-        .map(|(_, _, o)| o.order_type);
-    assert_eq!(
-        next_order,
-        Some(OrderType::TransitionSittingWaitingUpright),
-        "stand-up transition should be queued on the owning sequence element",
-    );
-}
-
-/// `EnterLeisure` on an already-leisuring NPC must not auto-leave
-/// leisure first — transition-flag calculation sets
-/// `CHANGEPOSTURE_CAN_BE_LEISURING` for this command.
-#[test]
-fn enter_leisure_on_leisuring_npc_skips_auto_leave() {
-    use crate::element::{Command, Posture};
-
-    let mut engine = EngineInner::new();
-    let actor = engine.add_test_entity(make_test_soldier(Posture::Leisure));
-
-    let changed = engine.auto_leave_disguise_if_needed(actor, Command::EnterLeisure);
-    assert!(
-        !changed,
-        "leisure-leisure re-entry should be a no-op (CAN_BE_LEISURING exempt)",
-    );
-
-    let entity = engine.get_entity(actor).expect("entity present");
-    assert_eq!(entity.element_data().posture(), Posture::Leisure);
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(actor)
-            .is_none(),
-        "no transition animation should be queued",
-    );
-}
-
 /// When the `TransitionWaitingUprightSpecial` animation completes,
 /// the actor's posture flips to `Leisure`.
 #[test]
@@ -6367,6 +6226,7 @@ fn redundant_pc_crouch_stops_path_wait_before_transition_rejection() {
             movement_sequence,
             0,
         );
+        engine.select_sequence_element(owner, Some((movement_sequence, 0)));
         engine.publish_selected_order_as_installed(owner);
         let incoming = engine.launch_element(
             &crate::sim_rng::test_context(),
@@ -6394,7 +6254,7 @@ fn redundant_pc_crouch_stops_path_wait_before_transition_rejection() {
             .unwrap();
         if command == Command::MoveWaiting {
             assert_eq!(movement.state, SequenceState::Interrupted);
-            assert_eq!(engine.current_sequence_element_for_actor(owner), None);
+            assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
             assert_eq!(
                 engine
                     .get_entity(owner)
@@ -6407,7 +6267,7 @@ fn redundant_pc_crouch_stops_path_wait_before_transition_rejection() {
         } else {
             assert_eq!(movement.state, SequenceState::InProgress);
             assert_eq!(
-                engine.current_sequence_element_for_actor(owner),
+                engine.world.entities.current_element_for_actor(owner),
                 Some((movement_sequence, 0))
             );
         }

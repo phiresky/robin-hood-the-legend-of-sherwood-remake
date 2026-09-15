@@ -2452,8 +2452,8 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
         Some(crate::order::OrderType::TransitionWaitingUprightWalkingUpright)
     );
     let (sequence_id, element_index) = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(pc_id)
         .expect("same-sector DropAle installs its direct movement");
     let movement = engine
@@ -5597,6 +5597,7 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
         .orders
         .sequence_manager
         .start_sequence_level(movement_sequence);
+    engine.select_sequence_element(pc_id, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -6274,6 +6275,7 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
         .orders
         .sequence_manager
         .start_sequence_level(wait_sequence);
+    engine.select_sequence_element(pc_id, Some((wait_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

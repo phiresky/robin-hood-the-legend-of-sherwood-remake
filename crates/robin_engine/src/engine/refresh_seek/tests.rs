@@ -468,6 +468,16 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
         .get_element_mut(sequence_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -834,6 +844,16 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
         .get_element_mut(seek_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_id, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -939,6 +959,16 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
         .get_element_mut(seek_id, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_id, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1149,6 +1179,16 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1189,6 +1229,16 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         .get_element_mut(pass_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(pass_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((pass_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1286,6 +1336,16 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1335,10 +1395,7 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
     );
     if expected_entry_state == SequenceState::Interrupted {
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            engine.world.entities.current_element_for_actor(owner),
             None,
             "seek refresh registers its replacement for the later manager phase"
         );
@@ -1448,6 +1505,16 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1519,6 +1586,16 @@ fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1608,6 +1685,16 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager
@@ -1670,6 +1757,16 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
         .get_element_mut(seek_seq, 0)
         .unwrap()
         .state = crate::sequence::SequenceState::InProgress;
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seek_seq, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((seek_seq, 0)),
+    );
     engine
         .orders
         .sequence_manager

@@ -587,6 +587,7 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(passing, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -910,6 +911,7 @@ fn periodic_phalanx_fixture(
         .orders
         .sequence_manager
         .start_sequence_level(selected);
+    engine.select_sequence_element(owner, Some((selected, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

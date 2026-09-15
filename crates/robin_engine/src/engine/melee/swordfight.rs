@@ -526,10 +526,8 @@ impl EngineInner {
             // action before launching `QUIT_SWORDFIGHT`. The movement is then
             // postponed and translated again after the lowering transition,
             // retaining its destination and flags.
-            if let Some((sequence_id, element_index)) = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(entity_id)
+            if let Some((sequence_id, element_index)) =
+                self.world.entities.current_element_for_actor(entity_id)
             {
                 self.rewrite_sword_movement_for_fight_exit(
                     sequence_id,

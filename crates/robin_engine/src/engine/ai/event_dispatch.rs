@@ -344,7 +344,7 @@ impl EngineInner {
         let order_type = self
             .orders
             .sequence_manager
-            .current_order_for_actor(pc_id)
+            .current_order_for_actor(&self.world.entities, pc_id)
             .map(|(_, _, order)| order.order_type)
             .unwrap_or(crate::order::OrderType::Invalid);
         self.refresh_pc_produced_noise_for_with_order(pc_id, order_type);
@@ -842,7 +842,7 @@ impl EngineInner {
         let animation = self
             .orders
             .sequence_manager
-            .current_order_for_actor(npc_id)
+            .current_order_for_actor(&self.world.entities, npc_id)
             .map(|(_, _, order)| order.order_type);
         let difficulty = self.control.sim_config.difficulty.rules();
         self.debug_refresh_view_lifecycle("refresh_view_before", npc_id, None);

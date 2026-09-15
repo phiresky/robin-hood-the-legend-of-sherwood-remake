@@ -64,10 +64,7 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
         "the lying actor speaks first and its type-wide Wounded forbid rejects the later actor"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(lying),
+        engine.world.entities.current_element_for_actor(lying),
         None,
         "the lying damage element still terminates after hurt speech"
     );
@@ -345,10 +342,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(victim),
+        engine.world.entities.current_element_for_actor(victim),
         Some((launched[1], 0)),
         "the second injury must replace the first dying element"
     );

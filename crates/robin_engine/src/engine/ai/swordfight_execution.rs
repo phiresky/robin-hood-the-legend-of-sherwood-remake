@@ -416,6 +416,7 @@ impl EngineInner {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched_or_postponed_by_current(
+                &self.world.entities,
                 owner,
                 crate::element::Command::EnterSwordfight,
             )
@@ -520,7 +521,11 @@ impl EngineInner {
         let input = extract_exact_forecast_input(
             self,
             entity,
-            selected_actor_is_passing_door(&self.orders.sequence_manager, target),
+            selected_actor_is_passing_door(
+                &self.world.entities,
+                &self.orders.sequence_manager,
+                target,
+            ),
         )
         .expect("lost swordfight forecast requires an actor");
         let forecast = crate::ai::prepare_forecast_destination_for_ia(

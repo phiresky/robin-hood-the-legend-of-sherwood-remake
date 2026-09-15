@@ -309,7 +309,11 @@ impl EngineInner {
                 let input = extract_exact_forecast_input(
                     self,
                     self.expect_entity(target, "missed battle forecast"),
-                    selected_actor_is_passing_door(&self.orders.sequence_manager, target),
+                    selected_actor_is_passing_door(
+                        &self.world.entities,
+                        &self.orders.sequence_manager,
+                        target,
+                    ),
                 )
                 .expect("forecast actor");
                 let forecast = crate::ai::prepare_forecast_destination_for_ia(

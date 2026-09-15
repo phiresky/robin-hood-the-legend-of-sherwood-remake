@@ -776,7 +776,10 @@ impl EngineInner {
             }
             // The victim's currently-active order animation on the
             // owning sequence element.
-            if let Some((_, _, order)) = self.orders.sequence_manager.current_order_for_actor(v)
+            if let Some((_, _, order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(&self.world.entities, v)
                 && order.order_type == crate::order::OrderType::WriggleUnderNet
             {
                 return true;

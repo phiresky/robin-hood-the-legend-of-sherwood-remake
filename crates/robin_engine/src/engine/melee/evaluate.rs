@@ -254,8 +254,8 @@ impl EngineInner {
                 ]
             });
         let attacker_command_strike = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(attacker_id)
             .and_then(|(seq_id, elem_idx)| {
                 self.orders.sequence_manager.get_element(seq_id, elem_idx)
@@ -1119,10 +1119,7 @@ impl EngineInner {
             return;
         }
 
-        let current = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(entity_id)
+        let current = self.orders.sequence_manager.current_order_for_actor(&self.world.entities, entity_id)
             .map(|(seq_id, elem_idx, order)| {
                 let element = self
                     .orders
@@ -1590,7 +1587,7 @@ impl EngineInner {
         let already_striking = self
             .orders
             .sequence_manager
-            .current_order_for_actor(pc_id)
+            .current_order_for_actor(&self.world.entities, pc_id)
             .is_some_and(|(_, _, order)| sword_strike_from_animation(order.order_type).is_some());
         if already_striking {
             return false;
@@ -2086,8 +2083,8 @@ impl EngineInner {
             // current sequence command and skip if it's any
             // sword-strike command.
             let already_striking = self
-                .orders
-                .sequence_manager
+                .world
+                .entities
                 .current_element_for_actor(victim_id)
                 .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
                 .map(|e| e.command.is_swordstrike())

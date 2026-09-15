@@ -99,6 +99,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         .orders
         .sequence_manager
         .start_sequence_level(shot_sequence);
+    engine.select_sequence_element(shooter_id, Some((shot_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -733,6 +734,7 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
         .orders
         .sequence_manager
         .start_sequence_level(selected_seq);
+    engine.select_sequence_element(owner, Some((selected_seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -847,6 +849,7 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -919,6 +922,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -967,6 +971,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1038,7 +1043,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
             .2
             .order_type,
@@ -1075,6 +1080,7 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(shooter, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1126,7 +1132,7 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(shooter)
+            .current_order_for_actor(&engine.world.entities, shooter)
             .unwrap()
             .2
             .order_id,
@@ -1207,6 +1213,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         ),
         crate::abilities::BeginResult::Started
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

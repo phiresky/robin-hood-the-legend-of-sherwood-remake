@@ -168,7 +168,11 @@ impl EngineInner {
             "SPECIAL_STRIKE frame={} owner={} {detail} selected={}",
             frame,
             owner.index(),
-            special_strike_selected_snapshot(&self.orders.sequence_manager, owner),
+            special_strike_selected_snapshot(
+                &self.world.entities,
+                &self.orders.sequence_manager,
+                owner
+            ),
         );
     }
 
@@ -311,10 +315,11 @@ fn opponent_sprite_timing_debug_matches(frame: u32, owner: u32, target: u32) -> 
 }
 
 fn special_strike_selected_snapshot(
+    entities: &crate::entities::Entities,
     manager: &crate::sequence::SequenceManager,
     owner: EntityId,
 ) -> String {
-    let selected = manager.current_element_for_actor(owner);
+    let selected = entities.current_element_for_actor(owner);
     let element = selected.and_then(|(sequence, index)| {
         manager.get_element(sequence, index).map(|element| {
             (
@@ -453,7 +458,10 @@ impl EngineInner {
                 {
                     return None;
                 }
-                let (_, _, order) = self.orders.sequence_manager.current_order_for_actor(id)?;
+                let (_, _, order) = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(&self.world.entities, id)?;
                 is_falling_flight_order(order.order_type).then_some((id, order.antagonist))
             })
             .collect::<Vec<_>>();
@@ -594,7 +602,7 @@ impl EngineInner {
     ) -> bool {
         self.orders
             .sequence_manager
-            .current_order_for_actor(attacker_id)
+            .current_order_for_actor(&self.world.entities, attacker_id)
             .is_some_and(|(seq_id, elem_idx, order)| {
                 seq_id == selected.seq_id
                     && elem_idx == selected.elem_idx
@@ -835,7 +843,7 @@ impl EngineInner {
         let Some((strike, target_id, animation)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(attacker_id)
+            .current_order_for_actor(&self.world.entities, attacker_id)
             .filter(|(seq_id, elem_idx, order)| {
                 *seq_id == selected.seq_id
                     && *elem_idx == selected.elem_idx
@@ -1186,7 +1194,7 @@ impl EngineInner {
             let Some(selected) = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(actor_id)
+                .current_order_for_actor(&self.world.entities, actor_id)
                 .and_then(|(seq_id, elem_idx, order)| {
                     sword_strike_from_animation(order.order_type).map(|_| {
                         super::tick::MeleeOwnerSelection {
@@ -1228,7 +1236,7 @@ impl EngineInner {
         let Some((strike, target_id, animation)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(attacker_id)
+            .current_order_for_actor(&self.world.entities, attacker_id)
             .filter(|(seq_id, elem_idx, order)| {
                 *seq_id == selected.seq_id
                     && *elem_idx == selected.elem_idx
@@ -1546,10 +1554,7 @@ impl EngineInner {
                 // first IN_PROGRESS frame. Lateral strikes deliberately keep
                 // their different legacy rule and advance any retained list
                 // on IN_PROGRESS.
-                let (active_strike, active_order_id) = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(attacker_id)
+                let (active_strike, active_order_id) = self.orders.sequence_manager.current_order_for_actor(&self.world.entities, attacker_id)
                     .and_then(|(_, _, order)| {
                         sword_strike_from_animation(order.order_type)
                             .map(|strike| (strike, order.order_id))
@@ -1837,7 +1842,7 @@ impl EngineInner {
         let (sequence_id, element_index, order) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(attacker_id)
+            .current_order_for_actor(&self.world.entities, attacker_id)
             .expect("sweep attacker must have a selected order");
         let strike = sword_strike_from_animation(order.order_type)
             .expect("sweep attacker must have a selected strike");
@@ -2164,11 +2169,16 @@ impl EngineInner {
             // before the countdown), the increment is never applied
             // again, so drop the flight and leave the actor in place.
             if flight.ladder_fall {
-                let fall_order_live = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(entity_id)
-                    .is_some_and(|(_, _, order)| {
+                let fall_order_live = entity
+                    .actor_data()
+                    .and_then(|actor| actor.selected_sequence_element)
+                    .and_then(|selected| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(selected.sequence_id, selected.element_index)
+                    })
+                    .and_then(|element| element.current_order())
+                    .is_some_and(|order| {
                         order.order_type == crate::order::OrderType::FallingLadderWall
                     });
                 if !fall_order_live {
@@ -2186,11 +2196,16 @@ impl EngineInner {
             // Sprite flight updates position even when
             // Action processing reports start, so that first execution owns the
             // first displacement too.
-            let falling_order_live = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(entity_id)
-                .is_some_and(|(_, _, order)| is_falling_flight_order(order.order_type));
+            let falling_order_live = entity
+                .actor_data()
+                .and_then(|actor| actor.selected_sequence_element)
+                .and_then(|selected| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(selected.sequence_id, selected.element_index)
+                })
+                .and_then(|element| element.current_order())
+                .is_some_and(|order| is_falling_flight_order(order.order_type));
             let waiting_for_fall_start = flight.frames_remaining != 0
                 && flight.antagonist.is_some()
                 && !flight.ladder_fall
@@ -2581,7 +2596,7 @@ impl EngineInner {
             if let Some((seq_id, elem_idx, order)) = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(victim_id)
+                .current_order_for_actor(&self.world.entities, victim_id)
                 && order.order_type == crate::order::OrderType::FallingLadderWall
             {
                 // The fall's Execute arm reports Terminated on the
@@ -2598,7 +2613,7 @@ impl EngineInner {
                 if self
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(victim_id)
+                    .current_order_for_actor(&self.world.entities, victim_id)
                     .is_some()
                     && let Some(actor) = self
                         .get_entity_mut(victim_id)
@@ -2776,7 +2791,7 @@ impl EngineInner {
         let Some((roll_seq_id, roll_elem_idx, roll_command)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .and_then(|(seq_id, elem_idx, order)| {
                 (order.order_type == OrderType::Rolling).then(|| {
                     let command = self
@@ -3491,6 +3506,7 @@ mod tests {
             .start_sequence_level(sequence);
         let order_id =
             engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3519,7 +3535,7 @@ mod tests {
         let (sequence, element, _) = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(victim)
+            .current_order_for_actor(&engine.world.entities, victim)
             .expect("falling order");
         engine
             .orders
@@ -3617,6 +3633,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -4086,6 +4103,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

@@ -108,19 +108,18 @@ impl EngineInner {
         }
 
         let manager = &self.orders.sequence_manager;
-        let selected = manager.current_element_for_actor(owner);
-        let current_order =
-            manager
-                .current_order_for_actor(owner)
-                .map(|(sequence_id, element_index, order)| {
-                    (
-                        sequence_id,
-                        element_index,
-                        order.order_type,
-                        order.order_id,
-                        order.done,
-                    )
-                });
+        let selected = self.world.entities.current_element_for_actor(owner);
+        let current_order = manager
+            .current_order_for_actor(&self.world.entities, owner)
+            .map(|(sequence_id, element_index, order)| {
+                (
+                    sequence_id,
+                    element_index,
+                    order.order_type,
+                    order.order_id,
+                    order.done,
+                )
+            });
         let graph = manager
             .sequences_iter()
             .flat_map(|sequence| {
@@ -187,10 +186,7 @@ impl EngineInner {
             return;
         }
 
-        let selected = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(victim);
+        let selected = self.world.entities.current_element_for_actor(victim);
         let selected_graph = selected.and_then(|(sequence_id, _)| {
             self.orders
                 .sequence_manager

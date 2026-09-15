@@ -98,6 +98,16 @@ mod suite {
             movement_sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(movement_sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((movement_sequence, 0)),
+        );
 
         let reentrant = engine.start_post_seek_sequence(
             &sim,
@@ -383,6 +393,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -574,6 +594,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -685,6 +715,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)
@@ -948,6 +988,16 @@ mod suite {
             outgoing_sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(outgoing_sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((outgoing_sequence, 0)),
+        );
         {
             let entity = engine.get_entity_mut(owner).unwrap();
             entity.actor_data_mut().unwrap().active_movement =
@@ -1107,10 +1157,7 @@ mod suite {
             "the queued point movement must wait behind the live action-stop transition"
         );
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            engine.world.entities.current_element_for_actor(owner),
             Some((outgoing_sequence, 0)),
             "the stop transition must still own the actor before its terminal tick"
         );
@@ -1284,13 +1331,7 @@ mod suite {
             .unwrap()
             .elements
             .push(completed_parallel);
-        engine
-            .orders
-            .sequence_manager
-            .set_translating_element(Some((
-                owner,
-                crate::sequence::SequenceElementRef::new(sequence, 0),
-            )));
+        engine.select_sequence_element(owner, Some((sequence, 0)));
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -1317,7 +1358,6 @@ mod suite {
             &assets,
             owner,
         );
-        engine.orders.sequence_manager.set_translating_element(None);
 
         let element = engine
             .orders
@@ -1619,6 +1659,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -1754,6 +1804,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)
@@ -2003,6 +2063,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)

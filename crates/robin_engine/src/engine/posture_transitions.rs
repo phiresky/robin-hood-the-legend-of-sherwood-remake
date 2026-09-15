@@ -145,7 +145,7 @@ impl EngineInner {
     fn selected_order_action(&self, entity: EntityId) -> Option<OrderType> {
         self.orders
             .sequence_manager
-            .current_order_for_actor(entity)
+            .current_order_for_actor(&self.world.entities, entity)
             .map(|(_, _, order)| order.order_type)
     }
 
@@ -167,7 +167,7 @@ impl EngineInner {
         let Some(selected_after) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity)
+            .current_order_for_actor(&self.world.entities, entity)
             .map(|(_, _, order)| crate::element::InstalledActorOrder {
                 order_id: order.order_id,
                 order_type: order.order_type,
@@ -219,7 +219,9 @@ impl EngineInner {
 
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
-            self.orders.sequence_manager.make_fast(entity);
+            self.orders
+                .sequence_manager
+                .make_fast(&self.world.entities, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
@@ -236,7 +238,9 @@ impl EngineInner {
             // following/postponed movement even when the selected element is
             // not itself movement. Only the selected-element movement tail
             // (pathfinder/path postprocessing) is skipped in that case.
-            self.orders.sequence_manager.make_fast(entity);
+            self.orders
+                .sequence_manager
+                .make_fast(&self.world.entities, entity);
         }
     }
 
@@ -248,7 +252,9 @@ impl EngineInner {
     ) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
-            self.orders.sequence_manager.make_slow(entity);
+            self.orders
+                .sequence_manager
+                .make_slow(&self.world.entities, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
@@ -260,7 +266,9 @@ impl EngineInner {
             self.after_make_rewrite(sim, entity, selected_movement);
             self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
-            self.orders.sequence_manager.make_slow(entity);
+            self.orders
+                .sequence_manager
+                .make_slow(&self.world.entities, entity);
         }
     }
 
@@ -383,7 +391,9 @@ impl EngineInner {
         if self.selected_element(entity).is_some() {
             let selected_movement = self.selected_movement_element(entity);
             let action_before = self.selected_order_action(entity);
-            self.orders.sequence_manager.make_upright(entity);
+            self.orders
+                .sequence_manager
+                .make_upright(&self.world.entities, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(selected_movement) = selected_movement {
                 if let Some(pathfinder_index) =
@@ -417,7 +427,9 @@ impl EngineInner {
     ) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             let action_before = self.selected_order_action(entity);
-            self.orders.sequence_manager.make_crouched(entity);
+            self.orders
+                .sequence_manager
+                .make_crouched(&self.world.entities, entity);
             self.synchronize_rewritten_selected_order(entity, action_before);
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
@@ -432,7 +444,9 @@ impl EngineInner {
             if self.selected_element(entity).is_some() {
                 // As in crouched-movement conversion, recurse into its linked
                 // tail before launching the actor's own posture command.
-                self.orders.sequence_manager.make_crouched(entity);
+                self.orders
+                    .sequence_manager
+                    .make_crouched(&self.world.entities, entity);
             }
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             let mut sequence = crate::sequence::Sequence::new();
@@ -1075,9 +1089,7 @@ impl EngineInner {
 
     /// Return the actor's exact selected sequence element.
     fn selected_element(&self, entity: EntityId) -> Option<(SequenceId, usize)> {
-        self.orders
-            .sequence_manager
-            .current_element_for_actor(entity)
+        self.world.entities.current_element_for_actor(entity)
     }
 
     /// Return the selected element only when that element itself is movement.
@@ -1342,6 +1354,16 @@ mod tests {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         (engine, owner, sequence, order_id)
     }
 
@@ -1439,6 +1461,16 @@ mod tests {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .expect("test PC")
@@ -1454,7 +1486,7 @@ mod tests {
         let selected = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .expect("post-processed movement remains selected")
             .2;
         assert_eq!(
@@ -1581,6 +1613,16 @@ mod tests {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         {
             let actor = engine

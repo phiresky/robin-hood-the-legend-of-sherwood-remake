@@ -664,49 +664,6 @@ impl crate::engine::EngineInner {
         );
     }
 
-    /// Interrupt an element after its actor has already selected an incoming
-    /// replacement.
-    ///
-    /// The original game selects the new sequence element before it interrupts the old
-    /// element.  Consequently the old element's synchronous
-    /// removal notification observes that it is no longer selected. Rust's
-    /// incoming element is still `Todo` at this borrow-safe boundary, so the
-    /// actor-in-progress index alone would incorrectly mark the old card as
-    /// selected.
-    pub(crate) fn element_interrupted_after_replacement_selected(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        flags: CascadeFlags,
-    ) {
-        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
-            return;
-        }
-        let mut effects = self.prepare_live_sequence_state(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            SequenceState::Interrupted,
-            flags,
-        );
-        if let Some(card) = effects.condolation.as_mut() {
-            card.was_selected = false;
-        }
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
-            "replacement_interruption",
-        );
-    }
-
     /// Hard-interrupt every live sequence element owned by `actor`, except
     /// those in `exempt_seq` and dead-admissible cards already waiting in the
     /// FIFO.
@@ -851,36 +808,11 @@ impl crate::engine::EngineInner {
         mut effects: StateChangeEffects,
         terminal_site: &'static str,
     ) {
-        let impossible_was_selected = effects
-            .impossible_notification
-            .and_then(|index| {
-                self.orders
-                    .sequence_manager
-                    .get_element(seq_id, index)
-                    .and_then(|element| element.owner)
-                    .map(|owner| {
-                        self.orders
-                            .sequence_manager
-                            .current_element_for_actor(owner)
-                            == Some((seq_id, index))
-                    })
-            })
-            .unwrap_or(false);
         if let Some(card) = effects.condolation.as_mut() {
-            card.was_selected = terminal_site != "replacement_interruption"
-                && self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(card.owner)
-                    == Some((card.seq_id, usize::from(card.elem_idx)));
             if goal_owner_debug_matches(card.owner) {
                 let provenance = GoalOwnerTerminalProvenance {
                     site: terminal_site,
-                    selected: self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(card.owner),
-                    translating: self.orders.sequence_manager.actor_translating,
+                    selected: self.world.entities.current_element_for_actor(card.owner),
                 };
                 GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
                     records
@@ -895,8 +827,7 @@ impl crate::engine::EngineInner {
                 elem_idx = card.elem_idx,
                 command = ?card.command,
                 terminal_state = ?card.terminal_state,
-                was_selected = card.was_selected,
-                instructing = ?self.orders.sequence_manager.actor_instructing.get(&card.owner),
+                selected = ?self.world.entities.current_element_for_actor(card.owner),
                 in_progress = ?self.orders.sequence_manager.actor_in_progress.get(&card.owner),
                 "removal notification capturing selection at state change"
             );
@@ -974,16 +905,6 @@ impl crate::engine::EngineInner {
                 .expect("impossible sequence disappeared")
                 .complete_impossible_notification(index);
             if let Some(card) = effects.condolation.as_mut() {
-                // Translation keeps its selected identity until the owner
-                // callback clears it; only a different successor supersedes it.
-                card.was_selected = impossible_was_selected
-                    && self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(card.owner)
-                        .is_none_or(|selected| {
-                            selected == (card.seq_id, usize::from(card.elem_idx))
-                        });
                 effects.notify_owner = Some(card.owner);
             }
         }

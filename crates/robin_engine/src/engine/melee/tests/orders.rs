@@ -131,6 +131,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
         };
         let old_order =
             engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -176,6 +177,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             100.0,
             100.0,
         );
+        engine.select_sequence_element(attacker, Some((strike_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -675,6 +677,7 @@ fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
+        engine.select_sequence_element(victim, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -769,13 +772,7 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
-    engine
-        .orders
-        .sequence_manager
-        .set_translating_element(Some((
-            victim,
-            crate::sequence::SequenceElementRef::new(sequence, 0),
-        )));
+    engine.select_sequence_element(victim, Some((sequence, 0)));
 
     assert!(engine.apply_push_effect(
         &sim,
@@ -787,7 +784,6 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
         (sequence, 0),
         true,
     ));
-    engine.orders.sequence_manager.set_translating_element(None);
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert!(victim_entity.human_data().unwrap().unconscious);

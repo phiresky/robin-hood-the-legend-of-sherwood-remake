@@ -122,6 +122,7 @@ fn give_flight(
         0.0,
         0.0,
     );
+    engine.select_sequence_element(flyer, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
@@ -404,6 +405,7 @@ fn install_test_melee_order(
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
+    engine.select_sequence_element(attacker, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),

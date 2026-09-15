@@ -1460,11 +1460,7 @@ impl EngineInner {
     /// element drives `action_state = Waiting` but the actor reports
     /// the actual command, not WAIT).
     pub fn actor_command(&self, actor: EntityId) -> crate::element::Command {
-        match self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(actor)
-        {
+        match self.world.entities.current_element_for_actor(actor) {
             Some((seq_id, idx)) => self
                 .orders
                 .sequence_manager
@@ -1490,8 +1486,8 @@ impl EngineInner {
         actor: EntityId,
     ) -> Option<(crate::gate::DoorIndex, i16)> {
         let element = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(actor)
             .and_then(|(sequence_id, element_index)| {
                 self.orders
@@ -1619,7 +1615,7 @@ impl EngineInner {
         let selected_order = self
             .orders
             .sequence_manager
-            .current_order_for_actor(actor)
+            .current_order_for_actor(&self.world.entities, actor)
             .map(|(seq_id, elem_idx, order)| {
                 (
                     seq_id,
@@ -1631,38 +1627,6 @@ impl EngineInner {
                 )
             });
         self.publish_order_as_installed(actor, selected_order);
-    }
-
-    /// Apply the post-translation selected-order write.
-    ///
-    /// The original game reads the order from the new sequence element, after verifying
-    /// that it is still the actor's accepted element. During Rust's deferred
-    /// terminal-movement cleanup, the manager-wide owner lookup can briefly
-    /// continue to expose the outgoing element even though translation has
-    /// already authored the incoming element's orders. Keep this boundary
-    /// tied to the element that was actually instructed.
-    pub(crate) fn publish_instructed_order_as_installed(
-        &mut self,
-        actor: EntityId,
-        sequence_id: crate::sequence::SequenceId,
-        element_index: usize,
-    ) {
-        let instructed_order = self
-            .orders
-            .sequence_manager
-            .get_element(sequence_id, element_index)
-            .and_then(|element| element.current_order())
-            .map(|order| {
-                (
-                    sequence_id,
-                    element_index,
-                    crate::element::InstalledActorOrder {
-                        order_id: order.order_id,
-                        order_type: order.order_type,
-                    },
-                )
-            });
-        self.publish_order_as_installed(actor, instructed_order);
     }
 
     fn publish_order_as_installed(
@@ -1854,10 +1818,7 @@ impl EngineInner {
         }
 
         let manager = &self.orders.sequence_manager;
-        let selected = manager.current_element_for_actor(owner);
-        let translating = manager
-            .goal_owner_debug_translating()
-            .filter(|(translating_owner, _)| *translating_owner == owner);
+        let selected = self.world.entities.current_element_for_actor(owner);
         let deferred = manager
             .deferred_elements_to_go()
             .into_iter()
@@ -1886,7 +1847,7 @@ impl EngineInner {
             )
         });
         eprintln!(
-            "PARITY_ATTENTIVE_OWNER frame={} owner={} owner_co={} stage={} detail={} attentive={} will_be_attentive={} ai_state={:?} ai_substate={:?} action_state={:?} sequence_started={} installed_order={:?} sprite_motion={:?} sprite_action={:?} selected={selected:?} translating={translating:?} deferred={deferred:?} focus={focus:?}",
+            "PARITY_ATTENTIVE_OWNER frame={} owner={} owner_co={} stage={} detail={} attentive={} will_be_attentive={} ai_state={:?} ai_substate={:?} action_state={:?} sequence_started={} installed_order={:?} sprite_motion={:?} sprite_action={:?} selected={selected:?} deferred={deferred:?} focus={focus:?}",
             self.control.frame_counter,
             owner.index(),
             config.creation_order,
@@ -1999,193 +1960,6 @@ impl EngineInner {
         seq_id
     }
 
-    /// Engine-side wrapper for
-    /// [`SequenceManager::launch_single_order_sequence_unchecked`] that
-    /// runs synchronous instruction handling — posture stamp +
-    /// priority arbitration — before the element is promoted to
-    /// `InProgress`.  This is the blessed path for owner-carrying
-    /// single-order sequences; a grep for
-    /// `launch_single_order_sequence_unchecked` should turn up only
-    /// this wrapper, making it obvious in review when a future change
-    /// bypasses the stamp / arbitration.
-    ///
-    /// Used for swordfight entry and exit when the order must be visible to
-    /// same-frame consumers (animation driver,
-    /// `current_order_for_actor`).  If arbitration rejects the element
-    /// (Abandon / Postpone), the `InProgress` promotion is skipped —
-    /// the element carries the correct terminal state and downstream
-    /// scanners ignore it.
-    pub(crate) fn launch_single_order_sequence_stamped(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        command: crate::element::Command,
-        order: crate::order::Order,
-    ) -> crate::sequence::SequenceId {
-        self.launch_single_order_sequence_stamped_ex(sim, assets, owner, command, order, true)
-    }
-
-    /// Like [`launch_single_order_sequence_stamped`] but with an
-    /// explicit toggle for the auto-insert `generate_transition` pass.
-    ///
-    /// `with_transitions = false` is reserved for synthetic prebuilt-order
-    /// lowerings whose Original command path has already selected the exact
-    /// transition order. Ordinary sequence launches still reach actor
-    /// instruction handling and generate transitions at the later manager boundary.
-    pub(crate) fn launch_single_order_sequence_stamped_ex(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        command: crate::element::Command,
-        order: crate::order::Order,
-        with_transitions: bool,
-    ) -> crate::sequence::SequenceId {
-        self.launch_single_order_sequence_stamped_ex_configured(
-            sim,
-            assets,
-            owner,
-            command,
-            order,
-            with_transitions,
-            |_| {},
-        )
-        .0
-    }
-
-    /// Configured single-order launch that installs element properties before
-    /// priority arbitration and reports whether the owner was instructed.
-    ///
-    /// The callback supports synthetic commands that need to author element
-    /// properties before the direct arbitration boundary.
-    pub(crate) fn launch_single_order_sequence_stamped_ex_configured(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        command: crate::element::Command,
-        order: crate::order::Order,
-        with_transitions: bool,
-        configure: impl FnOnce(&mut crate::sequence::SequenceElement),
-    ) -> (crate::sequence::SequenceId, bool) {
-        use crate::sequence::SequenceState;
-
-        // Unfreeze actor on any incoming command.
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.execution_frozen = false;
-        }
-
-        // `Command::Null` short-circuits to Terminated.  Launch the
-        // element so downstream callers see a terminated sequence
-        // (return-true semantics).
-        if command == crate::element::Command::Null {
-            let seq_id = self
-                .orders
-                .sequence_manager
-                .launch_single_order_sequence_unchecked(owner, command);
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, 0);
-            return (seq_id, false);
-        }
-
-        // Launch an EMPTY element so `generate_transition`'s auto-
-        // inserted exit/posture/enter transitions get pushed first,
-        // then append the pre-baked single order.  Order:
-        // Transition generation populates the queue with transitions
-        // BEFORE Translate pushes the command's own order, so those
-        // transitions play before the command's main animation.
-        let seq_id = self
-            .orders
-            .sequence_manager
-            .launch_single_order_sequence_unchecked(owner, command);
-        let elem_idx = 0;
-        if let Some(elem) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
-        {
-            configure(elem);
-            let resolver = Self::priority_resolver(&self.world.entities);
-            if elem.priority == crate::sequence::SequencePriority::NotYetSet {
-                elem.priority = resolver(elem);
-            }
-        }
-        if self.pc_instruct_early_completion(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
-        {
-            return (seq_id, false);
-        }
-        self.stamp_element_transition_state(owner, seq_id, elem_idx);
-
-        // NonInterruptable guard — see `launch_element_for_owner` for
-        // details.
-        if self.non_interruptable_guard(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx) {
-            return (seq_id, false);
-        }
-
-        // Auto-insert exit / posture / enter transition orders before
-        // the command runs.  If the transition is impossible, mark the
-        // element Impossible and skip both arbitration and the
-        // InProgress promotion below. Skipped only by synthetic lowering
-        // paths that have already chosen their exact transition order.
-        if with_transitions
-            && !self.generate_transition(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
-        {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return (seq_id, false);
-        }
-
-        // NOW append the pre-baked command order — transitions are
-        // already in front of it (when enabled).
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
-
-        let accepted = self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-        // Synchronously promote to `InProgress` so same-frame consumers
-        // (animation driver, `current_order_for_actor`) see the
-        // attached order without waiting for the next hourglass pass.
-        // Skip when arbitration rejected the element (Abandon /
-        // Postpone) — downstream scanners filter on state.
-        let state = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.state);
-        let mut instructed = false;
-        if accepted && matches!(state, Some(SequenceState::Todo)) {
-            // After priority evaluation runs an `INTERRUPT_CURRENT`
-            // cascade, re-check the actor's current element pointer.  A
-            // cascade may have started a postponed successor, in which
-            // case the pointer no longer matches this new element and
-            // the synchronous InProgress promotion must be skipped.
-            let still_current = match self.current_sequence_element_for_actor(owner) {
-                Some((cur_seq, cur_idx)) => cur_seq == seq_id && cur_idx == elem_idx,
-                None => true, // no current — we're free to promote
-            };
-            if still_current {
-                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                instructed = true;
-                // Mirror the original actor lifecycle flag when the element
-                // transitions to InProgress.
-                if let Some(entity) = self.world.entities.get_mut(owner)
-                    && let Some(actor) = entity.actor_data_mut()
-                {
-                    actor.sequence_element_started = true;
-                }
-                // Actor instruction handling publishes the selected order through
-                // the actor order before returning. The prebuilt-order fast path
-                // bypasses the normal InstructOwner dispatcher, so mirror
-                // that publication here as well; same-frame animation queries
-                // calls must see this order even though Execute will not run
-                // it until the actor's next update slot.
-                self.publish_selected_order_for_instruct_owner(owner);
-            }
-        }
-        (seq_id, instructed)
-    }
-
     /// Register a direct facing turn without instructing its owner yet.
     /// Cross-owner patrol coordination runs before the member's entity slot;
     /// The original game's sequence tick arbitrates turning only after that
@@ -2202,7 +1976,7 @@ impl EngineInner {
         let seq_id = self
             .orders
             .sequence_manager
-            .launch_single_order_sequence_unchecked(owner, command);
+            .register_owned_command(owner, command);
         if let Some(element) = self.orders.sequence_manager.get_element_mut(seq_id, 0) {
             if let Some(direction) = explicit_direction {
                 element.set_property(
@@ -2540,20 +2314,28 @@ impl EngineInner {
             .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"))
     }
 
-    /// Find the actor's currently-executing sequence element.  An
-    /// actor's "current" element is the single `InProgress`-state
-    /// element owned by that actor; priority-based arbitration in
-    /// Instruction handling maintains the one-at-a-time invariant across all
-    /// sequences.
-    ///
-    /// Returns `None` when the actor is idle (no in-progress element).
+    /// Read the actor's selected instruction, including during callbacks.
     fn current_sequence_element_for_actor(
         &self,
         actor: EntityId,
     ) -> Option<(crate::sequence::SequenceId, usize)> {
-        self.orders
-            .sequence_manager
-            .current_element_for_actor(actor)
+        self.world.entities.current_element_for_actor(actor)
+    }
+
+    fn select_sequence_element(
+        &mut self,
+        owner: EntityId,
+        selection: Option<(crate::sequence::SequenceId, usize)>,
+    ) {
+        if let Some(actor) = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::actor_data_mut)
+        {
+            actor.selected_sequence_element = selection
+                .map(|(sequence, index)| crate::sequence::SequenceElementRef::new(sequence, index));
+        }
     }
 
     fn preserve_selected_movement_goal_for_replacement(
@@ -2641,8 +2423,8 @@ impl EngineInner {
         ) {
             return true;
         }
-        self.orders
-            .sequence_manager
+        self.world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(sid, eidx)| self.orders.sequence_manager.get_element(sid, eidx))
             .is_some_and(|el| {
@@ -2784,18 +2566,18 @@ impl EngineInner {
         // already be selected and obscure the relationship. This notably
         // matters when a second facing command halts a turn whose front order is a
         // running-to-waiting transition.
-        let selected_element = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)
-            .filter(|&(sequence, element)| {
-                self.orders
-                    .sequence_manager
-                    .get_element(sequence, element)
-                    .is_some_and(|element| {
-                        element.state == crate::sequence::SequenceState::InProgress
-                    })
-            });
+        let selected_element =
+            self.world
+                .entities
+                .current_element_for_actor(owner)
+                .filter(|&(sequence, element)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(sequence, element)
+                        .is_some_and(|element| {
+                            element.state == crate::sequence::SequenceState::InProgress
+                        })
+                });
 
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()

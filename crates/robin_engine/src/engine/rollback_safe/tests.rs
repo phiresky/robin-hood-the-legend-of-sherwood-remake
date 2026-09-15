@@ -887,6 +887,9 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
         .orders
         .sequence_manager
         .start_sequence_level(wait_sequence);
+    engine
+        .inner
+        .select_sequence_element(pc_id, Some((wait_sequence, 0)));
     engine.inner.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

@@ -430,7 +430,6 @@ impl EngineInner {
             terminal_state,
             seq_id,
             elem_idx,
-            was_selected,
             from_halt,
         } = card;
         let frame = self.control.frame_counter;
@@ -515,42 +514,10 @@ impl EngineInner {
             npc.wasp_victim = false;
         }
 
-        // Base actor removal notification clears the sprite movement goal
-        // and detaches the selected sequence element and actor order when the card belongs
-        // to the actor's currently selected element. This happens before the
-        // NPC override checks whether halt handling is active. For movement, Rust's
-        // `active_movement` is the exact selected element identity; ordinary
-        // order exhaustion performs the same cleanup synchronously in
-        // `do_next_order`, before detaching that tracker.
-        let selected_element = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner);
-        // `was_selected` is captured at state change, the exact Original
-        // boundary at which the card's element is compared against the
-        // actor's selection. Rust dispatches the card later, so replacing it
-        // with a fresh selection lookup would reinterpret history and strand
-        // the old movement goal: by the time the card runs, the terminal
-        // element is no longer registered as selected even though it still
-        // was when it left `InProgress`.
-        let detaches_selected_goal = was_selected;
-        // The order reference needs a stricter gate than the goal. The original game
-        // clears goal and order together, at an instant when no successor can
-        // yet be selected — the successor republishes both strictly
-        // afterwards. Rust preserves that ordering for the goal, which is
-        // still installed late by the movement instruction, but publishes the
-        // order pointer eagerly at instruct time. A card deferred past an
-        // incoming element — a lazily installed Wait, or a recursive
-        // successor — would therefore clear a pointer the newcomer has
-        // already published, leaving the actor orderless mid-action. Detach
-        // only the terminal element's own leftovers.
-        //
-        // Replacement arbitration covers the narrower case where the incoming
-        // element is selected before the outgoing one is interrupted, and
-        // explicitly records `was_selected = false` for it.
-        let successor_already_selected =
-            selected_element.is_some_and(|selected| selected != (seq_id, usize::from(elem_idx)));
-        let detaches_selected_order = detaches_selected_goal && !successor_already_selected;
+        // Completion detaches only the instruction selected at this callback.
+        let selected_element = self.world.entities.current_element_for_actor(owner);
+        let was_selected = selected_element == Some((seq_id, usize::from(elem_idx)));
+        let detaches_selected_order = was_selected;
         let mut cleared_selected_goal = false;
         if let Some(provenance) = &goal_owner_provenance {
             let actor_state = self.world.entities.get(owner).and_then(|entity| {
@@ -568,10 +535,9 @@ impl EngineInner {
                     entity.position_iface().is_moving(),
                 )
             });
-            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
             eprintln!(
-                "[GOAL_OWNER frame={frame} owner={owner:?} stage=before_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} terminal_selected={:?} terminal_translating={:?} dispatch_selected={selected_element:?} dispatch_translating={translating:?} actor={actor_state:?} position={position_state:?}]",
-                provenance.site, provenance.selected, provenance.translating,
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=before_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} terminal_selected={:?} dispatch_selected={selected_element:?} actor={actor_state:?} position={position_state:?}]",
+                provenance.site, provenance.selected,
             );
         }
         if let Some(entity) = self.world.entities.get_mut(owner) {
@@ -580,12 +546,7 @@ impl EngineInner {
                     && actor.active_movement.element_index == elem_idx as usize
             });
 
-            // Actor-base cleanup keys goal clearing to the selected
-            // selected sequence element, independently of whether that element is
-            // tracked as movement. A synchronous AssertPosition can select
-            // and terminate without ever becoming `active_movement`.
-            let clears_goal =
-                detaches_selected_goal || (active_movement_matches && selected_element.is_none());
+            let clears_goal = was_selected;
             tracing::trace!(
                 target: "parity_owner_handoff",
                 frame,
@@ -624,6 +585,7 @@ impl EngineInner {
                     "condolation card detaching installed order"
                 );
                 actor.installed_order = None;
+                actor.selected_sequence_element = None;
             }
 
             // Rust's movement tracker is separate from Original's selected
@@ -668,21 +630,6 @@ impl EngineInner {
                 }
             }
         }
-        if detaches_selected_order {
-            // Same original-game pair as the `installed_order` detach above:
-            // clear the sequence element alongside the order
-            // during completion. The in-progress registry
-            // drops the element on its own terminal transition, but a card
-            // raised from inside the element's own `Translate` still holds the
-            // translation selection, and everything that runs later in that
-            // same `Translate` — notably the `Wait()` that
-            // Path request insertion launches right after stopping
-            // during path request insertion — must arbitrate against a cleared
-            // selection instead of the element that just died.
-            self.orders
-                .sequence_manager
-                .clear_translating_element_if_selected(owner, seq_id, usize::from(elem_idx));
-        }
         if cleared_selected_goal {
             // A queued replacement may carry the outgoing movement's goal
             // across Rust's eager halt. Once a later selected element has
@@ -694,11 +641,7 @@ impl EngineInner {
                 .clear_retained_movement_goals_for_actor(owner);
         }
         if let Some(provenance) = &goal_owner_provenance {
-            let selected = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
-            let translating = self.orders.sequence_manager.goal_owner_debug_translating();
+            let selected = self.world.entities.current_element_for_actor(owner);
             let actor_state = self.world.entities.get(owner).and_then(|entity| {
                 entity.actor_data().map(|actor| {
                     (
@@ -715,7 +658,7 @@ impl EngineInner {
                 )
             });
             eprintln!(
-                "[GOAL_OWNER frame={frame} owner={owner:?} stage=after_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} selected={selected:?} translating={translating:?} actor={actor_state:?} position={position_state:?} cleared_goal={cleared_selected_goal}]",
+                "[GOAL_OWNER frame={frame} owner={owner:?} stage=after_condolation_cleanup site={} seq={seq_id:?} elem={elem_idx} command={command:?} terminal={terminal_state:?} was_selected={was_selected} selected={selected:?} actor={actor_state:?} position={position_state:?} cleared_goal={cleared_selected_goal}]",
                 provenance.site,
             );
         }
@@ -1678,7 +1621,7 @@ mod tests {
             engine
                 .orders
                 .sequence_manager
-                .current_order_for_actor(owner)
+                .current_order_for_actor(&engine.world.entities, owner)
                 .is_none()
         );
         assert_eq!(

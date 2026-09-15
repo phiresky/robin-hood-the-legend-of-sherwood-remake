@@ -53,9 +53,7 @@ impl EngineInner {
         eprintln!(
             "[POST_SEEK frame={} owner={owner:?} stage=frozen_launch_done launched={launched} current={:?}]",
             self.control.frame_counter,
-            self.orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            self.world.entities.current_element_for_actor(owner),
         );
     }
 
@@ -213,8 +211,8 @@ impl EngineInner {
             move_flags |= crate::sequence::MoveFlags::NO_TRANSITIONS;
         }
         let selected = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(entity_id)
             .and_then(|(seq, index)| self.orders.sequence_manager.get_element(seq, index));
         let was_computing_path =
@@ -1072,7 +1070,7 @@ mod exact_ai_goto_source_tests {
                 engine
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(owner)
+                    .current_order_for_actor(&engine.world.entities, owner)
                     .is_none()
             );
         }

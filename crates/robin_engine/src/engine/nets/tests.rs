@@ -1015,7 +1015,7 @@ fn taking_net_animation_dispatched_for_pc() {
     let active_anim = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(pc_id)
+        .current_order_for_actor(&engine.world.entities, pc_id)
         .map(|(_, _, o)| o.order_type);
     assert_eq!(
         active_anim,

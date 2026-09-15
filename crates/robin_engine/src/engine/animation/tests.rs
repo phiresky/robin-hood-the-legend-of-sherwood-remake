@@ -6,7 +6,7 @@ use crate::engine::EngineInner;
 
 #[test]
 fn failed_movement_translation_clears_the_previous_installed_idle_order() {
-    use crate::sequence::{SequenceElement, SequenceElementRef};
+    use crate::sequence::SequenceElement;
 
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
@@ -23,6 +23,7 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
     ));
     let wait_id = engine.orders.sequence_manager.insert_element(wait);
     engine.orders.sequence_manager.start_sequence_level(wait_id);
+    engine.select_sequence_element(owner, Some((wait_id, 0)));
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), wait_id, 0);
     engine.publish_selected_order_as_installed(owner);
 
@@ -31,11 +32,8 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         &assets,
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright),
     );
-    engine
-        .orders
-        .sequence_manager
-        .set_translating_element(Some((owner, SequenceElementRef::new(movement, 0))));
-    engine.element_interrupted_after_replacement_selected(
+    engine.select_sequence_element(owner, Some((movement, 0)));
+    engine.element_interrupted(
         &sim,
         &assets,
         &mut Vec::new(),
@@ -54,13 +52,7 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         engine.live_actor_animation(owner),
         Some(OrderType::NonanimationEnd)
     );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
-        None
-    );
+    assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
 }
 
 #[test]
@@ -520,6 +512,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -773,6 +766,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
     let start = engine.tick_actor_animation_for(&sim, &assets, actor);
@@ -1583,6 +1577,7 @@ fn striking_down_execute_fixture() -> (
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1593,7 +1588,7 @@ fn striking_down_execute_fixture() -> (
     let order_id = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .expect("selected strike order")
         .2
         .order_id;
@@ -1630,7 +1625,7 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
     let order_id = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .expect("selected strike order")
         .2
         .order_id;
@@ -1744,7 +1739,7 @@ fn striking_down_keeps_running_while_unconscious_victim_is_alive() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::StrikingDownSword)
     );

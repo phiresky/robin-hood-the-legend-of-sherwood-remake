@@ -87,6 +87,7 @@ fn install_selected_melee(
         .orders
         .sequence_manager
         .push_order_on(seq_id, 0, order);
+    engine.select_sequence_element(attacker, Some((seq_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -121,6 +122,7 @@ fn install_selected_smalltalk(
         .orders
         .sequence_manager
         .push_order_on(seq_id, 0, order);
+    engine.select_sequence_element(attacker, Some((seq_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -170,6 +172,7 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
         0,
         Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
     );
+    engine.select_sequence_element(attacker, Some((interrupt, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -476,6 +479,7 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
+    engine.select_sequence_element(attacker, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -927,6 +931,7 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
                 0,
                 Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
             );
+            engine.select_sequence_element(owner, Some((replacement, 0)));
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &assets,

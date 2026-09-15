@@ -730,6 +730,16 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
         sequence_id,
         0,
     );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -859,6 +869,16 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
         &mut Vec::new(),
         sequence_id,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
     );
     let actor = engine
         .get_entity_mut(mover_id)
@@ -1025,6 +1045,16 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
         &mut Vec::new(),
         sequence,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence, 0)),
     );
     engine
         .get_entity_mut(carrier)
@@ -1256,6 +1286,16 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             sequence_id,
             pass_index,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, pass_index)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence_id, pass_index)),
+        );
         let resolved = crate::engine::ai::resolve_ai_position_with(
             &engine.world.entities,
             &engine.script_domains.interactables.doors,
@@ -1439,6 +1479,16 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
             sequence_id,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence_id, 0)),
+        );
         sequence_id
     };
     let first_sequence = launch_waiting_move(&mut engine, first_owner);
@@ -1557,6 +1607,16 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
             &mut Vec::new(),
             sequence_id,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence_id, 0)),
         );
         sequence_id
     };
@@ -1682,6 +1742,16 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
         &mut Vec::new(),
         selected_id,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(selected_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((selected_id, 0)),
     );
 
     let mut unrelated = Sequence::new();
@@ -2061,10 +2131,7 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(rider),
+        engine.world.entities.current_element_for_actor(rider),
         Some((selected_seq, 0))
     );
     assert_eq!(
@@ -2194,6 +2261,16 @@ fn install_rider_charge_fixture(
         &mut Vec::new(),
         sequence_id,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
     );
     engine
         .get_entity_mut(rider_id)
@@ -2332,6 +2409,16 @@ fn install_charge_victim_motion(
         &mut Vec::new(),
         sequence,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence, 0)),
     );
     engine
         .get_entity_mut(victim_id)
@@ -3158,7 +3245,7 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(rider)
+            .current_order_for_actor(&engine.world.entities, rider)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::RunningUpright),
         "the actor update consumes the Terminated charge order"
@@ -3656,6 +3743,16 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
         sequence_id,
         0,
     );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
+    );
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -3783,6 +3880,16 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         &mut Vec::new(),
         sequence_id,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
     );
     engine
         .get_entity_mut(mover_id)
@@ -4009,6 +4116,16 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             &mut Vec::new(),
             sequence_id,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence_id, 0)),
         );
         let actor = engine
             .get_entity_mut(owner)
@@ -4239,6 +4356,16 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
         sequence_id,
         0,
     );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
+    );
     let actor = engine
         .get_entity_mut(mover_id)
         .expect("mover exists")
@@ -4378,6 +4505,16 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
         &mut Vec::new(),
         sequence_id,
         0,
+    );
+    engine.select_sequence_element(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap()
+            .owner
+            .unwrap(),
+        Some((sequence_id, 0)),
     );
     let actor = engine
         .get_entity_mut(mover_id)

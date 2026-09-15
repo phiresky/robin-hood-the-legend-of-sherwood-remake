@@ -2057,8 +2057,8 @@ impl EngineInner {
         // animation check before the next detectable is scanned.
         if hostile && is_pc {
             let order = self
-                .orders
-                .sequence_manager
+                .world
+                .entities
                 .current_element_for_actor(target_id)
                 .and_then(|(sequence, index)| {
                     self.orders.sequence_manager.get_element(sequence, index)
@@ -2536,9 +2536,12 @@ mod tests {
 
     #[test]
     fn optical_passing_door_follows_selected_command_without_runtime_door_state() {
-        let target = EntityId::Pc(crate::entity_id::PcId(0));
         let mut engine = EngineInner::new();
+        let target = engine.add_test_entity(Entity::Pc(
+            crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright),
+        ));
         assert!(!selected_actor_is_passing_door(
+            &engine.world.entities,
             &engine.orders.sequence_manager,
             target
         ));
@@ -2564,7 +2567,9 @@ mod tests {
             0,
         );
 
+        engine.select_sequence_element(target, Some((sequence, 0)));
         assert!(selected_actor_is_passing_door(
+            &engine.world.entities,
             &engine.orders.sequence_manager,
             target
         ));

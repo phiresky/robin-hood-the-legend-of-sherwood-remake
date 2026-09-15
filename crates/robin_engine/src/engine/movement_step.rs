@@ -332,7 +332,6 @@ impl MovementStepCtx<'_> {
             entity,
             manager,
             selected,
-            actor_id,
             entity_id,
             is_swordfighting,
         )?;

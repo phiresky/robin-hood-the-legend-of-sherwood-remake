@@ -101,6 +101,7 @@ fn dying_find_place_increment_after_crossing(
     order.compute_direction = false;
     dying.orders.push_back(order);
     let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, dying);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -210,6 +211,7 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
     order.compute_direction = false;
     wait.orders.push_back(order);
     let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

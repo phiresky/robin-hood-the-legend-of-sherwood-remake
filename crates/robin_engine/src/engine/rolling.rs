@@ -54,7 +54,7 @@ impl EngineInner {
         let Some((seq_id, elem_idx, order, next_order)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&self.world.entities, owner)
             .filter(|(_, _, order)| order.order_type == OrderType::Rolling)
             .map(|(seq_id, elem_idx, order)| {
                 let element = self

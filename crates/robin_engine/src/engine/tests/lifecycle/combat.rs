@@ -145,7 +145,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(carrier)
+            .current_order_for_actor(&engine.world.entities, carrier)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::TransitionCarryingCorpseWaitingUpright),
         "translation frame must retain the registered corpse-exit owner"
@@ -167,7 +167,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(carrier)
+            .current_order_for_actor(&engine.world.entities, carrier)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::TransitionRaisingSword),
         "first Execute must terminate the corpse-exit prefix and expose the sword order"
@@ -314,6 +314,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             ),
             crate::abilities::BeginResult::Started
         );
+        engine.select_sequence_element(healer, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -400,7 +401,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 engine
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(healer)
+                    .current_order_for_actor(&engine.world.entities, healer)
                     .is_none(),
                 "the invalid Healing order must no longer be selected"
             );
@@ -779,6 +780,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         ),
         crate::abilities::BeginResult::Started
     );
+    engine.select_sequence_element(attacker, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1193,6 +1195,7 @@ fn launch_initialized_strangle(
             element.direction(),
         )
     };
+    engine.select_sequence_element(attacker, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1566,6 +1569,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         .orders
         .sequence_manager
         .start_sequence_level(damage_sequence);
+    engine.select_sequence_element(victim, Some((damage_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

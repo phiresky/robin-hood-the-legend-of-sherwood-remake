@@ -108,6 +108,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         owner
     }
 
@@ -407,6 +417,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine.set_actors_frozen(true);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
@@ -502,6 +522,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         owner_entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(sequence, 0);
@@ -700,6 +730,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)
@@ -1021,10 +1061,7 @@ mod suite {
             "human action execution registers QuitSwordfight; the later manager update owns actor instruction"
         );
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            engine.world.entities.current_element_for_actor(owner),
             None,
             "the rejected movement is already gone but deferred QuitSwordfight is not selected until manager dispatch"
         );

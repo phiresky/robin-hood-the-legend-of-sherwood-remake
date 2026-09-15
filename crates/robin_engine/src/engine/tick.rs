@@ -2882,10 +2882,7 @@ impl EngineInner {
             .sequence_manager
             .get_element(entry_seq_id, entry_elem_idx)
             .map(|element| element.command);
-        let live_element = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner);
+        let live_element = self.world.entities.current_element_for_actor(owner);
         let live_command = live_element.and_then(|(seq_id, elem_idx)| {
             self.orders
                 .sequence_manager
@@ -2952,8 +2949,10 @@ impl EngineInner {
                 (execute_result.entry_seq_id, execute_result.entry_elem_idx),
             ),
             crate::sprite::MotionState::Terminated => {
-                let Some((seq_id, elem_idx, order)) =
-                    self.orders.sequence_manager.current_order_for_actor(owner)
+                let Some((seq_id, elem_idx, order)) = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(&self.world.entities, owner)
                 else {
                     return;
                 };
@@ -3053,188 +3052,6 @@ impl EngineInner {
         // instead of postponing behind an animation which already reached its
         // action point.
         order.done = true;
-    }
-
-    /// Auto-leave disguise/stealth posture if the entity is in one and
-    /// the incoming command requires Upright posture.
-    ///
-    /// **Superseded.**  The transition logic now lives in
-    /// `engine/transitions.rs` and runs at launch time via
-    /// `launch_element_for_owner` / the stamped single-order
-    /// wrapper.  Posture transitions resolve before the element
-    /// becomes `InProgress`, so the dispatch pipeline no longer
-    /// needs to peek at posture.
-    ///
-    /// This helper remains as `#[cfg(test)]` so the legacy edge-case
-    /// tests in `engine/tests.rs` that document the partial-port
-    /// behaviour still compile.  Those tests cross-check commands the
-    /// transitions module also covers; once they're migrated to call
-    /// `generate_transition` directly, this function can be deleted.
-    #[cfg(test)]
-    pub(super) fn auto_leave_disguise_if_needed(
-        &mut self,
-        owner: EntityId,
-        command: Command,
-    ) -> bool {
-        use crate::stealth;
-        use crate::titbit::{ElementHandle, TitbitKind};
-
-        if !stealth::command_requires_upright(command) {
-            return false;
-        }
-
-        let posture = match self.world.entities.get(owner) {
-            Some(e) => e.element_data().posture(),
-            None => return false,
-        };
-
-        // Honor the `CAN_BE_LEANING_OUT` /
-        // `CAN_BE_ANONYMOUS_ARCHER` flags that pair with
-        // `MUST_BE_UPRIGHT` on a handful of bow commands: the actor
-        // keeps its lean-out / anonymous-archer pose rather than
-        // unsticking before the shot (e.g. `SHOOT_BOW` from a
-        // lean-out window preserves the lean).
-        if posture == crate::element::Posture::LeaningOut
-            && stealth::command_allows_leaning_out(command)
-        {
-            return false;
-        }
-        if posture == crate::element::Posture::AnonymousArcher
-            && stealth::command_allows_anonymous_archer(command)
-        {
-            return false;
-        }
-
-        // ENTER_LEISURE permits CAN_BE_LEISURING, letting an
-        // already-leisuring NPC re-enter leisure without standing
-        // up first.  Skip the auto-leave in that case so the
-        // animation pipeline doesn't churn through Upright.
-        if command == Command::EnterLeisure && posture == crate::element::Posture::Leisure {
-            return false;
-        }
-
-        let transition = match stealth::leave_disguise(posture) {
-            Some(t) => t,
-            None => {
-                // Also handle Crouched → Upright for commands that need it.
-                if posture == crate::element::Posture::Crouched {
-                    stealth::crouch_up()
-                } else {
-                    return false;
-                }
-            }
-        };
-
-        // Snap posture + action state.  Pre-existing behavior for
-        // disguise / crouched transitions is silent (no transition
-        // anim queued); the soldier-specific `LeaningOut → Upright`
-        // branch additionally queues
-        // `TransitionLeaningOutWaitingAlerted` on the actor's
-        // order_queue so the lean-out-window soldier plays the
-        // visible unstick transition.  Sitting/Leisure are also
-        // visible transitions (NPC standing up out of a chair / out
-        // of leisure pose), so they queue their animation too.
-        let queue_anim = matches!(
-            posture,
-            crate::element::Posture::LeaningOut
-                | crate::element::Posture::Sitting
-                | crate::element::Posture::Leisure
-        );
-        // Look up the sequence element that's currently dispatching
-        // this command so the queued transition animation can be
-        // tagged with its owner — if the element is later
-        // interrupted (injury mid-transition),
-        // `send_condolation_card` scrubs the pending order so no
-        // ghost animation plays.  The order lives on the sequence
-        // element and goes away with it.
-        let dispatching = self.find_dispatching_element(owner, command);
-
-        if let Some(entity) = self.world.entities.get_mut(owner) {
-            entity.set_posture(transition.result_posture);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = transition.result_action_state;
-            }
-        }
-        if queue_anim {
-            // `compute_direction = false` on the transition
-            // order — direction is preserved so the soldier
-            // finishes facing the same way it was leaning.
-            let mut order = crate::order::Order::new(
-                transition.animation,
-                0.0,
-                0.0,
-                self.orders.allocate_order_id(),
-            );
-            order.compute_direction = false;
-            if let Some((seq_id, elem_idx)) = dispatching {
-                self.orders
-                    .sequence_manager
-                    .push_order_on(seq_id, elem_idx, order);
-            } else {
-                // No dispatching element found — spawn a single-
-                // order generic sequence so the visible unstick
-                // transition still plays.  Without a host element
-                // we launch a tiny one just to carry this animation.
-                self.launch_single_order_sequence_stamped(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::new(),
-                    owner,
-                    Command::Generic,
-                    order,
-                );
-            }
-        }
-
-        // Set `posture_after_transition` so downstream dispatch
-        // (e.g. `NpcAttentionCommandContext`) decides whether to
-        // run the command's real transition or snap.
-        if let Some((seq_id, elem_idx)) = dispatching
-            && let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-        {
-            elem.posture_after_transition = transition.result_posture;
-            elem.action_state_after_transition = transition.result_action_state;
-        }
-
-        // Remove HIDDEN titbit when leaving a hidden posture.
-        if posture.is_hidden() {
-            self.feedback
-                .titbit_manager
-                .remove_titbit(TitbitKind::Hidden, ElementHandle(owner.index()));
-        }
-
-        tracing::debug!(
-            ?owner,
-            ?command,
-            old_posture = ?posture,
-            new_posture = ?transition.result_posture,
-            "auto-leave disguise before command"
-        );
-        true
-    }
-
-    /// Find the sequence element currently being dispatched for
-    /// `(owner, command)` so auto-leave can update its
-    /// `posture_after_transition` / `action_state_after_transition`
-    /// fields.
-    ///
-    /// Only reachable from `auto_leave_disguise_if_needed`, which is
-    /// itself `#[cfg(test)]` after the transitions-port migration.
-    #[cfg(test)]
-    fn find_dispatching_element(
-        &self,
-        owner: EntityId,
-        command: Command,
-    ) -> Option<(crate::sequence::SequenceId, usize)> {
-        use crate::sequence::SequenceState;
-        self.orders
-            .sequence_manager
-            .live_element_for_actor_matching(owner, |elem| {
-                elem.command == command
-                    && matches!(elem.state, SequenceState::Todo | SequenceState::InProgress)
-            })
     }
 
     /// Whether `owner` is a beggar civilian that refuses this command.
@@ -3629,7 +3446,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         // look up via the actor's current in-progress element.
         matches!(
             self.sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(self.entities, entity_id)
                 .map(|(_, _, o)| o.order_type),
             Some(OrderType::BeingWeakSword | OrderType::BeingStunnedSword)
         )

@@ -233,6 +233,7 @@ impl EngineInner {
             target_dead: target.is_dead(),
             target_unconscious: human.unconscious,
             target_passing_door: selected_actor_is_passing_door(
+                &self.world.entities,
                 &self.orders.sequence_manager,
                 target_id,
             ),

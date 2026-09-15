@@ -523,10 +523,7 @@ impl EngineInner {
             let owner_state = element_state
                 .and_then(|(owner, _, _, _, _, _)| owner)
                 .map(|owner| {
-                    let selected = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner);
+                    let selected = self.world.entities.current_element_for_actor(owner);
                     let (active_movement, goal) = self
                         .get_entity(owner)
                         .map(|entity| {
@@ -606,11 +603,8 @@ impl EngineInner {
             return;
         }
 
-        // Queue exhausted. The actor completion callback clears the
-        // current element's map goal before dropping the selected element and
-        // actor order. `do_next_order` is only called for the actor's selected
-        // current order, so perform that owner-side cleanup at the same
-        // terminal boundary before the Rust sequence registry removes it.
+        // Clear the exhausted order while retaining selection through the
+        // termination callback, which owns goal and selection cleanup.
         if let Some(owner) = owner {
             self.world
                 .entities
@@ -618,45 +612,6 @@ impl EngineInner {
                 .and_then(Entity::actor_data_mut)
                 .expect("exhausted-order owner disappeared before mpOrder clear")
                 .installed_order = None;
-            if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
-                let selected = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner);
-                let (active_movement, goal) = self
-                    .get_entity(owner)
-                    .map(|entity| {
-                        let active_movement = entity.actor_data().map(|actor| {
-                            (
-                                actor.active_movement.sequence_id,
-                                actor.active_movement.element_index,
-                            )
-                        });
-                        (active_movement, entity.position_iface().map_goal())
-                    })
-                    .unwrap_or_default();
-                tracing::trace!(
-                    target: "parity_owner_handoff",
-                    frame = self.control.frame_counter,
-                    ?seq_id,
-                    elem_idx,
-                    ?owner,
-                    ?selected,
-                    ?active_movement,
-                    ?goal,
-                    "do_next_order before exhausted-order goal clear"
-                );
-            }
-            self.world
-                .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("current order owner {owner:?} disappeared before terminal goal cleanup")
-                })
-                .element_data_mut()
-                .sprite
-                .position_iface
-                .set_map_goal(crate::coordinates::MapPoint::new(0.0, 0.0));
         }
 
         // Terminate the element. Do not eagerly install Wait here:
@@ -691,8 +646,8 @@ impl EngineInner {
         // InProgress element is the only state that corresponds to the
         // the original game's live selected element and actor order.
         if self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(entity_id)
             .is_some()
         {

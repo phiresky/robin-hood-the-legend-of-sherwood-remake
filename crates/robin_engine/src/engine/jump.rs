@@ -1594,9 +1594,14 @@ fn start_step(
         .and_then(|a| a.active_jump.as_ref())
         .map(|j| (j.sequence_id, j.element_index))?;
 
-    let prev_anim = sequence_manager
-        .current_order_for_actor(entity_id)
-        .map(|(_, _, o)| (o.order_type, o.order_id));
+    let prev_anim = entity
+        .actor_data()
+        .and_then(|actor| actor.selected_sequence_element)
+        .and_then(|selected| {
+            sequence_manager.get_element(selected.sequence_id, selected.element_index)
+        })
+        .and_then(|element| element.current_order())
+        .map(|o| (o.order_type, o.order_id));
     let order_id = match prev_anim {
         Some((anim_type, order_id)) if anim_type == step.anim => order_id,
         _ => crate::order::alloc_order_id(next_order_id),

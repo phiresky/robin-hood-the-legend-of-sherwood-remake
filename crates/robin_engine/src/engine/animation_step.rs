@@ -76,7 +76,7 @@ impl EngineInner {
         if let Some((_, _, order)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
         {
             let actor = self
                 .world
@@ -102,10 +102,7 @@ impl EngineInner {
             .and_then(Entity::actor_data)
             && actor.execution_frozen
         {
-            let frozen_wait = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(entity_id)
+            let frozen_wait = self.orders.sequence_manager.current_order_for_actor(&self.world.entities, entity_id)
                 .and_then(|(seq_id, elem_idx, order)| {
                     let element = self
                         .orders
@@ -141,7 +138,7 @@ impl EngineInner {
         let selected_generic_order = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .and_then(|(seq_id, elem_idx, order)| {
                 self.orders
                     .sequence_manager
@@ -201,7 +198,7 @@ impl EngineInner {
         let Some((seq_id, elem_idx, order)) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
         else {
             return None;
         };
@@ -604,7 +601,7 @@ impl EngineInner {
         let striking_down_sword_valid_after_perform = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .and_then(|(seq_id, elem_idx, order)| {
                 (order.order_type == OrderType::StrikingDownSword).then_some((seq_id, elem_idx))
             })
@@ -774,7 +771,7 @@ impl ActorAnimationStepCtx<'_> {
             .engine
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id);
+            .current_order_for_actor(&self.engine.world.entities, entity_id);
         let (
             order_seq_elem,
             anim_type,

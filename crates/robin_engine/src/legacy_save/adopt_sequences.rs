@@ -361,35 +361,6 @@ impl LegacySequenceAdoptionPlan {
             .map(Some)
             .ok_or_else(|| missing_identity(field, original_id))
     }
-
-    /// Actor selection reconstructed by the converted manager's canonical
-    /// in-progress index.
-    pub(crate) fn current_element_for_actor(&self, actor: EntityId) -> Option<SequenceElementRef> {
-        let mut in_progress = self.manager.sequences.iter().flat_map(|sequence| {
-            sequence
-                .elements
-                .iter()
-                .enumerate()
-                .filter(move |(_, element)| {
-                    element.owner == Some(actor) && element.state == SequenceState::InProgress
-                })
-                .map(move |(element_index, element)| {
-                    (
-                        SequenceElementRef::new(sequence.id, element_index),
-                        element.command,
-                    )
-                })
-        });
-        let first = in_progress.next()?;
-        let Some(second) = in_progress.next() else {
-            return Some(first.0);
-        };
-        std::iter::once(first)
-            .chain(std::iter::once(second))
-            .chain(in_progress)
-            .find_map(|(reference, command)| (command != Command::Wait).then_some(reference))
-            .or(Some(first.0))
-    }
 }
 
 /// Convert every manager-owned sequence and deferred element without mutating
@@ -1707,10 +1678,6 @@ mod tests {
         assert_eq!(order_element, SequenceElementRef::new(SequenceId(10), 0));
         assert_eq!(order_index, 0);
         assert_eq!(order.order_id.get(), 1);
-        assert_eq!(
-            plan.current_element_for_actor(owner),
-            Some(SequenceElementRef::new(SequenceId(10), 1))
-        );
         assert!(
             plan.resolve_order("actor.order", LegacyOrderRef(Some(u32::MAX)))
                 .is_err()

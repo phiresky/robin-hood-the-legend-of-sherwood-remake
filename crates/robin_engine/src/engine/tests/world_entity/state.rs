@@ -440,8 +440,8 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     );
     assert!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .is_none(),
         "registered Face/Leave elements must not become actor-selected during the owner slot"
@@ -488,8 +488,8 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     );
     assert_eq!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(sequence, index)| engine
                 .orders
@@ -502,7 +502,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::TransitionWaitingAlertedWaitingUpright)
     );
@@ -1169,8 +1169,8 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     assert_eq!(commands[movement].1, crate::sequence::SequenceState::Todo);
     assert!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(officer_id)
             .is_none(),
         "deferred owner mode must not instruct either element"
@@ -1179,8 +1179,8 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
     let current = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(officer_id)
         .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
         .expect("manager phase must select the attentive transition");
@@ -1480,8 +1480,8 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     assert_eq!(turns, [SequenceState::Todo]);
     assert!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(target_id)
             .is_none(),
         "nested Turn must remain uninstructed until the manager hourglass"

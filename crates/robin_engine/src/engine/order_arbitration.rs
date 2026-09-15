@@ -86,9 +86,7 @@ impl EngineInner {
             // instructs the owner. It must pass the same admission as new work.
             SequenceState::Todo | SequenceState::Postponed => {}
             SequenceState::InProgress => {
-                // Element is already the actor's current (e.g.
-                // `launch_single_order_sequence_stamped` promoted it
-                // after arbitration). Accept it without comparing the
+                // The element is already selected. Accept it without comparing the
                 // element against itself: a postponed element can retain its
                 // original manager registration and gain a second one when
                 // its blocker releases it, so duplicate InstructOwner
@@ -147,6 +145,7 @@ impl EngineInner {
 
         let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
             // Idle actor — new element takes over unconditionally.
+            self.select_sequence_element(owner, Some((new_seq, new_idx)));
             return true;
         };
 
@@ -258,18 +257,9 @@ impl EngineInner {
                 {
                     order.done = false;
                 }
-                // The original game assigns the incoming element as the selected sequence element
-                // before postponing the outgoing one, so every condolence
-                // card raised from inside that postpone — including the
-                // immediate termination of an outgoing element whose last
-                // order is already done — observes that it is no longer the
-                // actor's selected element and leaves the sprite's
-                // map goal intact. Mirrors the equivalent
-                // `element_interrupted_after_replacement_selected` handling
-                // in the InterruptCurrent arm below.
-                self.orders
-                    .sequence_manager
-                    .begin_instruct_callback(owner, new_seq, new_idx);
+                // Callbacks observe the incoming instruction before the outgoing
+                // element is postponed, and may replace it recursively.
+                self.select_sequence_element(owner, Some((new_seq, new_idx)));
                 self.engine_postpone(
                     sim,
                     assets,
@@ -279,9 +269,7 @@ impl EngineInner {
                     cur_seq,
                     cur_idx,
                 );
-                self.orders
-                    .sequence_manager
-                    .end_instruct_callback(owner, new_seq, new_idx)
+                self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx))
             }
             PriorityDecision::InterruptCurrent => {
                 assert!(
@@ -314,18 +302,10 @@ impl EngineInner {
                     .sequence_manager
                     .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
                 stop_owner_active_mechanics(&mut self.world, &mut self.orders, owner);
-                // The original game selects the new sequence element
-                // before interrupting the outgoing element. The outgoing
-                // state-change cascade can synchronously register/postpone nested
-                // work before its deferred condolence card is drained; that
-                // work must already see the incoming element as selected.
-                // The outer sequence-phase callback scope below covers the
-                // deferred card itself, while this inner scope closes the gap
-                // during the state transition which produces that card.
-                self.orders
-                    .sequence_manager
-                    .begin_instruct_callback(owner, new_seq, new_idx);
-                self.element_interrupted_after_replacement_selected(
+                // Select before interruption so nested callbacks arbitrate against
+                // the incoming instruction. Returning never restores selection.
+                self.select_sequence_element(owner, Some((new_seq, new_idx)));
+                self.element_interrupted(
                     sim,
                     assets,
                     active_scripts,
@@ -333,9 +313,7 @@ impl EngineInner {
                     cur_idx,
                     crate::sequence::CascadeFlags::NEXT_LEVEL,
                 );
-                self.orders
-                    .sequence_manager
-                    .end_instruct_callback(owner, new_seq, new_idx)
+                self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx))
             }
         }
     }
@@ -767,7 +745,7 @@ pub(super) fn propagate_done_to_current_orders(
         .collect();
 
     for (entity_id, processed_order_id) in done_actors {
-        let Some((seq_id, elem_idx)) = sequence_manager.current_element_for_actor(entity_id) else {
+        let Some((seq_id, elem_idx)) = entities.current_element_for_actor(entity_id) else {
             continue;
         };
         if let Some(elem) = sequence_manager.get_element_mut(seq_id, elem_idx)
@@ -865,7 +843,7 @@ pub(super) fn stop_owner_active_mechanics(
     orders: &mut OrderRuntime,
     owner: EntityId,
 ) {
-    let selected_element = orders.sequence_manager.current_element_for_actor(owner);
+    let selected_element = world.entities.current_element_for_actor(owner);
     world.pathfinder.cancel_requests_for(owner);
     orders.pending_path_requests.cancel_for_owner(owner);
     // Path-request cancellation fires from both
@@ -939,10 +917,7 @@ impl EngineInner {
             .map(|e| e.element_data().position_map())
             .unwrap_or_default();
         if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
-            let selected = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
+            let selected = self.world.entities.current_element_for_actor(owner);
             let selected_state = selected.and_then(|(seq_id, elem_idx)| {
                 self.orders
                     .sequence_manager
@@ -991,7 +966,7 @@ impl EngineInner {
         let selected_movement_before_stop = self
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&self.world.entities, owner)
             .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
         tracing::trace!(target: "parity_stop", ?owner, "before stop_movement_for_owner");
         self.stop_movement_for_owner(
@@ -1005,8 +980,10 @@ impl EngineInner {
         );
         let rewritten_selected_order = if let Some((before_seq, before_idx, before_id)) =
             selected_movement_before_stop
-            && let Some((after_seq, after_idx, after_order)) =
-                self.orders.sequence_manager.current_order_for_actor(owner)
+            && let Some((after_seq, after_idx, after_order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(&self.world.entities, owner)
             && after_seq == before_seq
             && after_idx == before_idx
             && after_order.order_id != before_id
@@ -1046,10 +1023,7 @@ impl EngineInner {
         if include_pending {
             self.stop_owner(sim, assets, active_scripts, owner, stop_priority, &resolver);
         } else {
-            let root = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
+            let root = self.world.entities.current_element_for_actor(owner);
             self.stop_owner_current_from_root(
                 sim,
                 assets,

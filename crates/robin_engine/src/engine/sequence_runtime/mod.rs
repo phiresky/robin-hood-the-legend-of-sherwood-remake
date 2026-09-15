@@ -433,7 +433,7 @@ impl EngineInner {
         let blocked = self
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&self.world.entities, owner)
             .is_some_and(|(_, _, order)| {
                 super::melee::sword_strike_from_animation(order.order_type).is_some()
             });

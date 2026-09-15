@@ -1181,6 +1181,8 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
         idx,
     );
 
+    engine.select_sequence_element(owner, Some((seq, idx)));
+
     assert_eq!(
         engine
             .get_entity(owner)

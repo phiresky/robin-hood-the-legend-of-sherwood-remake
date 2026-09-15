@@ -164,9 +164,7 @@ fn launch_test_shoot_element(
     let elem = build_shoot_bow_element(shooter, target);
     let seq_id = sm.insert_element(elem);
     sm.start_sequence_level(seq_id);
-    // Transition the element to InProgress so `current_element_for_actor`
-    // finds it — the engine does this as part of the hourglass dispatch,
-    // which the tests skip.
+    // Model the running bow element independently of instruction dispatch.
     sm.get_element_mut(seq_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
     sm.rebuild_indices();
     (sm, seq_id, 0)
@@ -446,9 +444,10 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
         .active_shot;
     replacement.released = true;
     let selected_order = sm
-        .current_order_for_actor(first)
-        .expect("first bow order selected")
-        .2
+        .get_element(first_seq, 0)
+        .unwrap()
+        .current_order()
+        .expect("first bow order present")
         .order_id;
 
     // A synchronous operation has replaced another actor's shot before this
@@ -514,7 +513,12 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
         ),
         BeginShotResult::Started
     );
-    let order = sm.current_order_for_actor(shooter).unwrap().2.clone();
+    let order = sm
+        .get_element(seq, 0)
+        .unwrap()
+        .current_order()
+        .unwrap()
+        .clone();
     let before_sprite = entities.get(shooter).unwrap().sprite().clone();
     // The shoot order samples its target only while the owner slot has
     // the execute order in its initialising window; arm it the way the
@@ -541,7 +545,11 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
         before_sprite.last_processed_order_id
     );
     assert_eq!(
-        sm.current_order_for_actor(shooter).unwrap().2.order_id,
+        sm.get_element(seq, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_id,
         order.order_id
     );
 }

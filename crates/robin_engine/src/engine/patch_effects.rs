@@ -459,7 +459,7 @@ impl EngineInner {
                         let installed_order = self
                             .orders
                             .sequence_manager
-                            .current_order_for_actor(id)
+                            .current_order_for_actor(&self.world.entities, id)
                             .filter(|(live_seq, live_idx, _)| {
                                 *live_seq == seq_id && *live_idx == elem_idx
                             })

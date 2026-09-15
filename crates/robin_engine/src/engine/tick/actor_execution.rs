@@ -109,7 +109,7 @@ impl EngineInner {
         let selected_order = self
             .orders
             .sequence_manager
-            .current_order_for_actor(carrier_id)
+            .current_order_for_actor(&self.world.entities, carrier_id)
             .map(|(_, _, order)| order.order_type)
             .unwrap_or_else(|| {
                 panic!(
@@ -367,11 +367,7 @@ impl EngineInner {
         // front order.  This mirrors the movement-tick door-pass
         // path, where `transition_pushes` are drained before
         // `order_pops`.
-        if let Some((seq_id, elem_idx)) = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(entity_id)
-        {
+        if let Some((seq_id, elem_idx)) = self.world.entities.current_element_for_actor(entity_id) {
             match advance.clone() {
                 DoorPassAdvance::Continue {
                     order_id,
@@ -868,8 +864,8 @@ impl EngineInner {
         let tick = effect;
         if tick.action_done {
             let (seq_id, elem_idx) = self
-                .orders
-                .sequence_manager
+                .world
+                .entities
                 .current_element_for_actor(tick.taker)
                 .unwrap_or_else(|| {
                     panic!("TakingNet taker {:?} lost its live element", tick.taker)

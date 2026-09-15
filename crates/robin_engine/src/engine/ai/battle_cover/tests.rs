@@ -115,6 +115,7 @@ fn pride_range_uses_close_body_during_door_pass() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(target, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

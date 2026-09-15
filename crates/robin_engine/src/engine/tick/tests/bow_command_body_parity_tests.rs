@@ -388,6 +388,7 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     let mut idle = SequenceElement::new(1, Command::Wait, Some(owner));
     idle.priority = crate::sequence::SequencePriority::Wait;
     let idle_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, idle);
+    engine.select_sequence_element(owner, Some((idle_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -499,6 +500,7 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(0));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    engine.select_sequence_element(owner, Some((seq_id, 0)));
     engine.dispatch_wait_command(
         &crate::sim_rng::test_context(),
         &assets,
@@ -551,6 +553,7 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.priority = crate::sequence::SequencePriority::Normal;
         let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+        engine.select_sequence_element(owner, Some((seq_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -672,7 +675,7 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .is_some_and(|(_, _, order)| {
                 order.order_type == OrderType::TransitionWalkingUprightWaitingUpright
             }),
@@ -704,6 +707,7 @@ fn owner_local_stop_movement_new_id_preserves_execute_start() {
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
     movement.priority = crate::sequence::SequencePriority::Normal;
     let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -762,7 +766,7 @@ fn owner_local_stop_movement_new_id_preserves_execute_start() {
     let (_, _, rewritten) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .expect("stopped walking order remains selected as its transition");
     assert_eq!(
         rewritten.order_type,
@@ -780,6 +784,7 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
     movement.priority = crate::sequence::SequencePriority::Normal;
     let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -842,7 +847,7 @@ fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
     let (_, _, successor) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(owner)
+        .current_order_for_actor(&engine.world.entities, owner)
         .expect("pre-existing stop transition must remain selected");
     assert_eq!(successor.order_id, transition_order_id);
     assert_eq!(
@@ -1590,6 +1595,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         seq_id,
         0,
     );
+    engine.select_sequence_element(owner, Some((seq_id, 0)));
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
 
@@ -1637,8 +1643,8 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     engine.tick_actor_animation_action_change_slots(&sim, &assets);
     assert_eq!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(sequence, element)| engine
                 .orders

@@ -406,6 +406,7 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
         .orders
         .sequence_manager
         .start_sequence_level(take_sequence);
+    engine.select_sequence_element(carrier, Some((take_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -434,8 +435,8 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
     assert_eq!(body_entity.sprite().current_frame, 0);
     assert_eq!(body_entity.sprite().frame_count, u16::MAX);
     let selected = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(body)
         .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
         .expect("DropCorpse must synchronously instruct the body's Wait");
@@ -558,6 +559,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         .orders
         .sequence_manager
         .start_sequence_level(movement_sequence);
+    engine.select_sequence_element(owner, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -635,6 +637,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -686,6 +689,7 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
     element.orders.push_back(order);
     let seq_id = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
+    engine.select_sequence_element(owner, Some((seq_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -733,7 +737,7 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
             .2
             .order_type,
@@ -932,6 +936,7 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     element.orders.push_back(order);
     let seq = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq);
+    engine.select_sequence_element(owner, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1082,6 +1087,7 @@ fn translate_pay_without_facing_or_speech(
         ),
         crate::abilities::BeginResult::Started
     );
+    engine.select_sequence_element(pc, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1570,6 +1576,7 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     element.orders.push_back(order);
     let seq = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq);
+    engine.select_sequence_element(beggar, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -2238,8 +2245,8 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
     );
     assert!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(pc_id)
             .is_none(),
         "inactive PC's invalid helping-climb element must be terminated at init"
@@ -2424,6 +2431,7 @@ fn evaluate_opponents_maps_legacy_climb_like_original_release() {
         .sequence_manager
         .start_sequence_level(movement);
 
+    engine.select_sequence_element(owner, Some((movement, 0)));
     engine.evaluate_opponents(&sim, &assets, owner);
 
     let movement = engine

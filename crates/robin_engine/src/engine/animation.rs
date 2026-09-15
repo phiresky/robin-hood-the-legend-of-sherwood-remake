@@ -2951,7 +2951,7 @@ impl EngineInner {
             .then(|| {
                 self.orders
                     .sequence_manager
-                    .current_order_for_actor(entity_id)
+                    .current_order_for_actor(&self.world.entities, entity_id)
                     .map(|(_, _, order)| (order.order_type, order.antagonist))
             })
             .flatten()
@@ -2980,7 +2980,7 @@ impl EngineInner {
             .then(|| {
                 self.orders
                     .sequence_manager
-                    .current_order_for_actor(entity_id)
+                    .current_order_for_actor(&self.world.entities, entity_id)
                     .map(|(sequence_id, element_index, order)| {
                         (sequence_id, element_index, order.order_type)
                     })
@@ -3013,7 +3013,7 @@ impl EngineInner {
             && self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(&self.world.entities, entity_id)
                 .is_some_and(|(_, _, order)| {
                     matches!(
                         order.order_type,
@@ -3387,6 +3387,7 @@ mod shoulder_idle_initialization_tests {
             .orders
             .sequence_manager
             .start_sequence_level(helper_wait);
+        engine.select_sequence_element(helper_id, Some((helper_wait, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3400,7 +3401,7 @@ mod shoulder_idle_initialization_tests {
         let (_, _, order) = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(climber_id)
+            .current_order_for_actor(&engine.world.entities, climber_id)
             .expect("helper idle initialization must wake the carried PC");
         assert_eq!(order.order_type, OrderType::WaitingOnShoulders);
         let climber = engine.get_entity(climber_id).unwrap().actor_data().unwrap();
@@ -3419,7 +3420,7 @@ mod shoulder_idle_initialization_tests {
         let carried_order = engine
             .orders
             .sequence_manager
-            .current_order_for_actor(climber_id)
+            .current_order_for_actor(&engine.world.entities, climber_id)
             .expect("carried wait must remain selected")
             .2
             .order_id;
@@ -3428,7 +3429,7 @@ mod shoulder_idle_initialization_tests {
             engine
                 .orders
                 .sequence_manager
-                .current_order_for_actor(climber_id)
+                .current_order_for_actor(&engine.world.entities, climber_id)
                 .expect("carried wait must remain selected")
                 .2
                 .order_id,
@@ -3493,6 +3494,7 @@ mod shoulder_idle_initialization_tests {
             .push_back(Order::test_new(OrderType::WaitingOnShoulders, 0.0, 0.0));
         let wait_id = engine.orders.sequence_manager.insert_element(wait);
         engine.orders.sequence_manager.start_sequence_level(wait_id);
+        engine.select_sequence_element(climber_id, Some((wait_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

@@ -232,7 +232,8 @@ impl EngineInner {
                                 element_index,
                             );
                         } else {
-                            self.orders.sequence_manager.set_translating_element(None);
+                            self.select_sequence_element(owner, None);
+                            self.publish_selected_order_as_installed(owner);
                             self.element_terminated(
                                 sim,
                                 assets,
@@ -515,8 +516,8 @@ impl EngineInner {
                     entity.element_data().posture() == crate::element::Posture::HelpingToClimb
                 });
                 let entry_still_in_progress = self
-                    .orders
-                    .sequence_manager
+                    .world
+                    .entities
                     .current_element_for_actor(pc_id)
                     .and_then(|(sequence_id, element_index)| {
                         self.orders
@@ -539,10 +540,6 @@ impl EngineInner {
         // Pop one live FIFO entry only after its predecessor and every
         // synchronous successor callback have returned.
         while let Some(action) = self.orders.sequence_manager.pop_next_hourglass_action() {
-            // Translation selection never outlives the dispatch that
-            // installed it; the arms below abandon the action early on many
-            // rejection paths.
-            self.orders.sequence_manager.set_translating_element(None);
             // Abandoning an action skips the rest of *that action's* work —
             // never the epilogue below. A rejected command can still have
             // terminated its element during translation, and the resulting
@@ -551,10 +548,7 @@ impl EngineInner {
             // Falling out of the whole loop instead would strand the
             // successor until the next frame and leave the actor orderless.
             self.dispatch_sequence_phase_action(sim, assets, action);
-
-            self.orders.sequence_manager.set_translating_element(None);
         }
-        self.orders.sequence_manager.set_translating_element(None);
 
         // The redundant-EnterSwordfight retention above is only a bridge
         // across a re-entrant actor-update lazy Wait. If that Wait is

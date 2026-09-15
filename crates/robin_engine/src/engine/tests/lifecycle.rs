@@ -188,6 +188,7 @@ fn corpse_exit_initialization_fixture(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(carrier, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -275,6 +276,7 @@ fn install_owner_selected_test_melee_frames(
         .orders
         .sequence_manager
         .push_order_on(sequence, 0, order);
+    engine.select_sequence_element(attacker, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

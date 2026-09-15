@@ -35,13 +35,7 @@ fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal()
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    engine
-        .orders
-        .sequence_manager
-        .set_translating_element(Some((
-            victim,
-            crate::sequence::SequenceElementRef::new(sequence, 0),
-        )));
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -200,6 +194,7 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(target, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -631,6 +626,7 @@ fn reactive_counterstrike_fixture() -> (
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
+    engine.select_sequence_element(victim, Some((old_parry, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -865,6 +861,7 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
         };
         let old_order =
             engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -2116,6 +2113,7 @@ fn push_strike_does_not_inform_soldier_of_good_strike() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2194,6 +2192,7 @@ fn ordinary_cutting_strike_still_informs_soldier_of_good_strike() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2298,6 +2297,7 @@ fn non_pc_helping_to_climb_still_informs_soldier_of_good_strike() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2488,6 +2488,7 @@ fn parried_true_circle_still_queues_push_fall() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((damage_sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2584,6 +2585,7 @@ fn parried_true_circle_still_queues_push_fall() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((parry_sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2606,7 +2608,7 @@ fn parried_true_circle_still_queues_push_fall() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(victim)
+            .current_order_for_actor(&engine.world.entities, victim)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::ParryingSword)
     );
@@ -2628,6 +2630,7 @@ fn parried_true_circle_still_queues_push_fall() {
         parry_sequence_id,
         0,
     );
+    engine.select_sequence_element(victim, Some((damage_sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2647,7 +2650,7 @@ fn parried_true_circle_still_queues_push_fall() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(victim)
+            .current_order_for_actor(&engine.world.entities, victim)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::FallingPushedWithSword)
     );
@@ -2873,6 +2876,7 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3091,6 +3095,7 @@ fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
+    engine.select_sequence_element(opponent, Some((selected_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

@@ -386,8 +386,8 @@ impl EngineInner {
         }
         let creation_order = self.world.original_creation_order(owner);
         let current = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(sequence_id, element_index)| {
                 self.orders
@@ -1997,10 +1997,11 @@ fn test_hiking_path_fine(
 /// Whether the actor's selected sequence command is PassDoor, matching
 /// the actor door-passing check.
 pub(super) fn selected_actor_is_passing_door(
+    entities: &crate::entities::Entities,
     sequence_manager: &crate::sequence::SequenceManager,
     entity_id: EntityId,
 ) -> bool {
-    sequence_manager
+    entities
         .current_element_for_actor(entity_id)
         .and_then(|(sequence_id, element_index)| {
             sequence_manager.get_element(sequence_id, element_index)
@@ -2013,14 +2014,13 @@ pub(super) fn selected_actor_is_passing_door(
 /// sequence element itself; unlike AI destination forecasting, it does not
 /// consult the sprite position interface's live door pointer.
 fn selected_pass_door_movement(
+    entities: &crate::entities::Entities,
     sequence_manager: &crate::sequence::SequenceManager,
     entity_id: EntityId,
 ) -> Option<(crate::gate::DoorIndex, i16)> {
-    let element = sequence_manager
-        .current_element_for_actor(entity_id)
-        .and_then(|(sequence_id, element_index)| {
-            sequence_manager.get_element(sequence_id, element_index)
-        })?;
+    let element = entities.current_element_for_actor(entity_id).and_then(
+        |(sequence_id, element_index)| sequence_manager.get_element(sequence_id, element_index),
+    )?;
     if element.command != crate::element::Command::PassDoor {
         return None;
     }
@@ -2118,7 +2118,7 @@ pub(super) fn resolve_ai_position_with(
     target_id: crate::element::EntityId,
     mut position_of: impl FnMut(crate::element::EntityId) -> crate::ai::Position,
 ) -> crate::ai::Position {
-    let selected_door = selected_pass_door_movement(sequence_manager, target_id);
+    let selected_door = selected_pass_door_movement(entities, sequence_manager, target_id);
     let target = entities
         .get(target_id)
         .unwrap_or_else(|| panic!("AI position target {target_id:?} disappeared"));

@@ -75,6 +75,18 @@ impl EntityNeighbours<'_> {
 }
 
 impl Entities {
+    /// Read the actor's explicit instruction selection.
+    pub fn current_element_for_actor(
+        &self,
+        actor: impl Into<EntityId>,
+    ) -> Option<(crate::sequence::SequenceId, usize)> {
+        let selected = self
+            .get(actor.into())?
+            .actor_data()?
+            .selected_sequence_element?;
+        Some((selected.sequence_id, selected.element_index))
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

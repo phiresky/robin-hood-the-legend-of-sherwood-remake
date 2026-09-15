@@ -101,6 +101,7 @@ fn mechanics_stop_clears_only_the_selected_elements_ability_mirror() {
             .orders
             .sequence_manager
             .start_sequence_level(selected);
+        engine.select_sequence_element(owner, Some((selected, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

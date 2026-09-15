@@ -121,6 +121,7 @@ fn dispatch_pass_with_element_mutation(
     let seq_id = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.script_domains.interactables.doors = doors.to_vec();
+    engine.select_sequence_element(owner, Some((seq_id, 0)));
     let barrier = engine.instruct_pass_door(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

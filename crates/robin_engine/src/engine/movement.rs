@@ -434,7 +434,7 @@ fn observe_post_execute_crossing(engine: &mut EngineInner, entity_id: EntityId) 
             current_order: engine
                 .orders
                 .sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(&engine.world.entities, entity_id)
                 .map(|(_, _, order)| (order.order_id, order.order_type)),
         });
     });
@@ -2923,24 +2923,23 @@ impl EngineInner {
         }
 
         let manager = &self.orders.sequence_manager;
-        let selected = manager.current_element_for_actor(owner);
-        let current_order =
-            manager
-                .current_order_for_actor(owner)
-                .map(|(sequence_id, element_index, order)| {
-                    (
-                        sequence_id,
-                        element_index,
-                        order.order_type,
-                        order.order_id,
-                        order.done,
-                        order.target_x.to_bits(),
-                        order.target_y.to_bits(),
-                        order.tolerance.to_bits(),
-                        order.move_flags,
-                        order.antagonist,
-                    )
-                });
+        let selected = self.world.entities.current_element_for_actor(owner);
+        let current_order = manager
+            .current_order_for_actor(&self.world.entities, owner)
+            .map(|(sequence_id, element_index, order)| {
+                (
+                    sequence_id,
+                    element_index,
+                    order.order_type,
+                    order.order_id,
+                    order.done,
+                    order.target_x.to_bits(),
+                    order.target_y.to_bits(),
+                    order.tolerance.to_bits(),
+                    order.move_flags,
+                    order.antagonist,
+                )
+            });
         let graph = manager
             .sequences_iter()
             .flat_map(|sequence| {
@@ -3120,7 +3119,7 @@ impl EngineInner {
             let compute_direction = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(&self.world.entities, entity_id)
                 .map(|(_, _, order)| order.compute_direction);
             if let Some(compute_direction) = compute_direction
                 && let Some(entity) = self.world.entities.get_mut(entity_id)
@@ -3241,10 +3240,7 @@ impl EngineInner {
         use crate::weapons::SwordStrike;
 
         let provenance_frame = self.control.frame_counter;
-        let selected = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(rider_id);
+        let selected = self.world.entities.current_element_for_actor(rider_id);
         let live = selected.and_then(|(seq_id, elem_idx)| {
             let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
             if !element.data.is_movement() {
@@ -4254,8 +4250,8 @@ impl EngineInner {
             return false;
         }
         let selected_command = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(seq_id, elem_idx)| {
                 self.orders
@@ -4786,8 +4782,8 @@ impl EngineInner {
             // and the actor replayed the walk instead of reaching its
             // PASSING_DOOR action point.
             let selected_priority = self
-                .orders
-                .sequence_manager
+                .world
+                .entities
                 .current_element_for_actor(owner)
                 .and_then(|(seq_id, elem_idx)| {
                     self.orders.sequence_manager.get_element(seq_id, elem_idx)
@@ -5620,7 +5616,6 @@ impl EngineInner {
         entity: &mut crate::element::Entity,
         manager: &crate::sequence::SequenceManager,
         selected: MovementOwnerSelection,
-        actor_id: crate::entity_id::ActorId,
         entity_id: EntityId,
         is_swordfighting: bool,
     ) -> Option<SelectedMovementOrder> {
@@ -5687,7 +5682,10 @@ impl EngineInner {
             return None;
         };
         if !has_moving_state
-            && manager.current_element_for_actor(actor_id) != Some((seq_id, elem_idx))
+            && actor
+                .selected_sequence_element
+                .map(|selected| (selected.sequence_id, selected.element_index))
+                != Some((seq_id, elem_idx))
         {
             // A parallel movement element can remain in progress
             // while a higher-priority non-movement element owns the
@@ -5856,7 +5854,7 @@ impl EngineInner {
             let selected = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(owner)
+                .current_order_for_actor(&self.world.entities, owner)
                 .and_then(|(seq_id, elem_idx, order)| {
                     self.orders
                         .sequence_manager
@@ -6486,7 +6484,7 @@ impl EngineInner {
         let selected_pre_path_tail = self
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&self.world.entities, owner)
             .and_then(|(selected_seq, selected_idx, current)| {
                 let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
                 let tail_index = element.orders.len().checked_sub(1)?;
@@ -6714,11 +6712,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        if let Some((seq_id, elem_idx)) = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner)
-        {
+        if let Some((seq_id, elem_idx)) = self.world.entities.current_element_for_actor(owner) {
             let exhausts_pending_move = self
                 .orders
                 .sequence_manager

@@ -5,6 +5,76 @@ use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
 #[test]
+fn nested_instruction_selection_survives_outer_callback_return() {
+    for nested_has_order in [false, true] {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let sim = crate::sim_rng::test_context();
+        let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            Posture::Upright,
+        ));
+        let mut insert = |has_order| {
+            let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+            element.priority = SequencePriority::Normal;
+            if has_order {
+                element.orders.push_back(crate::order::Order::new(
+                    OrderType::WaitingUpright,
+                    0.0,
+                    0.0,
+                    engine.orders.allocate_order_id(),
+                ));
+            }
+            let sequence = engine.orders.sequence_manager.insert_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
+            sequence
+        };
+        let outgoing = insert(true);
+        let incoming = insert(true);
+        let nested = insert(nested_has_order);
+        assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+        EngineInner::with_condolation_callback(
+            move |engine, card| {
+                if card.seq_id == outgoing {
+                    assert_eq!(
+                        engine.world.entities.current_element_for_actor(owner),
+                        Some((incoming, 0))
+                    );
+                    assert!(engine.instruct_owner(
+                        &crate::sim_rng::test_context(),
+                        &LevelAssets::new(),
+                        &mut Vec::new(),
+                        owner,
+                        nested,
+                        0,
+                    ));
+                }
+            },
+            || {
+                assert!(!engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, incoming, 0));
+            },
+        );
+        assert_eq!(
+            engine.world.entities.current_element_for_actor(owner),
+            nested_has_order.then_some((nested, 0)),
+        );
+        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        assert_eq!(actor.installed_order.is_some(), nested_has_order);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(incoming, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+        );
+    }
+}
+
+#[test]
 fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
@@ -87,10 +157,7 @@ fn held_bow_instruction_unfreezes_before_retaining_the_shot() {
         assert!(held.orders.is_empty());
         assert_eq!(held.posture_after_transition, Posture::Undefined);
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            engine.world.entities.current_element_for_actor(owner),
             None,
             "loading retains the shot without translating or selecting it"
         );
@@ -119,10 +186,7 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
         let sequence = engine.launch_element(&sim, &assets, whistle);
         if priority == SequencePriority::Normal {
             assert_eq!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner),
+                engine.world.entities.current_element_for_actor(owner),
                 None,
                 "registered instructions must wait for the sequence phase"
             );
@@ -130,10 +194,7 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
         }
 
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
+            engine.world.entities.current_element_for_actor(owner),
             Some((sequence, 0))
         );
         let element = engine
@@ -194,13 +255,7 @@ fn completion_during_translation_does_not_latch_instruction_motion() {
                 .state,
             SequenceState::Terminated
         );
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner),
-            None
-        );
+        assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
         assert_eq!(
             engine
                 .get_entity(owner)

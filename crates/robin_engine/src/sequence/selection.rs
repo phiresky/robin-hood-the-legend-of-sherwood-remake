@@ -404,38 +404,12 @@ impl SequenceManager {
         self.insert_sequence(seq)
     }
 
-    /// Launch a one-shot generic sequence carrying a single pre-built
-    /// `Order` for `actor`, and immediately mark its element as
-    /// `InProgress` so consumers (animation driver, AI peek-current)
-    /// see it this frame rather than waiting for the next
-    /// `hourglass` dispatch. Used by swordfight entry /
-    /// `QuitSwordfight` to build a
-    /// generic element, push the order onto its `orders` queue, then
-    /// launch with priority resolution firing synchronously.  Keeping
-    /// every in-flight `Order` attached to an `InProgress` element
-    /// means cancellation (via `set_element_state`) naturally discards
-    /// the orders along with the element.
-    ///
-    /// Suffixed `_unchecked` because this path bypasses the instruction
-    /// equivalent (posture/action-state stamp + priority arbitration
-    /// against the actor's current element).  Every caller except
-    /// `EngineInner::launch_single_order_sequence_stamped` should go
-    /// through that wrapper; the `_unchecked` form is kept only for
-    /// the stamped wrapper's internals.  A grep for this name should
-    /// turn up exactly one caller.
-    pub(crate) fn launch_single_order_sequence_unchecked(
+    /// Register an owned command for instruction at the next FIFO boundary.
+    pub(crate) fn register_owned_command(
         &mut self,
         actor: EntityId,
         command: Command,
     ) -> SequenceId {
-        // Launch the empty element.  The caller (always
-        // `EngineInner::launch_single_order_sequence_stamped`) is
-        // responsible for running instruction handling (posture
-        // stamp + `generate_transition` + arbitration) and THEN
-        // appending the pre-baked single order.  Ordering matters:
-        // `generate_transition` (exit + posture + enter) populates the
-        // order queue BEFORE `Translate` pushes the command's own
-        // order, so those transitions play first.
         let elem = SequenceElement::new_generic(1, command, Some(actor));
         let id = self.insert_element(elem);
         self.sequences
@@ -473,53 +447,15 @@ impl SequenceManager {
         }
     }
 
-    /// Find the actor's in-progress sequence element.  O(log k) via
-    /// [`actor_in_progress`](Self::actor_in_progress), where k is the
-    /// number of simultaneously-`InProgress` elements owned by this
-    /// actor (typically 1; briefly 2 during cascades).  When an idle
-    /// `Wait` overlaps a real command, the real command is the actor's
-    /// current element; otherwise old idle waits could starve combat
-    /// elements that should be the actor's current sequence element.
-    pub fn current_element_for_actor<I: Into<EntityId>>(
-        &self,
-        actor: I,
-    ) -> Option<(SequenceId, usize)> {
-        let actor = actor.into();
-        if let Some((elem_ref, false)) = self
-            .actor_instructing
-            .get(&actor)
-            .and_then(|stack| stack.last())
-        {
-            return Some((elem_ref.sequence_id, elem_ref.element_index));
-        }
-        if let Some((owner, elem_ref)) = self.actor_translating
-            && owner == actor
-        {
-            return Some((elem_ref.sequence_id, elem_ref.element_index));
-        }
-        let set = self.actor_in_progress.get(&actor)?;
-        let mut refs = set.iter();
-        let first = *refs.next()?;
-        if refs.next().is_none() {
-            return Some((first.sequence_id, first.element_index));
-        }
-
-        for elem_ref in set {
-            let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
-                debug_assert!(false, "actor_in_progress contains stale element ref");
-                continue;
-            };
-            if elem.command != Command::Wait {
-                return Some((elem_ref.sequence_id, elem_ref.element_index));
-            }
-        }
-        Some((first.sequence_id, first.element_index))
-    }
-
     /// Whether the actor's original-game-equivalent selected element currently
     /// names a movement element.
-    pub fn actor_has_selected_movement<I: Into<EntityId>>(&self, actor: I) -> bool {
-        self.current_element_for_actor(actor)
+    pub fn actor_has_selected_movement<I: Into<EntityId>>(
+        &self,
+        entities: &crate::entities::Entities,
+        actor: I,
+    ) -> bool {
+        entities
+            .current_element_for_actor(actor)
             .and_then(|(sequence_id, element_index)| self.get_element(sequence_id, element_index))
             .is_some_and(|element| element.data.is_movement())
     }
@@ -542,101 +478,8 @@ impl SequenceManager {
         })
     }
 
-    /// Select the accepted element for the duration of its command
-    /// translation, or release it again.
-    ///
-    /// Releasing before a terminal state change reproduces the original game's
-    /// post-translation clearing of the selected element for an accepted element whose
-    /// translation produced no orders: that card must not claim the actor's
-    /// movement goal, while a card raised from inside the translation body
-    /// must.
-    pub(crate) fn set_translating_element(
-        &mut self,
-        selection: Option<(EntityId, SequenceElementRef)>,
-    ) {
-        self.actor_translating = selection;
-    }
-
-    /// Read-only exposure for the opt-in goal/condolence ownership trace.
-    pub(crate) fn goal_owner_debug_translating(&self) -> Option<(EntityId, SequenceElementRef)> {
-        self.actor_translating
-    }
-
-    /// Release the translation selection when its own element is the one that
-    /// just detached the actor's selected sequence element.
-    ///
-    /// The actor completion callback clears the selected element
-    /// whenever the terminal element is the selected one
-    /// when the terminal element is selected. A command body can reach that state
-    /// from inside its own translation — path request insertion calls
-    /// `Stop()` on the actor whose Move is being translated
-    /// during path request insertion — and everything the same translation does
-    /// afterwards, including the `Wait()` it launches next, must observe the
-    /// cleared pointer. Rust holds the translation identity until after the
-    /// deferred condolence dispatch, so drop it here instead.
-    pub(crate) fn clear_translating_element_if_selected(
-        &mut self,
-        actor: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-    ) {
-        if self.actor_translating == Some((actor, SequenceElementRef::new(seq_id, elem_idx))) {
-            self.actor_translating = None;
-        }
-    }
-
-    /// Select an incoming element while the outgoing element's synchronous
-    /// interruption callback runs.
-    ///
-    /// The original game stores this selection in one raw element reference
-    /// for the active element. A recursively accepted instruction
-    /// overwrites that pointer permanently; returning from the recursive call
-    /// does not restore its caller's selection. Keep the stack only to pair
-    /// Rust callback scopes, and mark the parent superseded whenever a nested
-    /// selection is installed.
-    pub(crate) fn begin_instruct_callback(
-        &mut self,
-        owner: EntityId,
-        sequence_id: SequenceId,
-        element_index: usize,
-    ) {
-        let stack = self.actor_instructing.entry(owner).or_default();
-        if let Some((_, superseded)) = stack.last_mut() {
-            *superseded = true;
-        }
-        stack.push((SequenceElementRef::new(sequence_id, element_index), false));
-    }
-
-    /// Close a matching [`Self::begin_instruct_callback`] boundary, returning
-    /// whether recursive work left this element selected. This is Original's
-    /// post-priority callback selection check.
-    pub(crate) fn end_instruct_callback(
-        &mut self,
-        owner: EntityId,
-        sequence_id: SequenceId,
-        element_index: usize,
-    ) -> bool {
-        let expected = SequenceElementRef::new(sequence_id, element_index);
-        let stack = self
-            .actor_instructing
-            .get_mut(&owner)
-            .unwrap_or_else(|| panic!("missing Instruct callback selection for {owner:?}"));
-        let (selected, superseded) = stack
-            .pop()
-            .expect("Instruct callback selection stack is empty");
-        assert_eq!(
-            selected, expected,
-            "Instruct callback selection closed out of order"
-        );
-        if stack.is_empty() {
-            self.actor_instructing.remove(&owner);
-        }
-        !superseded
-    }
-
     /// Find the first in-progress element owned by `actor` that
-    /// satisfies `predicate`, using the same actor index as
-    /// [`current_element_for_actor`](Self::current_element_for_actor).
+    /// satisfies `predicate`, using the actor's in-progress index.
     /// Lets callers check the actor's parallel in-progress elements
     /// without scanning every sequence in the manager.
     pub fn in_progress_element_for_actor_matching(
@@ -730,9 +573,10 @@ impl SequenceManager {
     /// front of the owning `SequenceElement`'s `orders` queue.
     pub fn current_order_for_actor<I: Into<EntityId>>(
         &self,
+        entities: &crate::entities::Entities,
         actor: I,
     ) -> Option<(SequenceId, usize, &Order)> {
-        let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
+        let (seq_id, elem_idx) = entities.current_element_for_actor(actor)?;
         let order = self.get_element(seq_id, elem_idx)?.current_order()?;
         Some((seq_id, elem_idx, order))
     }

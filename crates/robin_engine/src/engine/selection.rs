@@ -1676,6 +1676,7 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence_id);
+        engine.select_sequence_element(pc_id, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),

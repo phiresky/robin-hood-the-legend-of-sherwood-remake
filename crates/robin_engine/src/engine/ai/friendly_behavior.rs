@@ -939,6 +939,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         let sim = crate::sim_rng::test_context();
+        engine.select_sequence_element(owner, Some((sequence, 0)));
         engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
         engine.civilian_face_human(&sim, &assets, owner, target);

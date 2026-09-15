@@ -364,6 +364,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         .orders
         .sequence_manager
         .start_sequence_level(pass_sequence);
+    engine.select_sequence_element(door_actor, Some((pass_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -447,6 +448,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
             &engine,
             engine.get_entity(door_actor).expect("door actor exists"),
             crate::engine::ai::selected_actor_is_passing_door(
+                &engine.world.entities,
                 &engine.orders.sequence_manager,
                 door_actor,
             ),
@@ -536,6 +538,7 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
             .orders
             .sequence_manager
             .start_sequence_level(pass_sequence);
+        engine.select_sequence_element(chief_id, Some((pass_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -759,6 +762,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             .orders
             .sequence_manager
             .start_sequence_level(movement_sequence);
+        engine.select_sequence_element(runner_id, Some((movement_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1028,6 +1032,7 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
         .orders
         .sequence_manager
         .start_sequence_level(movement_sequence);
+    engine.select_sequence_element(runner_id, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

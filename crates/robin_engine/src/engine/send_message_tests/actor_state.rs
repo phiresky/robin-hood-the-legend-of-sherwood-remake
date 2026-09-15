@@ -420,8 +420,8 @@ fn posture_wait_uses_real_instruction_path_before_callback_resumes() {
         .expect("posture WAIT should dispatch and resume");
     assert_eq!(posture, 2);
     let (sequence_id, element_index) = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(receiver)
         .expect("WAIT is the actor's live canonical instruction");
     let wait = engine
@@ -504,8 +504,8 @@ fn action_state_set_get_resumes_after_real_wait_instruction() {
         crate::element::ActionState::Bored
     );
     let current = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(receiver)
         .expect("WAIT is live before callback return");
     assert_eq!(

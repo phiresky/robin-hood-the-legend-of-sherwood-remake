@@ -623,6 +623,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(target_id, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -772,6 +773,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence_id);
+        engine.select_sequence_element(id, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

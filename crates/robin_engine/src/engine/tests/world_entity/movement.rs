@@ -420,6 +420,7 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence_id);
+        engine.select_sequence_element(passing, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -718,6 +719,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(target_id, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -886,6 +888,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(friend_id, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

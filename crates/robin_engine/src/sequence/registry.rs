@@ -48,20 +48,19 @@ impl SequenceManager {
     #[doc(hidden)]
     pub(crate) fn parity_runtime_refs(
         &self,
+        entities: &crate::entities::Entities,
     ) -> (
         Vec<(SequenceId, usize)>,
         Vec<(EntityId, SequenceElementRef)>,
     ) {
-        if !self.actor_instructing.is_empty()
-            || self.actor_translating.is_some()
-            || self.halt_pending
-        {
+        if self.halt_pending {
             panic!("parity sequence capture reached a non-quiescent dispatch boundary");
         }
-        let actor_current = self
-            .actor_in_progress
-            .iter()
-            .filter_map(|(owner, refs)| refs.first().copied().map(|element| (*owner, element)))
+        let actor_current = entities
+            .occupied()
+            .filter_map(|(owner, entity)| {
+                Some((owner, entity.actor_data()?.selected_sequence_element?))
+            })
             .collect();
         (self.elements_to_go.iter().copied().collect(), actor_current)
     }
@@ -93,8 +92,6 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
-            actor_instructing: BTreeMap::new(),
-            actor_translating: None,
             elements_to_go: VecDeque::new(),
             next_sequence_id: 1,
             next_element_id: 1,
@@ -115,8 +112,6 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
-            actor_instructing: BTreeMap::new(),
-            actor_translating: None,
             elements_to_go: state.elements_to_go,
             next_sequence_id: state.next_sequence_id,
             next_element_id: state.next_element_id,
@@ -135,8 +130,6 @@ impl SequenceManager {
         self.actor_live.clear();
         self.postpone_tail_cache.clear();
         self.actor_in_progress.clear();
-        self.actor_instructing.clear();
-        self.actor_translating = None;
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 let Some(owner) = elem.owner else {

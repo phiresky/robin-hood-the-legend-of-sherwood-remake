@@ -1381,7 +1381,7 @@ impl EngineInner {
         let snapshot = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(s, i, o)| (s, i, o.order_type));
         let Some((seq_id, elem_idx, order_type)) = snapshot else {
             return false;
@@ -2112,6 +2112,7 @@ mod tests {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
+        engine.select_sequence_element(shooter, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -2268,6 +2269,7 @@ mod tests {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
+        engine.select_sequence_element(pc_id, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -2399,6 +2401,7 @@ mod tests {
                 engine.orders.sequence_manager.start_sequence_level(id);
                 id
             };
+            engine.select_sequence_element(healer, Some((sequence, 0)));
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),

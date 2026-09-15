@@ -327,6 +327,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -455,6 +465,16 @@ mod suite {
             sequence,
             0,
         );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
+        );
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -579,6 +599,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)
@@ -947,6 +977,16 @@ mod suite {
             &mut Vec::new(),
             sequence,
             0,
+        );
+        engine.select_sequence_element(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .owner
+                .unwrap(),
+            Some((sequence, 0)),
         );
         engine
             .get_entity_mut(owner)

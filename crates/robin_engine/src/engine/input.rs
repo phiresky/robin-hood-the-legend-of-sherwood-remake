@@ -3074,7 +3074,7 @@ impl EngineInner {
         let current_anim = self
             .orders
             .sequence_manager
-            .current_order_for_actor(pc_id)
+            .current_order_for_actor(&self.world.entities, pc_id)
             .map(|(_, _, o)| o.order_type);
         let shoot_pending = self
             .orders
@@ -3142,7 +3142,7 @@ impl EngineInner {
         let current_anim = self
             .orders
             .sequence_manager
-            .current_order_for_actor(pc_id)
+            .current_order_for_actor(&self.world.entities, pc_id)
             .map(|(_, _, o)| o.order_type);
         if matches!(
             current_anim,
@@ -3194,7 +3194,7 @@ impl EngineInner {
         let transition_active = self
             .orders
             .sequence_manager
-            .current_order_for_actor(pc_id)
+            .current_order_for_actor(&self.world.entities, pc_id)
             .map(|(_, _, o)| {
                 matches!(
                     o.order_type,

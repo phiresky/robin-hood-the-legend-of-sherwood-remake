@@ -42,10 +42,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(receiver),
+        engine.world.entities.current_element_for_actor(receiver),
         Some((old_id, 0)),
         "the old animation must be live before the replacement sequence arrives"
     );
@@ -96,7 +93,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         SequenceState::InProgress
     );
     assert_eq!(
-        manager.current_element_for_actor(receiver),
+        engine.world.entities.current_element_for_actor(receiver),
         Some((replacement_id, 1)),
         "the new PlayAnim must become the actor's live command"
     );
@@ -121,6 +118,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
         &assets,
         SequenceElement::new_movement(1, Command::Move, Some(receiver), OrderType::RunningUpright),
     );
+    engine.select_sequence_element(receiver, Some((active_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -129,10 +127,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
         0,
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(receiver),
+        engine.world.entities.current_element_for_actor(receiver),
         Some((active_id, 0))
     );
 
@@ -151,10 +146,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
         "SendMessage is zero-frame"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(receiver),
+        engine.world.entities.current_element_for_actor(receiver),
         Some((active_id, 0)),
         "immediate execution bypasses instruction contention and preserves the current element"
     );

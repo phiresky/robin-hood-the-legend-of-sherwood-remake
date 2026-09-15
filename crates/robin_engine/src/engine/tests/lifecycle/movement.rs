@@ -203,6 +203,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -413,6 +414,7 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         .orders
         .sequence_manager
         .start_sequence_level(old_sequence);
+    engine.select_sequence_element(owner, Some((old_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -447,8 +449,9 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         replacement_sequence,
         0,
     );
+    engine.select_sequence_element(owner, Some((replacement_sequence, 0)));
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine.element_interrupted_after_replacement_selected(
+    engine.element_interrupted(
         &sim,
         &assets,
         &mut Vec::new(),
@@ -503,6 +506,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         .orders
         .sequence_manager
         .start_sequence_level(waiting_sequence);
+    engine.select_sequence_element(owner, Some((waiting_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -562,6 +566,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         .orders
         .sequence_manager
         .start_sequence_level(waiting_sequence);
+    engine.select_sequence_element(owner, Some((waiting_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

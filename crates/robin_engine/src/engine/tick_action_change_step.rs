@@ -74,7 +74,7 @@ impl EngineInner {
             && self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(&self.world.entities, entity_id)
                 .is_none();
         if frozen_without_order {
             // The actor update refreshes the order after applying
@@ -138,17 +138,17 @@ impl EngineInner {
         let selected_order = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
         let selected_order_type = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(_, _, order)| order.order_type);
         let selected_order_compute_direction = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(_, _, order)| order.compute_direction);
         // The actor update refreshes the order from the selected
         // element immediately before Execute. Preserve that
@@ -158,7 +158,7 @@ impl EngineInner {
         let installed_at_entry = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(_, _, order)| crate::element::InstalledActorOrder {
                 order_id: order.order_id,
                 order_type: order.order_type,
@@ -172,7 +172,7 @@ impl EngineInner {
         let selected_owner_family = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .and_then(|(_, _, order)| classify_live_actor_execute_arm(entity_id, order.order_type));
         if let Some((_, _, order_id)) = selected_order {
             let actor = self
@@ -827,7 +827,7 @@ impl EngineInner {
                 selected_order.is_some_and(|(entry_seq, entry_idx, entry_order_id)| {
                     self.orders
                         .sequence_manager
-                        .current_order_for_actor(entity_id)
+                        .current_order_for_actor(&self.world.entities, entity_id)
                         .is_some_and(|(live_seq, live_idx, live_order)| {
                             live_seq == entry_seq
                                 && live_idx == entry_idx
@@ -846,7 +846,7 @@ impl EngineInner {
             selected_order.is_some_and(|(entry_seq, entry_idx, entry_order)| {
                 self.orders
                     .sequence_manager
-                    .current_order_for_actor(entity_id)
+                    .current_order_for_actor(&self.world.entities, entity_id)
                     .is_some_and(|(live_seq, live_idx, live_order)| {
                         live_seq == entry_seq
                             && live_idx == entry_idx

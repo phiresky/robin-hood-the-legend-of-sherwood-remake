@@ -365,13 +365,6 @@ pub enum AdoptErrorKind {
     #[error("resolves to command {command:?}, expected Wait or Freeze")]
     WrongWaitCommand { command: Command },
     #[error(
-        "selected sequence element is {saved:?}, but the converted manager reconstructs {runtime:?}"
-    )]
-    SelectedElementMismatch {
-        saved: Option<SequenceElementRef>,
-        runtime: Option<SequenceElementRef>,
-    },
-    #[error(
         "order pointer resolves to {order_element:?} order index {order_index}, but selected element is {selected:?}"
     )]
     OrderElementMismatch {

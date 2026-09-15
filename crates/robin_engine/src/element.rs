@@ -965,6 +965,9 @@ pub struct ActorData {
     pub execution_frozen: bool,
     pub sequence_element_started: bool,
 
+    /// Selected instruction, including while its callbacks and translation run.
+    pub selected_sequence_element: Option<crate::sequence::SequenceElementRef>,
+
     /// Actor-update-selected order identity, corresponding to original-game
     /// last-order identity. This is deliberately independent of the sprite's
     /// processed order: FrozenAll still consumes actor initialization once.
@@ -1142,6 +1145,7 @@ impl Default for ActorData {
             sequence_element_started: false,
             last_execute_order_id: None,
             installed_order: None,
+            selected_sequence_element: None,
             execute_order_initialising: false,
             retained_waiting_sword_order_id: None,
             wait_time: 0,

@@ -67,10 +67,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
         let owner_sector = owner_entity.element_data().sector();
         let target_sector = target_entity.element_data().sector();
-        let selected = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner);
+        let selected = self.world.entities.current_element_for_actor(owner);
         let element = self
             .orders
             .sequence_manager
@@ -114,12 +111,9 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let selected_owner = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner);
+        let selected_owner = self.world.entities.current_element_for_actor(owner);
         let selected_opponent =
-            opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
+            opponent.and_then(|id| self.world.entities.current_element_for_actor(id));
         let sequence = self
             .orders
             .sequence_manager
@@ -701,13 +695,7 @@ impl EngineInner {
             // synchronous condolence snapshot so actor condolence dispatch
             // clears the selected order and map goal before releasing
             // any postponed predecessor.
-            self.orders
-                .sequence_manager
-                .begin_instruct_callback(owner, seq_id, elem_idx);
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            self.orders
-                .sequence_manager
-                .end_instruct_callback(owner, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
@@ -763,13 +751,7 @@ impl EngineInner {
             // As in the ParrySword early-exit above, Translate terminates the
             // already-selected incoming element rather than an unrelated
             // queued command.
-            self.orders
-                .sequence_manager
-                .begin_instruct_callback(owner, seq_id, elem_idx);
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            self.orders
-                .sequence_manager
-                .end_instruct_callback(owner, seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         }
 
@@ -1218,7 +1200,7 @@ impl EngineInner {
             // whether a nearby movement destination has already been reached.
             actor.installed_order = None;
         }
-        self.orders.sequence_manager.set_translating_element(None);
+        self.select_sequence_element(victim_id, None);
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         self.trace_sword_damage_lifecycle(
             "accepted-empty-after-terminate",

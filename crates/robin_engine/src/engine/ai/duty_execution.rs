@@ -474,8 +474,11 @@ impl DutyExecution<'_> {
             .world
             .entities
             .expect_entity(officer, format_args!("selected officer"));
-        let passing_door =
-            selected_actor_is_passing_door(&self.engine.orders.sequence_manager, officer);
+        let passing_door = selected_actor_is_passing_door(
+            &self.engine.world.entities,
+            &self.engine.orders.sequence_manager,
+            officer,
+        );
         let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("officer forecast requires an actor");
         let destination = crate::ai::forecast_destination_for_ia(

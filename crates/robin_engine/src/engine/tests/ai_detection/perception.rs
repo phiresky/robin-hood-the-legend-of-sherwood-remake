@@ -72,6 +72,7 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
             .start_sequence_level(sequence);
         // Install an already running command. Its initial instruction has
         // finished before the periodic watchdog inspects it.
+        engine.select_sequence_element(owner, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -191,7 +192,7 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(npc_id)
+            .current_order_for_actor(&engine.world.entities, npc_id)
             .is_none()
     );
     engine
@@ -361,6 +362,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
+        engine.select_sequence_element(pc, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -536,6 +538,7 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(npc_id, Some((sequence, 0)));
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ladder owner exists")
     else {
         panic!("ladder owner changed kind")
@@ -1478,6 +1481,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         .orders
         .sequence_manager
         .start_sequence_level(movement_sequence);
+    engine.select_sequence_element(pc_id, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1770,6 +1774,7 @@ fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId
         .orders
         .sequence_manager
         .start_sequence_level(movement_sequence);
+    engine.select_sequence_element(first_visible_id, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3350,6 +3355,7 @@ fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
     ));
     let seq_id = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
+    engine.select_sequence_element(pc_id, Some((seq_id, 0)));
     let elem_idx = 0;
 
     let observer = engine

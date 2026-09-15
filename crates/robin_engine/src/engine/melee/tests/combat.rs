@@ -470,6 +470,7 @@ fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(attacker, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
@@ -1242,6 +1243,7 @@ fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1355,6 +1357,7 @@ fn parried_damage_still_learns_attackers_live_strike() {
         .orders
         .sequence_manager
         .start_sequence_level(attacker_sequence_id);
+    engine.select_sequence_element(attacker, Some((attacker_sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1377,6 +1380,7 @@ fn parried_damage_still_learns_attackers_live_strike() {
         .orders
         .sequence_manager
         .start_sequence_level(damage_sequence_id);
+    engine.select_sequence_element(victim, Some((damage_sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1494,6 +1498,7 @@ fn push_damage_command_disables_direction_on_fall_and_successors() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1641,6 +1646,7 @@ fn pc_shoulder_sword_damage_skips_good_strike_but_keeps_fall_translation() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence_id);
+        engine.select_sequence_element(victim, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1768,6 +1774,7 @@ fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1887,6 +1894,7 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2024,6 +2032,7 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2126,6 +2135,7 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2213,6 +2223,7 @@ fn lethal_sword_hit_kills_unconscious_npc_before_say_ouch_translation() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2286,6 +2297,7 @@ fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2358,6 +2370,7 @@ fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2479,6 +2492,7 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2609,6 +2623,7 @@ fn surviving_push_does_not_run_npc_kill_cascade() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2683,6 +2698,7 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2861,6 +2877,7 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3008,6 +3025,7 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
+    engine.select_sequence_element(victim, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3252,6 +3270,7 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3332,6 +3351,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3417,6 +3437,7 @@ fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
+    engine.select_sequence_element(victim, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4072,6 +4093,7 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
         .orders
         .sequence_manager
         .push_order_on(strike_id, 0, strike_order);
+    engine.select_sequence_element(attacker, Some((strike_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4515,6 +4537,7 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         ..LevelAssets::new()
     };
 
+    engine.select_sequence_element(opponent, Some((selected_id, 0)));
     engine.element_in_progress(sim, &assets, &mut Vec::new(), selected_id, 0);
     assert!(engine.enter_swordfight(sim, &assets, initiator, opponent, false));
 
@@ -4523,6 +4546,7 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched_or_postponed_by_current(
+                &engine.world.entities,
                 opponent,
                 Command::EnterSwordfight,
             ),

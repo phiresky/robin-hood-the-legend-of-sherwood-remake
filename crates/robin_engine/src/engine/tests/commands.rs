@@ -637,6 +637,7 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
     timer.set_property(Field::Timer, FieldValue::Integer(5));
     sequence.append_element(timer);
     let sequence_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.select_sequence_element(owner, Some((sequence_id, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -647,7 +648,10 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
 
     // Exercise the real cancellation producer, including the selected actor's
     // successor chain, then let the manager instruct the cancelled successor.
-    engine.orders.sequence_manager.make_upright(owner);
+    engine
+        .orders
+        .sequence_manager
+        .make_upright(&engine.world.entities, owner);
     assert_eq!(
         engine
             .orders
@@ -1347,6 +1351,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             .orders
             .sequence_manager
             .start_sequence_level(wait_sequence);
+        engine.select_sequence_element(attacker, Some((wait_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1396,8 +1401,8 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         SequenceState::Interrupted
     );
     let (strike_sequence, strike_index) = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(attacker)
         .expect("smalltalk strike must own the actor after the manager drain");
     let strike = engine
@@ -1417,10 +1422,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
 
     let (engine, attacker, wait_sequence) = run_case(SequencePriority::Normal);
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(attacker),
+        engine.world.entities.current_element_for_actor(attacker),
         Some((wait_sequence, 0)),
         "a Wait-priority smalltalk strike must not displace a Normal-priority owner"
     );

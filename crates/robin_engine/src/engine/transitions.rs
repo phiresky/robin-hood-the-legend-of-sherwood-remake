@@ -1496,17 +1496,16 @@ fn make_posture_transition_human(
 ) -> bool {
     let posture = transition_owner(engine, owner).element_data().posture();
 
-    if posture == Posture::Leisure
-        && flags.contains(CP::MUST_BE_UPRIGHT)
-        && !flags.contains(CP::CAN_BE_LEISURING)
-    {
-        push_anim_order_no_dir(
-            engine,
-            seq_id,
-            elem_idx,
-            OrderType::TransitionSpecialWaitingUpright,
-        );
-        set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+    if posture == Posture::Leisure {
+        if flags.contains(CP::MUST_BE_UPRIGHT) && !flags.contains(CP::CAN_BE_LEISURING) {
+            push_anim_order_no_dir(
+                engine,
+                seq_id,
+                elem_idx,
+                OrderType::TransitionSpecialWaitingUpright,
+            );
+            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+        }
         return true;
     }
 

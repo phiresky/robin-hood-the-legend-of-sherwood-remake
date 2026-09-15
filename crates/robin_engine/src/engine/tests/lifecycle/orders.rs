@@ -286,6 +286,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         let launch_assets = engine.test_runtime_assets();
         engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
     };
+    engine.select_sequence_element(carrier, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -340,7 +341,7 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     let (_, _, selected) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(carrier)
+        .current_order_for_actor(&engine.world.entities, carrier)
         .expect("following Whistle order must remain selected");
     assert_eq!(selected.order_type, OrderType::Whistling);
     assert_ne!(selected.order_id, transition_id);
@@ -404,6 +405,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
         let launch_assets = engine.test_runtime_assets();
         engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, take)
     };
+    engine.select_sequence_element(carrier, Some((take_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -439,8 +441,8 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
         "SelectAction's synchronous stop completion must release the body before the update"
     );
     let selected = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(body)
         .and_then(|(sequence, index)| engine.orders.sequence_manager.get_element(sequence, index))
         .expect("the released body must already own its Wait");
@@ -477,7 +479,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .is_none(),
         "regression requires the actor update to synthesize the idle Wait"
     );
@@ -490,8 +492,8 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     assert!(!entity.is_active());
     assert_eq!(
         engine
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(seq, index)| engine.orders.sequence_manager.get_element(seq, index))
             .map(|element| element.command),
@@ -527,6 +529,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
     let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
+    engine.select_sequence_element(animated, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -575,6 +578,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     let order_id = order.order_id;
     selected.orders.push_back(order);
     let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -664,6 +668,7 @@ fn face_to_waits_for_manager_after_live_halt() {
     ));
     let movement_sequence =
         engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    engine.select_sequence_element(owner, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -768,6 +773,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
             ),
             crate::abilities::BeginResult::Started
         );
+        engine.select_sequence_element(actor_id, Some((sequence_id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -852,6 +858,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         ),
         crate::abilities::BeginResult::Started
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -971,10 +978,7 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
         Some(OrderType::WaitingShield)
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((first, 0)),
         "actor instruction keeps the accepted instant raise selected"
     );
@@ -999,17 +1003,14 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
         SequenceState::InProgress
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((redundant, 0))
     );
     assert_eq!(
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::LoweringShield)
     );
@@ -1085,6 +1086,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         let launch_assets = engine.test_runtime_assets();
         engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
     };
+    engine.select_sequence_element(beggar, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1312,6 +1314,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .unwrap()
         .active_ability
         .strangle_initialized = true;
+    engine.select_sequence_element(attacker, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1500,6 +1503,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         let launch_assets = engine.test_runtime_assets();
         engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
     };
+    engine.select_sequence_element(owner, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1567,7 +1571,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
             .2
             .order_type,
@@ -1612,6 +1616,7 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
         .orders
         .push_back(Order::test_new(OrderType::ThrowingApple, 0.0, 0.0));
     let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, element);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1697,6 +1702,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         ),
         crate::abilities::BeginResult::Started
     );
+    engine.select_sequence_element(owner, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1752,7 +1758,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
             .2
             .order_id,
@@ -1786,7 +1792,7 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         engine
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
             .2
             .order_type,
@@ -1964,8 +1970,8 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
         crate::element::ActionState::Waiting
     );
     let (sequence_id, element_index) = engine
-        .orders
-        .sequence_manager
+        .world
+        .entities
         .current_element_for_actor(pc_id)
         .expect("helping-climb command remains selected while its animation runs");
     let element = engine
@@ -2070,6 +2076,7 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         &assets,
         SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
     );
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, sequence, 0);
     // The InstructOwner dispatcher publishes the translated current order
     // through the actor's installed-order mirror right after the
@@ -2115,10 +2122,7 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         "QuitSwordfight translation must expose the command as current before lowering executes"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((sequence, 0))
     );
     assert_eq!(

@@ -283,11 +283,6 @@ fn populated_actor_indexes_round_trip_through_json() {
             SequenceElement::new(1, Command::Move, Some(owner)),
         );
         engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), sequence, 0);
-        engine
-            .orders
-            .sequence_manager
-            .actor_instructing
-            .insert(owner, vec![(SequenceElementRef::new(sequence, 0), true)]);
     }
     assert_eq!(engine.orders.sequence_manager.actor_live.len(), 2);
     assert_eq!(engine.orders.sequence_manager.actor_in_progress.len(), 2);
@@ -303,10 +298,6 @@ fn populated_actor_indexes_round_trip_through_json() {
         engine.orders.sequence_manager.actor_in_progress
     );
     assert_eq!(
-        restored.actor_instructing,
-        engine.orders.sequence_manager.actor_instructing
-    );
-    assert_eq!(
         robin_util::state_hash::compute(&restored),
         robin_util::state_hash::compute(&engine.orders.sequence_manager),
     );
@@ -317,7 +308,7 @@ fn make_simple_element(level: u16, cmd: Command, owner: Option<EntityId>) -> Seq
 }
 
 #[test]
-fn replacement_interruption_marks_outgoing_card_unselected() {
+fn replacement_interruption_observes_incoming_selection() {
     let (mut engine, assets, owner) = live_sequence_fixture();
     let outgoing = engine.launch_element(
         &test_context(),
@@ -325,14 +316,29 @@ fn replacement_interruption_marks_outgoing_card_unselected() {
         SequenceElement::new(1, Command::Move, Some(owner)),
     );
     engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), outgoing, 0);
+    let incoming = engine
+        .orders
+        .sequence_manager
+        .insert_element(SequenceElement::new(1, Command::Turn, Some(owner)));
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(incoming, 0));
     let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let observed = cards.clone();
     EngineInner::with_condolation_callback(
-        move |_, card| {
-            observed.borrow_mut().push((card.seq_id, card.was_selected));
+        move |engine, card| {
+            observed.borrow_mut().push((
+                card.seq_id,
+                engine.world.entities.current_element_for_actor(owner),
+            ));
         },
         || {
-            engine.element_interrupted_after_replacement_selected(
+            engine.element_interrupted(
                 &test_context(),
                 &assets,
                 &mut Vec::new(),
@@ -342,7 +348,7 @@ fn replacement_interruption_marks_outgoing_card_unselected() {
             );
         },
     );
-    assert_eq!(*cards.borrow(), [(outgoing, false)]);
+    assert_eq!(*cards.borrow(), [(outgoing, Some((incoming, 0)))]);
 }
 
 #[test]
@@ -1322,6 +1328,14 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), parry_seq, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(parry_seq, 0));
     engine.postpone_element(&sim, &assets, &mut Vec::new(), parry_seq, 0);
 
     // During the injury's terminal condolence callback, actor stopping sees
@@ -1333,6 +1347,14 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), injury_seq, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(injury_seq, 0));
     engine
         .orders
         .sequence_manager
@@ -1395,6 +1417,14 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(current_seq, 0));
 
     engine.stop_owner_current_from_root(
         &sim,
@@ -1812,6 +1842,14 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), injury_seq, 0);
     engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(injury_seq, 0));
+    engine
         .orders
         .sequence_manager
         .get_element_mut(injury_seq, 0)
@@ -1902,10 +1940,7 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
         .cross_postponed = Some((attentive_seq, 0));
 
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         None,
         "Todo manager entries are not the actor's current element"
     );
@@ -1968,6 +2003,14 @@ fn stop_owner_does_not_scan_unselected_postponed_branches() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), stale_seq, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(stale_seq, 0));
     engine.postpone_element(&sim, &assets, &mut Vec::new(), stale_seq, 0);
 
     let mut current = make_simple_element(1, Command::UnequipBow, Some(owner));
@@ -1976,6 +2019,14 @@ fn stop_owner_does_not_scan_unselected_postponed_branches() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(current_seq, 0));
 
     engine.stop_owner(
         &sim,
@@ -2413,6 +2464,14 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
     let current_seq_id = engine.launch_sequence(&test_context(), &assets, current_seq);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), current_seq_id, 0);
     engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(current_seq_id, 0));
+    engine
         .orders
         .sequence_manager
         .elements_to_go
@@ -2439,6 +2498,7 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched_or_postponed_by_current(
+                &engine.world.entities,
                 owner,
                 Command::EnterSwordfight
             )
@@ -2455,6 +2515,7 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
             .orders
             .sequence_manager
             .element_is_about_to_be_launched_or_postponed_by_current(
+                &engine.world.entities,
                 owner,
                 Command::EnterSwordfight
             )
@@ -2463,7 +2524,7 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
 
 #[test]
 fn pending_command_query_ignores_element_during_translation() {
-    let owner = EntityId::Soldier(crate::entity_id::SoldierId(84));
+    let (mut engine, _, owner) = live_sequence_fixture();
     let mut mgr = SequenceManager::new();
     let mut seq = Sequence::new();
     seq.append_element(make_simple_element(
@@ -2477,16 +2538,36 @@ fn pending_command_query_ignores_element_during_translation() {
     // Go enters actor instruction handling. The actor selection remains live during
     // Translate, but is not itself an about-to-launch command.
     mgr.elements_to_go.clear();
-    mgr.set_translating_element(Some((owner, SequenceElementRef::new(seq_id, 0))));
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(seq_id, 0));
 
     assert!(
         !mgr.element_is_about_to_be_launched_or_postponed_by_current(
+            &engine.world.entities,
             owner,
             Command::EnterSwordfight
         )
     );
-    assert!(!mgr.element_is_about_to_be_launched_or_postponed_by_current(owner, Command::Null));
-    assert!(!mgr.element_is_about_to_be_launched_or_postponed_by_current(owner, Command::Move));
+    assert!(
+        !mgr.element_is_about_to_be_launched_or_postponed_by_current(
+            &engine.world.entities,
+            owner,
+            Command::Null
+        )
+    );
+    assert!(
+        !mgr.element_is_about_to_be_launched_or_postponed_by_current(
+            &engine.world.entities,
+            owner,
+            Command::Move
+        )
+    );
 }
 
 #[test]
@@ -2603,12 +2684,23 @@ fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
     selected.append_element(movement_elem(owner, OrderType::WalkingUpright));
     let selected_id = engine.launch_sequence(&test_context(), &assets, selected);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), selected_id, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(selected_id, 0));
 
     let mut unrelated = Sequence::new();
     unrelated.append_element(movement_elem(owner, OrderType::WalkingUpright));
     let unrelated_id = engine.launch_sequence(&test_context(), &assets, unrelated);
 
-    engine.orders.sequence_manager.make_fast(owner);
+    engine
+        .orders
+        .sequence_manager
+        .make_fast(&engine.world.entities, owner);
 
     for idx in 0..2 {
         let SequenceElementData::Movement { action, flags, .. } = &engine
@@ -2652,8 +2744,19 @@ fn make_fast_rewrites_a_terminal_same_owner_follower() {
     sequence.append_element(finished);
     let sequence_id = engine.launch_sequence(&test_context(), &assets, sequence);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence_id, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(sequence_id, 0));
 
-    engine.orders.sequence_manager.make_fast(owner);
+    engine
+        .orders
+        .sequence_manager
+        .make_fast(&engine.world.entities, owner);
 
     let follower = engine
         .orders
@@ -3102,6 +3205,7 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
 fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
     let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
+    let owner = fixture_owner_0;
 
     let mut seq = Sequence::new();
     let mut elem = SequenceElement::new_movement(
@@ -3119,6 +3223,14 @@ fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
     let _ = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), seq_id, 0);
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(SequenceElementRef::new(seq_id, 0));
 
     engine.orders.pending_path_requests =
         crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![

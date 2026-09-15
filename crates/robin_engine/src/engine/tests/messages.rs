@@ -320,10 +320,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         "A and B must register exactly once and in causal order on the fresh manager"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(soldier),
+        engine.world.entities.current_element_for_actor(soldier),
         None,
         "owner-work drain registers both moves before the later manager selection phase"
     );
@@ -433,6 +430,7 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
         unrelated_seq,
         0,
     );
+    engine.select_sequence_element(owner, Some((movement_seq, 0)));
     engine.orders.sequence_manager.set_halt_pending(true);
     engine.element_interrupted(
         &crate::sim_rng::test_context(),
@@ -503,10 +501,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
         OrderType::WalkingUpright,
     );
     let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, assert_position);
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, sequence, 0);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
     engine.element_terminated(
         &crate::sim_rng::test_context(),
         &assets,
@@ -514,10 +509,6 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
         sequence,
         0,
     );
-    engine
-        .orders
-        .sequence_manager
-        .end_instruct_callback(owner, sequence, 0);
 
     assert_eq!(
         engine
@@ -548,6 +539,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
     let movement_sequence =
         engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    engine.select_sequence_element(owner, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -600,10 +592,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
         "selecting Wait must preserve the completed movement cleanup"
     );
     assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner),
+        engine.world.entities.current_element_for_actor(owner),
         Some((wait_sequence, 0)),
         "the caller's subsequent Wait remains selected"
     );
@@ -633,6 +622,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     ));
     let movement_sequence =
         engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    engine.select_sequence_element(owner, Some((movement_sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -753,6 +743,7 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
     leave_beggar.priority = SequencePriority::NonInterruptable;
     let blocker = engine.launch_element(&crate::sim_rng::test_context(), &assets, leave_beggar);
+    engine.select_sequence_element(owner, Some((blocker, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -842,10 +833,7 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
         &assets,
         SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
     );
-    engine
-        .orders
-        .sequence_manager
-        .begin_instruct_callback(owner, incoming_seq, 0);
+    engine.select_sequence_element(owner, Some((incoming_seq, 0)));
     engine.element_interrupted(
         &crate::sim_rng::test_context(),
         &assets,
@@ -854,11 +842,6 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
         0,
         CascadeFlags::NEXT_LEVEL,
     );
-
-    engine
-        .orders
-        .sequence_manager
-        .end_instruct_callback(owner, incoming_seq, 0);
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(

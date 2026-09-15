@@ -23,7 +23,6 @@ fn stale_selected_order_repairs_moving_state_without_clearing_sword_stance() {
             &mut entity,
             &SequenceManager::new(),
             selected,
-            actor_id,
             actor_id.into(),
             false,
         )
@@ -83,7 +82,6 @@ fn prepared_order_retains_selected_front_and_literal_successor() {
             elem_idx: 0,
             order_id,
         },
-        actor_id,
         actor_id.into(),
         false,
     )

@@ -254,6 +254,7 @@ impl SequenceManager {
     /// here, so only the current element's immediate successor qualifies.
     pub fn element_is_about_to_be_launched_or_postponed_by_current(
         &self,
+        entities: &crate::entities::Entities,
         owner: EntityId,
         command: Command,
     ) -> bool {
@@ -261,7 +262,7 @@ impl SequenceManager {
             return true;
         }
 
-        let Some((seq_id, elem_idx)) = self.current_element_for_actor(owner) else {
+        let Some((seq_id, elem_idx)) = entities.current_element_for_actor(owner) else {
             return false;
         };
         let Some(current) = self.get_element(seq_id, elem_idx) else {
@@ -287,8 +288,8 @@ impl SequenceManager {
     /// `entity` in its selected element's following/postponed chain. Sets the
     /// FAST flag, upgrades the element's action from walking to running, and
     /// rewrites queued walking / start-walking / stop-walking orders.
-    pub fn make_fast(&mut self, entity: EntityId) {
-        self.rewrite_selected_actor_chain(entity, make_fast_element);
+    pub fn make_fast(&mut self, entities: &crate::entities::Entities, entity: EntityId) {
+        self.rewrite_selected_actor_chain(entities, entity, make_fast_element);
     }
 
     /// Set `action` on the movement element at `(seq_id, elem_idx)` and recurse
@@ -333,24 +334,24 @@ impl SequenceManager {
     /// walking, and rewrites queued transition orders accordingly.
     ///
     /// Symmetric counterpart to [`Self::make_fast`].
-    pub fn make_slow(&mut self, entity: EntityId) {
-        self.rewrite_selected_actor_chain(entity, make_slow_element);
+    pub fn make_slow(&mut self, entities: &crate::entities::Entities, entity: EntityId) {
+        self.rewrite_selected_actor_chain(entities, entity, make_slow_element);
     }
 
     /// Apply upright-posture conversion to all active/pending elements owned by
     /// `entity`. Rewrites crouched-movement orders to upright variants
     /// and cancels pending `CrouchDown` sequence elements (their
     /// command is demoted to `Null`).
-    pub fn make_upright(&mut self, entity: EntityId) {
-        self.rewrite_selected_actor_chain(entity, make_upright_element);
+    pub fn make_upright(&mut self, entities: &crate::entities::Entities, entity: EntityId) {
+        self.rewrite_selected_actor_chain(entities, entity, make_upright_element);
     }
 
     /// Apply crouched-posture conversion to all active/pending elements owned by
     /// `entity`. Clears the FAST flag, downgrades running/walking
     /// upright orders to crouched, and rewrites posture-transition
     /// orders accordingly.
-    pub fn make_crouched(&mut self, entity: EntityId) {
-        self.rewrite_selected_actor_chain(entity, make_crouched_element);
+    pub fn make_crouched(&mut self, entities: &crate::entities::Entities, entity: EntityId) {
+        self.rewrite_selected_actor_chain(entities, entity, make_crouched_element);
     }
 
     /// Reproduce selected-element transition construction: start at the actor's selected
@@ -359,10 +360,11 @@ impl SequenceManager {
     /// owned by the same actor is not part of that graph and must not change.
     pub(super) fn rewrite_selected_actor_chain(
         &mut self,
+        entities: &crate::entities::Entities,
         entity: EntityId,
         rewrite: fn(&mut SequenceElement),
     ) {
-        let Some(root) = self.current_element_for_actor(entity) else {
+        let Some(root) = entities.current_element_for_actor(entity) else {
             return;
         };
         let mut pending = vec![root];
@@ -777,10 +779,7 @@ impl crate::engine::EngineInner {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) {
-        let root = self
-            .orders
-            .sequence_manager
-            .current_element_for_actor(owner);
+        let root = self.world.entities.current_element_for_actor(owner);
         self.stop_owner_from_root(
             sim,
             assets,
@@ -795,11 +794,8 @@ impl crate::engine::EngineInner {
     /// Stop an actor from an explicit root instead of the actor's
     /// currently selected element.
     ///
-    /// A command that stops its owner from inside its own translation runs
-    /// before the incoming element has been installed as the actor's
-    /// selection, yet the original game has already assigned the selected element by
-    /// then and therefore stops through the incoming element — reaching
-    /// whatever that element pushed into its postponed slot.
+    /// The explicit root lets callers stop a retained graph branch while
+    /// preserving the actor's current selection.
     pub(crate) fn stop_owner_from_root(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

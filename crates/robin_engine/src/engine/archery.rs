@@ -180,7 +180,7 @@ impl EngineInner {
                 let (sequence_id, element_index, _order) = self
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(owner)?;
+                    .current_order_for_actor(&self.world.entities, owner)?;
                 let element = self
                     .orders
                     .sequence_manager
@@ -438,7 +438,7 @@ impl EngineInner {
         let (seq_id, elem_idx, order) = self
             .orders
             .sequence_manager
-            .current_order_for_actor(owner)?;
+            .current_order_for_actor(&self.world.entities, owner)?;
         (shot.is_active()
             && shot.sequence_id == Some(seq_id)
             && shot.element_index == elem_idx
@@ -2442,7 +2442,7 @@ impl EngineInner {
                 let already_parrying = self
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(holder)
+                    .current_order_for_actor(&self.world.entities, holder)
                     .map(|(_, _, o)| o.order_type == crate::order::OrderType::ParryingShield)
                     .unwrap_or(false);
                 if !already_parrying {
@@ -4553,7 +4553,7 @@ impl EngineInner {
                 current_order: self
                     .orders
                     .sequence_manager
-                    .current_order_for_actor(beggar_id)
+                    .current_order_for_actor(&self.world.entities, beggar_id)
                     .map(|(_, _, order)| (order.order_id, order.order_type)),
             });
         });
@@ -5985,6 +5985,7 @@ mod tests {
                 Some(target_id),
             ));
         engine.orders.sequence_manager.start_sequence_level(lower);
+        engine.select_sequence_element(target_id, Some((lower, 0)));
         engine.dispatch_shield_command(
             &crate::sim_rng::test_context(),
             &assets,
@@ -5998,7 +5999,7 @@ mod tests {
             engine
                 .orders
                 .sequence_manager
-                .current_order_for_actor(target_id)
+                .current_order_for_actor(&engine.world.entities, target_id)
                 .map(|(_, _, order)| order.order_type),
             Some(OrderType::LoweringShield)
         );

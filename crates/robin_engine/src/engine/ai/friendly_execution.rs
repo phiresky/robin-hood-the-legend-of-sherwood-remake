@@ -634,8 +634,12 @@ impl EngineInner {
     ) {
         let target = self.reporting_target(owner);
         let entity = self.expect_entity(target, "civilian approach forecast");
-        let passing_door =
-            selected_pass_door_movement(&self.orders.sequence_manager, target).is_some();
+        let passing_door = selected_pass_door_movement(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            target,
+        )
+        .is_some();
         let input = extract_exact_forecast_input(self, entity, passing_door)
             .expect("soldier forecast requires an actor");
         let position = crate::ai::forecast_destination_for_ia(

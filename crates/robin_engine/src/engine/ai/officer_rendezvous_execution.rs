@@ -796,7 +796,11 @@ impl Rendezvous<'_> {
             self.engine,
             self.engine
                 .expect_entity(target, "officer destination forecast"),
-            selected_actor_is_passing_door(&self.engine.orders.sequence_manager, target),
+            selected_actor_is_passing_door(
+                &self.engine.world.entities,
+                &self.engine.orders.sequence_manager,
+                target,
+            ),
         )
         .expect("officer forecast requires an actor");
         let destination = crate::ai::prepare_forecast_destination_for_ia(

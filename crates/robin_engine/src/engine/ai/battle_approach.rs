@@ -914,6 +914,7 @@ mod tests {
         *direction = 1;
         let id = engine.orders.sequence_manager.insert_element(pass);
         engine.orders.sequence_manager.start_sequence_level(id);
+        engine.select_sequence_element(target, Some((id, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -1070,6 +1071,7 @@ mod tests {
             element.priority = crate::sequence::SequencePriority::Normal;
             let id = engine.orders.sequence_manager.insert_element(element);
             engine.orders.sequence_manager.start_sequence_level(id);
+            engine.select_sequence_element(owner, Some((id, 0)));
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
@@ -1098,8 +1100,8 @@ mod tests {
             let (mut engine, assets, owner, target, wait) = roof_fixture(close, waiting);
             let selected_waiter = waiting.then(|| {
                 engine
-                    .orders
-                    .sequence_manager
+                    .world
+                    .entities
                     .current_element_for_actor(owner)
                     .expect("fixture has a selected path waiter")
                     .0
@@ -1124,8 +1126,8 @@ mod tests {
             if close {
                 assert!(ai.base.already_on_point);
                 let selected = engine
-                    .orders
-                    .sequence_manager
+                    .world
+                    .entities
                     .current_element_for_actor(owner)
                     .expect("already-near movement retains the current waiter");
                 assert_eq!(

@@ -59,13 +59,7 @@ pub struct SequenceId(pub u32);
 
 /// Reference to a specific [`SequenceElement`] within a [`Sequence`].
 ///
-/// `Ord` / `PartialOrd` compare lexicographically on
-/// `(sequence_id, element_index)`.  Because `launch_sequence` stamps
-/// a monotonic per-engine id and `friday_evening_cleanup` preserves
-/// relative order, `SequenceId` order matches `SequenceManager`'s Vec
-/// order.  So `min(refs_for_this_actor)` == "first match by linear
-/// scan" — the semantic [`SequenceManager::current_element_for_actor`]
-/// preserves.
+/// Ordering follows sequence identity and element index for deterministic graph traversal.
 #[derive(
     Debug,
     Clone,
@@ -2247,7 +2241,6 @@ impl Default for Sequence {
 pub(crate) struct GoalOwnerTerminalProvenance {
     pub site: &'static str,
     pub selected: Option<(SequenceId, usize)>,
-    pub translating: Option<(EntityId, SequenceElementRef)>,
 }
 
 thread_local! {
@@ -2428,7 +2421,6 @@ impl Sequence {
                         terminal_state: new_state,
                         seq_id: self.id,
                         elem_idx: elem_idx as u16,
-                        was_selected: false,
                         from_halt: false,
                     });
                 }
@@ -2448,7 +2440,6 @@ impl Sequence {
                                 terminal_state: new_state,
                                 seq_id: self.id,
                                 elem_idx: elem_idx as u16,
-                                was_selected: false,
                                 from_halt: false,
                             });
                         }
@@ -2510,7 +2501,6 @@ impl Sequence {
             terminal_state: SequenceState::Impossible,
             seq_id: self.id,
             elem_idx: elem_idx as u16,
-            was_selected: false,
             from_halt: false,
         })
     }
@@ -2801,74 +2791,20 @@ pub struct SequenceManager {
     /// Several first-match scans depend on preserving that order exactly.
     sequences: OrderedSequences,
 
-    /// Actor → every `SequenceElementRef` whose element is currently
-    /// live (`Todo`, `InProgress`, or `Postponed`) and owned by that
-    /// actor.
-    ///
-    /// Lets engine paths answer "does this actor already have work?"
-    /// without scanning every active sequence. It is derived from
-    /// `sequences` and serialized with the manager so snapshots remain
-    /// self-contained.
-    // EntityId is a tagged enum; populated indexes need reversible JSON keys.
+    /// Actor → every live (`Todo`, `InProgress`, or `Postponed`) element.
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_live: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
-    /// Per-owner tails of cross-sequence postponed chains for a prospective
-    /// waiter's priority. Equal-priority swordfight instructions repeatedly
-    /// append to the same chain; caching the proven `Postpone` prefix turns
-    /// that operation from a triangular root walk into amortized O(1).
-    /// Every cross-link topology rewrite explicitly invalidates the affected
-    /// owner before installing a replacement entry.
+    /// Cached tails of same-priority postponed chains, invalidated on topology changes.
     #[bitcode(skip)]
     #[state_hash(skip)]
     #[serde(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
 
-    /// Actor → every `SequenceElementRef` whose element is currently
-    /// `InProgress` and owned by that actor.
-    ///
-    /// Typically one entry per actor, but a `set_element_state`
-    /// cascade can briefly land two elements in `InProgress` for the
-    /// same actor before the earlier one terminates — so we track the
-    /// whole set and
-    /// [`current_element_for_actor`](Self::current_element_for_actor)
-    /// returns [`BTreeSet::first`], which lexicographically matches the
-    /// old "iterate sequences in vec order, first match wins" semantic
-    /// (see `SequenceElementRef` docs for why `min` == "first by scan").
-    ///
-    /// Replaces an O(N_seq × N_elem) nested scan that was the single
-    /// hottest per-tick function in a rollback-enabled debug profile
-    /// (~5–15% depending on checker mode).
+    /// Actor → every in-progress element, for parallel graph queries.
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
-
-    /// Temporary actor selection installed by instruction handling while priority
-    /// arbitration's outgoing state-change callbacks run.
-    ///
-    /// The original game assigns the selected element to the incoming
-    /// element before interrupting/postponing the old one. The old element's
-    /// synchronous removal-notification callback must therefore observe and
-    /// arbitrate against the incoming element even though it has not reached
-    /// `InProgress` yet. Entries only exist inside that callback boundary and
-    /// are empty at stable frame/save boundaries.
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_instructing: BTreeMap<EntityId, Vec<(SequenceElementRef, bool)>>,
-
-    /// Actor selection held across the accepted element's command
-    /// translation.
-    ///
-    /// The original game keeps the selected element pointing at the
-    /// accepted element for the whole of `Translate`, and only drops it
-    /// afterwards when translation produced no orders. Commands whose
-    /// translation bodies terminate or interrupt the element outright —
-    /// EnterSwordfight onto an actor already holding its sword, a parry
-    /// that repeats one already running, AssertPosition — therefore reach
-    /// removal notification while still selected, which is what performs
-    /// the actor-base movement-goal cleanup. Set for the duration of one
-    /// command dispatch; empty at stable frame/save boundaries.
-    #[serde(deserialize_with = "Option::deserialize")]
-    actor_translating: Option<(EntityId, SequenceElementRef)>,
 
     /// Deferred queue of elements to start. Processed in `hourglass()`.
     /// Each entry is `(sequence id, element index within that sequence)`.
@@ -2902,8 +2838,6 @@ impl SequenceManager {
             actor_live: _,
             postpone_tail_cache: _,
             actor_in_progress: _,
-            actor_instructing: _,
-            actor_translating: _,
             elements_to_go: _,
             next_sequence_id: _,
             next_element_id: _,
@@ -2914,8 +2848,6 @@ impl SequenceManager {
             postpone_tail_cache: BTreeMap::new(),
             actor_live: value.actor_live.clone(),
             actor_in_progress: value.actor_in_progress.clone(),
-            actor_instructing: value.actor_instructing.clone(),
-            actor_translating: value.actor_translating,
             elements_to_go: value.elements_to_go.clone(),
             next_sequence_id: value.next_sequence_id,
             next_element_id: value.next_element_id,
@@ -2956,10 +2888,6 @@ pub struct CondolationCard {
     /// owned by the sequence element and die with it.
     pub seq_id: SequenceId,
     pub elem_idx: u16,
-    /// Whether this element was the actor's selected sequence element
-    /// at the synchronous state-change-to-removal-notification boundary.
-    /// Captured before terminal elements leave the in-progress index.
-    pub was_selected: bool,
     /// `true` if this callback began while the owning NPC's
     /// `inside_halt_method` flag was set — i.e. the sequence was torn
     /// down by an AI-initiated `Halt()` call.  The NPC's condolation

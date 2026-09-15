@@ -620,7 +620,7 @@ pub(super) mod tests {
             engine
                 .orders
                 .sequence_manager
-                .current_order_for_actor(owner)
+                .current_order_for_actor(&engine.world.entities, owner)
                 .is_none()
         );
     }

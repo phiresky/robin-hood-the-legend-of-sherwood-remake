@@ -154,7 +154,7 @@ fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
     let (_, _, order) = engine
         .orders
         .sequence_manager
-        .current_order_for_actor(pc_id)
+        .current_order_for_actor(&engine.world.entities, pc_id)
         .expect("DropAle must install its animation order");
     assert_eq!(order.order_type, crate::order::OrderType::DroppingAle);
     assert_eq!(

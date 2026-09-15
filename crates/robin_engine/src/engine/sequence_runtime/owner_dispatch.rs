@@ -45,17 +45,17 @@ impl EngineInner {
             satisfied_enter_swordfight_order,
         ) == OwnerActionBarrier::Skip
         {
-            self.orders
-                .sequence_manager
-                .clear_translating_element_if_selected(owner, seq_id, elem_idx);
             return true;
         }
         // A nested instruction can replace this actor's selection while the
         // command is translated. Its order and motion state belong to that
         // replacement when control returns here.
         if self
-            .current_sequence_element_for_actor(owner)
-            .is_some_and(|selected| selected != (seq_id, elem_idx))
+            .world
+            .entities
+            .get(owner)
+            .is_some_and(|entity| entity.actor_data().is_some())
+            && self.current_sequence_element_for_actor(owner) != Some((seq_id, elem_idx))
         {
             return true;
         }
@@ -65,7 +65,7 @@ impl EngineInner {
             .get(owner)
             .is_some_and(|entity| entity.actor_data().is_some())
         {
-            self.publish_instructed_order_as_installed(owner, seq_id, elem_idx);
+            self.publish_selected_order_as_installed(owner);
         }
         if trace_path_owner {
             self.trace_path_owner_lifecycle(
@@ -95,9 +95,6 @@ impl EngineInner {
                 .continuation
                 .motion_state = crate::sprite::MotionState::InProgress;
         }
-        self.orders
-            .sequence_manager
-            .clear_translating_element_if_selected(owner, seq_id, elem_idx);
         true
     }
 
@@ -796,7 +793,8 @@ impl EngineInner {
                     elem_idx,
                     "InstructOwner: no dispatch for command; terminating element"
                 );
-                self.orders.sequence_manager.set_translating_element(None);
+                self.select_sequence_element(owner, None);
+                self.publish_selected_order_for_instruct_owner(owner);
                 self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 OwnerActionBarrier::Reach
             }

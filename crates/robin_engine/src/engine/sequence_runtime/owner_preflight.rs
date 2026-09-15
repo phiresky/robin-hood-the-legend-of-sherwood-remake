@@ -203,8 +203,8 @@ impl EngineInner {
                 });
                 !posture_ready
                     && self
-                        .orders
-                        .sequence_manager
+                        .world
+                        .entities
                         .current_element_for_actor(helper)
                         .and_then(|(helper_sequence, helper_index)| {
                             self.orders
@@ -386,16 +386,6 @@ impl EngineInner {
         // order lowering may already have performed that work,
         // which is why `needs_transition` gates it above.
         //
-        // The accepted element stays the actor's selection for
-        // the whole translation. Translation bodies that
-        // terminate or interrupt the element on the spot then
-        // send their condolence card while still selected, and
-        // that card is what clears the actor's movement goal.
-        self.orders.sequence_manager.set_translating_element(Some((
-            owner,
-            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
-        )));
-
         Ok(PreparedOwnerInstruction {
             owner,
             cmd,

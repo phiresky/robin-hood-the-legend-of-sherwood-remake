@@ -236,7 +236,8 @@ impl Engine {
             }));
         }
 
-        let (elements_to_go, actor_current) = manager.parity_runtime_refs();
+        let (elements_to_go, actor_current) =
+            manager.parity_runtime_refs(&self.inner.world.entities);
         json!({
             "next_order_id": self.inner.orders.next_order_id - 1,
             "sequences": sequences,

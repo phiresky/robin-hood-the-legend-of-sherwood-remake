@@ -1367,8 +1367,8 @@ impl EngineInner {
         ai.script_locked = true;
         ai.remember_events = remember_events;
         let from_lock_command = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(owner)
             .and_then(|(sequence, index)| self.orders.sequence_manager.get_element(sequence, index))
             .is_some_and(|element| element.command == crate::element::Command::LockAi);
@@ -2496,7 +2496,7 @@ impl EngineInner {
             let new_action = self
                 .orders
                 .sequence_manager
-                .current_order_for_actor(entity_id)
+                .current_order_for_actor(&self.world.entities, entity_id)
                 .map(|(_, _, order)| order.order_type)
                 .unwrap_or(crate::order::OrderType::NonanimationEnd);
             (new_action, actor.old_action, handle)
@@ -2539,7 +2539,7 @@ impl EngineInner {
         let live_action = self
             .orders
             .sequence_manager
-            .current_order_for_actor(entity_id)
+            .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(_, _, order)| order.order_type)
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
@@ -3543,8 +3543,8 @@ impl EngineInner {
     ) {
         let attacker = self.expect_entity_id_for_index(attacker, "EVENT_SWORDSTRIKE attacker");
         let command_strike = self
-            .orders
-            .sequence_manager
+            .world
+            .entities
             .current_element_for_actor(attacker)
             .and_then(|(sequence_id, element_index)| {
                 self.orders

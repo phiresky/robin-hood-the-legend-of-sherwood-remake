@@ -1,12 +1,9 @@
 //! Post-sequence-manager adoption of common actor-element ownership.
 //!
 //! Saves retain identities for the selected sequence element, its
-//! currently executing order, and the actor's idle wait element. Rust keeps
-//! those objects in `SequenceManager` and derives selection from its exact
-//! in-progress topology, so adoption validates that the converted manager
-//! reconstructs the same relationships rather than adding a second source of
-//! truth. The genuinely actor-owned post-seek sequence and script VM heap are
-//! restored after that validation succeeds.
+//! currently executing order, and the actor's idle wait element. Selection is
+//! restored directly on the actor after validating the referenced objects in
+//! `SequenceManager`, along with the post-seek sequence and script VM heap.
 
 use crate::{
     element::{Command, Entity, EntityId, InstalledActorOrder},
@@ -33,7 +30,6 @@ pub(crate) struct LegacyActorOwnershipAdoptionPlan {
 #[derive(Debug)]
 struct PlannedActorOwnership {
     entity: EntityId,
-    /// Retained for diagnostics: the manager is the canonical owner.
     selected_element: Option<SequenceElementRef>,
     /// Retained for diagnostics: the manager is the canonical owner.
     wait_element: Option<SequenceElementRef>,
@@ -113,14 +109,6 @@ impl LegacyActorOwnershipAdoptionPlan {
                         .expect("same immutable plan must resolve identically")
                         .0
                 );
-            }
-
-            let reconstructed = sequences.current_element_for_actor(entity);
-            if reconstructed != selected_element {
-                return Err(site.error(AdoptErrorKind::SelectedElementMismatch {
-                    saved: selected_element,
-                    runtime: reconstructed,
-                }));
             }
 
             let resolved_order = sequences.resolve_order("order", saved.order)?;
@@ -204,16 +192,6 @@ impl LegacyActorOwnershipAdoptionPlan {
     /// Apply after the exact SequenceManager plan used during preflight.
     pub(crate) fn apply(self, engine: &mut EngineInner) {
         for planned in self.records {
-            debug_assert_eq!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(planned.entity)
-                    .map(|(sequence_id, element_index)| {
-                        SequenceElementRef::new(sequence_id, element_index)
-                    }),
-                planned.selected_element
-            );
             if let Some(wait) = planned.wait_element {
                 debug_assert!(
                     engine
@@ -230,6 +208,7 @@ impl LegacyActorOwnershipAdoptionPlan {
                 .get_mut(planned.entity)
                 .and_then(Entity::actor_data_mut)
                 .expect("preflighted actor ownership entity changed kind");
+            actor.selected_sequence_element = planned.selected_element;
             actor.installed_order = planned.installed_order;
             actor.post_seek_sequence = planned.post_seek_sequence;
             if let Some(heap) = planned.vm_heap {
@@ -280,5 +259,50 @@ fn actor_payload(payload: &LegacyElementPayload) -> Option<&LegacyActorPayload> 
         | LegacyElementPayload::Target(_)
         | LegacyElementPayload::Fx(_)
         | LegacyElementPayload::FxMasked(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        element::Posture,
+        engine::test_support::actors::make_test_pc,
+        sequence::{SequenceElement, SequenceState},
+    };
+
+    #[test]
+    fn restores_saved_selection_independently_of_element_progress() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+        let mut active = SequenceElement::new_generic(1, Command::Turn, Some(owner));
+        active.state = SequenceState::InProgress;
+        engine.orders.sequence_manager.insert_element(active);
+        let selected = engine
+            .orders
+            .sequence_manager
+            .insert_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
+        let selected = SequenceElementRef::new(selected, 0);
+
+        // A saved pointer can select pending work or be null despite other
+        // in-progress elements owned by this actor.
+        for saved in [Some(selected), None] {
+            LegacyActorOwnershipAdoptionPlan {
+                records: vec![PlannedActorOwnership {
+                    entity: owner,
+                    selected_element: saved,
+                    wait_element: None,
+                    installed_order: None,
+                    post_seek_sequence: None,
+                    vm_heap: None,
+                }],
+            }
+            .apply(&mut engine);
+
+            assert_eq!(
+                engine.world.entities.current_element_for_actor(owner),
+                saved.map(|reference| (reference.sequence_id, reference.element_index))
+            );
+        }
     }
 }
