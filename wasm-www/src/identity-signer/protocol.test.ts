@@ -68,14 +68,6 @@ function bridge(calls: string[]): LeaderboardIdentityBridgeModule {
         robinhoodLeaderboardPublicKey: async () => publicKey,
         robinhoodSignUsernameUpdate: (origin, value) => signed('username', origin, value),
         robinhoodSignSubmissionClaim: (origin, value) => signed('submission', origin, value),
-        robinhoodSignMultiplayerLeaderboardRequest: (origin, value) => signed('multiplayer', origin, value),
-        robinhoodSignNamedSeatJoin: (origin, value) => signed('named_seat_join', origin, value),
-        robinhoodSignReplaySessionGenesis: (origin, value) => signed('replay_session_genesis', origin, value),
-        robinhoodSignCompetitionRunGrantRequest: (origin, value) => signed('grant', origin, value),
-        robinhoodSignFreshRunPreflightRequest: (origin, value) => signed('fresh_preflight', origin, value),
-        robinhoodSignCampaignContinuationPreflightAsHost: (origin, value) => signed('continuation_preflight_host', origin, value),
-        robinhoodSignCampaignContinuationPreflightAsController: (origin, value) => signed('continuation_preflight_controller', origin, value),
-        robinhoodSignCampaignContinuation: (origin, value) => signed('continuation', origin, value),
         robinhoodSignSubmissionOwnerStatus: (origin, value) => signed('owner_status', origin, value),
         robinhoodSignDeletionRequest: (origin, value) => signed('deletion', origin, value),
     };
@@ -88,6 +80,14 @@ test('decoder accepts only the closed leaderboard operation set and exact fields
     for (const operation of [
         'sign_username_update',
         'sign_submission',
+        'sign_submission_owner_status',
+        'sign_deletion_request',
+    ]) {
+        assert.equal(decodeLeaderboardIdentityRequest(request(operation, json)).operation, operation);
+    }
+    for (const operation of [
+        'raw', 'sign_raw', 'approve_rekey', 'sign_session_genesis',
+        // Removed with the ranked protocol V2 simplification.
         'sign_multiplayer_leaderboard_request',
         'sign_named_seat_join',
         'sign_replay_session_genesis',
@@ -96,13 +96,6 @@ test('decoder accepts only the closed leaderboard operation set and exact fields
         'sign_campaign_continuation_preflight_as_host',
         'sign_campaign_continuation_preflight_as_controller',
         'sign_campaign_continuation',
-        'sign_submission_owner_status',
-        'sign_deletion_request',
-    ]) {
-        assert.equal(decodeLeaderboardIdentityRequest(request(operation, json)).operation, operation);
-    }
-    for (const operation of [
-        'raw', 'sign_raw', 'approve_rekey', 'sign_session_genesis',
     ]) {
         assert.throws(() => decodeLeaderboardIdentityRequest(request(operation, json)), /unsupported/u);
     }
@@ -135,14 +128,6 @@ test('dispatch routes every typed operation and freezes result shapes', async ()
     for (const [operation, call, kind] of [
         ['sign_username_update', 'username', 'signed_document'],
         ['sign_submission', 'submission', 'participant_signature'],
-        ['sign_multiplayer_leaderboard_request', 'multiplayer', 'participant_signature'],
-        ['sign_named_seat_join', 'named_seat_join', 'signed_document'],
-        ['sign_replay_session_genesis', 'replay_session_genesis', 'signed_document'],
-        ['sign_competition_run_grant_request', 'grant', 'signed_document'],
-        ['sign_fresh_run_preflight_request', 'fresh_preflight', 'signed_document'],
-        ['sign_campaign_continuation_preflight_as_host', 'continuation_preflight_host', 'participant_signature'],
-        ['sign_campaign_continuation_preflight_as_controller', 'continuation_preflight_controller', 'participant_signature'],
-        ['sign_campaign_continuation', 'continuation', 'signed_document'],
         ['sign_submission_owner_status', 'owner_status', 'signed_document'],
         ['sign_deletion_request', 'deletion', 'signed_document'],
     ] as const) {
@@ -151,6 +136,13 @@ test('dispatch routes every typed operation and freezes result shapes', async ()
         if (result.ok) assert.equal((result.result as { kind: string }).kind, kind);
         assert.equal(calls.at(-1), call);
     }
+    const submission = await dispatchLeaderboardIdentityRequest(request('sign_submission', json), signer);
+    assert.deepEqual(submission, {
+        protocol: LEADERBOARD_IDENTITY_PROTOCOL,
+        requestId,
+        ok: true,
+        result: { kind: 'participant_signature', participantSignatureJson: json },
+    });
 });
 
 test('payload and bridge result limits fail closed', async () => {

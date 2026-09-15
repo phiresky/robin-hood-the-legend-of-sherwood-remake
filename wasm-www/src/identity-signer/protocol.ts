@@ -7,15 +7,9 @@ const MAX_COMPLETED_REQUESTS = 256;
 
 const SIGNING_LIMITS = {
     sign_username_update: 4 * 1024,
+    /** payloadJson: `SubmissionV2`; result: `{ public_key, signature }` over
+     * `SignedSubmissionV2::signing_bytes`. */
     sign_submission: 128 * 1024,
-    sign_multiplayer_leaderboard_request: 4 * 1024,
-    sign_named_seat_join: 8 * 1024,
-    sign_replay_session_genesis: 64 * 1024,
-    sign_competition_run_grant_request: 128 * 1024,
-    sign_fresh_run_preflight_request: 128 * 1024,
-    sign_campaign_continuation_preflight_as_host: 128 * 1024,
-    sign_campaign_continuation_preflight_as_controller: 128 * 1024,
-    sign_campaign_continuation: 128 * 1024,
     sign_submission_owner_status: 8 * 1024,
     sign_deletion_request: 8 * 1024,
 } as const;
@@ -51,14 +45,6 @@ export type LeaderboardIdentityBridgeModule = {
     readonly robinhoodLeaderboardPublicKey: (parentOrigin: string) => Promise<string>;
     readonly robinhoodSignUsernameUpdate: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignSubmissionClaim: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignMultiplayerLeaderboardRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignNamedSeatJoin: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignReplaySessionGenesis: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCompetitionRunGrantRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignFreshRunPreflightRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuationPreflightAsHost: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuationPreflightAsController: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuation: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignSubmissionOwnerStatus: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignDeletionRequest: (parentOrigin: string, json: string) => Promise<string>;
 };
@@ -194,67 +180,6 @@ async function execute(
             bridgeJson(json, SIGNING_LIMITS.sign_submission, 'participant signature');
             return { kind: 'participant_signature', participantSignatureJson: json };
         }
-        case 'sign_multiplayer_leaderboard_request': {
-            const json = await bridge.robinhoodSignMultiplayerLeaderboardRequest(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_multiplayer_leaderboard_request,
-                'multiplayer participant signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_named_seat_join':
-            return signedDocument(
-                await bridge.robinhoodSignNamedSeatJoin(parentOrigin, payload),
-                SIGNING_LIMITS.sign_named_seat_join,
-            );
-        case 'sign_replay_session_genesis':
-            return signedDocument(
-                await bridge.robinhoodSignReplaySessionGenesis(parentOrigin, payload),
-                SIGNING_LIMITS.sign_replay_session_genesis,
-            );
-        case 'sign_competition_run_grant_request':
-            return signedDocument(
-                await bridge.robinhoodSignCompetitionRunGrantRequest(parentOrigin, payload),
-                SIGNING_LIMITS.sign_competition_run_grant_request,
-            );
-        case 'sign_fresh_run_preflight_request':
-            return signedDocument(
-                await bridge.robinhoodSignFreshRunPreflightRequest(parentOrigin, payload),
-                SIGNING_LIMITS.sign_fresh_run_preflight_request,
-            );
-        case 'sign_campaign_continuation_preflight_as_host': {
-            const json = await bridge.robinhoodSignCampaignContinuationPreflightAsHost(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_campaign_continuation_preflight_as_host,
-                'campaign continuation preflight host signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_campaign_continuation_preflight_as_controller': {
-            const json = await bridge.robinhoodSignCampaignContinuationPreflightAsController(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_campaign_continuation_preflight_as_controller,
-                'campaign continuation preflight controller signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_campaign_continuation':
-            return signedDocument(
-                await bridge.robinhoodSignCampaignContinuation(parentOrigin, payload),
-                SIGNING_LIMITS.sign_campaign_continuation,
-            );
         case 'sign_submission_owner_status':
             return signedDocument(
                 await bridge.robinhoodSignSubmissionOwnerStatus(parentOrigin, payload),
