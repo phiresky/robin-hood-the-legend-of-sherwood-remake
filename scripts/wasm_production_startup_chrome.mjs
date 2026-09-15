@@ -86,8 +86,8 @@ for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_adm
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
-const dataPrefix = '/datadirs/demo-leicester/v17/';
-const demoDatadirName = 'v17-web-opus-q80.rhdata.zst';
+const dataPrefix = '/datadirs/demo-leicester/v18/';
+const demoDatadirName = 'v18-web-opus-q80.rhdata.zst';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
 preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });

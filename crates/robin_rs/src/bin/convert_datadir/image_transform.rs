@@ -162,23 +162,234 @@ pub(super) fn encode_interface_pak_pictures(
     pictures: &[Picture],
     format: InterfaceImageFormat,
 ) -> Result<Vec<EncodedPicture>> {
-    let Some(q) = format.jxl_quality() else {
+    let Some(codec) = format.web_codec() else {
         bail!("raw interface pak pictures should stay in dd.raw, not dd.pak_files");
     };
     pictures
         .iter()
         .enumerate()
         .map(|(idx, pic)| {
-            Ok(EncodedPicture::jxl_rgba565_keyed(
-                transcode_picture_to_jxl_rgba_keyed(pic, q).with_context(|| {
-                    format!(
-                        "interface pak picture {idx}: encode JXL {}",
-                        jxl_quality_label(q)
-                    )
-                })?,
-            ))
+            encode_interface_picture(pic, codec)
+                .with_context(|| format!("interface pak picture {idx}: encode {}", codec.label()))
         })
         .collect()
+}
+
+/// One interface picture (`.res` or `.pak`) in the chosen shipping codec.
+pub(super) fn encode_interface_picture(
+    pic: &Picture,
+    codec: WebImageCodec,
+) -> Result<EncodedPicture> {
+    match codec {
+        WebImageCodec::Jxl(quality) => Ok(EncodedPicture::jxl_rgba565_keyed(
+            transcode_picture_to_jxl_rgba_keyed(pic, quality)?,
+        )),
+        WebImageCodec::Avif(quality) => encode_keyed_picture_avif(pic, quality),
+    }
+}
+
+/// `avifenc` worker threads. `-j` changes the output bytes slightly, so it is
+/// fixed per asset kind — never derived from the machine's core count — to
+/// keep conversions reproducible across hosts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AvifJobs {
+    /// `-j 1`: the converter already parallelizes across these images.
+    Single,
+    /// `-j all`: big images encoded one at a time (terrain maps, minimaps).
+    All,
+}
+
+/// libaom encoder speed of the web recipe (`avifenc -s 2`).
+const AVIF_ENCODER_SPEED: &str = "2";
+
+/// Which representation a keyed AVIF-recipe interface picture ships as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyedPictureEncoding {
+    /// Exact `EncodedPicture::rgb565_raw` (`w*h*2 + 4` bytes).
+    Rgb565Raw,
+    /// Lossy keyed RGBA AVIF.
+    Avif,
+}
+
+/// Tiny-picture policy of the AVIF interface recipe: ship the exact raw
+/// RGB565 bytes when they are no larger than the AVIF, or when the AVIF's
+/// opaque PSNR565 falls below [`KEYED_PICTURE_MIN_PSNR_DB`]; otherwise the
+/// AVIF. `avif_opaque_psnr_db` is only evaluated (it needs a decode) when the
+/// size comparison does not already pick raw. Measured on the Demo interface
+/// corpus: 231 of 947 pictures ship raw and none of the AVIFs is below 20 dB.
+pub(super) fn choose_keyed_picture_encoding(
+    width: u16,
+    height: u16,
+    avif_bytes: usize,
+    avif_opaque_psnr_db: impl FnOnce() -> Result<f64>,
+) -> Result<KeyedPictureEncoding> {
+    let raw_bytes = usize::from(width) * usize::from(height) * 2 + 4;
+    if raw_bytes <= avif_bytes || avif_opaque_psnr_db()? < KEYED_PICTURE_MIN_PSNR_DB {
+        Ok(KeyedPictureEncoding::Rgb565Raw)
+    } else {
+        Ok(KeyedPictureEncoding::Avif)
+    }
+}
+
+/// Class-marked, edge-extended RGBA for a keyed `Rgb16` picture — the same
+/// encoder input the lossy keyed JXL path builds — plus its source canvas.
+/// A fully opaque picture encodes without an alpha item (libavif omits an
+/// all-255 alpha plane); the runtime keyed decoder reads that as all-opaque.
+fn keyed_canvas_rgba(pic: &Picture) -> Result<(Vec<u16>, Vec<u8>)> {
+    let canvas = picture_rgb16_canvas(pic)?;
+    let mut rgba = robin_assets::rle_jxl::canvas_to_rgba(&canvas)?;
+    robin_assets::rle_jxl::smear_invisible_rgb(&mut rgba, pic.width as usize, pic.height as usize);
+    Ok((canvas, rgba))
+}
+
+/// Decode a keyed AVIF natively exactly as the runtime reconstructs it.
+pub(super) fn decode_keyed_avif(bytes: &[u8]) -> Result<Picture> {
+    use robin_assets::browser_images;
+    let decoded = browser_images::decode_avif_rgba8(bytes).context("decode keyed AVIF")?;
+    browser_images::rgba_to_rgb565_keyed(&decoded)
+}
+
+/// Keyed interface picture for the AVIF recipe: class-marked RGBA AVIF with
+/// lossless alpha, or exact raw RGB565 per [`choose_keyed_picture_encoding`].
+pub(super) fn encode_keyed_picture_avif(pic: &Picture, quality: u8) -> Result<EncodedPicture> {
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_assets::picture::PixelFormat;
+
+    if pic.pixel_format != PixelFormat::Rgb16 {
+        // Mirrors the JXL path's non-RGB16 branch: only the transparent key
+        // maps to alpha.
+        // TODO: no class verification or raw fallback for non-RGB16 interface
+        // pictures (the JXL path has none either); check whether any exist.
+        let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+        let encoded = encode_pixels_to_avif(
+            u32::from(pic.width),
+            u32::from(pic.height),
+            &rgba,
+            png::ColorType::Rgba,
+            quality,
+            AvifJobs::Single,
+        )?;
+        return Ok(EncodedPicture::avif_rgba565_keyed(encoded));
+    }
+
+    let (canvas, rgba) = keyed_canvas_rgba(pic)?;
+    let encoded = encode_pixels_to_avif(
+        u32::from(pic.width),
+        u32::from(pic.height),
+        &rgba,
+        png::ColorType::Rgba,
+        quality,
+        AvifJobs::Single,
+    )?;
+    let mut psnr = None;
+    let choice = choose_keyed_picture_encoding(pic.width, pic.height, encoded.len(), || {
+        let decoded = decode_keyed_avif(&encoded)?;
+        verify_decoded_picture_classes(&decoded, &canvas)?;
+        let score = keyed_opaque_psnr565(&decoded, &canvas)?;
+        psnr = Some(score);
+        Ok(score)
+    })?;
+    match choice {
+        KeyedPictureEncoding::Avif => Ok(EncodedPicture::avif_rgba565_keyed(encoded)),
+        KeyedPictureEncoding::Rgb565Raw => {
+            tracing::debug!(
+                width = pic.width,
+                height = pic.height,
+                avif_bytes = encoded.len(),
+                avif_psnr_db = psnr,
+                "keyed picture ships as exact raw RGB565"
+            );
+            let tight = Picture {
+                width: pic.width,
+                height: pic.height,
+                pitch: pic
+                    .width
+                    .checked_mul(2)
+                    .context("picture row exceeds u16")?,
+                pixel_format: PixelFormat::Rgb16,
+                data: canvas.iter().copied().flat_map(u16::to_le_bytes).collect(),
+                palette: None,
+            };
+            EncodedPicture::rgb565_raw(&tight)
+        }
+    }
+}
+
+/// Decode a packed 16-bit minimap (`.min`) and encode it as keyed RGBA AVIF.
+pub(super) fn transcode_minimap_to_avif(src: &Path, quality: u8) -> Result<Vec<u8>> {
+    encode_minimap_picture_to_avif(&load_sixteen_file(src)?, quality)
+}
+
+/// Keyed RGBA AVIF minimap (see [`encode_minimap_picture_to_jxl`] for why
+/// minimaps are keyed). Always AVIF — minimaps live in `payload.raw`, not as
+/// `EncodedPicture`, so there is no raw fallback — and the conversion fails
+/// if any pixel class does not survive.
+pub(super) fn encode_minimap_picture_to_avif(pic: &Picture, quality: u8) -> Result<Vec<u8>> {
+    let (canvas, rgba) = keyed_canvas_rgba(pic)?;
+    let encoded = encode_pixels_to_avif(
+        u32::from(pic.width),
+        u32::from(pic.height),
+        &rgba,
+        png::ColorType::Rgba,
+        quality,
+        AvifJobs::All,
+    )?;
+    let decoded = decode_keyed_avif(&encoded).context("decode keyed AVIF minimap")?;
+    verify_decoded_picture_classes(&decoded, &canvas).context("keyed AVIF minimap classes")?;
+    let psnr = keyed_opaque_psnr565(&decoded, &canvas)?;
+    tracing::debug!(
+        width = pic.width,
+        height = pic.height,
+        bytes = encoded.len(),
+        psnr_db = psnr,
+        "encoded keyed AVIF minimap"
+    );
+    Ok(encoded)
+}
+
+/// Decode a packed 16-bit (`.map`) terrain image and encode it as opaque
+/// AVIF (RGB input, so no alpha item).
+pub(super) fn transcode_sixteen_to_avif(src: &Path, quality: u8) -> Result<Vec<u8>> {
+    transcode_picture_to_avif(&load_sixteen_file(src)?, quality)
+}
+
+/// Opaque terrain AVIF. Checks the container facts the runtime's opaque
+/// loader relies on; the pixels are not decoded here.
+// TODO: score terrain PSNR565 once the native AVIF decoder is fast enough for
+// full-size maps in the conversion loop.
+pub(super) fn transcode_picture_to_avif(pic: &Picture, quality: u8) -> Result<Vec<u8>> {
+    let rgb = picture_to_rgb888(pic)?;
+    let encoded = encode_pixels_to_avif(
+        u32::from(pic.width),
+        u32::from(pic.height),
+        &rgb,
+        png::ColorType::Rgb,
+        quality,
+        AvifJobs::All,
+    )?;
+    let info = robin_assets::browser_images::avif_info(&encoded)?;
+    anyhow::ensure!(
+        !info.has_alpha && (info.width, info.height) == (pic.width, pic.height),
+        "terrain AVIF came back as {}x{} alpha={} for a {}x{} opaque picture",
+        info.width,
+        info.height,
+        info.has_alpha,
+        pic.width,
+        pic.height
+    );
+    Ok(encoded)
+}
+
+fn load_sixteen_file(src: &Path) -> Result<Picture> {
+    let mut file =
+        SbFile::open(&src.to_string_lossy()).map_err(|e| anyhow!("open {}: {e}", src.display()))?;
+    Picture::load_sixteen_from_stream(&mut file)
+        .with_context(|| format!("decode {}", src.display()))
 }
 
 pub(super) fn jxl_quality_label(quality: Option<u8>) -> String {
@@ -218,9 +429,39 @@ pub(super) fn transcode_picture_to_jxl_rgba_keyed(
             pic.width as usize,
             pic.height as usize,
         );
-        let encoded = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)?;
-        verify_keyed_picture_classes(&encoded, &canvas)?;
-        return Ok(encoded);
+        let encoded = transcode_pixels_to_jxl(pic, rgba.clone(), png::ColorType::Rgba, quality, 9)?;
+        let decoded =
+            Picture::load_jxl_rgba565_keyed(&encoded).context("decode keyed interface picture")?;
+        verify_decoded_picture_classes(&decoded, &canvas)?;
+        let psnr = keyed_opaque_psnr565(&decoded, &canvas)?;
+        if psnr >= KEYED_PICTURE_MIN_PSNR_DB {
+            return Ok(encoded);
+        }
+        // Lossy VarDCT wrecks tiny keyed pictures (measured on the Demo
+        // interface corpus: every picture with a side under 8 px scored
+        // 8-19 dB at q80, and q90 did not rescue them). Lossless modular
+        // of the same class-marked RGBA is exact and, for exactly these
+        // pictures, was no larger (27 pictures: 1982 vs 2065 bytes).
+        let lossless = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, None, 9)?;
+        let decoded = Picture::load_jxl_rgba565_keyed(&lossless)
+            .context("decode lossless keyed interface picture")?;
+        verify_decoded_picture_classes(&decoded, &canvas)?;
+        let lossless_psnr = keyed_opaque_psnr565(&decoded, &canvas)?;
+        anyhow::ensure!(
+            lossless_psnr == f64::INFINITY,
+            "lossless keyed picture {}x{} did not round-trip exactly ({lossless_psnr:.2} dB)",
+            pic.width,
+            pic.height
+        );
+        tracing::debug!(
+            width = pic.width,
+            height = pic.height,
+            lossy_psnr_db = psnr,
+            lossy_bytes = encoded.len(),
+            lossless_bytes = lossless.len(),
+            "keyed picture below the lossy quality floor; shipping lossless JXL"
+        );
+        return Ok(lossless);
     }
 
     let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
@@ -245,6 +486,47 @@ pub(super) fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Re
     let decoded =
         Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
     verify_decoded_picture_classes(&decoded, source)
+}
+
+/// Opaque-pixel quality floor for lossy keyed pictures (interface art and
+/// minimaps). Below it the picture ships as lossless JXL instead. Scored
+/// like the RLE sprite path's `member_quality` gate.
+///
+/// Measured on the Demo interface corpus at q80 (947 pictures): the damaged
+/// pictures are exactly the 25 with a side under 8 px (8.2-19.3 dB); the
+/// next picture scores 20.2 dB and is visually fine. A 20 dB floor catches
+/// all 25 and the lossless set is 90 bytes SMALLER in total; a 24 dB floor
+/// would pull in 88 pictures for +37.8 KB (+1.7%) without visible gain.
+pub(super) const KEYED_PICTURE_MIN_PSNR_DB: f64 = 20.0;
+
+/// PSNR over the source's opaque pixels, scored on the RGB565 values the
+/// runtime sees (bit-replicated back to 8 bits), like `member_quality`.
+/// `INFINITY` when every opaque pixel is exact (or there are none).
+pub(super) fn keyed_opaque_psnr565(decoded: &Picture, source: &[u16]) -> Result<f64> {
+    use robin_assets::rle_jxl::{CL_OPAQUE, class_of, expand565};
+    let pixel_count = usize::from(decoded.width) * usize::from(decoded.height);
+    anyhow::ensure!(
+        pixel_count == source.len(),
+        "keyed picture scored {} decoded pixels against {} source pixels",
+        pixel_count,
+        source.len()
+    );
+    let (mut sse, mut samples) = (0.0f64, 0u64);
+    for (&want, got) in source.iter().zip(picture_rgb16_pixels(decoded)?) {
+        if class_of(want) != CL_OPAQUE {
+            continue;
+        }
+        let (a, b) = (expand565(want), expand565(got));
+        for channel in 0..3 {
+            let d = f64::from(a[channel]) - f64::from(b[channel]);
+            sse += d * d;
+        }
+        samples += 3;
+    }
+    if samples == 0 || sse == 0.0 {
+        return Ok(f64::INFINITY);
+    }
+    Ok(10.0 * (255.0f64 * 255.0 / (sse / samples as f64)).log10())
 }
 
 fn verify_decoded_picture_classes(decoded: &Picture, source: &[u16]) -> Result<()> {
@@ -341,7 +623,25 @@ pub(super) fn transcode_pixels_to_jxl(
         color,
         quality,
         effort,
+        JxlDecodeSpeed::DEFAULT,
     )
+}
+
+/// Encoder options that trade bytes for decoder speed. `DEFAULT` passes no
+/// flags at all, so recipes that do not opt in stay byte-identical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct JxlDecodeSpeed {
+    /// cjxl `--faster_decoding` level; 0 = cjxl default (flag omitted).
+    pub(super) faster_decoding: u8,
+    /// cjxl `--epf` strength; `None` = encoder chooses (flag omitted).
+    pub(super) epf: Option<u8>,
+}
+
+impl JxlDecodeSpeed {
+    pub(super) const DEFAULT: Self = Self {
+        faster_decoding: 0,
+        epf: None,
+    };
 }
 
 /// Dimension-explicit form of [`transcode_pixels_to_jxl`]; the RLE sprite
@@ -353,19 +653,9 @@ pub(super) fn encode_pixels_to_jxl(
     color: png::ColorType,
     quality: Option<u8>,
     effort: u8,
+    decode_speed: JxlDecodeSpeed,
 ) -> Result<Vec<u8>> {
-    use std::io::Write as _;
-    use std::process::Stdio;
-
-    let mut png_bytes: Vec<u8> = Vec::new();
-    {
-        let mut enc = png::Encoder::new(&mut png_bytes, width, height);
-        enc.set_color(color);
-        enc.set_depth(png::BitDepth::Eight);
-        let mut w = enc.write_header().context("png header")?;
-        w.write_image_data(pixels).context("png data")?;
-        w.finish().context("png finish")?;
-    }
+    let png_bytes = encode_png(width, height, pixels, color)?;
 
     let mut cmd = Command::new("cjxl");
     let effort = effort.to_string();
@@ -375,48 +665,163 @@ pub(super) fn encode_pixels_to_jxl(
         // it to 0 already; passing it explicitly means a future default
         // change cannot silently corrupt the sprite class channel (which
         // `member_quality` would then catch as a hard error anyway).
-        cmd.args([
-            "-q",
-            &q.to_string(),
-            "--alpha_distance=0",
-            "-e",
-            &effort,
-            "-",
-            "-",
-        ]);
+        cmd.args(["-q", &q.to_string(), "--alpha_distance=0", "-e", &effort]);
     } else {
-        cmd.args(["-d", "0", "--modular=1", "-e", &effort, "-", "-"]);
+        cmd.args(["-d", "0", "--modular=1", "-e", &effort]);
     }
+    if decode_speed.faster_decoding > 0 {
+        cmd.arg(format!(
+            "--faster_decoding={}",
+            decode_speed.faster_decoding
+        ));
+    }
+    if let Some(epf) = decode_speed.epf {
+        cmd.arg(format!("--epf={epf}"));
+    }
+    // Input and output last: PNG on stdin, JXL on stdout.
+    cmd.args(["-", "-"]);
+    let out = run_with_stdin(
+        cmd,
+        &png_bytes,
+        "cjxl",
+        "spawn cjxl (is it installed?)".to_owned(),
+    )?;
+    Ok(out.stdout)
+}
+
+/// Encode raw pixel data to AVIF with the pinned `avifenc` (libavif 1.4.2 on
+/// libaom 3.15.0; see `scripts/install_pinned_avif_tools.sh`). PNG goes in
+/// on stdin; avifenc insists on an output file, so it writes into a private
+/// temporary directory.
+///
+/// Recipe (docs measurements): colour quality `quality`, 4:4:4, speed 2,
+/// libavif's default still-image tuning (tune is deliberately not passed),
+/// CICP 1/13/6 full range pinned explicitly (byte-identical to the current
+/// defaults, but a future default change cannot alter colour signalling).
+/// RGBA input always codes alpha losslessly (`--qalpha 100`): keyed images
+/// carry their pixel class there.
+pub(super) fn encode_pixels_to_avif(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    color: png::ColorType,
+    quality: u8,
+    jobs: AvifJobs,
+) -> Result<Vec<u8>> {
+    let has_alpha = match color {
+        png::ColorType::Rgba => true,
+        png::ColorType::Rgb => false,
+        other => bail!("AVIF encode supports RGB or RGBA input, not {other:?}"),
+    };
+    anyhow::ensure!(quality <= 100, "AVIF quality {quality} is above 100");
+    let png_bytes = encode_png(width, height, pixels, color)?;
+    let directory = tempfile::tempdir().context("create avifenc output directory")?;
+    let output = directory.path().join("image.avif");
+
+    let mut cmd = Command::new("avifenc");
+    cmd.args([
+        "--stdin",
+        "--input-format",
+        "png",
+        "-q",
+        &quality.to_string(),
+        "-y",
+        "444",
+        "-s",
+        AVIF_ENCODER_SPEED,
+        "-j",
+        match jobs {
+            AvifJobs::Single => "1",
+            AvifJobs::All => "all",
+        },
+        "--cicp",
+        "1/13/6",
+        "--range",
+        "full",
+    ]);
+    if has_alpha {
+        cmd.args(["--qalpha", "100"]);
+    }
+    cmd.arg(&output);
+    run_with_stdin(
+        cmd,
+        &png_bytes,
+        "avifenc",
+        "spawn avifenc: the pinned libavif 1.4.2 / libaom 3.15.0 avifenc must be on PATH \
+         (build it with scripts/install_pinned_avif_tools.sh)"
+            .to_owned(),
+    )?;
+    let encoded =
+        fs::read(&output).with_context(|| format!("read avifenc output {}", output.display()))?;
+    anyhow::ensure!(
+        robin_assets::browser_images::is_avif(&encoded),
+        "avifenc output ({} bytes) is not an AVIF file",
+        encoded.len()
+    );
+    Ok(encoded)
+}
+
+/// Minimal 8-bit PNG of raw pixels, the encoder CLIs' input format.
+fn encode_png(width: u32, height: u32, pixels: &[u8], color: png::ColorType) -> Result<Vec<u8>> {
+    let mut png_bytes: Vec<u8> = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png_bytes, width, height);
+        enc.set_color(color);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().context("png header")?;
+        w.write_image_data(pixels).context("png data")?;
+        w.finish().context("png finish")?;
+    }
+    Ok(png_bytes)
+}
+
+/// Run an encoder CLI with `input` on stdin, failing with its stderr on a
+/// non-zero exit. stdin is fed from a scoped thread while the parent drains
+/// stdout/stderr, so an input larger than the pipe buffer cannot deadlock.
+fn run_with_stdin(
+    mut cmd: Command,
+    input: &[u8],
+    tool: &str,
+    spawn_context: String,
+) -> Result<std::process::Output> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("spawn cjxl (is it installed?)")?;
-    let mut stdin = child.stdin.take().expect("cjxl stdin was requested piped");
+        .context(spawn_context)?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .with_context(|| format!("{tool} stdin was requested piped"))?;
     let (out, write_result) = std::thread::scope(|scope| {
         let writer = scope.spawn(move || {
-            let result = stdin.write_all(&png_bytes);
-            // Explicit drop closes the pipe so cjxl sees EOF.
+            let result = stdin.write_all(input);
+            // Explicit drop closes the pipe so the encoder sees EOF.
             drop(stdin);
             result
         });
         // `wait_with_output` drains stdout and stderr concurrently while
         // the writer thread feeds stdin.
-        let out = child.wait_with_output().context("cjxl wait");
-        let write_result = writer.join().expect("cjxl stdin writer thread panicked");
+        let out = child
+            .wait_with_output()
+            .with_context(|| format!("{tool} wait"));
+        let write_result = writer.join().expect("encoder stdin writer thread panicked");
         (out, write_result)
     });
     let out = out?;
     if !out.status.success() {
         bail!(
-            "cjxl failed: exit {}: {}",
+            "{tool} failed: exit {}: {}",
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    write_result.context("write PNG to cjxl")?;
-    Ok(out.stdout)
+    write_result.with_context(|| format!("write PNG to {tool}"))?;
+    Ok(out)
 }
 
 pub(super) fn picture_to_rgb888(pic: &Picture) -> Result<Vec<u8>> {

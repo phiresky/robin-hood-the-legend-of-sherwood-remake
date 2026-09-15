@@ -458,6 +458,66 @@ fn opus_membership_only_dependency_is_written_and_decodes() {
 
 #[test]
 #[ignore = "requires cjxl on PATH"]
+fn tiny_keyed_interface_picture_falls_back_to_exact_lossless_jxl() {
+    use robin_assets::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
+    use robin_assets::rle_jxl::canvas_to_rgba;
+
+    // Shaped like the damaged Demo interface pictures: 4x6, two colours
+    // (black and a saturated green-yellow) with keyed corners and a shadow
+    // pixel. Lossy q80 VarDCT scored ~8 dB on these.
+    let (width, height) = (4u16, 6u16);
+    const INK: u16 = 0x0000;
+    const FILL: u16 = (20 << 11) | (62 << 5) | 10;
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| match (x, y) {
+            (0, 0) | (3, 0) | (0, 5) | (3, 5) => TRANSPARENT_COLOR_16,
+            (2, 4) => SHADOW_KEY,
+            _ if (x + y) % 2 == 0 => INK,
+            _ => FILL,
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    // Premise: plain lossy q80 of this picture is below the floor, so the
+    // gate below is actually exercised.
+    let lossy = super::transcode_pixels_to_jxl(
+        &picture,
+        canvas_to_rgba(&source).unwrap(),
+        png::ColorType::Rgba,
+        Some(80),
+        9,
+    )
+    .unwrap();
+    let lossy_decoded = Picture::load_jxl_rgba565_keyed(&lossy).unwrap();
+    let lossy_psnr = super::keyed_opaque_psnr565(&lossy_decoded, &source).unwrap();
+    assert!(
+        lossy_psnr < super::KEYED_PICTURE_MIN_PSNR_DB,
+        "test premise: lossy q80 scored {lossy_psnr:.2} dB, above the floor"
+    );
+
+    let encoded = super::transcode_picture_to_jxl_rgba_keyed(&picture, Some(80)).unwrap();
+    let decoded = Picture::load_jxl_rgba565_keyed(&encoded).unwrap();
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    assert_eq!(
+        pixels, source,
+        "gated keyed picture must round-trip exactly"
+    );
+}
+
+#[test]
+#[ignore = "requires cjxl on PATH"]
 fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
     use robin_engine::minimap::HitMask;
@@ -522,8 +582,239 @@ fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
 }
 
 #[test]
-#[ignore = "requires ffmpeg with libopus"]
+fn image_format_flags_dispatch_to_their_codec() {
+    use super::{MapFormat, RleSpriteCodec, RleSpriteFormat, WebImageCodec};
+    use clap::ValueEnum as _;
+
+    let map = |flag| MapFormat::from_str(flag, false).unwrap().web_codec();
+    assert_eq!(map("raw"), None);
+    assert_eq!(map("jxl-lossless"), Some(WebImageCodec::Jxl(None)));
+    assert_eq!(map("jxl-q80"), Some(WebImageCodec::Jxl(Some(80))));
+    assert_eq!(map("avif-q60"), Some(WebImageCodec::Avif(60)));
+
+    let interface = |flag| {
+        InterfaceImageFormat::from_str(flag, false)
+            .unwrap()
+            .web_codec()
+    };
+    assert_eq!(interface("raw"), None);
+    assert_eq!(interface("jxl-q90"), Some(WebImageCodec::Jxl(Some(90))));
+    assert_eq!(interface("avif-q60"), Some(WebImageCodec::Avif(60)));
+
+    let rle = |flag| {
+        RleSpriteFormat::from_str(flag, false)
+            .unwrap()
+            .lossy_codec()
+    };
+    assert_eq!(rle("exact"), None);
+    assert_eq!(rle("jxl-q70"), Some(RleSpriteCodec::Jxl(70)));
+    assert_eq!(rle("avif-q60"), Some(RleSpriteCodec::Avif(60)));
+
+    assert_eq!(WebImageCodec::Avif(60).label(), "AVIF q60");
+    assert_eq!(WebImageCodec::Jxl(None).label(), "JXL lossless");
+    assert_eq!(RleSpriteCodec::Avif(60).name(), "AVIF");
+}
+
+#[test]
+fn keyed_picture_ships_raw_when_no_larger_or_below_the_quality_floor() {
+    use super::{KEYED_PICTURE_MIN_PSNR_DB, KeyedPictureEncoding, choose_keyed_picture_encoding};
+
+    // 4x6 raw = 4*6*2 + 4 = 52 bytes. A size win for raw must not even
+    // decode the AVIF to score it.
+    let unscored = || -> anyhow::Result<f64> { panic!("raw already won on size") };
+    assert_eq!(
+        choose_keyed_picture_encoding(4, 6, 52, unscored).unwrap(),
+        KeyedPictureEncoding::Rgb565Raw
+    );
+    assert_eq!(
+        choose_keyed_picture_encoding(4, 6, 300, unscored).unwrap(),
+        KeyedPictureEncoding::Rgb565Raw
+    );
+    // AVIF strictly smaller: the quality floor decides.
+    assert_eq!(
+        choose_keyed_picture_encoding(4, 6, 51, || Ok(KEYED_PICTURE_MIN_PSNR_DB)).unwrap(),
+        KeyedPictureEncoding::Avif
+    );
+    assert_eq!(
+        choose_keyed_picture_encoding(64, 64, 900, || Ok(f64::INFINITY)).unwrap(),
+        KeyedPictureEncoding::Avif
+    );
+    assert_eq!(
+        choose_keyed_picture_encoding(64, 64, 900, || Ok(KEYED_PICTURE_MIN_PSNR_DB - 0.01))
+            .unwrap(),
+        KeyedPictureEncoding::Rgb565Raw
+    );
+    // A failed decode/class check is an error, never a silent choice.
+    assert!(choose_keyed_picture_encoding(64, 64, 900, || anyhow::bail!("class lost")).is_err());
+}
+
+#[test]
+#[ignore = "requires avifenc on PATH"]
+fn tiny_keyed_interface_picture_ships_exact_raw_rgb565_for_avif() {
+    use robin_assets::frame_holder::{SHADOW_KEY, TRANSPARENT_COLOR_16};
+    use robin_assets::resource_manager::EncodedPictureCodec;
+
+    // Same shape as the JXL tiny-picture test: keyed corners and a shadow
+    // pixel, where exactness of the keys matters most.
+    let (width, height) = (4u16, 6u16);
+    const INK: u16 = 0x0000;
+    const FILL: u16 = (20 << 11) | (62 << 5) | 10;
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| match (x, y) {
+            (0, 0) | (3, 0) | (0, 5) | (3, 5) => TRANSPARENT_COLOR_16,
+            (2, 4) => SHADOW_KEY,
+            _ if (x + y) % 2 == 0 => INK,
+            _ => FILL,
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    let encoded = super::encode_keyed_picture_avif(&picture, 60).unwrap();
+    assert_eq!(encoded.codec, EncodedPictureCodec::Rgb565Raw);
+    assert_eq!(encoded.bytes.len(), 4 * 6 * 2 + 4);
+    let decoded = encoded.decode().unwrap();
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    assert_eq!(pixels, source, "raw keyed picture must round-trip exactly");
+}
+
+#[test]
+#[ignore = "requires avifenc on PATH"]
+fn lossy_minimap_avif_keeps_the_exact_transparent_key() {
+    use robin_assets::browser_images::{self, ImageScope};
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_engine::minimap::HitMask;
+
+    // Same minimap shape as the JXL test: keyed border, interior hole, and
+    // near-key greens in the playfield.
+    let (width, height) = (48u16, 32u16);
+    let source: Vec<u16> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let border = x < 4 || y < 3 || x >= width - 5 || y >= height - 4;
+            let hole = (20..26).contains(&x) && (12..18).contains(&y);
+            if border || hole {
+                TRANSPARENT_COLOR_16
+            } else if (x + y) % 7 == 0 {
+                0x07A0 // near-key green
+            } else {
+                ((x & 0x1f) << 11) | ((y * 2) << 5) | ((x + y) & 0x1f)
+            }
+        })
+        .collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+
+    let encoded = super::encode_minimap_picture_to_avif(&picture, 60).unwrap();
+    assert!(browser_images::is_avif(&encoded));
+    assert_eq!(
+        Picture::terrain_dimensions(&encoded).unwrap(),
+        (width, height)
+    );
+    // Go through the runtime loader: register the decode the browser would
+    // have produced, then load the minimap from its bytes.
+    let pixels_rgba = browser_images::decode_avif_rgba8(&encoded).unwrap();
+    browser_images::insert_decoded(&encoded, ImageScope::Mission, pixels_rgba).unwrap();
+    let decoded = Picture::load_minimap_from_bytes(&encoded).unwrap();
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    let pixels: Vec<u16> = decoded
+        .data
+        .chunks_exact(2)
+        .map(|word| u16::from_le_bytes([word[0], word[1]]))
+        .collect();
+    for (index, (&want, &got)) in source.iter().zip(&pixels).enumerate() {
+        assert_eq!(
+            want == TRANSPARENT_COLOR_16,
+            got == TRANSPARENT_COLOR_16,
+            "pixel {index}: source {want:#06x} decoded {got:#06x}"
+        );
+    }
+    let expected_mask = HitMask::from_pixels_u16(width, height, &source, TRANSPARENT_COLOR_16);
+    let decoded_mask = HitMask::from_pixels_u16(width, height, &pixels, TRANSPARENT_COLOR_16);
+    for y in 0..height {
+        for x in 0..width {
+            assert_eq!(
+                decoded_mask.is_opaque(x, y),
+                expected_mask.is_opaque(x, y),
+                "hit mask differs at ({x}, {y})"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires avifenc on PATH"]
+fn opaque_keyed_picture_avif_without_alpha_item_decodes_all_opaque() {
+    // libavif drops an all-255 alpha plane. The runtime keyed decoder reads
+    // an alpha-less keyed AVIF as all-opaque (browser and native decoders
+    // both report alpha 255), so no pixel may come back as a key.
+    let (width, height) = (64u16, 64u16);
+    let source: Vec<u16> = (0..width * height).map(|i| (i % 0xF000) | 0x0800).collect();
+    let picture = Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    };
+    let rgba = robin_assets::rle_jxl::canvas_to_rgba(&source).unwrap();
+    let encoded = super::encode_pixels_to_avif(
+        width.into(),
+        height.into(),
+        &rgba,
+        png::ColorType::Rgba,
+        60,
+        super::AvifJobs::Single,
+    )
+    .unwrap();
+    assert!(
+        !robin_assets::browser_images::avif_info(&encoded)
+            .unwrap()
+            .has_alpha,
+        "test premise: libavif omits an all-opaque alpha plane"
+    );
+    let encoded = super::encode_minimap_picture_to_avif(&picture, 60).unwrap();
+    assert!(
+        !robin_assets::browser_images::avif_info(&encoded)
+            .unwrap()
+            .has_alpha,
+        "an all-opaque keyed minimap ships without an alpha item"
+    );
+    let decoded = Picture::load_minimap_from_bytes(&encoded).unwrap();
+    assert_eq!((decoded.width, decoded.height), (width, height));
+    for (index, word) in decoded.data.chunks_exact(2).enumerate() {
+        let pixel = u16::from_le_bytes([word[0], word[1]]);
+        assert!(
+            pixel != robin_assets::frame_holder::TRANSPARENT_COLOR_16
+                && pixel != robin_assets::frame_holder::SHADOW_KEY,
+            "opaque pixel {index} decoded as key {pixel:#06x}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires ffmpeg and ROBIN_OPUS_TOOLS_DIR (opusenc on libopus 1.6.1)"]
 fn opus_transcode_is_byte_deterministic() {
+    super::configure_test_opus_toolchain();
     let sample_rate = 8_000u32;
     let sample_count = 800u32;
     let mut wav = Vec::new();

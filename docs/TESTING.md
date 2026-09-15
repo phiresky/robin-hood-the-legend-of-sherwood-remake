@@ -347,13 +347,13 @@ pre-save checkpoint must not be reused as a post-load expected hash.
 
 Native parity traces and shipping assets have independent codec contracts.
 `robin_parity` pins crates.io `bitcode` 0.6.9 for authoritative v68 traces;
-shipping assets pin the workspace `bitcode` git revision for datadir v17 and
+shipping assets pin the workspace `bitcode` git revision for datadir v18 and
 mission v9. Two sources are intentional: dependency deduplication must not
 silently change either format. Updating one codec requires checking its frozen
 contract independently, not assuming a matching package version is compatible.
 
 Shipping's independent frozen-layout checks live in
-`robin_assets/src/shipping_v17_contract.rs` and `shipping_v9_contract.rs` and run
+`robin_assets/src/shipping_v18_contract.rs` and `shipping_v9_contract.rs` and run
 with `cargo test -p robin_assets`. Native trace checks run with
 `cargo test -p robin_parity`; validate real frozen replay evidence before
 changing its codec or layout. Runtime native readers accept v68 only; older

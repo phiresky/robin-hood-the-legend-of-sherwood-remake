@@ -109,10 +109,12 @@ pub(super) fn publish_shipping(
         robin_assets::shipping_datadir::zstd_compress_with_window(&blob, opts.zstd_window_log)?;
     publish_bytes(&out_file, &compressed)?;
     tracing::info!(
-        "wrote {} (windowLog={}, map={:?}, audio={:?})",
+        "wrote {} (windowLog={}, map={:?}, interface_images={:?}, rle_sprites={:?}, audio={:?})",
         out_file.display(),
         opts.zstd_window_log,
         opts.map_format,
+        opts.interface_image_format,
+        opts.rle_sprite_format,
         opts.audio_format
     );
     Ok(())

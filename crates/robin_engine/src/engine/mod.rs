@@ -2452,8 +2452,8 @@ impl EngineInner {
         }
     }
 
-    /// Run the PC instruction paths which return before delegating to
-    /// human and base actor instruction.
+    /// Apply PC instruction handling before delegating to the base actor.
+    /// Returns true when the instruction completes without delegation.
     ///
     /// Arrival speech must terminate here before base Actor's
     /// non-interruptable-current guard can postpone it. Otherwise parallel
@@ -2475,6 +2475,38 @@ impl EngineInner {
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|element| element.command);
+        if matches!(
+            command,
+            Some(crate::element::Command::CrouchUp | crate::element::Command::CrouchDown)
+        ) {
+            if self
+                .get_entity(owner)
+                .and_then(Entity::human_data)
+                .is_some_and(|human| !human.opponents.is_empty())
+            {
+                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                return true;
+            }
+            // Posture commands stop nonmovement work before transition
+            // generation, even when the requested posture is already current.
+            // MoveWaiting is deliberately outside the movement command group.
+            let current_is_nonmovement = self
+                .current_sequence_element_for_actor(owner)
+                .and_then(|(sequence, index)| {
+                    self.orders.sequence_manager.get_element(sequence, index)
+                })
+                .is_some_and(|element| !element.command.is_part_of_movement());
+            if current_is_nonmovement {
+                self.stop_actor_orders(
+                    sim,
+                    assets,
+                    &mut Vec::new(),
+                    owner,
+                    crate::sequence::SequencePriority::Preference,
+                );
+            }
+            return false;
+        }
         let expression = match command {
             Some(crate::element::Command::SpeakHeroReachDestination) => {
                 crate::engine::melee::HERO_DONE_COMMAND

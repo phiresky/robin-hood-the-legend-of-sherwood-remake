@@ -886,6 +886,91 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
 }
 
 #[test]
+fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_work() {
+    use crate::ai::AiLockFlags;
+    use crate::sequence::SequencePriority;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let (attacker, victim, assets, hotspot) = add_strangle_placement_failure_scene(&mut engine);
+    // This interruption occurs after the victim has reached the attacker.
+    // Both actors must therefore use the fixture's canonical combat sector.
+    {
+        let victim = engine.get_entity_mut(victim).unwrap().element_data_mut();
+        victim.set_position_map(crate::coordinates::MapPoint::new(106.0, 127.0));
+        victim.set_layer(3);
+        victim.set_sector(crate::position_interface::SectorHandle::new(2));
+    }
+    let old_wait = engine.actor_wait(&sim, &assets, victim);
+    let strangle = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .non_script_lock(AiLockFlags::FREEZE);
+    let unrelated = engine.entity_id_for_index(0).unwrap();
+    let outer_wait = engine.launch_element(
+        &sim,
+        &assets,
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(unrelated)),
+    );
+    let observed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let callback_observed = observed.clone();
+
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.owner == victim && card.seq_id == old_wait {
+                assert!(
+                    engine
+                        .get_entity(victim)
+                        .unwrap()
+                        .ai_controller()
+                        .unwrap()
+                        .locks_flag_field
+                        .contains(AiLockFlags::FREEZE),
+                    "replacement Wait must execute before the victim's AI unlock"
+                );
+                assert_eq!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_element(outer_wait, 0)
+                        .unwrap()
+                        .state,
+                    crate::sequence::SequenceState::Todo,
+                    "nested victim Wait must not instruct the caller's pending work"
+                );
+                callback_observed.set(true);
+            }
+        },
+        || {
+            engine.stop_actor_orders(
+                &sim,
+                &assets,
+                &mut Vec::new(),
+                attacker,
+                SequencePriority::Normal,
+            );
+        },
+    );
+
+    assert!(
+        observed.get(),
+        "victim Wait must be instructed inside Strangle cleanup"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(strangle.seq, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Interrupted
+    );
+}
+
+#[test]
 fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authorization_effects() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();

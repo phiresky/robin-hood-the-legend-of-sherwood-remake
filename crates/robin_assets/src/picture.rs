@@ -162,7 +162,7 @@ fn compress_sixteen_bzip(_data: &[u8]) -> Result<Vec<u8>> {
 /// Check whether a buffer starts with a JPEG XL magic signature
 /// (either the naked codestream marker `0xFF 0x0A` or the ISOBMFF
 /// container `JXL ` box header).
-fn is_jxl_signature(bytes: &[u8]) -> bool {
+pub fn is_jxl_signature(bytes: &[u8]) -> bool {
     // Naked JXL codestream.
     if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0x0A {
         return true;
@@ -175,6 +175,7 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
 }
 
 /// Header facts of a JPEG XL image read without decoding its frame.
+#[cfg(not(target_arch = "wasm32"))]
 struct JxlHeader {
     width: u16,
     height: u16,
@@ -193,14 +194,12 @@ pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
 /// set (one entry per group/pass section), which maps directly onto a
 /// parallel iterator.
 ///
-/// Threading contract: the rayon join parks worker threads with
-/// `atomics.wait` on wasm, so this runner must only be used from a rayon
-/// worker there — never from the browser main thread (which traps on
-/// `atomics.wait`). Native threads have no such restriction.
-#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+/// JPEG XL decoding is native only (loose mod terrain, offline tools): the
+/// web build ships AVIF decoded by the browser and does not link jxl-rs.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct RayonJxlRunner;
 
-#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
+#[cfg(not(target_arch = "wasm32"))]
 impl jxl::api::JxlParallelRunner for RayonJxlRunner {
     fn num_threads(&self) -> usize {
         rayon::current_num_threads()
@@ -216,41 +215,22 @@ impl jxl::api::JxlParallelRunner for RayonJxlRunner {
     }
 }
 
-/// Uninhabited stand-in on single-threaded wasm builds so the shared JXL
-/// decode body type-checks; [`rayon_jxl_runner`] never constructs it there.
-#[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
-pub(crate) enum RayonJxlRunner {}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
-impl jxl::api::JxlParallelRunner for RayonJxlRunner {
-    fn num_threads(&self) -> usize {
-        match *self {}
-    }
-
-    fn run(
-        &mut self,
-        _num: usize,
-        _fun: &jxl::api::JxlParallelRunnerFun<'_>,
-    ) -> std::result::Result<(), jxl::error::Error> {
-        match *self {}
-    }
+/// Resolve the section runner for a JXL decode. `None` means decode
+/// serially (parallelism not requested).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn rayon_jxl_runner(parallel: bool) -> Option<RayonJxlRunner> {
+    parallel.then_some(RayonJxlRunner)
 }
 
-/// Resolve the section runner for a JXL decode. `None` means decode
-/// serially: parallelism not requested, or (wasm) the worker pool was never
-/// initialized so rayon has no threads to run on.
-pub(crate) fn rayon_jxl_runner(parallel: bool) -> Option<RayonJxlRunner> {
-    if !parallel {
-        return None;
-    }
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    if crate::wasm_threads::pool_threads() == 0 {
-        return None;
-    }
-    #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
-    return None;
-    #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
-    Some(RayonJxlRunner)
+/// Web builds have no JPEG XL decoder; name the asset instead of failing
+/// deep inside a missing codec.
+#[cfg(target_arch = "wasm32")]
+fn jxl_unsupported(what: &str, bytes: &[u8]) -> anyhow::Error {
+    anyhow!(
+        "JPEG XL {what} ({} bytes) is not supported by the web build: the web datadir recipe \
+         ships AVIF images decoded by the browser",
+        bytes.len()
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -361,21 +341,36 @@ impl Picture {
     /// Always returns the picture in `PixelFormat::Rgb16` so downstream code
     /// (which expects RGB565 pixels for the GPU upload path) is unchanged.
     pub fn load_terrain_from_stream(file: &mut SbFile) -> Result<Self> {
-        match Self::read_jxl_remainder(file)? {
-            Some(blob) => Self::load_jxl_rgb565(&blob),
+        match Self::read_image_remainder(file)? {
+            // AVIF (web recipe, mod terrain) or JPEG XL (legacy).
+            Some(blob) => Self::load_terrain_from_bytes(&blob),
             None => Self::load_sixteen_from_stream(file),
         }
     }
 
-    /// Peek 12 bytes to identify JXL (which has a 2- or 12-byte signature).
-    /// JXL: slurp the rest of the stream and return it. Otherwise rewind the
-    /// peeked bytes so the caller can parse the legacy Sixteen format.
-    fn read_jxl_remainder(file: &mut SbFile) -> Result<Option<Vec<u8>>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_jxl_terrain(bytes: &[u8], parallel: bool) -> Result<Self> {
+        Self::load_jxl_rgb565_impl(bytes, parallel)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_jxl_terrain(bytes: &[u8], _parallel: bool) -> Result<Self> {
+        Err(jxl_unsupported("terrain bitmap", bytes))
+    }
+
+    /// Peek 12 bytes to identify a compressed image: JPEG XL (2- or 12-byte
+    /// signature) or an ISOBMFF `ftyp` box (AVIF). Those consume the rest of
+    /// the stream, which is returned whole; an ISOBMFF file that is not AVIF
+    /// is an error rather than something to misparse as Sixteen. Otherwise
+    /// rewind the peeked bytes so the caller can parse the legacy Sixteen
+    /// format.
+    fn read_image_remainder(file: &mut SbFile) -> Result<Option<Vec<u8>>> {
         let start = file.tell();
         let mut head = [0u8; 12];
         file.read(&mut head)
             .map_err(|e| anyhow!("read terrain header: {e}"))?;
-        if is_jxl_signature(&head) {
+        let isobmff = &head[4..8] == b"ftyp";
+        if is_jxl_signature(&head) || isobmff {
             let total = usize::try_from(
                 file.get_size()
                     .checked_sub(start)
@@ -387,6 +382,13 @@ impl Picture {
             blob.resize(total, 0);
             file.read(&mut blob[head.len()..])
                 .map_err(|e| anyhow!("read terrain body: {e}"))?;
+            if isobmff && !crate::browser_images::is_avif(&blob) {
+                bail!(
+                    "terrain image is an ISOBMFF file without the AVIF brand ({} bytes); only \
+                     AVIF, JPEG XL and Sixteen terrain are supported",
+                    blob.len()
+                );
+            }
             return Ok(Some(blob));
         }
         seek_to(file, start)?;
@@ -406,9 +408,23 @@ impl Picture {
     /// JXL minimaps; those still decode through the terrain RGB path, with a
     /// one-time warning because their key pixels are no longer exact.
     pub fn load_minimap_from_bytes(bytes: &[u8]) -> Result<Self> {
+        if crate::browser_images::is_avif(bytes) {
+            // Web recipe: keyed AVIF, pixels predecoded by the browser.
+            return crate::browser_images::load_avif_rgb565_keyed(bytes);
+        }
         if !is_jxl_signature(bytes) {
             return Self::load_sixteen_from_bytes(bytes);
         }
+        Self::load_jxl_minimap(bytes)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_jxl_minimap(bytes: &[u8]) -> Result<Self> {
+        Err(jxl_unsupported("minimap", bytes))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_jxl_minimap(bytes: &[u8]) -> Result<Self> {
         if Self::jxl_header(bytes)?.extra_channels > 0 {
             return Self::load_jxl_rgba565_keyed(bytes);
         }
@@ -426,7 +442,7 @@ impl Picture {
     /// start-position and consumption rules as
     /// [`Self::load_terrain_from_stream`].
     pub fn load_minimap_from_stream(file: &mut SbFile) -> Result<Self> {
-        match Self::read_jxl_remainder(file)? {
+        match Self::read_image_remainder(file)? {
             Some(blob) => Self::load_minimap_from_bytes(&blob),
             None => Self::load_sixteen_from_stream(file),
         }
@@ -439,8 +455,15 @@ impl Picture {
     /// Lets level setup hand `Engine::new` its grid dimensions while the
     /// full bitmap decode still runs on a worker thread.
     pub fn terrain_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+        if crate::browser_images::is_avif(bytes) {
+            let info = crate::browser_images::avif_info(bytes)?;
+            return Ok((info.width, info.height));
+        }
         if is_jxl_signature(bytes) {
+            #[cfg(not(target_arch = "wasm32"))]
             return Self::jxl_dimensions(bytes);
+            #[cfg(target_arch = "wasm32")]
+            return Err(jxl_unsupported("terrain bitmap", bytes));
         }
         let mut reader = Reader::new(bytes);
         let x_size = reader.u16("Sixteen frame width")?;
@@ -450,6 +473,7 @@ impl Picture {
 
     /// Read JPEG XL image dimensions without decoding its frame pixels.
     /// Works for both RGB terrain and keyed RGBA interface pictures.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn jxl_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
         let header = Self::jxl_header(bytes)?;
         Ok((header.width, header.height))
@@ -457,6 +481,7 @@ impl Picture {
 
     /// Image-info stage of a JPEG XL decode: dimensions and extra-channel
     /// count, without decoding frame pixels.
+    #[cfg(not(target_arch = "wasm32"))]
     fn jxl_header(bytes: &[u8]) -> Result<JxlHeader> {
         use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
 
@@ -482,19 +507,25 @@ impl Picture {
     /// already-buffered byte slice — used when the bytes come from the
     /// shipping datadir's `raw` map rather than from disk.
     pub fn load_terrain_from_bytes(bytes: &[u8]) -> Result<Self> {
+        if crate::browser_images::is_avif(bytes) {
+            // Web recipe: opaque AVIF, pixels predecoded by the browser.
+            return crate::browser_images::load_avif_rgb565_opaque(bytes);
+        }
         if is_jxl_signature(bytes) {
-            return Self::load_jxl_rgb565(bytes);
+            return Self::load_jxl_terrain(bytes, false);
         }
         Self::load_sixteen_from_bytes(bytes)
     }
 
     /// [`Self::load_terrain_from_bytes`] with rayon-parallel JXL section
-    /// decoding — see [`Self::load_jxl_rgb565_parallel`] for the threading
-    /// contract (on wasm this must only run on a worker, never the browser
-    /// main thread).
+    /// decoding (native). AVIF pixels were already decoded by the browser,
+    /// so only the RGB565 collapse remains.
     pub fn load_terrain_from_bytes_parallel(bytes: &[u8]) -> Result<Self> {
+        if crate::browser_images::is_avif(bytes) {
+            return crate::browser_images::load_avif_rgb565_opaque(bytes);
+        }
         if is_jxl_signature(bytes) {
-            return Self::load_jxl_rgb565_parallel(bytes);
+            return Self::load_jxl_terrain(bytes, true);
         }
         // The legacy Sixteen format is one bzip2/zlib stream — nothing to
         // parallelize.
@@ -581,6 +612,7 @@ impl Picture {
         Ok((pitch, length))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn jxl_rgb565_layout(w: usize, h: usize) -> Result<(u16, u16, u16)> {
         if w == 0 || h == 0 {
             bail!("jxl: decoded image has zero dimensions");
@@ -659,20 +691,19 @@ impl Picture {
     /// requested as RGB8 (no alpha — terrain bitmaps are fully opaque,
     /// and the converter is careful to write 3-channel JXL) and then the
     /// pixels are collapsed back into the engine's RGB565 representation.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_jxl_rgb565(bytes: &[u8]) -> Result<Self> {
         Self::load_jxl_rgb565_impl(bytes, false)
     }
 
     /// [`Self::load_jxl_rgb565`] with the section decode and the RGB565
-    /// collapse spread across the rayon pool. Threading contract: safe from
-    /// any native thread; on wasm this must only be called from a rayon
-    /// worker (`wasm-threads` builds), never from the browser main thread —
-    /// rayon joins park with `atomics.wait`, which the main thread forbids.
-    /// Falls back to the serial decode when no pool is available.
+    /// collapse spread across the rayon pool (native only).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_jxl_rgb565_parallel(bytes: &[u8]) -> Result<Self> {
         Self::load_jxl_rgb565_impl(bytes, true)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn load_jxl_rgb565_impl(bytes: &[u8], parallel: bool) -> Result<Self> {
         use jxl::api::{
             JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
@@ -758,15 +789,11 @@ impl Picture {
             }
         };
         if runner.is_some() {
-            // Row-parallel collapse on the pool (same threading contract as
-            // the section decode above).
-            #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
-            {
-                use rayon::prelude::*;
-                data.par_chunks_exact_mut(w * 2)
-                    .zip(rgb.par_chunks_exact(stride))
-                    .for_each(|(dst_row, src_row)| collapse_row(dst_row, src_row));
-            }
+            // Row-parallel collapse on the pool.
+            use rayon::prelude::*;
+            data.par_chunks_exact_mut(w * 2)
+                .zip(rgb.par_chunks_exact(stride))
+                .for_each(|(dst_row, src_row)| collapse_row(dst_row, src_row));
         } else {
             for (dst_row, src_row) in data.chunks_exact_mut(w * 2).zip(rgb.chunks_exact(stride)) {
                 collapse_row(dst_row, src_row);
@@ -785,6 +812,7 @@ impl Picture {
 
     /// Decode a JPEG XL RGBA byte slice into an `Rgb16` `Picture`, restoring
     /// fully transparent pixels to the engine's RGB565 transparent key.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_jxl_rgba565_keyed(bytes: &[u8]) -> Result<Self> {
         use jxl::api::{
             JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
@@ -840,35 +868,15 @@ impl Picture {
         };
         drop(output_bufs);
 
-        let pixel_count = w * h;
-        let mut data = Vec::with_capacity(pixel_count * 2);
-        for i in 0..pixel_count {
-            let off = i * 4;
-            // Alpha carries the pixel CLASS, not opacity: the converter
-            // codes it losslessly so the game's exact key comparisons keep
-            // working after a lossy color pass. Banded rather than exact so
-            // artifacts produced before the shadow class existed (alpha was
-            // only 0 or 255, and lossily coded) still decode correctly.
-            let px = match rgba[off + 3] {
-                a if a < 64 => crate::frame_holder::TRANSPARENT_COLOR_16,
-                a if a < 192 => crate::frame_holder::SHADOW_KEY,
-                _ => {
-                    let px = robin_util::color::rgb565(rgba[off], rgba[off + 1], rgba[off + 2]);
-                    // A visible pixel whose lossy colour lands exactly on a
-                    // key would be read as transparent or shadow by the
-                    // runtime's exact comparisons. Nudge it one step in the
-                    // dominant channel — imperceptible, and it cannot
-                    // collide (the same trick the original game's shadow
-                    // pass uses).
-                    match px {
-                        crate::frame_holder::TRANSPARENT_COLOR_16 => px + 1,
-                        crate::frame_holder::SHADOW_KEY => px - 1,
-                        _ => px,
-                    }
-                }
-            };
-            data.extend_from_slice(&px.to_le_bytes());
-        }
+        // Alpha carries the pixel CLASS, not opacity; the class bands and the
+        // key-collision nudge are shared with the AVIF path.
+        let data =
+            crate::browser_images::rgba_to_rgb565_keyed(&crate::browser_images::DecodedRgba {
+                width: u32::from(width),
+                height: u32::from(height),
+                rgba,
+            })?
+            .data;
 
         Ok(Self {
             width,

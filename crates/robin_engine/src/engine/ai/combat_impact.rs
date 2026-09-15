@@ -133,10 +133,9 @@ impl EngineInner {
             .current_substate;
         let protect = match substate {
             Substate::AttackingProtectingWithShield => {
-                self.expect_entity(owner, "incoming arrow animation")
-                    .sprite()
-                    .last_action
-                    != crate::order::OrderType::WaitingShield
+                // The installed order can change before its sprite executes.
+                // A pending lowering order must still react to another arrow.
+                self.actor_order_type(owner) != Some(crate::order::OrderType::WaitingShield)
             }
             Substate::AttackingAdvancingWithShield | Substate::AttackingRunningToPhalanx => true,
             _ => false,
@@ -319,6 +318,67 @@ impl EngineInner {
                 .entities
                 .expect_ai_actor_data_mut(owner, format_args!("hit eye status"));
             crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::DieOrGetUnconscious);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{Command, InstalledActorOrder};
+    use crate::order::OrderType;
+
+    #[test]
+    fn incoming_arrow_checks_installed_shield_order_instead_of_last_sprite() {
+        for (installed, displayed, protects) in [
+            (
+                Some(OrderType::LoweringShield),
+                OrderType::WaitingShield,
+                true,
+            ),
+            (
+                Some(OrderType::WaitingShield),
+                OrderType::LoweringShield,
+                false,
+            ),
+            (None, OrderType::WaitingShield, true),
+        ] {
+            let (mut engine, assets, owner, target) =
+                super::super::battle_decision_observation_tests::fixture(false);
+            let entity = engine.get_entity_mut(owner).unwrap();
+            entity.sprite_mut().last_action = displayed;
+            let actor = entity.actor_data_mut().unwrap();
+            actor.action_state = crate::element::ActionState::HoldingShield;
+            actor.installed_order = installed.map(|order_type| InstalledActorOrder {
+                order_id: std::num::NonZeroU32::new(1).unwrap(),
+                order_type,
+            });
+            entity.enemy_ai_mut().unwrap().base.current_substate =
+                Substate::AttackingProtectingWithShield;
+            let mut stimulus = Stimulus::new(StimulusType::EventArrowLaunched);
+            stimulus.info = StimulusInfo::Human(crate::ai::AiEntityHandle::new(target.index()));
+
+            engine.execute_ai_combat_impact_event(
+                &crate::sim_rng::test_context(),
+                &assets,
+                owner,
+                &stimulus,
+            );
+
+            let queued_raise = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .any(|sequence| {
+                    sequence.elements.iter().any(|element| {
+                        element.owner == Some(owner)
+                            && element.command == Command::RaiseShieldInstantly
+                    })
+                });
+            assert_eq!(
+                queued_raise, protects,
+                "installed={installed:?}, displayed={displayed:?}"
+            );
         }
     }
 }

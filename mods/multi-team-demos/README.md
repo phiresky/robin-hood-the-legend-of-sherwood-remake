@@ -15,10 +15,16 @@ Ten custom missions sharing battlefield assets. Select a mission from the custom
 | `MultiTeamThreeWay` | Diplomacy test arena: allegiances 2 and 3 are allied, 3 and 4 are neutral, and all unspecified pairs remain hostile. |
 | `MultiTeamTwentyRobins` | Ten forest Robins and ten town-disguise Robins meet twenty advanced Black Knights in two compact, inward-facing formations on open ground. |
 
-The shared terrain is stored as JPEG XL in `Data/Levels/Day/OpenBattlefield.map`
-(the terrain loader detects the format from its signature). It was converted
-from the original 2508 × 2508 PNG with `cjxl -q 90 -e 7`, reducing the map
-from 12.1 MB to 1.7 MB. The minimap remains PNG. To edit the terrain, decode
-the map with `djxl OpenBattlefield.map OpenBattlefield.map.png`; a sibling
-`.map.png` takes precedence during loading. Remove that editing copy before
-packaging so it does not ship alongside the compressed map.
+The shared terrain is stored as AVIF in `Data/Levels/Day/OpenBattlefield.map`
+(the terrain loader detects the format from its signature; the web build
+decodes it with the browser, native builds with rav1d). It was encoded from the
+original lossless 2508 × 2508 PNG (git history, commit `cc36f8d75`) with the
+web datadir recipe's terrain settings, libavif 1.4.2 on libaom 3.15.0:
+`avifenc -j all -y 444 -q 60 -s 2 --cicp 1/13/6 --range full`, reducing the map
+from 12.1 MB to 0.98 MB (it was 1.7 MB as JPEG XL q90, which the web build no
+longer decodes). The minimap remains PNG. To edit the terrain, decode the map
+with `avifdec --depth 8 OpenBattlefield.map OpenBattlefield.map.png`, or restore
+the lossless PNG from git history; a sibling `.map.png` takes precedence during
+loading. Re-encode with `encode_mod_sprites --map OpenBattlefield.map.png
+OpenBattlefield.map` and remove the editing copy before packaging so it does
+not ship alongside the compressed map.

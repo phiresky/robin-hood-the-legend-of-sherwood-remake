@@ -113,6 +113,8 @@ struct Args {
 
     /// Shipping: how to encode `.map` / `.min` terrain bitmaps.
     /// `raw` keeps the original bzip2-RGB565 bytes (current behavior);
+    /// `avif-q60` is the web recipe (`avifenc`, browser-decoded; minimaps
+    /// keyed RGBA). The JXL variants are native/offline experiments:
     /// `jxl-lossless` transcodes them via `cjxl -d 0 --modular=1`; `jxl-q90`
     /// transcodes via `cjxl -q 90` (~60% smaller, visually lossless).
     /// `jxl-q85` / `jxl-q80` trade more terrain-map fidelity for smaller blobs.
@@ -120,8 +122,9 @@ struct Args {
     map_format: MapFormat,
 
     /// Shipping: how to encode picture payloads inside interface `.res` /
-    /// `.pak` bundles. `raw` keeps RGB565 bytes; `jxl-lossless` keeps exact
-    /// RGBA values; `jxl-q80` is the current size-oriented target.
+    /// `.pak` bundles. `raw` keeps RGB565 bytes; `avif-q60` is the web recipe
+    /// (keyed RGBA AVIF, tiny pictures exact raw); `jxl-lossless` keeps exact
+    /// RGBA values and `jxl-q80` is the native/offline size experiment.
     #[arg(long, value_enum, default_value_t = InterfaceImageFormat::Raw)]
     interface_image_format: InterfaceImageFormat,
 
@@ -135,6 +138,21 @@ struct Args {
     #[arg(long, value_enum, default_value_t = AudioFormat::Source)]
     audio_format: AudioFormat,
 
+    /// Shipping `--audio-format opus`: opus-tools prefix whose `bin/opusenc`
+    /// encodes all Opus audio. Its `--version` must report libopus 1.6.1; the
+    /// converter loads the libopus it resolves to check the version string and,
+    /// for every opusenc run, that the loader used exactly that file.
+    #[arg(long)]
+    opus_tools_dir: Option<PathBuf>,
+
+    /// Shipping `--audio-format opus`: directory of lossless remaster WAVs that
+    /// music encodes from. Which remaster belongs to which game track comes
+    /// from the tracked `convert_datadir/lossless_music_mapping.json`, selected
+    /// by the sha256 of the datadir's music files. Without this flag, music
+    /// encodes from the game sources.
+    #[arg(long)]
+    lossless_music_dir: Option<PathBuf>,
+
     /// Shipping: reorder every sprite dictionary by descending tile-index
     /// frequency and rewrite all VQ sprite indices to match. Invisible to
     /// the decoder (a consistent permutation), but the ranked index streams
@@ -145,18 +163,20 @@ struct Args {
     /// Shipping: how to encode the RLE patch/ambient-animation sprite bucket
     /// (`Data/Animations/**` plus the ACCESSORIES_/BONUS_/RELIC_/TG_
     /// character files). `exact` keeps the byte-preserving packed RLE words
-    /// (required for native/parity builds); `jxl-q70` ships them as lossy
-    /// JXL per-animation atlases whose alpha channel carries the pixel
+    /// (required for native/parity builds); `avif-q60` (web recipe) and
+    /// `jxl-q70`/`jxl-q80` (native/offline experiments) ship them as lossy
+    /// per-animation atlases whose alpha channel carries the pixel
     /// class losslessly — transparent and shadow pixels stay bit-exact,
     /// only visible RGB is lossy (docs/COMPRESSION.md, 2026-08-30 RLE
-    /// alpha-atlas section). WEB ONLY: it breaks framebuffer parity.
+    /// alpha-atlas section). Lossy formats break framebuffer parity.
     #[arg(long, value_enum, default_value_t = RleSpriteFormat::Exact)]
     rle_sprite_format: RleSpriteFormat,
     /// Shipping: maximum VQ tiles per independent decoder job (whole grids).
     /// Zero preserves one adaptive stream per RHS for compression comparisons.
     #[arg(long, default_value_t = 1_048_576)]
     vq_group_tiles: usize,
-    /// Shipping: independent JXL atlases per decoder job; zero keeps each RHS together.
+    /// Shipping: independent RLE sprite atlases (JXL or AVIF) per decoder
+    /// job; zero keeps each RHS together.
     #[arg(long, default_value_t = 1)]
     rle_group_blobs: usize,
 }
@@ -165,10 +185,49 @@ struct Args {
 enum RleSpriteFormat {
     /// Keep exact packed RLE words (byte-preserving).
     Exact,
-    /// Lossy JXL atlases at quality 70 + lossless class masks (web recipe).
+    /// Lossy JXL atlases at quality 70 + lossless class masks (native/offline
+    /// experiments; the web build cannot decode JXL).
     JxlQ70,
-    /// Lossy JXL atlases at quality 80 + lossless class masks.
+    /// Lossy JXL atlases at quality 80 + lossless class masks (native/offline
+    /// experiments; the web build cannot decode JXL).
     JxlQ80,
+    /// Lossy AVIF atlases at quality 60 (4:4:4, libaom speed 2) with a
+    /// losslessly coded class alpha channel (web recipe; browser-decoded).
+    AvifQ60,
+}
+
+/// Lossy image codec of a shipping image format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebImageCodec {
+    /// `cjxl`: `None` = lossless modular, `Some(q)` = VarDCT quality `q`.
+    Jxl(Option<u8>),
+    /// `avifenc` colour quality (alpha, when present, is always lossless).
+    Avif(u8),
+}
+
+impl WebImageCodec {
+    fn label(self) -> String {
+        match self {
+            Self::Jxl(quality) => format!("JXL {}", jxl_quality_label(quality)),
+            Self::Avif(quality) => format!("AVIF q{quality}"),
+        }
+    }
+}
+
+/// Lossy codec of the RLE sprite bucket (always lossy colour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RleSpriteCodec {
+    Jxl(u8),
+    Avif(u8),
+}
+
+impl RleSpriteCodec {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Jxl(_) => "JXL",
+            Self::Avif(_) => "AVIF",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -187,11 +246,13 @@ impl From<WebContentEditionArg> for robin_rs::multiplayer::content_identity::Web
 }
 
 impl RleSpriteFormat {
-    fn jxl_quality(self) -> Option<u8> {
+    /// `None` = keep exact RLE words.
+    fn lossy_codec(self) -> Option<RleSpriteCodec> {
         match self {
             Self::Exact => None,
-            Self::JxlQ70 => Some(70),
-            Self::JxlQ80 => Some(80),
+            Self::JxlQ70 => Some(RleSpriteCodec::Jxl(70)),
+            Self::JxlQ80 => Some(RleSpriteCodec::Jxl(80)),
+            Self::AvifQ60 => Some(RleSpriteCodec::Avif(60)),
         }
     }
 }
@@ -201,6 +262,7 @@ enum MapFormat {
     /// Shipping stores the original bzip2-compressed RGB565 `.map` bytes.
     Raw,
     /// Shipping transcodes `.map` files to lossless JXL (modular).
+    /// JXL variants are for native/offline experiments only.
     JxlLossless,
     /// Shipping transcodes `.map` files to JXL quality 90 (visually lossless).
     JxlQ90,
@@ -210,18 +272,22 @@ enum MapFormat {
     JxlQ80,
     /// Shipping transcodes `.map` files to JXL quality 70.
     JxlQ70,
+    /// Shipping transcodes `.map` terrain to opaque AVIF quality 60 and `.min`
+    /// minimaps to keyed RGBA AVIF (web recipe; browser-decoded).
+    AvifQ60,
 }
 
 impl MapFormat {
-    /// `None` = keep raw; `Some(None)` = lossless JXL; `Some(Some(q))` = lossy.
-    fn jxl_quality(self) -> Option<Option<u8>> {
+    /// `None` = keep raw bytes.
+    fn web_codec(self) -> Option<WebImageCodec> {
         match self {
             Self::Raw => None,
-            Self::JxlLossless => Some(None),
-            Self::JxlQ90 => Some(Some(90)),
-            Self::JxlQ85 => Some(Some(85)),
-            Self::JxlQ80 => Some(Some(80)),
-            Self::JxlQ70 => Some(Some(70)),
+            Self::JxlLossless => Some(WebImageCodec::Jxl(None)),
+            Self::JxlQ90 => Some(WebImageCodec::Jxl(Some(90))),
+            Self::JxlQ85 => Some(WebImageCodec::Jxl(Some(85))),
+            Self::JxlQ80 => Some(WebImageCodec::Jxl(Some(80))),
+            Self::JxlQ70 => Some(WebImageCodec::Jxl(Some(70))),
+            Self::AvifQ60 => Some(WebImageCodec::Avif(60)),
         }
     }
 }
@@ -248,17 +314,22 @@ enum InterfaceImageFormat {
     JxlQ80,
     /// Encode interface resource pictures as JXL quality 70.
     JxlQ70,
+    /// Encode interface resource pictures as keyed RGBA AVIF quality 60;
+    /// pictures too small to benefit ship as exact raw RGB565 (web recipe).
+    AvifQ60,
 }
 
 impl InterfaceImageFormat {
-    fn jxl_quality(self) -> Option<Option<u8>> {
+    /// `None` = keep raw RGB565 pictures.
+    fn web_codec(self) -> Option<WebImageCodec> {
         match self {
             Self::Raw => None,
-            Self::JxlLossless => Some(None),
-            Self::JxlQ90 => Some(Some(90)),
-            Self::JxlQ85 => Some(Some(85)),
-            Self::JxlQ80 => Some(Some(80)),
-            Self::JxlQ70 => Some(Some(70)),
+            Self::JxlLossless => Some(WebImageCodec::Jxl(None)),
+            Self::JxlQ90 => Some(WebImageCodec::Jxl(Some(90))),
+            Self::JxlQ85 => Some(WebImageCodec::Jxl(Some(85))),
+            Self::JxlQ80 => Some(WebImageCodec::Jxl(Some(80))),
+            Self::JxlQ70 => Some(WebImageCodec::Jxl(Some(70))),
+            Self::AvifQ60 => Some(WebImageCodec::Avif(60)),
         }
     }
 }
@@ -303,6 +374,18 @@ fn main() -> Result<()> {
         }
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
         OutFormat::Shipping => {
+            if args.audio_format == AudioFormat::Opus {
+                let opus_tools_dir = args.opus_tools_dir.as_deref().with_context(|| {
+                    format!(
+                        "--audio-format opus requires --opus-tools-dir (opusenc on {REQUIRED_LIBOPUS_VERSION})"
+                    )
+                })?;
+                configure_opus_toolchain(opus_tools_dir)?;
+                let musics_dir = resolve_case_insensitive(&data_in.join("Musics"))
+                    .filter(|path| path.is_dir())
+                    .with_context(|| format!("no Musics directory in {}", data_in.display()))?;
+                configure_lossless_music(args.lossless_music_dir.as_deref(), &musics_dir)?;
+            }
             let web_content_edition = match (args.web_content_manifest, args.web_content_edition) {
                 (true, Some(edition)) => {
                     Some(validate_web_content_edition(&data_in, edition.into())?)
@@ -1650,16 +1733,13 @@ fn shipping_resource_manager(
         .attach_resource_file(&path.to_string_lossy())
         .with_context(|| format!("parse shipping resource {}", path.display()))?;
     if is_interface_path(key)
-        && let Some(quality) = interface_image_format.jxl_quality()
+        && let Some(codec) = interface_image_format.web_codec()
     {
-        let encoded = resources.encode_pictures_for_shipping(|picture| {
-            Ok(EncodedPicture::jxl_rgba565_keyed(
-                transcode_picture_to_jxl_rgba_keyed(picture, quality)?,
-            ))
-        })?;
+        let encoded = resources
+            .encode_pictures_for_shipping(|picture| encode_interface_picture(picture, codec))?;
         tracing::info!(
-            "interface res {key}: encoded {encoded} pictures as JXL {}",
-            jxl_quality_label(quality)
+            "interface res {key}: encoded {encoded} pictures as {}",
+            codec.label()
         );
     }
     resources.disable_recovery_for_shipping();

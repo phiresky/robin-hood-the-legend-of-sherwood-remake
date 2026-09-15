@@ -427,6 +427,25 @@ pub struct ShippingMission {
     sprite_streaming: crate::late_sprites::SpriteStreaming,
 }
 
+impl ShippingMission {
+    /// [`ShippingMissionPayload::browser_image_blobs`] plus the AVIF images
+    /// already moved into this mission's sealed raw bundle — the images an
+    /// installed mission still decodes after publication (terrain maps,
+    /// minimaps read through [`Self::raw_asset`]).
+    pub fn installed_browser_image_blobs(&self) -> Vec<&[u8]> {
+        let mut blobs = self.payload.browser_image_blobs();
+        if let Some(bundle) = self.raw_bundle.get() {
+            blobs.extend(
+                bundle
+                    .values()
+                    .map(AsRef::as_ref)
+                    .filter(|bytes| crate::browser_images::is_avif(bytes)),
+            );
+        }
+        blobs
+    }
+}
+
 impl std::ops::Deref for ShippingMission {
     type Target = ShippingMissionPayload;
     fn deref(&self) -> &Self::Target {
@@ -561,6 +580,71 @@ pub struct RleJxlPlacement {
     pub blob: u32,
     pub x: u16,
     pub y: u16,
+}
+
+fn push_browser_images_of<'a>(
+    blobs: &mut Vec<&'a [u8]>,
+    res_files: &'a BTreeMap<String, ResourceManager>,
+    pak_files: &'a BTreeMap<String, Vec<EncodedPicture>>,
+    raw: &'a BTreeMap<String, Vec<u8>>,
+) {
+    for manager in res_files.values() {
+        blobs.extend(manager.browser_image_blobs());
+    }
+    for pictures in pak_files.values() {
+        blobs.extend(
+            pictures
+                .iter()
+                .filter_map(EncodedPicture::browser_image_bytes),
+        );
+    }
+    blobs.extend(
+        raw.values()
+            .map(Vec::as_slice)
+            .filter(|bytes| crate::browser_images::is_avif(bytes)),
+    );
+}
+
+impl ShippingDatadirPayload {
+    /// Every encoded image of the boot payload (datadir and all locales)
+    /// that the web runtime must have the browser decode before synchronous
+    /// consumers (interface pictures, loading-screen pak pictures) use it.
+    pub fn boot_browser_image_blobs(&self) -> Vec<&[u8]> {
+        let mut blobs = Vec::new();
+        push_browser_images_of(&mut blobs, &self.res_files, &self.pak_files, &self.raw);
+        for locale in self.locales.values() {
+            push_browser_images_of(
+                &mut blobs,
+                &locale.res_files,
+                &locale.pak_files,
+                &locale.raw,
+            );
+        }
+        blobs
+    }
+}
+
+impl ShippingMissionPayload {
+    /// Every encoded image of this mission payload (RLE sprite atlases,
+    /// terrain maps, minimaps) that the browser must decode before sprite
+    /// materialization and level loading use it.
+    pub fn browser_image_blobs(&self) -> Vec<&[u8]> {
+        let mut blobs: Vec<&[u8]> = self
+            .sprite_bank
+            .iter()
+            .flat_map(|bank| bank.rle_jxl_chunks.iter())
+            .flat_map(|chunk| chunk.jxl_blobs.iter())
+            .map(Vec::as_slice)
+            .filter(|bytes| crate::browser_images::is_avif(bytes))
+            .collect();
+        blobs.extend(
+            self.raw
+                .values()
+                .map(Vec::as_slice)
+                .filter(|bytes| crate::browser_images::is_avif(bytes)),
+        );
+        blobs
+    }
 }
 
 /// Derive the deterministic within-chunk auxiliary references for a VQ
@@ -801,8 +885,8 @@ impl ShippingAssets {
 static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 
 #[cfg(test)]
-#[path = "shipping_v17_contract.rs"]
-mod v17_contract;
+#[path = "shipping_v18_contract.rs"]
+mod v18_contract;
 
 #[cfg(test)]
 #[path = "shipping_v9_contract.rs"]

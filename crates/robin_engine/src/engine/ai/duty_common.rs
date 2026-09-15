@@ -59,6 +59,86 @@ mod tests {
     }
 
     #[test]
+    fn facing_a_fractionally_elevated_target_registers_the_integral_direction() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(
+                1027.3711, 439.47885, 0.0,
+            ));
+        entity
+            .position_iface_mut()
+            .set_direction(crate::position_interface::Direction::from_raw(13));
+        let target = Position {
+            x: 946.0,
+            y: 401.0,
+            ..engine.live_ai_position(owner)
+        };
+
+        engine.duty_face_position_at_elevation(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            target,
+            7.790_524,
+        );
+
+        let turn = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Turn
+            })
+            .expect("integral target elevation must request a turn away from direction 13");
+        assert!(matches!(
+            turn.get_property(crate::sequence::Field::Direction),
+            Some(crate::sequence::FieldValue::Integer(14)),
+        ));
+    }
+
+    #[test]
+    fn facing_elevation_sentinel_resolves_target_ground_height() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let entity = engine.get_entity_mut(owner).unwrap();
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(1000.0, 500.0, 0.0));
+        entity
+            .position_iface_mut()
+            .set_direction(crate::position_interface::Direction::from_raw(12));
+        let target = Position {
+            x: 920.0,
+            y: 469.5,
+            ..engine.live_ai_position(owner)
+        };
+        engine.duty_face_position_at_elevation(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            target,
+            -1.0,
+        );
+        let turn = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Turn
+            })
+            .expect("ground-facing direction differs from the initial direction");
+        assert!(matches!(
+            turn.get_property(crate::sequence::Field::Direction),
+            Some(crate::sequence::FieldValue::Integer(13)),
+        ));
+    }
+
+    #[test]
     fn goto_flags_reach_registered_movement() {
         use crate::sequence::{MoveFlags, SequenceElementData};
         for (goto, expected) in [
@@ -907,12 +987,29 @@ impl EngineInner {
         position: Position,
         elevation: f32,
     ) {
-        let here = self.live_ai_position(owner);
+        // Facing accepts a signed integral elevation, including the -1
+        // sentinel for resolving the target's ground point.
+        let elevation = elevation as i16;
         let entity = self.expect_entity(owner, "duty facing position owner");
-        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-            position.x - here.x,
-            position.y - here.y + elevation - entity.position_iface().get_elevation(),
-        );
+        let (dx, dy) = if elevation == -1 {
+            let target = self.position_to_point_3d(
+                assets,
+                position.sector,
+                position.level,
+                position.x,
+                position.y,
+            );
+            let here = entity.element_data().position();
+            (target.x - here.x, target.y - here.y)
+        } else {
+            let here = self.live_ai_position(owner);
+            (
+                position.x - here.x,
+                (position.y - here.y)
+                    + (f32::from(elevation) - entity.position_iface().get_elevation()),
+            )
+        };
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
         self.duty_face_direction(sim, assets, owner, direction as u16);
     }
 

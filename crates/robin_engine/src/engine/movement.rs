@@ -4655,6 +4655,10 @@ impl EngineInner {
             .orders
             .sequence_manager
             .get_element(selected.seq_id, selected.elem_idx)
+            // A synchronous seek handoff clears the actor's order reference.
+            // The retired element can retain its order deque until collection,
+            // but crossing must not recompute a trajectory from that old order.
+            .filter(|element| element.state == crate::sequence::SequenceState::InProgress)
             .and_then(|element| element.current_order())
             .map(|order| order.compute_direction);
         self.dispatch_actor_post_execute_line_crossing(sim, assets, owner, compute_direction);

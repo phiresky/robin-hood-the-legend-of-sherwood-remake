@@ -104,7 +104,6 @@ impl EngineInner {
         new_idx: usize,
         allow_terminated_shoot: bool,
     ) -> bool {
-        use crate::element::Command;
         use crate::sequence::{PriorityDecision, SequenceState};
 
         let Some(new_elem) = self.orders.sequence_manager.get_element(new_seq, new_idx) else {
@@ -198,49 +197,6 @@ impl EngineInner {
         // return for those paths as well.
         if self.pc_instruct_early_completion(sim, assets, owner, new_seq, new_idx) {
             return false;
-        }
-
-        // PC instruction handling intercepts the remaining commands before falling
-        // through to the Human path.
-        if let Some(entity) = self.get_entity(owner)
-            && entity.is_pc()
-        {
-            match new_command {
-                // CROUCH_UP / CROUCH_DOWN: reject when swordfighting.
-                // When the PC is doing a non-movement sequence element,
-                // first Stop(PREFERENCE) so the posture change can take
-                // over cleanly.
-                Command::CrouchUp | Command::CrouchDown => {
-                    let swordfighting =
-                        entity.human_data().is_some_and(|h| !h.opponents.is_empty());
-                    if swordfighting {
-                        self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
-                        return false;
-                    }
-                    // `is_part_of_movement` covers
-                    // Move/MoveOk/Seek/PassDoor/Jump/AssertPosition;
-                    // use it instead of `data.is_movement()` (which only
-                    // covers the `Movement` data variant —
-                    // Move/MoveOk/Seek/PassDoor) so a mid-Jump or
-                    // mid-AssertPosition crouch toggle doesn't trigger
-                    // a spurious `Stop(PREFERENCE)`.
-                    let cur_is_movement = self
-                        .current_sequence_element_for_actor(owner)
-                        .and_then(|(s, i)| self.orders.sequence_manager.get_element(s, i))
-                        .map(|e| e.command.is_part_of_movement())
-                        .unwrap_or(true);
-                    if !cur_is_movement {
-                        self.stop_actor_orders(
-                            sim,
-                            assets,
-                            active_scripts,
-                            owner,
-                            crate::sequence::SequencePriority::Preference,
-                        );
-                    }
-                }
-                _ => {}
-            }
         }
 
         if self.human_instruct_rejects_command(owner, new_command) {

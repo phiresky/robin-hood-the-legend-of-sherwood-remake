@@ -185,9 +185,24 @@ release_web() {
     binding=$prior/datadir-deployment.json
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
-        command -v cjxl >/dev/null || die "cjxl not on PATH (put the static cjxl binary in $toolchain/bin)"
+        # Web images are AVIF, encoded by the pinned static avifenc/avifdec.
+        for avif_tool in avifenc avifdec; do
+            command -v $avif_tool >/dev/null || die "$avif_tool not on PATH (scripts/install_pinned_avif_tools.sh, then copy bin/$avif_tool into $toolchain/bin)"
+            [[ $($avif_tool --version | head -n 1) == 'Version: 1.4.2 (aom [enc/dec]:3.15.0)' ]] ||
+                die "$avif_tool is not the pinned libavif 1.4.2 / libaom 3.15.0 build (scripts/install_pinned_avif_tools.sh)"
+        done
+        # Opus is encoded by opusenc on libopus 1.6.1; the converter itself
+        # verifies the loaded library (docs/COMPRESSION.md, 2026-09-14).
+        export ROBIN_OPUS_TOOLS_DIR=$toolchain/opus-tools-0.2
+        [[ -x $ROBIN_OPUS_TOOLS_DIR/bin/opusenc ]] || die "missing $ROBIN_OPUS_TOOLS_DIR/bin/opusenc (build opus-tools 0.2 on libopus 1.6.1 into $toolchain)"
+        "$ROBIN_OPUS_TOOLS_DIR/bin/opusenc" --version | grep -qF '(using libopus 1.6.1)' ||
+            die "$ROBIN_OPUS_TOOLS_DIR/bin/opusenc does not report libopus 1.6.1"
+        export ROBIN_LOSSLESS_MUSIC_DIR=$main_repo/datadirs/music-rhmods-lossless
+        [[ -d $ROBIN_LOSSLESS_MUSIC_DIR ]] || die "missing lossless music WAV directory $ROBIN_LOSSLESS_MUSIC_DIR (mapping: convert_datadir/lossless_music_mapping.json)"
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"
-        run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$prior/datadir-dist" "$stage/demo-converter-output" "$stage/datadir-dist"
+        # A release that reused its datadir stages `datadir-dist` as a symlink;
+        # the corpus verifier rejects symlinks, so pass the resolved directory.
+        run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$(realpath "$prior/datadir-dist")" "$stage/demo-converter-output" "$stage/datadir-dist"
         run node wasm-www/scripts/datadir-release-authority.mjs author "$stage/datadir-dist" "$commit" \
             "$(sha256sum Cargo.lock | cut -d' ' -f1)" "$stage/datadir-inventory.json" "$stage/datadir-authority.json"
         stage_checkout "$stage/datadir-dist" wasm-www/datadir-dist

@@ -18,7 +18,9 @@ impl EngineInner {
         body: HumanHandle,
     ) {
         let body_id = self.expect_human_id_for_ai_handle(body, "seen body");
-        assert_ne!(body_id, owner, "body observer cannot observe itself");
+        // Net publication includes the victim in its own detectable list.
+        // A later self-sighting still updates the report and follows the normal
+        // priority and examination path, even after the net has gone away.
         let ai = self.seek_enemy(owner);
         let is_charly = ai.base.current_state == AiState::Seeking
             && ai.base.my_reconnaissance_report.report_type == ReportType::MissedCharly

@@ -48,8 +48,9 @@ pub(super) fn remapped_packed(
     }))
 }
 
-/// The RLE-bucket files eligible for `--rle-sprite-format jxl-*`: the
-/// content class where lossy JXL was measured to WIN (docs/COMPRESSION.md,
+/// The RLE-bucket files eligible for a lossy `--rle-sprite-format`
+/// (`avif-q60` / `jxl-*`): the content class where lossy coding was measured
+/// to WIN (docs/COMPRESSION.md,
 /// 2026-08-29 "the RLE/patch bucket"). RLE sprites in other RHS chunks
 /// (e.g. stray RLE frames inside character banks) keep exact words — they
 /// were not part of the measured/visually-vetted corpus.
@@ -84,6 +85,89 @@ const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
 /// this floor also guarantees the per-chunk aggregate floor that
 /// `sprite_compression_probe --verify-shipping` enforces.
 const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
+/// Decode-speed encoder settings for RLE sprite JXL: cjxl
+/// `--faster_decoding=2 --epf=0`. Measured on the Demo Dem_Lei_MP atlases
+/// (75 images, cjxl 0.12 q80 e7, quiet 12-core machine, best of 3 passes):
+///
+/// | setting        | bytes  | jxl-rs native serial | serial wasm | PSNR565 |
+/// |----------------|--------|----------------------|-------------|---------|
+/// | default        | 836 KB | 459 ms               | 690 ms      | 29.63   |
+/// | fd2            | +2.7%  | -33%                 | -33%        | 29.62   |
+/// | fd2 + epf0     | +1.1%  | -41%                 | -43%        | 29.58   |
+/// | fd3            | +4.3%  | -50%                 | -50%        | 29.58   |
+///
+/// The edge-preserving filter is a decoder-side smoothing pass (jxl-rs skips
+/// its render stage when the frame header disables it); on this pixel art it
+/// buys almost nothing, and without it the encoder also spends fewer bytes.
+/// Only the lossy colour channels are affected: alpha stays
+/// `--alpha_distance=0` exact, and `member_quality` still gates every sprite.
+/// JXL only — AVIF atlases use the fixed web recipe in `encode_pixels_to_avif`.
+const RLE_JXL_DECODE_SPEED: JxlDecodeSpeed = JxlDecodeSpeed {
+    faster_decoding: 2,
+    epf: Some(0),
+};
+
+/// Encode one class-marked RGBA atlas/sprite in the bucket's codec. AVIF uses
+/// `-j 1`: RHS chunks are already built in parallel on the rayon pool.
+fn encode_rle_rgba(
+    codec: RleSpriteCodec,
+    width: usize,
+    height: usize,
+    rgba: &[u8],
+) -> Result<Vec<u8>> {
+    let (width, height) = (
+        u32::try_from(width).context("RLE atlas width exceeds u32")?,
+        u32::try_from(height).context("RLE atlas height exceeds u32")?,
+    );
+    match codec {
+        RleSpriteCodec::Jxl(quality) => encode_pixels_to_jxl(
+            width,
+            height,
+            rgba,
+            png::ColorType::Rgba,
+            Some(quality),
+            7,
+            RLE_JXL_DECODE_SPEED,
+        ),
+        RleSpriteCodec::Avif(quality) => encode_pixels_to_avif(
+            width,
+            height,
+            rgba,
+            png::ColorType::Rgba,
+            quality,
+            AvifJobs::Single,
+        ),
+    }
+}
+
+/// Native decode of an encoded atlas to straight RGBA8 `(width, height, rgba)`.
+fn decode_rle_rgba(codec: RleSpriteCodec, bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
+    match codec {
+        RleSpriteCodec::Jxl(_) => robin_assets::rle_jxl::decode_jxl_rgba8(bytes),
+        RleSpriteCodec::Avif(_) => {
+            let decoded = robin_assets::browser_images::decode_avif_rgba8(bytes)?;
+            Ok((
+                decoded.width as usize,
+                decoded.height as usize,
+                decoded.rgba,
+            ))
+        }
+    }
+}
+
+/// Pixel dimensions of an encoded atlas (AVIF reads the container only).
+fn rle_blob_dimensions(codec: RleSpriteCodec, bytes: &[u8]) -> Result<(usize, usize)> {
+    match codec {
+        RleSpriteCodec::Jxl(_) => {
+            let (width, height, _rgba) = robin_assets::rle_jxl::decode_jxl_rgba8(bytes)?;
+            Ok((width, height))
+        }
+        RleSpriteCodec::Avif(_) => {
+            let info = robin_assets::browser_images::avif_info(bytes)?;
+            Ok((usize::from(info.width), usize::from(info.height)))
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct RleJxlChunkStats {
@@ -94,7 +178,8 @@ pub(super) struct RleJxlChunkStats {
     pub(super) kept_shared: usize,
     pub(super) kept_irregular: usize,
     pub(super) kept_low_psnr: usize,
-    pub(super) jxl_bytes: u64,
+    /// Encoded atlas bytes (JXL or AVIF).
+    pub(super) encoded_bytes: u64,
     pub(super) raw_words_replaced: u64,
     /// Pixels of the decoded atlases these chunks keep resident (2 B each),
     /// gutters included.
@@ -113,7 +198,7 @@ impl RleJxlChunkStats {
         self.kept_shared += other.kept_shared;
         self.kept_irregular += other.kept_irregular;
         self.kept_low_psnr += other.kept_low_psnr;
-        self.jxl_bytes += other.jxl_bytes;
+        self.encoded_bytes += other.encoded_bytes;
         self.raw_words_replaced += other.raw_words_replaced;
         self.atlas_pixels += other.atlas_pixels;
         self.sprite_canvas_pixels += other.sprite_canvas_pixels;
@@ -177,7 +262,7 @@ pub(super) fn member_quality(
             if class != rle_jxl::class_of(source) {
                 bail!(
                     "sprite {} pixel ({x},{y}) came back in class {class} instead of {} — \
-                     cjxl did not code the alpha channel losslessly",
+                     the encoder did not code the alpha channel losslessly",
                     candidate.id,
                     rle_jxl::class_of(source),
                 );
@@ -282,14 +367,16 @@ impl std::io::Write for CompressedByteCount {
     }
 }
 
-/// Build the lossy-JXL payload for one RHS chunk's eligible RLE sprites and
-/// blank the rows it covers. See `--rle-sprite-format` and the schema v13
-/// comment in `shipping_datadir.rs`.
+/// Build the lossy (JXL or AVIF) payload for one RHS chunk's eligible RLE
+/// sprites and blank the rows it covers. See `--rle-sprite-format` and the
+/// schema v13 comment in `shipping_datadir.rs`. The chunk type keeps its
+/// JXL names (`SpriteRleJxlChunk::jxl_blobs`); the runtime sniffs per blob.
+// TODO: rename the RLE-JXL chunk/stat types to codec-neutral names.
 pub(super) fn build_rle_jxl_chunk(
     rel: &str,
     prep: &RhsChunkPrep,
     sprites: &mut [(u32, ShippingSprite)],
-    quality: u8,
+    codec: RleSpriteCodec,
     multi_chunk_ids: &std::collections::HashSet<u32>,
 ) -> Result<(Option<SpriteRleJxlChunk>, RleJxlChunkStats)> {
     use robin_assets::rle_jxl;
@@ -441,16 +528,9 @@ pub(super) fn build_rle_jxl_chunk(
                     placements.push((frame.id, x0 as u16, y0 as u16));
                 }
                 rle_jxl::smear_invisible_rgb(&mut rgba, atlas_w, atlas_h);
-                let jxl = encode_pixels_to_jxl(
-                    atlas_w as u32,
-                    atlas_h as u32,
-                    &rgba,
-                    png::ColorType::Rgba,
-                    Some(quality),
-                    7,
-                )
-                .with_context(|| format!("cjxl atlas for {rel}"))?;
-                let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+                let jxl = encode_rle_rgba(codec, atlas_w, atlas_h, &rgba)
+                    .with_context(|| format!("{} atlas for {rel}", codec.name()))?;
+                let (dec_w, _dec_h, decoded) = decode_rle_rgba(codec, &jxl)
                     .with_context(|| format!("decode encoded atlas for {rel}"))?;
                 for &(id, x0, y0) in &placements {
                     let candidate = &candidates[by_id[&id]];
@@ -506,20 +586,18 @@ pub(super) fn build_rle_jxl_chunk(
             None => ungrouped.extend(members),
         }
     }
-    // Ungrouped / demoted sprites: individual JXL, kept only when it clears
-    // the PSNR floor and beats the outer-zstd cost of the exact words.
+    // Ungrouped / demoted sprites: individual images, kept only when they
+    // clear the PSNR floor and beat the outer-zstd cost of the exact words.
     for id in ungrouped {
         let candidate = &candidates[by_id[&id]];
-        let jxl = encode_pixels_to_jxl(
-            candidate.width as u32,
-            candidate.height as u32,
+        let jxl = encode_rle_rgba(
+            codec,
+            candidate.width as usize,
+            candidate.height as usize,
             &candidate.smeared_rgba()?,
-            png::ColorType::Rgba,
-            Some(quality),
-            7,
         )
-        .with_context(|| format!("cjxl sprite {id} of {rel}"))?;
-        let (dec_w, _dec_h, decoded) = rle_jxl::decode_jxl_rgba8(&jxl)
+        .with_context(|| format!("{} sprite {id} of {rel}", codec.name()))?;
+        let (dec_w, _dec_h, decoded) = decode_rle_rgba(codec, &jxl)
             .with_context(|| format!("decode encoded sprite {id} of {rel}"))?;
         if member_quality(candidate, &decoded, dec_w, 0, 0)? < RLE_JXL_MIN_SPRITE_PSNR_DB {
             stats.kept_low_psnr += 1;
@@ -574,11 +652,11 @@ pub(super) fn build_rle_jxl_chunk(
             .expect("accepted sprite came from these rows");
         sprites[position].1.packed_data = Arc::new(Vec::new());
     }
-    stats.jxl_bytes = chunk.jxl_blobs.iter().map(|blob| blob.len() as u64).sum();
+    stats.encoded_bytes = chunk.jxl_blobs.iter().map(|blob| blob.len() as u64).sum();
     // Resident cost of this chunk once decoded: the whole atlas raster at
     // 2 B/px, gutters included (see the memory note in the ledger).
     for blob in &chunk.jxl_blobs {
-        let (width, height, _rgba) = rle_jxl::decode_jxl_rgba8(blob)
+        let (width, height) = rle_blob_dimensions(codec, blob)
             .with_context(|| format!("measure decoded atlas of {rel}"))?;
         stats.atlas_pixels += (width * height) as u64;
     }
@@ -699,11 +777,11 @@ pub(super) fn build_rhs_chunk_payload(
             },
         ));
     }
-    // Web recipe: swap eligible RLE bucket sprites to lossy JXL atlases,
+    // Web recipe: swap eligible RLE bucket sprites to lossy atlases,
     // blanking the rows the chunk covers.
-    let (rle_jxl_chunk, rle_stats) = match rle_format.jxl_quality() {
-        Some(quality) if is_rle_jxl_bucket_rel(rel) => {
-            build_rle_jxl_chunk(rel, &prep, &mut sprites, quality, multi_chunk_ids)?
+    let (rle_jxl_chunk, rle_stats) = match rle_format.lossy_codec() {
+        Some(codec) if is_rle_jxl_bucket_rel(rel) => {
+            build_rle_jxl_chunk(rel, &prep, &mut sprites, codec, multi_chunk_ids)?
         }
         _ => (None, RleJxlChunkStats::default()),
     };
@@ -793,8 +871,8 @@ pub(super) fn build_rhs_chunk_payload(
         vq_blob_bytes = blob_bytes,
         base = prep.base_rel.as_deref().unwrap_or(""),
         base2 = prep.base2_rel.as_deref().unwrap_or(""),
-        rle_jxl_sprites = rle_stats.lossy(),
-        rle_jxl_bytes = rle_stats.jxl_bytes,
+        rle_lossy_sprites = rle_stats.lossy(),
+        rle_image_bytes = rle_stats.encoded_bytes,
         "built shared RHS sprite payload"
     );
     if let Some(rhs_data) = prep.rhs_data {

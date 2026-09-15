@@ -6325,3 +6325,89 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
     // no titbit matches, so it returns false.
     assert!(!engine.remove_quick_action_titbits_for(pc, slot));
 }
+
+#[test]
+fn redundant_pc_crouch_stops_path_wait_before_transition_rejection() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    for command in [Command::MoveWaiting, Command::MoveOk] {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_test_entity(make_test_pc(Posture::Crouched));
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Waiting;
+        let mut movement =
+            SequenceElement::new_movement(1, command, Some(owner), OrderType::WalkingCrouched);
+        movement.priority = SequencePriority::Normal;
+        movement.orders.push_back(Order::new(
+            OrderType::Freezing,
+            0.0,
+            0.0,
+            engine.orders.allocate_order_id(),
+        ));
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(movement);
+        let movement_sequence = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(movement_sequence);
+        engine.element_in_progress(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            movement_sequence,
+            0,
+        );
+        engine.publish_selected_order_as_installed(owner);
+        let incoming = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &assets,
+            SequenceElement::new(1, Command::CrouchDown, Some(owner)),
+        );
+        engine.hourglass_phase_sequences(
+            &crate::sim_rng::test_context(),
+            &mut HostDisplayState::default(),
+            &assets,
+        );
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(incoming, 0)
+                .unwrap()
+                .state,
+            SequenceState::Impossible
+        );
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element(movement_sequence, 0)
+            .unwrap();
+        if command == Command::MoveWaiting {
+            assert_eq!(movement.state, SequenceState::Interrupted);
+            assert_eq!(engine.current_sequence_element_for_actor(owner), None);
+            assert_eq!(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .actor_data()
+                    .unwrap()
+                    .installed_order,
+                None
+            );
+        } else {
+            assert_eq!(movement.state, SequenceState::InProgress);
+            assert_eq!(
+                engine.current_sequence_element_for_actor(owner),
+                Some((movement_sequence, 0))
+            );
+        }
+    }
+}

@@ -360,7 +360,9 @@ impl EngineInner {
         let substate = self.observation_ai(owner).base.current_substate;
         let mut observe = false;
         match state {
-            AiState::Sleeping => panic!("sleeping owner received view event"),
+            // Eyes are restored before the awakening timer leaves Sleeping.
+            // Sightings during that delay do not interrupt recovery.
+            AiState::Sleeping => {}
             AiState::Default | AiState::Wondering | AiState::Seeking => {
                 observe = !self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus)
             }
@@ -450,5 +452,47 @@ impl EngineInner {
                 },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::test_support::{actors::make_test_ai_soldier, ensure_ordinary_sector};
+
+    #[test]
+    fn conscious_awakening_owner_ignores_view_without_interrupting_timer() {
+        let mut engine = EngineInner::new();
+        let sector = ensure_ordinary_sector(&mut engine, 1, 0);
+        let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
+        entity.element_data_mut().set_sector(Some(sector));
+        let owner = engine.add_test_entity(entity);
+        let target = engine.add_test_entity(Entity::Pc(
+            crate::engine::test_support::actors::unbound_pc(crate::element::Posture::Upright),
+        ));
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let sim = crate::sim_rng::test_context();
+        let ai = engine.observation_ai_mut(owner);
+        ai.base.current_state = AiState::Sleeping;
+        ai.base.current_substate = Substate::SleepingAwakening;
+        ai.base.launch_timer(100, 0);
+        let before = engine.observation_ai(owner).clone();
+        assert!(
+            !engine
+                .expect_entity(owner, "awakening owner")
+                .is_unconscious()
+        );
+        let stimulus = Stimulus::with_human(StimulusType::EventView, target.index());
+        assert!(engine.admit_ai_think_live(owner, &stimulus));
+        assert!(!engine.execute_ai_enemy_event(&sim, &assets, owner, &stimulus));
+        let after = engine.observation_ai(owner);
+        assert_eq!(after.base.current_state, AiState::Sleeping);
+        assert_eq!(after.base.current_substate, Substate::SleepingAwakening);
+        assert!(after.base.timer_is_running);
+        assert_eq!(after.base.when_does_timer_ring, 100);
+        assert_eq!(after.base.antagonist, before.base.antagonist);
+        assert_eq!(after.base.view_alert_status, before.base.view_alert_status);
+        assert_eq!(after.list_them, before.list_them);
     }
 }
