@@ -1443,11 +1443,15 @@ mod suite {
     }
 
     #[test]
-    fn direct_move_keeps_instruction_boundary_extraction() {
+    fn direct_move_translation_extracts_before_instruction_acceptance() {
         let (before, after, state, _, _, _, _) =
             dispatch_instruction_extraction_fixture(Command::Move, true, false);
         assert_ne!(after, before);
-        assert_eq!(state, SequenceState::InProgress);
+        assert_eq!(
+            state,
+            SequenceState::Todo,
+            "translation extracts the actor but leaves acceptance to the instruction boundary"
+        );
     }
 
     #[test]
