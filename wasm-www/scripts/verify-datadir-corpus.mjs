@@ -15,9 +15,6 @@ export const DEMO_PARENT_ROOT = 'datadirs/demo-leicester';
 // v17: native shipping datadir format 17 (match-gated VQ sprite coding).
 // v17r2: same format, opusenc/libopus 1.6.1 audio and per-datadir music remasters.
 // v18: native shipping datadir format 18 (browser-decoded AVIF web images).
-// TODO(release): once v17r2 is published, move it into
-// RETAINED_DEMO_GENERATIONS below with its deployed digests (the corpus
-// verifier rejects a published generation directory that is not listed).
 export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v18`;
 export const DEMO_PATH = `${DEMO_ROOT}/v18-web-opus-q80.rhdata.zst`;
 export const DEMO_CONTENT_MANIFEST_PATH = `${DEMO_ROOT}/robinhood-web-content.json`;
@@ -72,6 +69,17 @@ export const RETAINED_DEMO_GENERATIONS = Object.freeze([
         contentManifestSha256: 'e62b0204ed930612aa560981fa9cc5198cdfbca08d566968242ff848c2c4c8af',
         datadirSha256: '8518ada3bd1981a2f0f053abc2a8954119e365efe1fcd4677dc0ab28ecf04f27',
         datadirByteLength: 3_699_000,
+        nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
+    }),
+    Object.freeze({
+        // Native shipping datadir format 17 (`RHDDNA17`), second build (opusenc on
+        // libopus 1.6.1, per-datadir music remasters), published 2026-09-15.
+        root: `${DEMO_PARENT_ROOT}/v17r2`,
+        datadirPath: `${DEMO_PARENT_ROOT}/v17r2/v17r2-web-opus-q80.rhdata.zst`,
+        contentManifestPath: `${DEMO_PARENT_ROOT}/v17r2/robinhood-web-content.json`,
+        contentManifestSha256: 'd62fce960fdd2895c45ec5359019e630f505f1fe7a64786d3807a8e701b8953b',
+        datadirSha256: '12ef4c0caf2934eeee40d9eb89b33350a52837599f00d55ca1e99947f30c3162',
+        datadirByteLength: 3_697_444,
         nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
     }),
 ]);
