@@ -10,7 +10,6 @@ mod tick_action_change_step;
 use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
-#[cfg(test)]
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
