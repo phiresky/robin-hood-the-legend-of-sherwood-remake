@@ -495,7 +495,7 @@ pub enum BeginShotResult {
 /// to play the shoot animation; [`BeginShotResult::Impossible`] if the
 /// shooter or target is not in a valid state.
 pub fn begin_bow_shot(
-    entities: &mut Entities,
+    entities: &Entities,
     sequence_manager: &mut SequenceManager,
     shooter_id: EntityId,
     target_id: EntityId,
@@ -555,15 +555,6 @@ pub fn begin_bow_shot(
         _ => return BeginShotResult::Impossible,
     };
 
-    let shooter = match entities.get_mut(shooter_id) {
-        Some(e) => e,
-        None => panic!("validated bow shooter {shooter_id:?} disappeared before translation"),
-    };
-    let actor = match shooter.actor_data_mut() {
-        Some(a) => a,
-        None => panic!("validated bow shooter {shooter_id:?} lost actor data before translation"),
-    };
-
     // The original game's shoot-bow translation chooses
     // raise/lower setup from the sequence element's
     // post-transition action state, not from the actor's live state. That
@@ -594,12 +585,10 @@ pub fn begin_bow_shot(
     };
 
     let order_id = crate::order::alloc_order_id(next_order_id);
-    actor.clear_path();
 
     // Push aim-transition orders if needed.  Orders live on the owning
     // `SequenceElement.orders` — when the element is cancelled, its
     // orders go with it.
-    let _ = actor; // actor mutable borrow ends here; below we borrow sequence_manager instead
     let anonymous = shooter_posture == Posture::AnonymousArcher;
     let transitions = aim_transition_orders(action_state_after_transition, desired_mode, anonymous);
     for t in &transitions {
