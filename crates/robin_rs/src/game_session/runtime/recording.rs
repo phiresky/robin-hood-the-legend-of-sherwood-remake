@@ -60,7 +60,7 @@ impl RecordingState {
 
     fn into_header(self) -> Option<ReplayHeader> {
         match self {
-            Self::Recording(recorder) => Some(recorder.into_recording_header()),
+            Self::Recording(recorder) => Some(recorder.seal()),
             Self::Sealed(header) => Some(header),
             Self::Invalid { header, .. } => header,
             Self::Inactive => None,
@@ -722,9 +722,7 @@ impl ReplayLifecycle {
 
     pub(in crate::game_session) fn seal(&mut self) {
         self.recording = match std::mem::replace(&mut self.recording, RecordingState::Inactive) {
-            RecordingState::Recording(recorder) => {
-                RecordingState::Sealed(recorder.into_recording_header())
-            }
+            RecordingState::Recording(recorder) => RecordingState::Sealed(recorder.seal()),
             state => state,
         };
     }

@@ -11,6 +11,7 @@ fn snapshots_are_pure_and_recording_boundaries_are_explicit() {
     let (engine, _, profiles, host) = fresh_save_session("Explicit boundary");
     let game = game_for_save(&profiles, 17);
     let archive = MissionArchive::create(&root.path().join("replay")).unwrap();
+    let chunk_path = archive.directory().join(archive.current_chunk());
     let recorder = ReplayRecorder::with_writer(
         archive.writer().unwrap(),
         "Mission_17".into(),
@@ -70,18 +71,64 @@ fn snapshots_are_pure_and_recording_boundaries_are_explicit() {
     assert!(restart.record_replay_boundary(&recording).is_err());
     assert_eq!(recorder.next_ordinal(), 2);
 
+    // Background and transition saves can capture the completed campaign after
+    // gameplay has sealed its recorder. Neither may extend the mission replay.
+    recorder.clone().seal();
+    let before = std::fs::read(&chunk_path).unwrap();
+    for name in ["background", "transition"] {
+        let mut completed = GameSaveFile::capture_with_game(
+            &engine,
+            &host,
+            &game,
+            17,
+            game.mission_assets().unwrap().clone(),
+            name.into(),
+            required_save_provenance(&host, &engine, 17, Some(&profiles)).unwrap(),
+        )
+        .unwrap();
+        recording.attach_save_boundary(&mut completed).unwrap();
+        assert!(completed.header.replay.is_none());
+        let path = root.path().join(format!("{name}.json"));
+        completed.write_to(&path).unwrap();
+        assert!(
+            GameSaveFile::read_from(&path)
+                .unwrap()
+                .header
+                .replay
+                .is_none()
+        );
+        assert_eq!(recorder.next_ordinal(), 2);
+    }
+    let after = std::fs::read(&chunk_path).unwrap();
+    assert_eq!(before, after, "post-seal saves must preserve replay bytes");
+    let persisted = GameSaveFile::read_from(&root.path().join("save.json")).unwrap();
+
+    // Loading a pre-completion save explicitly opens a continuation and enables
+    // recording and save boundaries again.
+    let boundary = recorder.restore(&persisted, &recording).unwrap();
+    recorder.write_load_back(boundary.ordinal, boundary.marker_ordinal.unwrap(), false);
+    recorder
+        .commit_restore_boundary(
+            boundary.timeline_frame,
+            robin_engine::replay::state_hash(&persisted.engine),
+            &crate::mission_replays::RecordingIndex::disabled(),
+        )
+        .unwrap();
+    let mut resumed = persisted;
+    resumed.header.replay = None;
+    recording.attach_save_boundary(&mut resumed).unwrap();
+    assert!(resumed.header.replay.is_some());
+    assert_eq!(recorder.next_ordinal(), 4);
     recording.install_capture_recorder(None);
     drop(recorder);
     let reopened = MissionArchive::open(&root.path().join("replay")).unwrap();
     let (_, replay, _) = reopened.assembled_replay().unwrap();
-    assert_eq!(replay.frame_count(), 2);
-    let persisted = GameSaveFile::read_from(&root.path().join("save.json")).unwrap();
-    let save_file::ReplaySaveIdentity::Payload(digest) = persisted.replay_identity().unwrap()
-    else {
+    assert_eq!(replay.frame_count(), 4);
+    let save_file::ReplaySaveIdentity::Payload(digest) = resumed.replay_identity().unwrap() else {
         panic!("published saves require a payload identity");
     };
     reopened
-        .validate_link(persisted.header.replay.as_ref().unwrap(), &replay, digest)
+        .validate_link(resumed.header.replay.as_ref().unwrap(), &replay, digest)
         .unwrap();
 }
 
