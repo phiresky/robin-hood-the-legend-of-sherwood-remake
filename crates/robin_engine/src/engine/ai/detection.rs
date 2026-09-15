@@ -809,7 +809,7 @@ impl EngineInner {
         // its Execute arm while frozen, but its visual operand must not move.
         let sprite_frozen = self.actors_frozen();
         // ── Listen ability frame tick. ──────────────────────
-        // Each frame a PC is in `ListenPhase::CountingDown`:
+        // Each frame a PC executes the Listening order:
         //
         //  - Arm `listen_wait_time` to `TIME_LISTEN_WAIT` on the
         //    first observation.
@@ -817,9 +817,7 @@ impl EngineInner {
         //    and drive the `LISTENING` sprite while deliberately ignoring its
         //    completion state. On the frame the countdown reaches 0,
         //    fire the one-shot blip reveal + FX-target `Heard()`
-        //    callback (below) and advance the phase to
-        //    `ExitTransition` so owner-local `tick_ability` plays the exit
-        //    transition animation and cleans up the ability.
+        //    callback (below) and advance to the exit-transition order.
         //
         // The action state stays `Listening` through the
         // countdown — the exit transition in owner-local `tick_ability`
@@ -831,15 +829,20 @@ impl EngineInner {
             seq_id: crate::sequence::SequenceId,
             elem_idx: usize,
         }
+        let Some(ability) = crate::abilities::selected_ability(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            pc_id,
+        )
+        .filter(|ability| ability.order_type == crate::order::OrderType::Listening) else {
+            return false;
+        };
         let firing_listener = {
             let pc = match self.world.entities.get_mut(pc_id) {
                 Some(Entity::Pc(pc)) => pc,
                 Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
                 None => panic!("Listen owner {pc_id:?} disappeared"),
             };
-            if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
-                return false;
-            }
             if pc.actor.listen_wait_time == 0 {
                 // First frame in the CountingDown phase — arm the
                 // countdown. Original stores this in the actor's single
@@ -860,11 +863,7 @@ impl EngineInner {
                 // never advances the sequence; the wait timer is authoritative.
                 pc.element.sprite.position_iface.turn();
                 let direction = pc.element.direction() as u16;
-                let order_id = pc
-                    .actor
-                    .active_ability
-                    .order_id
-                    .expect("Listening phase has a current order");
+                let order_id = ability.order_id;
                 if !sprite_frozen {
                     let _ignored_motion = pc.element.sprite.perform_action(
                         sim,
@@ -894,12 +893,8 @@ impl EngineInner {
             let fl = FiringListener {
                 pc_id,
                 position: pc.element.position(),
-                seq_id: pc
-                    .actor
-                    .active_ability
-                    .sequence_id
-                    .expect("Listen sequence"),
-                elem_idx: pc.actor.active_ability.element_index,
+                seq_id: ability.sequence_id,
+                elem_idx: ability.element_index,
             };
             tracing::debug!(
                 pc = pc_id.index(),
@@ -987,24 +982,17 @@ impl EngineInner {
                 }
             }
             self.do_next_order(sim, assets, listener.seq_id, listener.elem_idx);
-            let (exit_order_id, exit_order_type) = self
+            let exit_order_type = self
                 .orders
                 .sequence_manager
                 .get_element(listener.seq_id, listener.elem_idx)
                 .and_then(|element| element.current_order())
-                .map(|order| (order.order_id, order.order_type))
+                .map(|order| order.order_type)
                 .unwrap_or_else(|| panic!("Listen countdown did not expose its exit order"));
             assert_eq!(
                 exit_order_type,
                 crate::order::OrderType::TransitionListeningWaitingUpright
             );
-            let actor = self
-                .get_entity_mut(listener.pc_id)
-                .and_then(Entity::actor_data_mut)
-                .expect("Listen owner vanished after synchronous scan");
-            actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-            actor.active_ability.order_id = Some(exit_order_id);
-            actor.active_ability.done_effect_applied = false;
         }
         true
     }

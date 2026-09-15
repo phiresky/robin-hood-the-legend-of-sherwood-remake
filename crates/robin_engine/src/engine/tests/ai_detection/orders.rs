@@ -39,7 +39,6 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
 #[test]
 fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     use crate::element::{Command, ElementData, ElementKind, TargetFilter};
-    use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
 
@@ -118,7 +117,6 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
 
     let mut element = SequenceElement::new(1, Command::EnterListen, Some(listener));
     let listening = Order::test_new(OrderType::Listening, 0.0, 0.0);
-    let listening_id = listening.order_id;
     element.orders.push_back(listening);
     element.orders.push_back(Order::test_new(
         OrderType::TransitionListeningWaitingUpright,
@@ -140,17 +138,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         .unwrap()
         .actor_data_mut()
         .unwrap();
-    actor.listen_phase = crate::element::ListenPhase::CountingDown;
     actor.listen_wait_time = 0;
-    actor.active_ability = ActiveAbility {
-        kind: Some(AbilityKind::Listen),
-        sequence_id: Some(seq),
-        element_index: 0,
-        target: None,
-        order_id: Some(listening_id),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     // The listening animation deliberately ignores the sprite's completion
@@ -199,8 +187,12 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             "PC execution must expose its Listening wrapper result, not the raw sprite edge"
         );
         assert_eq!(
-            owner_actor.listen_phase,
-            crate::element::ListenPhase::CountingDown,
+            owner_driven
+                .orders
+                .sequence_manager
+                .current_order_for_actor(&owner_driven.world.entities, listener)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::Listening),
             "Listening sprite completion must not advance the exit transition"
         );
         assert_eq!(
@@ -304,12 +296,11 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     );
     assert_eq!(
         engine
-            .get_entity(listener)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .listen_phase,
-        crate::element::ListenPhase::ExitTransition
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, listener)
+            .map(|(_, _, order)| order.order_type),
+        Some(OrderType::TransitionListeningWaitingUpright)
     );
 }
 
@@ -317,7 +308,6 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
 fn production_listen_creation_order_runs_heard_before_later_reveal() {
     let mut assets = LevelAssets::new();
     use crate::element::{Command, TargetFilter};
-    use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
 
@@ -334,7 +324,6 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
 
     let mut element = SequenceElement::new(1, Command::EnterListen, Some(listener));
     let listening = Order::test_new(OrderType::Listening, 0.0, 0.0);
-    let order_id = listening.order_id;
     element.orders.push_back(listening);
     element.orders.push_back(Order::test_new(
         OrderType::TransitionListeningWaitingUpright,
@@ -356,16 +345,6 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         .unwrap()
         .actor_data_mut()
         .unwrap();
-    actor.listen_phase = crate::element::ListenPhase::CountingDown;
-    actor.active_ability = ActiveAbility {
-        kind: Some(AbilityKind::Listen),
-        sequence_id: Some(seq),
-        element_index: 0,
-        target: None,
-        order_id: Some(order_id),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
     engine.set_actors_frozen(true);
 
     assets = engine.test_runtime_assets();

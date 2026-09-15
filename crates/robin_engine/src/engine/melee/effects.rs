@@ -143,9 +143,7 @@ fn roll_destination_box(
 /// live action state alone. The original game's push-damage translation only authors the
 /// falling order; pushed falling changes the state when that order
 /// reaches the actor's update slot.
-fn clear_fatal_push_path(actor: &mut crate::element::ActorData) {
-    actor.clear_path();
-}
+fn clear_fatal_push_path(actor: &mut crate::element::ActorData) {}
 
 impl EngineInner {
     /// Original-game possible-victim collection used by
@@ -592,7 +590,6 @@ impl EngineInner {
             // FallingShoulders and FallingBackUpright with
             // direction computation disabled.
             self.push_translated_damage_order((seq_id, elem_idx), anim);
-            self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         } else {
             self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }
@@ -967,9 +964,6 @@ impl EngineInner {
             // No falling animation (already lying/dead/carried).
             if is_dead && !death_cascade_already_applied {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.clear_path();
-                    }
                     if let Some(npc) = entity.ai_actor_data_mut() {
                         crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
                         npc.alerted = false;

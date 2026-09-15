@@ -6,6 +6,114 @@ use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilte
 use crate::engine::test_support::actors::TestActor;
 use crate::sprite_script::SpriteScript;
 
+fn begin_test_bow_shot(
+    entities: &mut Entities,
+    sequences: &mut SequenceManager,
+    owner: EntityId,
+    target: EntityId,
+    sequence: SequenceId,
+    element: usize,
+    once: bool,
+    ammo: u32,
+    mode: Option<ShootMode>,
+    next_order_id: &mut u32,
+) -> BeginShotResult {
+    entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element =
+        Some(crate::sequence::SequenceElementRef::new(sequence, element));
+    super::begin_bow_shot(
+        entities,
+        sequences,
+        owner,
+        target,
+        sequence,
+        element,
+        once,
+        ammo,
+        mode,
+        next_order_id,
+    )
+}
+
+fn run_test_bow_owner(
+    sim: &crate::sim_rng::SimulationContext,
+    entities: &mut Entities,
+    sequences: &mut SequenceManager,
+    owner: EntityId,
+    frozen: bool,
+) {
+    let Some(selected) = entities
+        .get(owner)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .selected_sequence_element
+    else {
+        return;
+    };
+    let sequence = selected.sequence_id;
+    let Some(order) = sequences
+        .get_element(sequence, selected.element_index)
+        .and_then(SequenceElement::current_order)
+    else {
+        return;
+    };
+    let order_id = order.order_id;
+    let order_type = order.order_type;
+    let mut engine = crate::engine::EngineInner::new();
+    engine.world.entities = std::mem::take(entities);
+    engine.orders.sequence_manager = std::mem::replace(sequences, SequenceManager::new());
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .selected_sequence_element = Some(crate::sequence::SequenceElementRef::new(
+        sequence,
+        selected.element_index,
+    ));
+    engine
+        .world
+        .entities
+        .get_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .installed_order = Some(crate::element::InstalledActorOrder {
+        order_id,
+        order_type,
+    });
+    engine.control.set_actors_frozen(frozen);
+    engine.tick_bow_shot_for(sim, &crate::engine::LevelAssets::new(), owner, order_id);
+    *entities = engine.world.entities;
+    *sequences = engine.orders.sequence_manager;
+}
+
+fn test_bow_done_pulse(entities: &Entities, owner: EntityId) -> bool {
+    entities.get(owner).unwrap().sprite().last_motion_state == Some(SpriteMotionState::Done)
+}
+fn test_selected_bow(entities: &Entities, sequences: &SequenceManager, owner: EntityId) -> bool {
+    let Some(selected) = entities
+        .get(owner)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .selected_sequence_element
+    else {
+        return false;
+    };
+    sequences
+        .get_element(selected.sequence_id, selected.element_index)
+        .and_then(SequenceElement::current_order)
+        .is_some_and(|order| is_active_bow_order(order.order_type))
+}
+
 trait TestEntityIndexAccess {
     fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)>;
     fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)>;
@@ -155,7 +263,7 @@ fn make_arrow_target(x: f32, y: f32) -> Entity {
 
 /// Test helper — launch a `ShootBow` sequence element and return
 /// `(sequence_manager, seq_id, elem_idx)` so tests can hand the
-/// triple to `begin_bow_shot` / `tick_bow_shots`.
+/// triple to `begin_bow_shot` and exact-owner execution.
 fn launch_test_shoot_element(
     shooter: EntityId,
     target: EntityId,
@@ -213,7 +321,7 @@ fn begin_bow_shot_sets_shooter_state() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -238,9 +346,14 @@ fn begin_bow_shot_sets_shooter_state() {
         ActionState::Waiting,
         "shoot-bow translation must not force the actor's action state before queued bow orders run"
     );
-    assert!(actor.active_shot.is_active());
-    assert_eq!(actor.active_shot.target, Some(target_id));
-    assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
+    assert!(
+        sm.get_element(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .iter()
+            .any(|order| order.order_type == OrderType::ShootingWithBow
+                && order.target_actor == Some(target_id.index()))
+    );
     // Should have: shoot order + reload order (and possibly transition orders)
     assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
 }
@@ -252,7 +365,7 @@ fn begin_bow_shot_rejects_a_missing_sequence_element_as_corrupt_state() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let mut sequences = SequenceManager::new();
 
-    let _ = begin_bow_shot(
+    let _ = begin_test_bow_shot(
         &mut entities,
         &mut sequences,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -267,74 +380,97 @@ fn begin_bow_shot_rejects_a_missing_sequence_element_as_corrupt_state() {
 }
 
 #[test]
-fn todo_shot_retranslation_clears_only_its_own_execution_latch() {
+fn unbound_bow_sprite_does_not_synthesize_a_release_pulse() {
+    let sim = crate::sim_rng::test_context();
     let owner = EntityId::Pc(crate::entity_id::PcId(0));
-    let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-    let mut sm = SequenceManager::new();
-    let seq_id = sm.insert_element(build_shoot_bow_element(owner, target_id));
-    sm.start_sequence_level(seq_id);
-    let elem_idx = 0;
-    assert_eq!(
-        sm.get_element(seq_id, elem_idx).unwrap().state,
-        crate::sequence::SequenceState::Todo,
-        "cross-postponed elements are refreshed to Todo before dispatch"
+    let (mut sequences, sequence, element) = launch_test_shoot_element(owner, target);
+    begin_test_bow_shot(
+        &mut entities,
+        &mut sequences,
+        owner,
+        target,
+        sequence,
+        element,
+        false,
+        10,
+        Some(ShootMode::Normal),
+        &mut 1,
     );
-    entities
-        .get_mut(owner)
+    let order = sequences
+        .get_element(sequence, element)
         .unwrap()
-        .actor_data_mut()
+        .current_order()
         .unwrap()
-        .active_shot = ActiveShot {
-        sequence_id: Some(seq_id),
-        element_index: elem_idx,
-        target: Some(target_id),
-        order_id: Some(std::num::NonZeroU32::new(77).unwrap()),
-        released: true,
-        shoot_mode: Some(ShootMode::Normal),
-    };
-
-    clear_matching_retranslated_shot(&mut entities, owner, SequenceId(999), elem_idx);
-    assert!(
-        entities
-            .get(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active(),
-        "an unrelated sequence must retain its active shot"
-    );
-
-    clear_matching_retranslated_shot(&mut entities, owner, seq_id, elem_idx);
-    assert!(
-        !entities
-            .get(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active(),
-        "the resumed element must release its stale execution latch before translation"
-    );
-
-    let mut next_order_id = 100;
+        .order_id;
+    for _ in 0..4 {
+        run_test_bow_owner(&sim, &mut entities, &mut sequences, owner, false);
+    }
+    assert!(!test_bow_done_pulse(&entities, owner));
     assert_eq!(
-        begin_bow_shot(
-            &mut entities,
-            &mut sm,
-            owner,
-            target_id,
-            seq_id,
-            elem_idx,
-            false,
-            1,
-            Some(ShootMode::Normal),
-            &mut next_order_id,
-        ),
-        BeginShotResult::Started,
-        "the resumed Original element must translate as a fresh execution"
+        sequences
+            .get_element(sequence, element)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_id,
+        order
     );
+}
+
+#[test]
+fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
+    let sim = crate::sim_rng::test_context();
+    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+    let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let mut shooter = make_pc(0.0, 0.0);
+    shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+    bind_test_bow_release_rows(&mut shooter, OrderType::ShootingWithBow);
+    let mut entities = entity_table(vec![Some(shooter), Some(make_soldier(50.0, 0.0))]);
+    let (mut sequences, sequence, element) = launch_test_shoot_element(owner, target);
+    begin_test_bow_shot(
+        &mut entities,
+        &mut sequences,
+        owner,
+        target,
+        sequence,
+        element,
+        false,
+        10,
+        Some(ShootMode::Normal),
+        &mut 1,
+    );
+    let orders = &mut sequences.get_element_mut(sequence, element).unwrap().orders;
+    orders.truncate(1);
+    orders.push_back(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        std::num::NonZeroU32::new(999).unwrap(),
+    ));
+
+    let mut pulse_count = 0;
+    let mut restored = None;
+    for _ in 0..12 {
+        run_test_bow_owner(&sim, &mut entities, &mut sequences, owner, false);
+        if test_bow_done_pulse(&entities, owner) {
+            pulse_count += 1;
+            restored = Some((entities.clone(), sequences.clone()));
+        }
+    }
+    assert_eq!(
+        pulse_count, 1,
+        "one authored animation yields one release pulse"
+    );
+    let (mut entities, mut sequences) = restored.expect("captured state immediately after DONE");
+    for _ in 0..8 {
+        run_test_bow_owner(&sim, &mut entities, &mut sequences, owner, false);
+        assert!(
+            !test_bow_done_pulse(&entities, owner),
+            "restored animation must not release again"
+        );
+    }
 }
 
 #[test]
@@ -345,7 +481,7 @@ fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -368,19 +504,21 @@ fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
         crate::order::alloc_order_id(&mut next_order_id),
     ));
 
-    let events = tick_bow_shots(sim, &mut entities, &mut sm);
+    run_test_bow_owner(
+        sim,
+        &mut entities,
+        &mut sm,
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        false,
+    );
 
-    assert!(events.fired.is_empty());
-    assert!(events.completed.is_empty());
+    assert!(!test_bow_done_pulse(
+        &entities,
+        entities.actors().next().unwrap().0.into()
+    ));
+
     assert!(
-        !entities
-            .get_at_index(0)
-            .map(|(_, entity)| entity)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active(),
+        !test_selected_bow(&entities, &sm, EntityId::Pc(crate::entity_id::PcId(0))),
         "shoot-list ownership ends once the sequence has no bow orders left"
     );
 }
@@ -407,7 +545,7 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
     sm.rebuild_indices();
     let mut next_order_id = 1;
     assert_eq!(
-        begin_bow_shot(
+        begin_test_bow_shot(
             &mut entities,
             &mut sm,
             first,
@@ -422,7 +560,7 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
         BeginShotResult::Started
     );
     assert_eq!(
-        begin_bow_shot(
+        begin_test_bow_shot(
             &mut entities,
             &mut sm,
             other,
@@ -436,19 +574,10 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
         ),
         BeginShotResult::Started
     );
-    let mut replacement = entities
-        .get(other)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_shot;
-    replacement.released = true;
-    let selected_order = sm
-        .get_element(first_seq, 0)
-        .unwrap()
-        .current_order()
-        .expect("first bow order present")
-        .order_id;
+    let replacement = crate::sequence::SequenceElementRef::new(
+        sm.insert_element(build_shoot_bow_element(other, target)),
+        0,
+    );
 
     // A synchronous operation has replaced another actor's shot before this
     // owner resumes. The production owner-only tick must not overwrite it.
@@ -457,16 +586,9 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .active_shot = replacement;
+        .selected_sequence_element = Some(replacement);
 
-    tick_bow_shot_for_owner(
-        &sim_context,
-        &mut entities,
-        &mut sm,
-        first,
-        selected_order,
-        false,
-    );
+    run_test_bow_owner(&sim_context, &mut entities, &mut sm, first, false);
 
     assert_eq!(
         entities
@@ -474,8 +596,8 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
             .unwrap()
             .actor_data()
             .unwrap()
-            .active_shot,
-        replacement,
+            .selected_sequence_element,
+        Some(replacement),
         "single-owner bow execution must preserve a synchronous cross-actor replacement"
     );
 }
@@ -499,7 +621,7 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
     sm.rebuild_indices();
     let mut next_order_id = 1;
     assert_eq!(
-        begin_bow_shot(
+        begin_test_bow_shot(
             &mut entities,
             &mut sm,
             shooter,
@@ -530,11 +652,13 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
         .unwrap()
         .execute_order_initialising = true;
 
-    let events =
-        tick_bow_shot_for_owner(&sim, &mut entities, &mut sm, shooter, order.order_id, true);
+    run_test_bow_owner(&sim, &mut entities, &mut sm, shooter, true);
 
-    assert!(events.fired.is_empty());
-    assert!(events.completed.is_empty());
+    assert!(!test_bow_done_pulse(
+        &entities,
+        entities.actors().next().unwrap().0.into()
+    ));
+
     let entity = entities.get(shooter).unwrap();
     assert_eq!(
         i16::from(entity.position_iface().get_direction_goal()),
@@ -562,7 +686,7 @@ fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -586,19 +710,25 @@ fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
             crate::order::alloc_order_id(&mut next_order_id),
         ));
 
-    let events = tick_bow_shots(sim, &mut entities, &mut sm);
+    run_test_bow_owner(
+        sim,
+        &mut entities,
+        &mut sm,
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        false,
+    );
 
-    assert!(events.fired.is_empty());
-    assert!(events.completed.is_empty());
+    assert!(!test_bow_done_pulse(
+        &entities,
+        entities.actors().next().unwrap().0.into()
+    ));
+
     assert!(
-        entities
-            .get_at_index(0)
-            .map(|(_, entity)| entity)
+        sm.get_element(seq_id, elem_idx)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active(),
+            .orders
+            .iter()
+            .any(|order| is_shoot_order(order.order_type)),
         "pre-shoot setup orders should not cancel the pending bow shot"
     );
 }
@@ -608,6 +738,12 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+    entities
+        .get_mut(EntityId::Pc(crate::entity_id::PcId(0)))
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::AimingWithBow;
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     bind_test_bow_release_rows(
         entities
@@ -618,7 +754,7 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
     );
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -648,36 +784,28 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
         crate::order::alloc_order_id(&mut next_order_id),
     ));
 
-    let mut fired = Vec::new();
-    let mut completed = Vec::new();
+    let mut released = false;
     for _ in 0..64 {
-        let events = tick_bow_shots(sim, &mut entities, &mut sm);
-        fired.extend(events.fired);
-        completed.extend(events.completed);
-        if !entities
-            .get_at_index(0)
-            .map(|(_, entity)| entity)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active()
-        {
+        run_test_bow_owner(
+            sim,
+            &mut entities,
+            &mut sm,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            false,
+        );
+        released |= test_bow_done_pulse(&entities, EntityId::Pc(crate::entity_id::PcId(0)));
+        if !test_selected_bow(&entities, &sm, EntityId::Pc(crate::entity_id::PcId(0))) {
             break;
         }
     }
 
-    assert_eq!(fired.len(), 1);
-    assert!(completed.is_empty());
+    assert!(released);
+    assert_eq!(
+        sm.get_element(seq_id, elem_idx).unwrap().state,
+        crate::sequence::SequenceState::InProgress
+    );
     assert!(
-        !entities
-            .get_at_index(0)
-            .map(|(_, entity)| entity)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active(),
+        !test_selected_bow(&entities, &sm, EntityId::Pc(crate::entity_id::PcId(0))),
         "active bow-shot driver should detach after the final bow order"
     );
     assert_eq!(
@@ -691,15 +819,15 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
 }
 
 #[test]
-#[should_panic(expected = "active bow shot missing resolved shoot mode")]
-fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
+#[should_panic(expected = "bow release requires an aiming action")]
+fn bow_release_rejects_non_aiming_action_state() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -718,9 +846,18 @@ fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
         .map(|(_, entity)| entity)
         .unwrap();
     shooter.element_data_mut().set_direction_instantly(facing);
-    shooter.actor_data_mut().unwrap().active_shot.shoot_mode = None;
+    shooter.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+    bind_test_bow_release_rows(shooter, OrderType::ShootingWithBow);
 
-    let _ = tick_bow_shots(sim, &mut entities, &mut sm);
+    for _ in 0..16 {
+        run_test_bow_owner(
+            sim,
+            &mut entities,
+            &mut sm,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            false,
+        );
+    }
 }
 
 #[test]
@@ -738,7 +875,7 @@ fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
     set_test_action_state_after_transition(&mut sm, seq_id, elem_idx, ActionState::AimingWithBow);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -759,7 +896,13 @@ fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
         .actor_data()
         .unwrap();
     assert_eq!(actor.action_state, ActionState::AimingWithBow);
-    assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Long));
+    assert!(
+        sm.get_element(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .iter()
+            .any(|order| order.order_type == OrderType::ShootingWithBowUp)
+    );
     let orders: Vec<OrderType> = sm
         .get_element(seq_id, elem_idx)
         .unwrap()
@@ -779,7 +922,7 @@ fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
     set_test_action_state_after_transition(&mut sm, seq_id, elem_idx, ActionState::AimingWithBow);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -817,7 +960,7 @@ fn begin_bow_shot_accepts_active_target_that_died_while_aiming() {
     }
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -852,7 +995,7 @@ fn begin_bow_shot_accepts_retained_inactive_human_target() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -888,7 +1031,7 @@ fn begin_bow_shot_accepts_arrow_fx_target() {
     let target_id = EntityId::Target(crate::entity_id::TargetId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -901,17 +1044,8 @@ fn begin_bow_shot_accepts_arrow_fx_target() {
         &mut 1u32,
     );
     assert_eq!(result, BeginShotResult::Started);
-    assert_eq!(
-        entities
-            .get_at_index(0)
-            .map(|(_, entity)| entity)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .target,
-        Some(target_id)
-    );
+    assert!(matches!(sm.get_element(seq_id, elem_idx).unwrap().data,
+        SequenceElementData::Interaction { antagonist: Some(target) } if target == target_id));
 }
 
 #[test]
@@ -924,7 +1058,7 @@ fn begin_bow_shot_uses_anonymous_shoot_orders() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -968,7 +1102,7 @@ fn begin_bow_shot_preserves_facing_until_shoot_order_initialization() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -1006,6 +1140,12 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
         z: 100.0,
     });
     let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
+    entities
+        .get_mut(EntityId::Pc(crate::entity_id::PcId(0)))
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::AimingWithBow;
     let target_id = EntityId::Target(crate::entity_id::TargetId(1));
     bind_test_bow_release_rows(
         entities
@@ -1017,7 +1157,7 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    let result = begin_bow_shot(
+    let result = begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -1038,7 +1178,13 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
         .unwrap()
         .execute_order_initialising = true;
 
-    tick_bow_shots(sim, &mut entities, &mut sm);
+    run_test_bow_owner(
+        sim,
+        &mut entities,
+        &mut sm,
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        false,
+    );
 
     let direction_goal = i16::from(
         entities
@@ -1075,7 +1221,13 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
             y: -100.0,
             z: 0.0,
         });
-    tick_bow_shots(sim, &mut entities, &mut sm);
+    run_test_bow_owner(
+        sim,
+        &mut entities,
+        &mut sm,
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        false,
+    );
     assert_eq!(
         i16::from(
             entities
@@ -1112,7 +1264,7 @@ fn leaning_out_shot_initializes_from_live_map_positions_and_holds_while_turning(
     let mut entities = entity_table(vec![Some(shooter), Some(target)]);
     let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(shooter_id, target_id);
     assert_eq!(
-        begin_bow_shot(
+        begin_test_bow_shot(
             &mut entities,
             &mut sm,
             shooter_id,
@@ -1133,8 +1285,11 @@ fn leaning_out_shot_initializes_from_live_map_positions_and_holds_while_turning(
         .unwrap()
         .execute_order_initialising = true;
 
-    let events = tick_bow_shots(&sim, &mut entities, &mut sm);
-    assert!(events.fired.is_empty());
+    run_test_bow_owner(&sim, &mut entities, &mut sm, shooter_id, false);
+    assert!(!test_bow_done_pulse(
+        &entities,
+        entities.actors().next().unwrap().0.into()
+    ));
 
     let shooter = entities.get(shooter_id).unwrap();
     let expected_goal = crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0);
@@ -1157,6 +1312,12 @@ fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+    entities
+        .get_mut(EntityId::Pc(crate::entity_id::PcId(0)))
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = ActionState::AimingWithBow;
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     bind_test_bow_release_rows(
         entities
@@ -1168,7 +1329,7 @@ fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    begin_bow_shot(
+    begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -1182,25 +1343,25 @@ fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
     );
 
     // Tick through the facing freeze, then the shoot row's action-done pulse.
-    let mut fired = Vec::new();
-    let mut completed = Vec::new();
+    let mut released = false;
     for _ in 0..24 {
-        let events = tick_bow_shots(sim, &mut entities, &mut sm);
-        fired.extend(events.fired);
-        completed.extend(events.completed);
-        if !fired.is_empty() {
+        run_test_bow_owner(
+            sim,
+            &mut entities,
+            &mut sm,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            false,
+        );
+        released |= test_bow_done_pulse(&entities, EntityId::Pc(crate::entity_id::PcId(0)));
+        if released {
             break;
         }
     }
-    assert_eq!(fired.len(), 1, "expected one fired shot");
-    assert!(
-        completed.is_empty(),
-        "release should not terminate the sequence before the visual orders finish"
+    assert!(released, "expected the release pulse");
+    assert_eq!(
+        sm.get_element(seq_id, elem_idx).unwrap().state,
+        crate::sequence::SequenceState::InProgress
     );
-    let r = &fired[0];
-    assert_eq!(r.shooter, EntityId::Pc(crate::entity_id::PcId(0)));
-    assert_eq!(r.target, target_id);
-    assert_eq!(r.target_pos.x, 50.0);
 
     // Shooter should now be in AimingWithBow (sustained aim).
     let actor = entities
@@ -1210,8 +1371,15 @@ fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
         .actor_data()
         .unwrap();
     assert_eq!(actor.action_state, ActionState::AimingWithBow);
-    assert!(actor.active_shot.is_active());
-    assert!(actor.active_shot.released);
+    assert!(test_selected_bow(
+        &entities,
+        &sm,
+        EntityId::Pc(crate::entity_id::PcId(0))
+    ));
+    assert!(test_bow_done_pulse(
+        &entities,
+        EntityId::Pc(crate::entity_id::PcId(0))
+    ));
 }
 
 #[test]
@@ -2928,7 +3096,7 @@ fn equip_bow_sets_aiming_on_animation_start() {
     );
 }
 
-fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
+fn tick_active_pc_equip_start(script_driven: bool) -> Action {
     let sim = crate::sim_rng::test_context();
     let shooter = EntityId::Pc(crate::entity_id::PcId(0));
     let target = EntityId::Soldier(crate::entity_id::SoldierId(1));
@@ -2938,6 +3106,7 @@ fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
     let mut sm = SequenceManager::new();
     let mut element = build_shoot_bow_element(shooter, target);
     element.script_driven = script_driven;
+    element.data = SequenceElementData::Interaction { antagonist: None };
     let mut next_order_id = 1;
     let order_id = crate::order::alloc_order_id(&mut next_order_id);
     element.orders.push_back(Order::new(
@@ -2955,16 +3124,9 @@ fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .active_shot = ActiveShot {
-        sequence_id: Some(sequence_id),
-        element_index: 0,
-        target: Some(target),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(ShootMode::Normal),
-    };
+        .selected_sequence_element = Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
 
-    let events = tick_bow_shots(&sim, &mut entities, &mut sm);
+    run_test_bow_owner(&sim, &mut entities, &mut sm, shooter, false);
     assert_eq!(
         entities
             .get(shooter)
@@ -2975,27 +3137,22 @@ fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
         ActionState::AimingWithBow,
         "the specialized owner must still apply the equip START state before its callback"
     );
-    events
+    entities
+        .get(shooter)
+        .unwrap()
+        .pc_data()
+        .unwrap()
+        .current_action
 }
 
 #[test]
-fn active_shot_pc_equip_start_requests_bow_action_restitution() {
-    let events = tick_active_pc_equip_start(false);
-
-    assert_eq!(
-        events.pc_equip_actions,
-        [EntityId::Pc(crate::entity_id::PcId(0))]
-    );
+fn selected_bow_pc_equip_start_requests_bow_action_restitution() {
+    assert_eq!(tick_active_pc_equip_start(false), Action::Bow);
 }
 
 #[test]
-fn active_shot_script_pc_equip_start_suppresses_bow_action_restitution() {
-    let events = tick_active_pc_equip_start(true);
-
-    assert!(
-        events.pc_equip_actions.is_empty(),
-        "script-driven equip transitions must preserve the PC's toolbar action"
-    );
+fn selected_bow_script_pc_equip_start_suppresses_bow_action_restitution() {
+    assert_eq!(tick_active_pc_equip_start(true), Action::NoAction);
 }
 
 #[test]
@@ -3064,6 +3221,7 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
     pc.element_data_mut()
         .publish_order_posture(Posture::LeaningOut);
     bind_test_bow_release_rows(&mut pc, OrderType::ShootingWithBowLeaningOut);
+    pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
     let mut target = make_soldier(50.0, 0.0);
     target
         .element_data_mut()
@@ -3073,7 +3231,7 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
-    begin_bow_shot(
+    begin_test_bow_shot(
         &mut entities,
         &mut sm,
         EntityId::Pc(crate::entity_id::PcId(0)),
@@ -3086,14 +3244,21 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
         &mut 1u32,
     );
 
-    let mut fired = Vec::new();
+    let mut released = false;
     for _ in 0..16 {
-        fired.extend(tick_bow_shots(sim, &mut entities, &mut sm).fired);
-        if !fired.is_empty() {
+        run_test_bow_owner(
+            sim,
+            &mut entities,
+            &mut sm,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            false,
+        );
+        released |= test_bow_done_pulse(&entities, EntityId::Pc(crate::entity_id::PcId(0)));
+        if released {
             break;
         }
     }
-    assert_eq!(fired.len(), 1);
+    assert!(released);
     assert_eq!(
         entities
             .get_at_index(0)

@@ -10,11 +10,6 @@ impl EngineInner {
         fast: bool,
     ) {
         self.halt_actor(sim, assets, owner);
-        let retained_goal = Some(
-            self.expect_entity(owner, "turn owner")
-                .position_iface()
-                .map_goal(),
-        );
         self.launch_turn_sequence_deferred_no_transitions(
             owner,
             if fast {
@@ -25,7 +20,6 @@ impl EngineInner {
             Some(direction),
             0.0,
             0.0,
-            retained_goal,
         );
     }
     /// Emit one `AIDECISION` line; `stage` holds the stage-specific payload.
@@ -217,14 +211,6 @@ impl EngineInner {
             .and_then(|(seq, index)| self.orders.sequence_manager.get_element(seq, index));
         let was_computing_path =
             selected.is_some_and(|element| element.command == crate::element::Command::MoveWaiting);
-        let retained_goal = selected
-            .filter(|element| {
-                element.data.is_movement()
-                    && element
-                        .current_order()
-                        .is_some_and(|order| movement_transition_retains_goal(order.order_type))
-            })
-            .map(|_| actor.position_iface().map_goal());
         let (raw_source, raw_sector, raw_layer, door_source) = {
             let entity = self.expect_entity(entity_id, "AI movement source actor before enqueue");
             let element = entity.element_data();
@@ -520,7 +506,6 @@ impl EngineInner {
                 Some(entity_id),
                 action,
             );
-            elem.retained_movement_goal = retained_goal;
             if let crate::sequence::SequenceElementData::Movement {
                 destination,
                 layer: elem_layer,

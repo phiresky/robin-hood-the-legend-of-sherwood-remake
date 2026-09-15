@@ -534,7 +534,6 @@ mod suite {
             Some((sequence, 0)),
         );
         let owner_entity = engine.get_entity_mut(owner).unwrap();
-        owner_entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(sequence, 0);
         owner_entity
             .element_data_mut()
             .sprite
@@ -564,11 +563,6 @@ mod suite {
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             expected_action_state
-        );
-        assert_eq!(
-            entity.actor_data().unwrap().active_movement,
-            ActiveMovement::none(),
-            "the aborted movement tracker must still detach"
         );
         assert_eq!(entity.position_iface().blocked_count, 0);
         assert!(entity.position_iface().box_blocked.0.is_none());
@@ -741,12 +735,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         (engine, owner, sequence, order_id, start)
     }

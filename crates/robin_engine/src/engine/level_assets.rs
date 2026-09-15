@@ -120,7 +120,7 @@ pub struct LevelEnvironmentAssets {
     /// Wrapped in `Arc` so cloning `LevelAssets` is a refcount bump
     /// rather than a 600+ KB deep copy. Mutated only at level load
     /// time via `Arc::make_mut`. The runtime per-obstacle active flag
-    /// (toggled by `PatchEffect::SwapObjects`) lives separately on
+    /// (toggled by patch transitions) lives separately on
     /// `EngineInner::static_sight_obstacle_active` — that vec
     /// participates in rollback hashing; this immutable geometry does
     /// not.

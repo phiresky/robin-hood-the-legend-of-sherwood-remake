@@ -10,7 +10,7 @@ fn dispatch_pass(
     engine: &mut EngineInner,
     doors: &[crate::gate::Door],
     owner: EntityId,
-) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+) -> (bool, crate::sequence::SequenceId) {
     let (posture_after_transition, action_state_after_transition) = engine
         .world
         .entities
@@ -41,7 +41,7 @@ fn dispatch_pass_with_transition_state(
     flags: crate::sequence::MoveFlags,
     posture_after_transition: Posture,
     action_state_after_transition: crate::element::ActionState,
-) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+) -> (bool, crate::sequence::SequenceId) {
     dispatch_pass_with_element_mutation(
         engine,
         doors,
@@ -63,7 +63,7 @@ fn dispatch_pass_with_element_mutation(
     posture_after_transition: Posture,
     action_state_after_transition: crate::element::ActionState,
     mutate_element: impl FnOnce(&mut SequenceElement),
-) -> (PassDoorLaunchBarrier, crate::sequence::SequenceId) {
+) -> (bool, crate::sequence::SequenceId) {
     for sector_number in doors
         .iter()
         .flat_map(|door| [door.sector_out, door.sector_in])
@@ -121,8 +121,7 @@ fn dispatch_pass_with_element_mutation(
     let seq_id = engine.orders.sequence_manager.insert_element(element);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.script_domains.interactables.doors = doors.to_vec();
-    engine.select_sequence_element(owner, Some((seq_id, 0)));
-    let barrier = engine.instruct_pass_door(
+    let accepted = engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         &mut Vec::new(),
@@ -130,7 +129,7 @@ fn dispatch_pass_with_element_mutation(
         seq_id,
         0,
     );
-    (barrier, seq_id)
+    (accepted, seq_id)
 }
 
 fn default_door() -> crate::gate::Door {
@@ -152,9 +151,9 @@ fn default_inside_outside_reserves_complete_translated_order_chain() {
     let owner = engine.add_test_entity(TestActor::pc(Posture::Upright).sector(8).build());
     let first_id = engine.orders.next_order_id;
 
-    let (barrier, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     assert_eq!(engine.orders.next_order_id, first_id + 4);
     let element = engine
         .orders
@@ -497,7 +496,7 @@ fn install_production_climb_fixture(
 }
 
 #[test]
-fn launch_context_resolves_direction_and_installs_first_order_before_splice() {
+fn instruction_resolves_direction_and_installs_first_order() {
     for (actor_sector, expected_direct, expected_exit) in [
         (7, true, MapPoint::new(30.0, 30.0)),
         (8, false, MapPoint::new(10.0, 30.0)),
@@ -509,9 +508,9 @@ fn launch_context_resolves_direction_and_installs_first_order_before_splice() {
                 .sector(actor_sector)
                 .build(),
         );
-        let (barrier, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
+        let (accepted, seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
-        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        assert!(accepted);
         let element = engine
             .orders
             .sequence_manager
@@ -562,7 +561,7 @@ fn corpse_carrying_pass_rewrites_authored_fast_run_without_affecting_upright_con
             .expect("door-pass test PC")
             .set_posture(posture);
 
-        let (barrier, seq_id) = dispatch_pass_with_transition_state(
+        let (accepted, seq_id) = dispatch_pass_with_transition_state(
             &mut engine,
             &[default_door()],
             owner,
@@ -572,7 +571,7 @@ fn corpse_carrying_pass_rewrites_authored_fast_run_without_affecting_upright_con
             crate::element::ActionState::MovingFast,
         );
 
-        assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+        assert!(accepted);
         let element = engine
             .orders
             .sequence_manager
@@ -639,7 +638,7 @@ fn direct_pc_pass_uses_stamped_moving_fast_sword_state() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass_with_transition_state(
+    let (accepted, seq_id) = dispatch_pass_with_transition_state(
         &mut engine,
         &[door],
         owner,
@@ -649,7 +648,7 @@ fn direct_pc_pass_uses_stamped_moving_fast_sword_state() {
         crate::element::ActionState::MovingFastSword,
     );
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -675,7 +674,7 @@ fn direct_pc_pass_preserves_authored_run_without_fast_flag_in_sword_state() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass_with_transition_state(
+    let (accepted, seq_id) = dispatch_pass_with_transition_state(
         &mut engine,
         &[door],
         owner,
@@ -685,7 +684,7 @@ fn direct_pc_pass_preserves_authored_run_without_fast_flag_in_sword_state() {
         crate::element::ActionState::MovingSword,
     );
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -714,7 +713,7 @@ fn direct_stairs_pass_preserves_stamped_crouched_posture() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass_with_transition_state(
+    let (accepted, seq_id) = dispatch_pass_with_transition_state(
         &mut engine,
         &[door],
         owner,
@@ -724,7 +723,7 @@ fn direct_stairs_pass_preserves_stamped_crouched_posture() {
         crate::element::ActionState::Moving,
     );
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -773,7 +772,7 @@ fn indirect_stairs_pass_translates_dormant_lying_stamp_from_live_lift() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass_with_transition_state(
+    let (accepted, seq_id) = dispatch_pass_with_transition_state(
         &mut engine,
         &[door],
         owner,
@@ -783,7 +782,7 @@ fn indirect_stairs_pass_translates_dormant_lying_stamp_from_live_lift() {
         crate::element::ActionState::Waiting,
     );
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -1442,9 +1441,9 @@ fn denied_door_disables_anti_collision_before_marking_impossible() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::SkipSplice);
+    assert!(accepted);
     assert_eq!(
         engine
             .orders
@@ -1492,9 +1491,9 @@ fn wall_lift_rejects_soldier_before_installing_an_order() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::SkipSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -1514,7 +1513,7 @@ fn wall_lift_rejects_soldier_before_installing_an_order() {
 }
 
 #[test]
-fn ladder_lift_uses_ladder_translation_and_reaches_splice() {
+fn ladder_lift_instruction_installs_ladder_translation() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(
         TestActor::soldier(Posture::Upright)
@@ -1530,9 +1529,9 @@ fn ladder_lift_uses_ladder_translation_and_reaches_splice() {
         ..default_door()
     };
 
-    let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let element = engine
         .orders
         .sequence_manager
@@ -1576,8 +1575,8 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
     };
     engine.script_domains.interactables.doors.push(door.clone());
 
-    let (barrier, seq_id) = dispatch_pass(&mut engine, &[door], owner);
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+    assert!(accepted);
     assert!(
         engine
             .get_entity(owner)
@@ -1772,9 +1771,9 @@ fn actor_sector_outside_both_door_sides_passes_directly() {
             .build(),
     );
 
-    let (barrier, _seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
+    let (accepted, _seq_id) = dispatch_pass(&mut engine, &[default_door()], owner);
 
-    assert_eq!(barrier, PassDoorLaunchBarrier::ReachSplice);
+    assert!(accepted);
     let entity = engine.world.entities.get(owner).unwrap();
     assert!(entity.position_iface().get_door_direction());
     let pass = entity

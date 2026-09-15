@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::element::{ActionState, Command, EntityId};
-use crate::engine::sequence_runtime::{OrderEmitter, OwnerActionBarrier};
+use crate::engine::sequence_runtime::OrderEmitter;
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
@@ -162,14 +162,6 @@ impl EngineInner {
     ///
     /// Handles the `SwordstrikeThrustA..I` strike commands.
     ///
-    /// Returns [`OwnerActionBarrier::Skip`] whenever translation marked the
-    /// impossible sequence element. The original game's translation reaches that
-    /// actor state change during instruction processing
-    /// in the original game; the resulting
-    /// Condolence dispatch detaches the selected sequence element, so the immediately
-    /// following pointer-change test returns before the acceptance epilogue
-    /// marks motion as in progress
-    /// by the original game's actor update.
     pub(in crate::engine) fn dispatch_sword_strike(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -180,7 +172,7 @@ impl EngineInner {
         strike: SwordStrike,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let admission_debug = strike == SwordStrike::A
             && thrust_admission_debug_gate()
                 .matches([Some(self.control.frame_counter), Some(owner.index())]);
@@ -191,7 +183,7 @@ impl EngineInner {
             .unwrap_or(false);
         if !owner_ok {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         // Translate B..I literally stores the interaction antagonist, even
@@ -204,7 +196,7 @@ impl EngineInner {
             .unwrap_or(false);
         if !target_ok {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         if strike == SwordStrike::A {
@@ -223,7 +215,7 @@ impl EngineInner {
                 self.set_as_new_principal_opponent(sim, assets, target, owner);
             } else {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             }
         }
 
@@ -243,12 +235,6 @@ impl EngineInner {
                 )
             });
 
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.clear_path();
-        }
-
         // Original-game actor translation stores the target as the order's
         // antagonist. Execution derives both the target and strike type from
         // this selected order; there is no parallel melee state object.
@@ -260,15 +246,12 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-
         tracing::debug!(
             attacker = ?owner,
             target = ?target,
             ?strike,
             "Sword strike dispatched"
         );
-        OwnerActionBarrier::Reach
     }
 
     // ─── Enter / quit swordfight ────────────────────────────────────
@@ -286,7 +269,7 @@ impl EngineInner {
         opponent: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         self.dispatch_enter_swordfight_impl(
             sim,
             assets,
@@ -307,7 +290,7 @@ impl EngineInner {
         opponent: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let caller_gate = opponent_caller_debug_gate();
         let caller_debug = caller_gate.matches([Some(self.control.frame_counter), None])
             && (caller_gate.required(1) == owner.index()
@@ -318,11 +301,11 @@ impl EngineInner {
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             };
             if entity.is_dead() || entity.human_data().map(|h| h.unconscious).unwrap_or(true) {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             }
         }
 
@@ -366,7 +349,7 @@ impl EngineInner {
                         elem_idx,
                         crate::sequence::CascadeFlags::NEXT_LEVEL,
                     );
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
                 TableFightMove::Launched => {
                     let element = self
@@ -474,15 +457,11 @@ impl EngineInner {
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
         }
-        if transition.is_some() {
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            OwnerActionBarrier::Reach
-        } else {
+        if transition.is_none() {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             // Termination synchronously sends the removal notification.
             // If that callback changes the selected sequence element, actor instruction handling
             // returns before its accepted-motion/order epilogue.
-            OwnerActionBarrier::Skip
         }
     }
 
@@ -623,7 +602,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let queue_lower = self
             .world
             .entities
@@ -647,11 +626,8 @@ impl EngineInner {
                     id,
                 ),
             );
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            OwnerActionBarrier::Reach
         } else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            OwnerActionBarrier::Skip
         }
     }
 
@@ -667,14 +643,14 @@ impl EngineInner {
         low: bool,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some(entity) = self.world.entities.get(owner) else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let Some(actor) = entity.actor_data() else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
 
         // The original game's sequence validation accepts sword parrying without an
@@ -696,7 +672,7 @@ impl EngineInner {
             // clears the selected order and map goal before releasing
             // any postponed predecessor.
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         let transition = if low {
@@ -722,8 +698,6 @@ impl EngineInner {
             elem_idx,
             crate::order::Order::new(hold, 0.0, 0.0, id),
         );
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     /// Dispatch a StopParrySword command.
@@ -735,14 +709,14 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some(entity) = self.world.entities.get(owner) else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let Some(actor) = entity.actor_data() else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         if !matches!(
             actor.action_state,
@@ -752,7 +726,7 @@ impl EngineInner {
             // already-selected incoming element rather than an unrelated
             // queued command.
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         let id = self.orders.allocate_order_id();
@@ -766,8 +740,6 @@ impl EngineInner {
                 id,
             ),
         );
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -1017,7 +989,7 @@ impl EngineInner {
                 // tick will set it when the raising animation
                 // completes (on MotionState::Done →
                 // upright posture with the holding-shield action state).
-                actor.clear_path();
+
                 actor.shield_face_point = danger_pt;
                 started = true;
             }
@@ -1037,7 +1009,6 @@ impl EngineInner {
                 (0.0, 0.0),
                 false,
             );
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
@@ -1059,7 +1030,6 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
-                actor.clear_path();
             }
             entity.set_posture(Posture::Upright);
         }
@@ -1075,7 +1045,6 @@ impl EngineInner {
         // WAITING_SHIELD order installed. Actor instruction handling then marks the
         // accepted, still-selected element IN_PROGRESS; it does not terminate
         // this command at translation time.
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
     /// Dispatch a LowerShield command.
@@ -1115,7 +1084,6 @@ impl EngineInner {
             (0.0, 0.0),
             false,
         );
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 
     /// Dispatch a ParryShield command.
@@ -1157,61 +1125,11 @@ impl EngineInner {
             (0.0, 0.0),
             false,
         );
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
     }
 }
 
 impl EngineInner {
     // ─── Receive damage dispatch ────────────────────────────────────
-
-    /// Complete the actor instruction handler's accepted-empty-order path for damage.
-    ///
-    /// The original game publishes in-progress motion, discovers that translation
-    /// produced no current order, clears the selected sequence element, and only then
-    /// terminates the accepted element. Its condolence card therefore cannot
-    /// clear a movement goal belonging to the element that will resume next.
-    fn terminate_accepted_empty_damage(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        victim_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> OwnerActionBarrier {
-        self.trace_sword_damage_lifecycle(
-            "accepted-empty-before-terminate",
-            victim_id,
-            None,
-            None,
-            Some((seq_id, elem_idx)),
-            None,
-        );
-        // A deferred Hades kill can outlive an already removed entity slot.
-        // There is no actor instruction receiver (and therefore no motion field)
-        // in that case, but its synthetic damage element still has to close.
-        if let Some(victim) = self.world.entities.get_mut(victim_id) {
-            let actor = victim
-                .actor_data_mut()
-                .expect("accepted damage victim lost actor state");
-            actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
-            // Empty translation installs no order before completion callbacks.
-            // Those callbacks can immediately query the animation while deciding
-            // whether a nearby movement destination has already been reached.
-            actor.installed_order = None;
-        }
-        self.select_sequence_element(victim_id, None);
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        self.trace_sword_damage_lifecycle(
-            "accepted-empty-after-terminate",
-            victim_id,
-            None,
-            None,
-            Some((seq_id, elem_idx)),
-            None,
-        );
-        OwnerActionBarrier::Reach
-    }
 
     /// Dispatch a receive-damage command from the sequence system.
     ///
@@ -1226,11 +1144,11 @@ impl EngineInner {
         victim_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         // Read damage data from the sequence element
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
             // Dispatch may invalidate a queued element before its turn.
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let command = elem.command;
 
@@ -1270,14 +1188,7 @@ impl EngineInner {
                     ?command,
                     "dispatch_receive_damage: element is not Damage"
                 );
-                return self.terminate_accepted_empty_damage(
-                    sim,
-                    assets,
-                    active_scripts,
-                    victim_id,
-                    seq_id,
-                    elem_idx,
-                );
+                return;
             }
         };
 
@@ -1306,7 +1217,7 @@ impl EngineInner {
                 };
                 if !owner_active {
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
                 let damage_probe = super::damage::SwordDamageProbe::before(self, victim_id);
                 self.apply_sword_damage(
@@ -1346,7 +1257,7 @@ impl EngineInner {
                     .is_some_and(|victim| victim.element_data().active);
                 if !victim_active {
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
                 self.apply_piercing_damage(
                     sim,
@@ -1411,46 +1322,6 @@ impl EngineInner {
                 );
             }
         }
-
-        // Some translation bodies terminate themselves synchronously while
-        // the accepted element is still selected (notably an amulet coma
-        // save receiving sword damage while lying). Their condolence
-        // card has already captured that selected identity; do not apply the
-        // different accepted-empty-order lifecycle a second time.
-        if self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated)
-        {
-            return OwnerActionBarrier::Skip;
-        }
-
-        // Order-advancement boot: if the damage handler pushed any orders
-        // (the sword-damage path pushes simpleHit / standup /
-        // BeingStunnedSword), let the element keep running so
-        // `do_next_order` chains through on each MotionState::Terminated.
-        // Order ids are stamped at construction time (`Order::new`
-        // requires `NonZeroU32`), so no batch fixup is needed here.
-        // Otherwise terminate now.
-        let order_count = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .map(|e| e.orders.len())
-            .unwrap_or(0);
-        if order_count > 0 && self.get_entity(victim_id).is_some() {
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
-        }
-        self.terminate_accepted_empty_damage(
-            sim,
-            assets,
-            active_scripts,
-            victim_id,
-            seq_id,
-            elem_idx,
-        )
     }
 }
 
@@ -1663,15 +1534,6 @@ mod shield_order_tests {
                 .sequence_manager
                 .get_element(sequence_id, 0)
                 .unwrap()
-                .state,
-            SequenceState::InProgress
-        );
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(sequence_id, 0)
-                .unwrap()
                 .orders
                 .iter()
                 .map(|order| order.order_type)
@@ -1729,7 +1591,6 @@ mod shield_order_tests {
             .sequence_manager
             .get_element(sequence_id, 0)
             .unwrap();
-        assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(
             element
                 .orders

@@ -790,7 +790,7 @@ pub struct SideEffects {
     pub pending_mark_pc_ids: Vec<crate::element::EntityId>,
     /// Deferred patch-effect background decal inserts and
     /// removals (`RestoreBackground`).  Produced by
-    /// `process_patch_effects`; drained host-side where
+    /// patch transitions; drained host-side where
     /// renderer-owned sprite textures are available (see
     /// `robin_rs::blit_to_map`).
     pub bg_blits: Vec<super::PendingBgBlit>,

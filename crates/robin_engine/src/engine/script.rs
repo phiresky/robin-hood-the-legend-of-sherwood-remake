@@ -249,10 +249,9 @@ impl EngineInner {
                 return Ok(1);
             }
             for index in recorded {
-                let effects = self.script_domains.interactables.patches[index].apply();
                 let index = crate::patch::PatchIndex::new(index as u32)
                     .expect("recorded target patch index exceeds patch handle range");
-                self.process_patch_effects(sim, assets, index, effects);
+                self.apply_patch(sim, assets, index);
             }
             return Ok(1);
         }
@@ -2078,18 +2077,11 @@ impl EngineInner {
                         }
                     }
                     crate::natives::WorldNativeCommand::ApplyPatch { patch_index, reset } => {
-                        let patch = self
-                            .script_domains
-                            .interactables
-                            .patches
-                            .get_mut(usize::from(patch_index))
-                            .expect("validated native patch");
-                        let effects = if reset {
-                            patch.force_reset()
+                        if reset {
+                            self.reset_patch(sim, assets, patch_index);
                         } else {
-                            patch.apply()
-                        };
-                        self.process_patch_effects(sim, assets, patch_index, effects);
+                            self.apply_patch(sim, assets, patch_index);
+                        }
                     }
                     crate::natives::WorldNativeCommand::PutActorInBuilding { actor, building } => {
                         self.put_actor_in_building(actor, building);

@@ -3,7 +3,6 @@ use crate::element::{
     ActorData, ActorPc, ActorSoldier, AiBrain, Command, ElementData, ElementKind, Entity,
     HumanData, PcData, Posture, SoldierData,
 };
-use crate::movement::ActiveMovement;
 use crate::position_interface::SectorHandle;
 use crate::sequence::{SequenceElementData, SequenceState};
 
@@ -491,7 +490,7 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
             .unwrap()
             .actor_data_mut()
             .unwrap();
-        actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
         actor.installed_order = Some(crate::element::InstalledActorOrder {
             order_id,
             order_type: OrderType::TransitionRunningUprightWaitingUpright,
@@ -1204,7 +1203,7 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
             .unwrap()
             .actor_data_mut()
             .unwrap();
-        actor.active_movement = ActiveMovement::new(seek_seq, 0);
+
         actor.seek_target = Some(target);
         actor.seek_distance = 10.0;
     }
@@ -1246,12 +1245,6 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         .unwrap()
         .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(pass_seq, 0);
 
     engine.apply_seek_refresh(
         sim,
@@ -1357,7 +1350,7 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         let owner_entity = engine.get_entity_mut(owner).unwrap();
         owner_entity.element_data_mut().sprite.last_motion_state = Some(stale_sprite_motion);
         let actor = owner_entity.actor_data_mut().unwrap();
-        actor.active_movement = ActiveMovement::new(seek_seq, 0);
+
         actor.seek_target = Some(target);
         actor.seek_distance = 10.0;
         actor.seek_refresh_wait = 0;
@@ -1528,7 +1521,7 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
             .unwrap()
             .actor_data_mut()
             .unwrap();
-        actor.active_movement = ActiveMovement::new(seek_seq, 0);
+
         actor.seek_refresh_wait = 0;
         actor.last_seek_target_position = MapPoint::ZERO;
     }
@@ -1609,7 +1602,7 @@ fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
             .expect("owner")
             .actor_data_mut()
             .expect("owner is an actor");
-        actor.active_movement = ActiveMovement::new(seek_seq, 0);
+
         actor.seek_target = Some(actor_target);
         actor.seek_distance = 10.0;
         actor.seek_refresh_wait = 0;
@@ -1708,7 +1701,7 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
             .expect("owner")
             .actor_data_mut()
             .expect("owner is an actor");
-        actor.active_movement = ActiveMovement::new(seek_seq, 0);
+
         actor.seek_target = Some(target);
         actor.seek_refresh_wait = 0;
         actor.seek_distance = 10.0;
@@ -1776,7 +1769,7 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
     engine.orders.sequence_manager.rebuild_indices();
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(seek_seq, 0);
+
         entity.position_iface_mut().set_map_goal(stale_goal);
     }
 
@@ -1802,15 +1795,6 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
             .map_goal(),
         MapPoint::ZERO,
         "Original's synchronous selected-Seek condolence clears the old sprite goal"
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_movement,
-        ActiveMovement::none()
     );
     assert_eq!(
         engine

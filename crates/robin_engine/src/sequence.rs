@@ -535,7 +535,6 @@ impl RecordingSession {
 pub enum Field {
     Direction,
     Event,
-    RetainedMovementGoal,
     Timer,
     Message,
     MessageArgument,
@@ -583,17 +582,13 @@ pub enum Field {
 }
 
 impl Field {
-    /// Discriminant used by the original game's field enumeration. Rust's
-    /// `RetainedMovementGoal` is an engine cache with no original-game property
-    /// entry, so callers must handle it separately instead of shifting every
-    /// subsequent field ordinal.
+    /// Discriminant used by the serialized command-field enumeration.
     #[doc(hidden)]
     pub(crate) fn original_ordinal(self) -> Option<u32> {
         use Field::*;
         Some(match self {
             Direction => 0,
             Event => 1,
-            RetainedMovementGoal => return None,
             Timer => 2,
             Message => 3,
             MessageArgument => 4,
@@ -1031,11 +1026,6 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
     /// appended; standard sequence-order teardown decrements it.
     pub num_transition_orders: usize,
 
-    /// Goal cached from a selected movement while this replacement waits for
-    /// pathfinding. Used to reproduce Original's select-new-before-condoling-
-    /// old movement handoff.
-    pub retained_movement_goal: Option<crate::coordinates::MapPoint>,
-
     /// Replay-only authoritative gate-search result retained until a point
     /// Seek reaches its cross-sector expansion boundary.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -1113,7 +1103,6 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             posture_after_transition,
             action_state_after_transition,
             num_transition_orders,
-            retained_movement_goal,
             recorded_gate_path,
             point_seek_route_provenance,
             orders,
@@ -1135,7 +1124,6 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             posture_after_transition,
             action_state_after_transition,
             num_transition_orders,
-            retained_movement_goal,
             recorded_gate_path,
             point_seek_route_provenance,
             orders,
@@ -1234,7 +1222,6 @@ impl SequenceElement {
             posture_after_transition: Posture::default(),
             action_state_after_transition: ActionState::default(),
             num_transition_orders: 0,
-            retained_movement_goal: None,
             recorded_gate_path: None,
             point_seek_route_provenance: PointSeekRouteProvenance::Live,
             orders: VecDeque::new(),
@@ -1334,17 +1321,6 @@ impl SequenceElement {
                 properties.insert(field, value);
             }
             _ => panic!("set_property called on non-generic element"),
-        }
-    }
-
-    /// Drop a property from a generic element, if present.
-    ///
-    /// Only engine caches are ever removed — [`Field::RetainedMovementGoal`]
-    /// is the sole such field. Authored command properties are written once
-    /// and read for the element's whole life.
-    pub fn remove_property(&mut self, field: Field) {
-        if let SequenceElementData::Generic { properties } = &mut self.data {
-            properties.remove(&field);
         }
     }
 
@@ -2317,14 +2293,6 @@ pub struct StateChangeEffects {
     pub increment_in_progress: bool,
     /// Whether elements_in_progress should be decremented.
     pub decrement_in_progress: bool,
-    /// Which element transitioned *into* `InProgress` plus its owner,
-    /// if any.  Used by `SequenceManager::process_effects` to maintain
-    /// `actor_in_progress`. Carried explicitly because some call paths
-    /// (e.g. `stop_element` recursion) mutate a different element than
-    /// the caller passed in.
-    pub entered_in_progress: Option<(usize, EntityId)>,
-    /// Mirror of `entered_in_progress` for `InProgress → *` exits.
-    pub left_in_progress: Option<(usize, EntityId)>,
     /// Element state transition for the actor-live index.  Live here
     /// means Todo / InProgress / Postponed: any element that should
     /// prevent the engine from synthesizing an idle Wait for the owner.
@@ -2359,8 +2327,6 @@ impl Sequence {
             condolation: None,
             increment_in_progress: false,
             decrement_in_progress: false,
-            entered_in_progress: None,
-            left_in_progress: None,
             actor_live_transition: None,
         };
 
@@ -2376,17 +2342,11 @@ impl Sequence {
             effects.actor_live_transition = Some((elem_idx, owner, old_state, new_state));
         }
 
-        // Track in-progress count and — for `SequenceManager`'s actor
-        // → refs map — which specific element's state changed plus its
-        // owner.  (The `elem_idx` passed in here is what actually moved;
-        // outer callers can have a different "driving" elem_idx when
-        // the cascade lands on a sibling.)
+        // Track the sequence's count of running elements.
         if new_state == SequenceState::InProgress {
             effects.increment_in_progress = true;
-            effects.entered_in_progress = self.elements[elem_idx].owner.map(|o| (elem_idx, o));
         } else if old_state == SequenceState::InProgress {
             effects.decrement_in_progress = true;
-            effects.left_in_progress = self.elements[elem_idx].owner.map(|o| (elem_idx, o));
         }
 
         match new_state {
@@ -2783,7 +2743,7 @@ pub struct SequenceManager {
     /// insertion order. `IndexMap` preserves that scan order while retaining
     /// efficient ID lookup, and cleanup does not change any stored ID.
     /// Every `SequenceId` stored elsewhere (in
-    /// `elements_to_go`, `actor_in_progress`, `cross_postponed`,
+    /// `elements_to_go`, `actor_live`, `cross_postponed`,
     /// `post_seek_sequence`, etc.) stays valid across cleanup.
     ///
     /// Fresh sequences normally have monotonic IDs, but loaded Original
@@ -2801,10 +2761,6 @@ pub struct SequenceManager {
     #[serde(skip)]
     postpone_tail_cache:
         BTreeMap<EntityId, BTreeMap<(SequenceElementRef, SequencePriority), PostponeTailSummary>>,
-
-    /// Actor → every in-progress element, for parallel graph queries.
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    actor_in_progress: BTreeMap<EntityId, BTreeSet<SequenceElementRef>>,
 
     /// Deferred queue of elements to start. Processed in `hourglass()`.
     /// Each entry is `(sequence id, element index within that sequence)`.
@@ -2837,7 +2793,6 @@ impl SequenceManager {
             sequences: _,
             actor_live: _,
             postpone_tail_cache: _,
-            actor_in_progress: _,
             elements_to_go: _,
             next_sequence_id: _,
             next_element_id: _,
@@ -2847,7 +2802,6 @@ impl SequenceManager {
             sequences: value.sequences.clone(),
             postpone_tail_cache: BTreeMap::new(),
             actor_live: value.actor_live.clone(),
-            actor_in_progress: value.actor_in_progress.clone(),
             elements_to_go: value.elements_to_go.clone(),
             next_sequence_id: value.next_sequence_id,
             next_element_id: value.next_element_id,

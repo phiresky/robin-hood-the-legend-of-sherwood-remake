@@ -337,12 +337,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
@@ -475,12 +469,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
@@ -610,12 +598,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         // A short perpendicular bond through the midpoint is crossed only
         // by the first start->goal substep. The control translates that
@@ -988,12 +970,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
 
@@ -1443,11 +1419,15 @@ mod suite {
     }
 
     #[test]
-    fn direct_move_keeps_instruction_boundary_extraction() {
+    fn direct_move_translation_extracts_before_instruction_acceptance() {
         let (before, after, state, _, _, _, _) =
             dispatch_instruction_extraction_fixture(Command::Move, true, false);
         assert_ne!(after, before);
-        assert_eq!(state, SequenceState::InProgress);
+        assert_eq!(
+            state,
+            SequenceState::Todo,
+            "translation extracts the actor but leaves acceptance to the instruction boundary"
+        );
     }
 
     #[test]

@@ -120,7 +120,7 @@ fn straight_strike_range_uses_stored_world_position() {
 }
 
 #[test]
-fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
+fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_pc(
         WorldPoint3D::default(),
@@ -201,7 +201,11 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         .sequence_manager
         .get_element(sequence, 0)
         .unwrap();
-    assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+    assert_eq!(
+        element.state,
+        crate::sequence::SequenceState::Todo,
+        "strike translation builds the order before instruction acceptance"
+    );
     let order = element.current_order().unwrap();
     assert_eq!(order.order_type, OrderType::StrikingStraightSword);
     assert_eq!(order.antagonist, Some(target));

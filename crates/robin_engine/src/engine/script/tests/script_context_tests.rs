@@ -1288,21 +1288,11 @@ fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
         });
     let patch_index = crate::patch::PatchIndex::new(0).expect("zero is a valid patch index");
 
-    engine.process_patch_effects(
-        sim,
-        &LevelAssets::default(),
-        patch_index,
-        vec![crate::patch::PatchEffect::SwapBackground { applied: true }],
-    );
+    engine.apply_patch(sim, &LevelAssets::default(), patch_index);
     assert!(engine.feedback.pending_side_effects.invalidate_background);
 
     engine.feedback.pending_side_effects.invalidate_background = false;
-    engine.process_patch_effects(
-        sim,
-        &LevelAssets::default(),
-        patch_index,
-        vec![crate::patch::PatchEffect::RestoreBackground],
-    );
+    engine.reset_patch(sim, &LevelAssets::default(), patch_index);
     assert!(engine.feedback.pending_side_effects.invalidate_background);
 }
 

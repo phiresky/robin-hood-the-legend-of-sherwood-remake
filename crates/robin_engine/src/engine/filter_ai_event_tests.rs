@@ -1788,6 +1788,13 @@ fn install_test_wait_timer(
 ) -> crate::sequence::SequenceId {
     use crate::sequence::{Field, FieldValue};
 
+    // Begin in the idle state so this fixture isolates timer countdown from
+    // the separate Waiting-to-Bored transition order prefix.
+    engine
+        .world
+        .entities
+        .expect_actor_data_mut(actor, format_args!("timer fixture"))
+        .action_state = crate::element::ActionState::Bored;
     let mut element = crate::sequence::SequenceElement::new_generic(
         1,
         crate::element::Command::WaitTimer,
@@ -1799,13 +1806,12 @@ fn install_test_wait_timer(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.dispatch_wait_command(
+    engine.select_sequence_element(actor, None);
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         actor,
-        crate::element::Command::WaitTimer,
         sequence,
         0,
     );
@@ -3464,6 +3470,11 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
+    engine
+        .world
+        .entities
+        .expect_actor_data_mut(actor, format_args!("timer fixture"))
+        .action_state = crate::element::ActionState::Bored;
     let assets = LevelAssets::new();
     bind_test_actor_animations(
         &mut engine,
@@ -3527,13 +3538,12 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.select_sequence_element(actor, Some((sequence, 0)));
-            engine.dispatch_wait_command(
+            engine.select_sequence_element(actor, None);
+            engine.instruct_owner(
                 &crate::sim_rng::test_context(),
                 &assets,
                 &mut Vec::new(),
                 actor,
-                crate::element::Command::WaitTimer,
                 sequence,
                 0,
             );
@@ -3583,6 +3593,11 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
         };
         let assets = LevelAssets::new();
         for actor in [installer, target] {
+            engine
+                .world
+                .entities
+                .expect_actor_data_mut(actor, format_args!("timer fixture"))
+                .action_state = crate::element::ActionState::Bored;
             bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
             install_test_action(
                 &mut engine,
@@ -3613,13 +3628,12 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                     .orders
                     .sequence_manager
                     .start_sequence_level(sequence);
-                engine.select_sequence_element(target, Some((sequence, 0)));
-                engine.dispatch_wait_command(
+                engine.select_sequence_element(target, None);
+                engine.instruct_owner(
                     &crate::sim_rng::test_context(),
                     &assets,
                     &mut Vec::new(),
                     target,
-                    crate::element::Command::WaitTimer,
                     sequence,
                     0,
                 );

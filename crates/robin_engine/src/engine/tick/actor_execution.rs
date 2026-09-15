@@ -331,16 +331,17 @@ impl EngineInner {
             // If the door pass is done (no more steps), mirror the
             // arrival teardown performed by the movement tick.
             let arrived = if let DoorPassAdvance::Done { completed } = &adv {
-                let am = actor.active_movement;
-                actor.clear_path();
+                let selected = actor.selected_sequence_element;
                 actor.action_state = if actor.action_state.is_sword() {
                     crate::element::ActionState::WaitingSword
                 } else {
                     crate::element::ActionState::Waiting
                 };
-                actor.active_movement.clear();
                 actor.active_door_pass = None;
-                Some((am, *completed))
+                Some((
+                    selected.expect("completed door pass has a selected instruction"),
+                    *completed,
+                ))
             } else {
                 None
             };
@@ -428,13 +429,14 @@ impl EngineInner {
         // The last-real-action check suppresses the event while AssertPosition /
         // Move followers remain. Dispatching it manually here bypassed
         // that completion gate for translated door routes.
-        if let Some(am) = arrived_movement {
-            let seq_id = am.sequence_id.unwrap_or_else(|| {
-                    panic!(
-                        "completed transition-resumed PassDoor for {entity_id:?} has no sequence identity"
-                    )
-                });
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, am.element_index);
+        if let Some(selected) = arrived_movement {
+            self.element_terminated(
+                sim,
+                assets,
+                &mut Vec::new(),
+                selected.sequence_id,
+                selected.element_index,
+            );
         }
 
         let _ = advance;

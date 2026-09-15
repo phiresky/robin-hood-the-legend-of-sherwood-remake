@@ -4,9 +4,7 @@
 //! sets of masks, obstacles, sectors, and lines when triggered (e.g. by a
 //! trap or player action).
 //!
-//! EngineInner side-effects (swapping masks, background bitmaps, pathfinder
-//! obstacles, FX animations) are returned as [`PatchEffect`] values for
-//! the caller to execute.
+//! The engine executes transitions directly against this canonical state.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,32 +20,6 @@ crate::bitcode_adapters::define_index_newtype!(
 /// would be an absurd patch count, so forbidding it costs nothing.
 pub struct PatchIndex(pub nonmax::NonMaxU32), u32
 );
-
-// ---------------------------------------------------------------------------
-// PatchAnimation
-// ---------------------------------------------------------------------------
-
-/// Which animation phase a patch FX element should play.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum PatchAnimation {
-    /// Idle loop shown before the patch is triggered.
-    Initial,
-    /// Played during the apply/unapply transition.
-    Transition,
-    /// Shown after the patch has been applied.
-    Final,
-}
 
 // ---------------------------------------------------------------------------
 // PatchState
@@ -126,42 +98,6 @@ pub struct AnimationFlags {
 pub struct OccupantId(pub u32);
 
 // ---------------------------------------------------------------------------
-// PatchEffect
-// ---------------------------------------------------------------------------
-
-/// Side effects produced by patch state transitions.
-///
-/// The engine must execute these after the patch's state has been updated.
-/// This decouples the state machine from the rendering, pathfinder, and
-/// animation systems.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum PatchEffect {
-    /// Swap masks, obstacles, sectors, and lines.
-    SwapObjects { applied: bool, forced_reset: bool },
-    /// Swap the background bitmap.
-    SwapBackground { applied: bool },
-    /// Toggle door rights for connected doors.
-    SwapDoors,
-    /// Start a specific animation on the FX element.
-    /// `reverse`: if true, start at the last frame and play backwards
-    /// (used for unapply transition).
-    StartAnimation { anim: PatchAnimation, reverse: bool },
-    /// Deactivate the FX animation element.
-    DeactivateAnimation,
-    /// Restore the background from the FX element's saved data.
-    RestoreBackground,
-}
-
-// ---------------------------------------------------------------------------
 // Patch
 // ---------------------------------------------------------------------------
 
@@ -234,7 +170,7 @@ pub struct Patch {
     pub waypoint: MapPoint,
     /// Indices of doors controlled by this patch (into the canonical
     /// doors array). Mirrors the original game's door list, populated
-    /// only for `triggers_door` patches.  When `PatchEffect::SwapDoors`
+    /// only for `triggers_door` patches. When door rights swap
     /// fires inside `apply_final`, `swap_rights_patch()` is called on
     /// each door in this list.  `door_triggered`-style links are stored
     /// on the *door* side as `Door::patch_index` instead.
@@ -422,145 +358,6 @@ impl Patch {
     pub fn any_occupant(&self) -> Option<OccupantId> {
         self.occupants.first().copied()
     }
-
-    // -- State transitions ---------------------------------------------------
-
-    /// Toggle the patch (apply if unapplied, unapply if applied).
-    ///
-    /// Returns the engine side-effects to execute.
-    pub fn apply(&mut self) -> Vec<PatchEffect> {
-        let mut effects = Vec::new();
-
-        // If mid-transition, finalize the current transition first
-        if self.animated && self.in_transition {
-            effects.push(PatchEffect::DeactivateAnimation);
-            self.in_transition = false;
-            effects.extend(self.apply_final(false));
-        }
-
-        if self.applied {
-            if !self.definitive {
-                effects.push(PatchEffect::SwapBackground { applied: false });
-
-                if self.animation_flags.transition_valid {
-                    // Unapplying: play transition in reverse.
-                    effects.push(PatchEffect::StartAnimation {
-                        anim: PatchAnimation::Transition,
-                        reverse: true,
-                    });
-                    self.in_transition = true;
-                } else {
-                    effects.push(PatchEffect::DeactivateAnimation);
-                    effects.extend(self.apply_final(false));
-                }
-            }
-        } else if self.animation_flags.transition_valid {
-            // Applying: play transition forward.
-            effects.push(PatchEffect::StartAnimation {
-                anim: PatchAnimation::Transition,
-                reverse: false,
-            });
-            self.in_transition = true;
-        } else {
-            effects.push(PatchEffect::DeactivateAnimation);
-            effects.extend(self.apply_final(false));
-        }
-
-        effects
-    }
-
-    /// Finalize the patch application/unapplication.
-    ///
-    /// Called when a transition animation completes, or immediately if no
-    /// transition animation exists.
-    ///
-    /// Does **not** clear `in_transition` — the caller (the animation
-    /// system) is responsible for that flag.
-    pub fn apply_final(&mut self, forced_reset: bool) -> Vec<PatchEffect> {
-        let mut effects = Vec::new();
-
-        if self.definitive {
-            self.active = false;
-        }
-
-        effects.push(PatchEffect::SwapDoors);
-
-        if self.applied {
-            if !self.definitive {
-                self.applied = false;
-
-                if self.animation_flags.start_valid {
-                    effects.push(PatchEffect::StartAnimation {
-                        anim: PatchAnimation::Initial,
-                        reverse: false,
-                    });
-                } else {
-                    effects.push(PatchEffect::DeactivateAnimation);
-                }
-
-                effects.push(PatchEffect::SwapObjects {
-                    applied: false,
-                    forced_reset,
-                });
-            }
-        } else {
-            self.applied = true;
-
-            effects.push(PatchEffect::SwapBackground { applied: true });
-            effects.push(PatchEffect::SwapObjects {
-                applied: true,
-                forced_reset,
-            });
-
-            if self.animation_flags.end_valid {
-                effects.push(PatchEffect::StartAnimation {
-                    anim: PatchAnimation::Final,
-                    reverse: false,
-                });
-            } else {
-                effects.push(PatchEffect::DeactivateAnimation);
-            }
-        }
-
-        effects
-    }
-
-    /// Force-reset the patch to its initial (unapplied) state.
-    pub fn force_reset(&mut self) -> Vec<PatchEffect> {
-        let mut effects = Vec::new();
-
-        if self.applied {
-            effects.push(PatchEffect::SwapBackground { applied: false });
-            if !self.in_transition {
-                effects.push(PatchEffect::SwapDoors);
-            }
-        }
-
-        self.applied = false;
-        self.active = self.initially_active;
-
-        if self.animated {
-            effects.push(PatchEffect::RestoreBackground);
-
-            if self.animation_flags.start_valid {
-                effects.push(PatchEffect::StartAnimation {
-                    anim: PatchAnimation::Initial,
-                    reverse: false,
-                });
-            } else {
-                effects.push(PatchEffect::DeactivateAnimation);
-            }
-
-            self.in_transition = false;
-        }
-
-        effects.push(PatchEffect::SwapObjects {
-            applied: false,
-            forced_reset: true,
-        });
-
-        effects
-    }
 }
 
 #[cfg(test)]
@@ -665,100 +462,6 @@ mod tests {
     }
 
     #[test]
-    fn apply_no_transition_animation() {
-        let mut p = active_patch();
-        let effects = p.apply();
-        assert!(p.is_applied());
-        assert!(!p.is_in_transition());
-        assert!(effects.contains(&PatchEffect::SwapDoors));
-        assert!(effects.contains(&PatchEffect::SwapObjects {
-            applied: true,
-            forced_reset: false,
-        }));
-    }
-
-    #[test]
-    fn apply_with_transition_animation() {
-        let mut p = active_patch_with_animations();
-        let effects = p.apply();
-        assert!(!p.is_applied());
-        assert!(p.is_in_transition());
-        assert!(effects.contains(&PatchEffect::StartAnimation {
-            anim: PatchAnimation::Transition,
-            reverse: false,
-        }));
-    }
-
-    #[test]
-    fn apply_final_completes_forward() {
-        let mut p = active_patch_with_animations();
-        p.in_transition = true;
-        let effects = p.apply_final(false);
-        assert!(p.is_applied());
-        assert!(effects.contains(&PatchEffect::SwapDoors));
-        assert!(effects.contains(&PatchEffect::StartAnimation {
-            anim: PatchAnimation::Final,
-            reverse: false,
-        }));
-    }
-
-    #[test]
-    fn apply_toggle_no_anim() {
-        let mut p = active_patch();
-        p.apply();
-        assert!(p.is_applied());
-        // Toggle back
-        let effects = p.apply();
-        assert!(!p.is_applied());
-        assert!(effects.contains(&PatchEffect::SwapObjects {
-            applied: false,
-            forced_reset: false,
-        }));
-    }
-
-    #[test]
-    fn opted_in_definitive_animation_reverses_terrain_and_doors_repeatedly() {
-        let mut patch = active_patch_with_animations();
-        patch.definitive = true;
-        patch.configure_background_reversal(true);
-        patch.repeat_activation = Some((123, "ActivatedBySword".into()));
-        for _ in 0..2 {
-            assert!(patch.apply().contains(&PatchEffect::StartAnimation {
-                anim: PatchAnimation::Transition,
-                reverse: false,
-            }));
-            patch.in_transition = false;
-            let forward = patch.apply_final(false);
-            assert!(patch.active && patch.applied);
-            assert!(forward.contains(&PatchEffect::SwapObjects {
-                applied: true,
-                forced_reset: false
-            }));
-            assert!(forward.contains(&PatchEffect::SwapDoors));
-            // Save/load between clicks must retain the resolved policy.
-            patch = serde_json::from_str(&serde_json::to_string(&patch).unwrap()).unwrap();
-            assert_eq!(
-                patch.repeat_activation,
-                Some((123, "ActivatedBySword".into()))
-            );
-            let reverse = patch.apply();
-            assert!(reverse.contains(&PatchEffect::SwapBackground { applied: false }));
-            assert!(reverse.contains(&PatchEffect::StartAnimation {
-                anim: PatchAnimation::Transition,
-                reverse: true,
-            }));
-            patch.in_transition = false;
-            let reversed = patch.apply_final(false);
-            assert!(patch.active && !patch.applied);
-            assert!(reversed.contains(&PatchEffect::SwapObjects {
-                applied: false,
-                forced_reset: false
-            }));
-            assert!(reversed.contains(&PatchEffect::SwapDoors));
-        }
-    }
-
-    #[test]
     fn reversal_opt_out_and_nonanimated_patches_keep_definitive_policy() {
         let mut patch = active_patch_with_animations();
         patch.definitive = true;
@@ -767,69 +470,6 @@ mod tests {
         patch.animation_flags.transition_valid = false;
         patch.configure_background_reversal(true);
         assert!(patch.definitive);
-    }
-
-    #[test]
-    fn definitive_patch_cannot_unapply() {
-        let mut p = active_patch();
-        p.definitive = true;
-        p.apply();
-        assert!(p.is_applied());
-        assert!(!p.is_active()); // definitive → deactivated after apply
-        // Trying to toggle: applied && definitive → nothing happens
-        let effects = p.apply();
-        assert!(p.is_applied());
-        assert!(effects.is_empty());
-    }
-
-    #[test]
-    fn force_reset_from_applied() {
-        let mut p = active_patch();
-        p.apply();
-        assert!(p.is_applied());
-        let effects = p.force_reset();
-        assert!(!p.is_applied());
-        assert!(p.is_active()); // restored to initially_active
-        assert!(!p.is_in_transition());
-        assert!(effects.contains(&PatchEffect::SwapObjects {
-            applied: false,
-            forced_reset: true,
-        }));
-    }
-
-    #[test]
-    fn force_reset_during_transition_skips_door_swap() {
-        let mut p = active_patch_with_animations();
-        p.apply();
-        assert!(p.is_in_transition());
-        let effects = p.force_reset();
-        assert!(!p.is_in_transition());
-        assert!(!p.is_applied());
-        // Doors are only swapped when applied && !in_transition.
-        // Here applied was false (transition not finalized), so no SwapDoors at all.
-        assert!(!effects.contains(&PatchEffect::SwapDoors));
-    }
-
-    #[test]
-    fn apply_during_transition_finalizes_then_reverses() {
-        let mut p = active_patch_with_animations();
-        // Start forward transition
-        p.apply();
-        assert!(p.is_in_transition());
-        assert!(!p.is_applied());
-
-        // Apply again during transition → finalize forward, then start reverse
-        let effects = p.apply();
-        // After finalization: applied=true. Then reverse transition starts.
-        assert!(p.is_in_transition());
-        // The finalization produced SwapDoors + SwapBackground + SwapObjects + StartAnimation(Final)
-        // Then reverse produced SwapBackground{false} + StartAnimation(Transition)
-        assert!(effects.contains(&PatchEffect::SwapDoors));
-        // Reverse transition since we're unapplying from applied state
-        assert!(effects.contains(&PatchEffect::StartAnimation {
-            anim: PatchAnimation::Transition,
-            reverse: true,
-        }));
     }
 
     #[test]

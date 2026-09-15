@@ -1022,16 +1022,13 @@ impl EngineInner {
                 let is_beggar = matches!(entity, Entity::Civilian(c)
                     if c.civilian.cached_civilian_type
                         == crate::profiles::CivilianType::Beggar);
-                // Reject the Use focus while the beggar is playing
-                // one of the purse-chain animations (receiving purse,
-                // waiting with purse, or the transition back). The
-                // chain is driven by `AbilityKind::ReceivePurse`, so
-                // we reject the focus whenever that ability is active
-                // — prevents a second click from dispatching Pay (and
-                // deducting salary) while the beggar is mid-chain.
-                let beggar_mid_chain = entity.actor_data().is_some_and(|a| {
-                    a.active_ability.kind == Some(crate::movement::AbilityKind::ReceivePurse)
-                });
+                // Focus follows the sprite's last played purse animation.
+                let beggar_mid_chain = matches!(
+                    entity.sprite().last_action,
+                    crate::order::OrderType::ReceivingPurse
+                        | crate::order::OrderType::WaitingWithPurse
+                        | crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright
+                );
                 if is_beggar
                     && !is_dead
                     && !is_unconscious

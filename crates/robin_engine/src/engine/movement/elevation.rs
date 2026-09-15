@@ -798,7 +798,7 @@ impl EngineInner {
     /// the PC just entered the apply polygon, `outside` means the PC
     /// just left it.  Patch state machine, FX entity, sight obstacles,
     /// grid sectors, and door rights are updated via
-    /// `process_patch_effects`.
+    /// `apply_patch`.
     pub(in crate::engine) fn dispatch_patch_line_crossing(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -854,7 +854,7 @@ impl EngineInner {
         };
         let inside_apply = apply_sector.contains_point(new_pos);
 
-        let effects = {
+        let apply = {
             let Some(patch) = self
                 .script_domains
                 .interactables
@@ -868,26 +868,18 @@ impl EngineInner {
                 if let Some(carried) = carried_occupant {
                     patch.enter(carried);
                 }
-                if !patch.is_applied() {
-                    patch.apply()
-                } else {
-                    Vec::new()
-                }
+                !patch.is_applied()
             } else {
                 patch.leave(occupant);
                 if let Some(carried) = carried_occupant {
                     patch.leave(carried);
                 }
-                if patch.is_applied() && patch.any_occupant().is_none() {
-                    patch.apply()
-                } else {
-                    Vec::new()
-                }
+                patch.is_applied() && patch.any_occupant().is_none()
             }
         };
 
-        if !effects.is_empty() {
-            self.process_patch_effects(sim, assets, patch_index, effects);
+        if apply {
+            self.apply_patch(sim, assets, patch_index);
         }
     }
 

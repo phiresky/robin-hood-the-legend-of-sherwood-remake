@@ -150,7 +150,6 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
                 order_id: old_order,
                 order_type: OrderType::WalkingWithSword,
             });
-            actor.active_movement = crate::movement::ActiveMovement::new(old_sequence, 0);
         }
 
         // The selected request remains F while its installed replacement

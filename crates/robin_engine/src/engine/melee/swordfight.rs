@@ -1783,18 +1783,9 @@ impl EngineInner {
             pc.portrait.burned = true;
             pc.portrait.open = false;
         }
-        // Stop derived live execution state.  Do not rewrite the actor's
-        // action state here: the original game's player-character coma
-        // branch applies concussion (which exits the swordfight) and
-        // lying posture, but deliberately preserves the interrupted
-        // action state.  The next damage/wait animation is selected from
-        // that state (for example WAITING_SWORD chooses the sword-specific
-        // unconscious animation).
-        if let Some(entity) = self.world.entities.get_mut(pc_id)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.clear_path();
-        }
+        // Preserve the interrupted action state when leaving the swordfight.
+        // The next damage/wait animation uses it to choose the appropriate
+        // unconscious animation.
         self.quit_swordfight(sim, assets, pc_id);
 
         // Add unconscious star titbit (event-driven creation).

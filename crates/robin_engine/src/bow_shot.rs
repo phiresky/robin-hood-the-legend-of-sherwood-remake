@@ -6,22 +6,16 @@
 //!    `Command::ShootBow` sequence element is dispatched to a shooter.
 //!    It sets the shooter into the appropriate aiming action state,
 //!    pushes aim-transition and shoot orders onto the order queue,
-//!    and marks the `ActiveShot` in-progress.
+//!    on the sequence element.
 //!
-//! 2. [`tick_bow_shots`] runs every engine tick and, for each actor with an
-//!    [`ActiveShot`], drives the sprite through transition animations
-//!    and the shoot animation.  On the frame the shoot animation reports
-//!    [`SpriteMotionState::Done`], the tick returns a
-//!    [`ShotTickResult`] for each completed shot so the engine layer
-//!    can compute the trajectory and spawn the arrow.
-//!
-//! 3. The engine layer (`EngineInner::tick_bow_shots`) receives the result,
-//!    looks up the shooter's bow profile, rolls the hit chance,
+//! 2. The engine executes each actor's selected bow order directly,
+//!    including equip callbacks, arrow release, and order completion.
+//!    At release it looks up the shooter's bow profile, rolls the hit chance,
 //!    computes a ballistic trajectory via [`compute_initial_throw_velocity`]
 //!    and [`compute_trajectory_ballistic`], and spawns the arrow via
 //!    [`spawn_arrow`].
 //!
-//! 4. [`tick_arrows`] runs every engine tick and advances each arrow
+//! 3. [`tick_arrows`] runs every engine tick and advances each arrow
 //!    along its precomputed ballistic trajectory (popping waypoints
 //!    from the trajectory list, interpolating between them).  When the
 //!    arrow comes within [`HIT_DISTANCE`] of any human, or the
@@ -47,8 +41,7 @@ use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
     ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
-use crate::entities::{Entities, EntitySlots};
-use crate::movement::ActiveShot;
+use crate::entities::Entities;
 use crate::order::{Order, OrderType};
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::profiles::{Action, ProfileManager};
@@ -201,19 +194,6 @@ fn shoot_order_type_for_mode(mode: ShootMode, anonymous: bool) -> OrderType {
     }
 }
 
-/// Recover the authored shoot mode from a concrete shooting order. Used when
-/// rebuilding Rust's derived active-shot latch after loading an Original save.
-pub(crate) fn shoot_mode_for_order(order: OrderType) -> Option<ShootMode> {
-    match order {
-        OrderType::ShootingWithBow | OrderType::ShootingWithBowAnonymous => Some(ShootMode::Normal),
-        OrderType::ShootingWithBowUp | OrderType::ShootingWithBowUpAnonymous => {
-            Some(ShootMode::Long)
-        }
-        OrderType::ShootingWithBowLeaningOut => Some(ShootMode::Down),
-        _ => None,
-    }
-}
-
 /// The original game's bow-point calculation selects these non-anonymous
 /// animation ids for hotspot lookup even when the active shoot animation is
 /// an anonymous archer variant.
@@ -267,7 +247,7 @@ pub(crate) const ACTIVE_BOW_ORDERS: &[OrderType] = &[
     OrderType::TransitionUnequipBowAnonymous,
 ];
 
-fn is_shoot_order(ot: OrderType) -> bool {
+pub(crate) fn is_shoot_order(ot: OrderType) -> bool {
     matches!(
         ot,
         OrderType::ShootingWithBow
@@ -279,7 +259,7 @@ fn is_shoot_order(ot: OrderType) -> bool {
 }
 
 /// Whether this order type is a bow transition animation.
-fn is_bow_transition_order(ot: OrderType) -> bool {
+pub(crate) fn is_bow_transition_order(ot: OrderType) -> bool {
     matches!(
         ot,
         OrderType::TransitionEquipBow
@@ -303,14 +283,7 @@ pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
     ACTIVE_BOW_ORDERS.contains(&ot)
 }
 
-fn has_active_bow_order(element: &crate::sequence::SequenceElement) -> bool {
-    element
-        .orders
-        .iter()
-        .any(|order| is_active_bow_order(order.order_type))
-}
-
-fn apply_bow_transition_state_side_effect(
+pub(crate) fn apply_bow_transition_state_side_effect(
     entity: &mut Entity,
     order_type: OrderType,
     motion: SpriteMotionState,
@@ -471,7 +444,7 @@ fn aim_transition_orders(
     transitions
 }
 
-fn bow_target_ground_position(entity: &Entity) -> MapPoint {
+pub(crate) fn bow_target_ground_position(entity: &Entity) -> MapPoint {
     if entity.is_fx_target() {
         entity
             .compute_target_center()
@@ -509,31 +482,6 @@ pub enum BeginShotResult {
     Impossible,
 }
 
-/// Forget Rust's execution-side bow latch before retranslating the same
-/// postponed Original sequence element.
-///
-/// The original game stores the active shot entirely in the selected sequence element and
-/// its current order. When an injury postpones that element, resuming it calls
-/// instruction/translation again with no separate "shot already active" state.
-/// Rust needs the separate [`ActiveShot`] driver while an order is executing,
-/// but that driver must not reject re-instruction of its own postponed owner.
-pub(crate) fn clear_matching_retranslated_shot(
-    entities: &mut Entities,
-    owner: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
-) {
-    let actor = entities
-        .get_mut(owner)
-        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} disappeared"))
-        .actor_data_mut()
-        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} has no actor data"));
-    if actor.active_shot.sequence_id == Some(seq_id) && actor.active_shot.element_index == elem_idx
-    {
-        actor.active_shot.clear();
-    }
-}
-
 /// Begin a bow shot on behalf of a `Command::ShootBow` sequence element.
 ///
 /// Called from the engine's sequence-action dispatch when it sees a
@@ -547,7 +495,7 @@ pub(crate) fn clear_matching_retranslated_shot(
 /// to play the shoot animation; [`BeginShotResult::Impossible`] if the
 /// shooter or target is not in a valid state.
 pub fn begin_bow_shot(
-    entities: &mut Entities,
+    entities: &Entities,
     sequence_manager: &mut SequenceManager,
     shooter_id: EntityId,
     target_id: EntityId,
@@ -592,7 +540,7 @@ pub fn begin_bow_shot(
     };
 
     // Validate shooter.  Read posture before the mutable borrow.
-    let (shooter_valid, shooter_posture, current_state) = match entities.get(shooter_id) {
+    let (shooter_posture, current_state) = match entities.get(shooter_id) {
         Some(e) if e.is_human() && !e.is_dead() => {
             let posture = e.element_data().posture();
             let Some(actor) = e.actor_data() else {
@@ -602,25 +550,9 @@ pub fn begin_bow_shot(
                 );
                 return BeginShotResult::Impossible;
             };
-            if actor.active_shot.is_active() {
-                (false, posture, ActionState::Waiting)
-            } else {
-                (true, posture, actor.action_state)
-            }
+            (posture, actor.action_state)
         }
         _ => return BeginShotResult::Impossible,
-    };
-    if !shooter_valid {
-        return BeginShotResult::Impossible;
-    }
-
-    let shooter = match entities.get_mut(shooter_id) {
-        Some(e) => e,
-        None => panic!("validated bow shooter {shooter_id:?} disappeared before translation"),
-    };
-    let actor = match shooter.actor_data_mut() {
-        Some(a) => a,
-        None => panic!("validated bow shooter {shooter_id:?} lost actor data before translation"),
     };
 
     // The original game's shoot-bow translation chooses
@@ -653,20 +585,10 @@ pub fn begin_bow_shot(
     };
 
     let order_id = crate::order::alloc_order_id(next_order_id);
-    actor.active_shot = ActiveShot {
-        sequence_id: Some(seq_id),
-        element_index: elem_idx,
-        target: Some(target_id),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(desired_mode),
-    };
-    actor.clear_path();
 
     // Push aim-transition orders if needed.  Orders live on the owning
     // `SequenceElement.orders` — when the element is cancelled, its
     // orders go with it.
-    let _ = actor; // actor mutable borrow ends here; below we borrow sequence_manager instead
     let anonymous = shooter_posture == Posture::AnonymousArcher;
     let transitions = aim_transition_orders(action_state_after_transition, desired_mode, anonymous);
     for t in &transitions {
@@ -732,493 +654,6 @@ pub fn begin_bow_shot(
     }
 
     BeginShotResult::Started
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Per-frame bow-shot tick
-// ═══════════════════════════════════════════════════════════════════
-
-/// Per-actor outcome returned from the bow-shot tick.  The engine uses
-/// this to compute the trajectory, spawn the arrow, and notify the
-/// sequence manager *after* the mutable borrow on `entities` is released.
-pub struct ShotTickResult {
-    pub shooter: EntityId,
-    pub target: EntityId,
-    pub seq_id: SequenceId,
-    pub elem_idx: usize,
-    /// Shooter's 3D entity position (`.z` = ground elevation).
-    pub shooter_position: WorldPoint3D,
-    /// Target's 2D map position (for arrow direction / spawn).
-    pub target_pos: MapPoint,
-    /// Target's 3D belt point (for trajectory computation).
-    pub target_point: WorldPoint3D,
-    /// Shoot mode selected when the command was translated.
-    pub shoot_mode: ShootMode,
-    /// Shooter's facing direction (0–15) for bow-point computation.
-    pub shooter_direction: i16,
-    /// Projected sprite hand anchor point (sprite position + hotspot).
-    pub sprite_hand_point: MapPoint,
-    /// Target's forecasted movement vector for leading shots.
-    pub target_forecasted_movement: WorldVec3D,
-}
-
-struct PendingShotTickResult {
-    shooter: EntityId,
-    target: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
-    shooter_position: WorldPoint3D,
-    shoot_mode: ShootMode,
-    shooter_direction: i16,
-    sprite_hand_point: MapPoint,
-}
-
-#[derive(Default)]
-pub struct BowTickEvents {
-    pub fired: Vec<ShotTickResult>,
-    pub completed: Vec<(SequenceId, usize)>,
-    /// Non-script PC equip transitions that reached START while owned by the
-    /// specialized active-shot runner. The engine closes Original's
-    /// synchronous `MSG_SELECT_ACTION(BOW)` boundary for these owners.
-    pub pc_equip_actions: Vec<EntityId>,
-}
-
-/// Advance the shoot animation for every actor with an [`ActiveShot`].
-///
-/// Returns a list of results for actors whose shoot animation reached
-/// `MotionState::Done` this frame — the engine computes the trajectory,
-/// spawns an arrow, and notifies the sequence manager for each.  When
-/// the shoot animation completes the actor returns to the
-/// AimingWithBow action state.
-pub fn tick_bow_shots(
-    sim: &crate::sim_rng::SimulationContext,
-    entities: &mut Entities,
-    sequence_manager: &mut SequenceManager,
-) -> BowTickEvents {
-    tick_bow_shots_matching(sim, entities, sequence_manager, None, None, false)
-}
-
-pub fn tick_bow_shot_for_owner(
-    sim: &crate::sim_rng::SimulationContext,
-    entities: &mut Entities,
-    sequence_manager: &mut SequenceManager,
-    owner: EntityId,
-    expected_order_id: std::num::NonZeroU32,
-    sprite_frozen: bool,
-) -> BowTickEvents {
-    tick_bow_shots_matching(
-        sim,
-        entities,
-        sequence_manager,
-        Some(owner),
-        Some(expected_order_id),
-        sprite_frozen,
-    )
-}
-
-fn tick_bow_shots_matching(
-    sim: &crate::sim_rng::SimulationContext,
-    entities: &mut Entities,
-    sequence_manager: &mut SequenceManager,
-    only_owner: Option<EntityId>,
-    expected_order_id: Option<std::num::NonZeroU32>,
-    sprite_frozen: bool,
-) -> BowTickEvents {
-    let mut events = BowTickEvents::default();
-    let mut pending_fired = Vec::new();
-    let mut target_ground_positions = EntitySlots::filled(entities.len(), None);
-    let mut target_map_positions = EntitySlots::filled(entities.len(), None);
-    for (entity_id, entity) in entities.occupied() {
-        target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
-        target_map_positions[entity_id] = Some(entity.element_data().position_map());
-    }
-
-    for (actor_id, entity) in entities.actors_mut() {
-        let shooter_id: EntityId = actor_id.into();
-        if only_owner.is_some_and(|owner| owner != shooter_id) {
-            continue;
-        }
-        let actor = match entity.actor_data() {
-            Some(a) => a,
-            None => continue,
-        };
-        if !actor.active_shot.is_active() {
-            continue;
-        }
-        let shot = actor.active_shot;
-        let order_initialising = actor.execute_order_initialising;
-        let direction = entity.element_data().direction();
-        // Build 3D shooter position: X/Y from the live map position,
-        // Z from the position interface's elevation.
-        // The element_data().position field is a dead field; the live
-        // ground position is in position_map.
-        let elevation = entity.position_iface().get_elevation();
-        let shooter_position = WorldPoint3D {
-            x: entity.element_data().position_map().x,
-            y: entity.element_data().position_map().y,
-            z: elevation,
-        };
-
-        // Peek at the current order to determine what animation to drive.
-        // Orders live on the owning `SequenceElement.orders` (looked up via
-        // the `active_shot` handle), not `actor.order_queue`.
-        let (shot_seq_id, shot_elem_idx) = match (shot.sequence_id, shot.element_index) {
-            (Some(id), ix) => (id, ix),
-            _ => continue,
-        };
-        let (current_order_type, current_order_id, script_driven, bow_order_pending) =
-            match sequence_manager
-                .get_element(shot_seq_id, shot_elem_idx)
-                .and_then(|element| {
-                    element.current_order().map(|order| {
-                        (
-                            order.order_type,
-                            order.order_id,
-                            element.script_driven,
-                            has_active_bow_order(element),
-                        )
-                    })
-                }) {
-                Some((order_type, order_id, script_driven, bow_order_pending)) => {
-                    (order_type, Some(order_id), script_driven, bow_order_pending)
-                }
-                None => continue,
-            };
-        if expected_order_id.is_some() && expected_order_id != current_order_id {
-            continue;
-        }
-        if !is_active_bow_order(current_order_type) {
-            if bow_order_pending {
-                // The original game's shoot-bow translation appends bow orders after
-                // any pre-command setup transitions already owned by the
-                // same sequence element. The active shot has been
-                // registered, but the actor must finish those setup orders
-                // before the bow runner starts driving the shoot body.
-                continue;
-            }
-            tracing::debug!(
-                shooter = shooter_id.index(),
-                ?shot_seq_id,
-                shot_elem_idx,
-                ?current_order_type,
-                "Bow shot driver detached after sequence advanced past bow orders"
-            );
-            entity.actor_data_mut().unwrap().active_shot.clear();
-            continue;
-        }
-
-        let mut direction = direction;
-        let mut frame_progression = crate::sprite::FrameProgression::Default;
-        if is_shoot_order(current_order_type) {
-            // Original samples the live target only when the shooting order
-            // initializes. Translation and bow-preparation transitions retain
-            // the actor's old facing, and later target movement does not
-            // rewrite this shot's goal.
-            if order_initialising {
-                let target_id = shot.target.unwrap_or_else(|| {
-                    panic!("active bow shot for {shooter_id:?} has no target at initialization")
-                });
-                // The soldier override for a downward leaning-out shot uses
-                // map positions on both participants. Ordinary and high bow
-                // shots remain in the human arm, which uses ground position.
-                let leaning_out = current_order_type == OrderType::ShootingWithBowLeaningOut;
-                let target_pos = (if leaning_out {
-                    target_map_positions.get(target_id)
-                } else {
-                    target_ground_positions.get(target_id)
-                })
-                .and_then(|position| *position)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "active bow shot for {shooter_id:?} lost target {target_id:?} at initialization"
-                    )
-                });
-                let shooter_pos = if leaning_out {
-                    entity.element_data().position_map()
-                } else {
-                    let position = entity.element_data().position();
-                    MapPoint::new(position.x, position.y)
-                };
-                let dx = target_pos.x - shooter_pos.x;
-                let dy = target_pos.y - shooter_pos.y;
-                entity.element_data_mut().set_direction_goal(
-                    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-                );
-            }
-            if entity.element_data_mut().sprite.position_iface.turn() {
-                frame_progression = crate::sprite::FrameProgression::FrozenFirstFrame;
-            }
-            direction = entity.element_data().direction();
-        }
-        let Ok(dir_u16) = u16::try_from(direction) else {
-            tracing::warn!(
-                shooter = shooter_id.index(),
-                direction,
-                "Bow shot tick skipped: invalid shooter direction"
-            );
-            continue;
-        };
-
-        // Drive the current animation through the sprite.
-        //
-        // Bow shots have a different headless contract than every
-        // other animation site: the test in
-        // `tick_bow_shots_fires_arrow_and_returns_to_aiming` (and any
-        // future headless flow) expects each transition order to
-        // resolve immediately when no real sprite is bound, instead of
-        // staying in-progress forever.  `Sprite::perform_action`'s
-        // generic empty-conversion fallback returns `InProgress`
-        // (the right default for animation-tick callers, who can't
-        // mark an order Impossible while scripts are still loading);
-        // here we explicitly opt out and synthesize `Done`.
-        let elem = entity.element_data_mut();
-        let motion = if sprite_frozen {
-            SpriteMotionState::InProgress
-        } else if elem.sprite.scripts.is_empty() {
-            if frame_progression == crate::sprite::FrameProgression::FrozenFirstFrame {
-                SpriteMotionState::InProgress
-            } else {
-                SpriteMotionState::Done
-            }
-        } else {
-            elem.sprite.perform_action(
-                sim,
-                current_order_id,
-                current_order_type,
-                dir_u16,
-                frame_progression,
-                false,
-            )
-        };
-
-        let transition_start =
-            is_bow_transition_order(current_order_type) && motion == SpriteMotionState::Start;
-        if !transition_start
-            && !matches!(
-                motion,
-                SpriteMotionState::Done
-                    | SpriteMotionState::Terminated
-                    | SpriteMotionState::Aborted
-            )
-        {
-            continue;
-        }
-
-        // Animation for current order reached a state with bow side
-        // effects or queue-completion behavior.
-
-        if is_bow_transition_order(current_order_type) {
-            // Update action state on the action-done pulse, matching the
-            // original game's execution behavior. Keep the visual transition order alive until
-            // Terminated so it does not collapse to a one-frame animation.
-            apply_bow_transition_state_side_effect(entity, current_order_type, motion);
-            if entity.is_pc()
-                && !script_driven
-                && motion == SpriteMotionState::Start
-                && matches!(
-                    current_order_type,
-                    OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
-                )
-            {
-                // Original-game actor execution forwards this immediately
-                // after setting AimingWithBow. Active-shot bow orders bypass
-                // the generic actor-animation owner, so publish the same
-                // callback from this mutually exclusive owner seam.
-                events.pc_equip_actions.push(shooter_id);
-            }
-            let actor = entity.actor_data_mut().unwrap();
-            if matches!(
-                motion,
-                SpriteMotionState::Terminated | SpriteMotionState::Aborted
-            ) {
-                let (remaining, bow_remaining, installed_order) = if let Some(elem) =
-                    sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
-                {
-                    elem.orders.pop_front();
-                    let installed_order =
-                        elem.current_order()
-                            .map(|order| crate::element::InstalledActorOrder {
-                                order_id: order.order_id,
-                                order_type: order.order_type,
-                            });
-                    (
-                        elem.orders.is_empty(),
-                        has_active_bow_order(elem),
-                        installed_order,
-                    )
-                } else {
-                    (true, false, None)
-                };
-                // The actor update routes a TERMINATED bow action through
-                // order advancement, whose result immediately replaces
-                // actor order. This specialized driver pops the same queue
-                // directly, so publish that exact successor (or no value) here.
-                actor.installed_order = installed_order;
-                if remaining || !bow_remaining {
-                    actor.active_shot.clear();
-                }
-                if remaining {
-                    events.completed.push((shot_seq_id, shot_elem_idx));
-                }
-            }
-            continue;
-        }
-
-        let actor = entity.actor_data_mut().unwrap();
-        if is_shoot_order(current_order_type) {
-            if matches!(
-                motion,
-                SpriteMotionState::Terminated | SpriteMotionState::Aborted
-            ) {
-                let (remaining, bow_remaining, installed_order) = if let Some(elem) =
-                    sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
-                {
-                    elem.orders.pop_front();
-                    let installed_order =
-                        elem.current_order()
-                            .map(|order| crate::element::InstalledActorOrder {
-                                order_id: order.order_id,
-                                order_type: order.order_type,
-                            });
-                    (
-                        elem.orders.is_empty(),
-                        has_active_bow_order(elem),
-                        installed_order,
-                    )
-                } else {
-                    (true, false, None)
-                };
-                // See the transition branch above: direct retirement must
-                // mirror synchronous actor-order publication during advancement.
-                actor.installed_order = installed_order;
-                if remaining || !bow_remaining {
-                    actor.active_shot.clear();
-                }
-                if remaining {
-                    events.completed.push((shot_seq_id, shot_elem_idx));
-                }
-                continue;
-            }
-
-            if actor.active_shot.released {
-                continue;
-            }
-            actor.active_shot.released = true;
-
-            // Shoot action-done pulse — arrow is released, but the
-            // animation continues until Terminated.
-            let Some(shot_mode) = shot.shoot_mode else {
-                panic!(
-                    "active bow shot missing resolved shoot mode at release: shooter={} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}",
-                    shooter_id.index()
-                );
-            };
-            actor.action_state = ActionState::AimingWithBow;
-            if current_order_type == OrderType::ShootingWithBowLeaningOut {
-                entity
-                    .element_data_mut()
-                    .publish_order_posture(Posture::LeaningOut);
-            } else if entity.element_data().posture() != Posture::AnonymousArcher {
-                entity
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Upright);
-            }
-
-            let Some(sprite_hand_point) = bow_sprite_hand_point(entity, shot_mode, direction)
-            else {
-                tracing::warn!(
-                    shooter = shooter_id.index(),
-                    ?shot_mode,
-                    dir_u16,
-                    "Bow release skipped: missing bow-point sprite hotspot"
-                );
-                continue;
-            };
-
-            let Some(target) = shot.target else {
-                tracing::warn!(
-                    shooter = shooter_id.index(),
-                    "Bow release skipped: active shot missing target"
-                );
-                continue;
-            };
-
-            pending_fired.push(PendingShotTickResult {
-                shooter: shooter_id,
-                target,
-                seq_id: shot_seq_id,
-                elem_idx: shot.element_index,
-                shooter_position,
-                shoot_mode: shot_mode,
-                shooter_direction: direction,
-                sprite_hand_point,
-            });
-            continue;
-        }
-
-        panic!(
-            "active bow shot reached unhandled active bow order: shooter={} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}",
-            shooter_id.index()
-        );
-    }
-
-    // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
-    for result in pending_fired {
-        let Some(target_entity) = entities.get(result.target) else {
-            tracing::warn!(
-                shooter = ?result.shooter,
-                target = ?result.target,
-                "Bow release skipped: target entity missing"
-            );
-            continue;
-        };
-        let target_pos = target_entity.element_data().position_map();
-        let target_point = if target_entity.is_human() {
-            let Some(point) = target_entity.compute_belt_point() else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    target = ?result.target,
-                    "Bow release skipped: human target missing belt hotspot"
-                );
-                continue;
-            };
-            point
-        } else if target_entity.is_fx_target() {
-            let Some(point) = target_entity.compute_target_center() else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    target = ?result.target,
-                    "Bow release skipped: FX target missing center hotspot"
-                );
-                continue;
-            };
-            point
-        } else {
-            tracing::warn!(
-                shooter = ?result.shooter,
-                target = ?result.target,
-                kind = ?target_entity.kind(),
-                "Bow release skipped: unsupported target kind"
-            );
-            continue;
-        };
-        let target_forecasted_movement = target_entity.position_iface().get_forecasted_movement();
-        events.fired.push(ShotTickResult {
-            shooter: result.shooter,
-            target: result.target,
-            seq_id: result.seq_id,
-            elem_idx: result.elem_idx,
-            shooter_position: result.shooter_position,
-            target_pos,
-            target_point,
-            shoot_mode: result.shoot_mode,
-            shooter_direction: result.shooter_direction,
-            sprite_hand_point: result.sprite_hand_point,
-            target_forecasted_movement,
-        });
-    }
-
-    events
 }
 
 // ═══════════════════════════════════════════════════════════════════

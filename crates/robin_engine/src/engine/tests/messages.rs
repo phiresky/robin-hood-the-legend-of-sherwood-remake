@@ -386,7 +386,6 @@ fn condolation_reenters_think_before_dispatch_returns() {
 fn halt_condolation_clears_only_the_selected_movement_goal() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
@@ -408,7 +407,7 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
+
         entity
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
@@ -444,8 +443,8 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(
-        entity.actor_data().unwrap().active_movement,
-        ActiveMovement::new(movement_seq, 0)
+        engine.world.entities.current_element_for_actor(owner),
+        Some((movement_seq, 0))
     );
     assert_eq!(
         entity.position_iface().map_goal(),
@@ -465,11 +464,6 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     engine.orders.sequence_manager.set_halt_pending(false);
 
     let entity = engine.get_entity(owner).unwrap();
-    assert_eq!(
-        entity.actor_data().unwrap().active_movement,
-        ActiveMovement::none(),
-        "the selected movement's halt card detaches active movement"
-    );
     assert_eq!(
         entity.position_iface().map_goal(),
         MapPoint::ZERO,
@@ -525,7 +519,6 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
 fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
 
@@ -549,8 +542,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement =
-            ActiveMovement::new(movement_sequence, 0);
+
         entity.position_iface_mut().set_map_goal(goal);
     }
 
@@ -602,7 +594,6 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
 fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 
@@ -632,8 +623,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement =
-            ActiveMovement::new(movement_sequence, 0);
+
         entity.position_iface_mut().set_map_goal(goal);
     }
 
@@ -679,7 +669,6 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
 fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
 
@@ -702,8 +691,7 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement =
-            ActiveMovement::new(movement_sequence, 0);
+
         entity.position_iface_mut().set_map_goal(goal);
     }
 
@@ -802,7 +790,6 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
 fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     use crate::coordinates::MapPoint;
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
@@ -824,7 +811,7 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(movement_seq, 0);
+
         entity.position_iface_mut().set_map_goal(goal);
     }
 
@@ -844,11 +831,6 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     );
 
     let entity = engine.get_entity(owner).unwrap();
-    assert_eq!(
-        entity.actor_data().unwrap().active_movement,
-        ActiveMovement::none(),
-        "Rust's stale movement tracker must still detach"
-    );
     assert_eq!(
         entity.position_iface().map_goal(),
         goal,

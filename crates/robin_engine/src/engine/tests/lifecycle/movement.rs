@@ -264,7 +264,6 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
         .unwrap()
         .action_state = ActionState::Moving;
 
-    let stale_retained_goal = MapPoint::new(70.0, 80.0);
     let live_goal = MapPoint::new(90.0, 100.0);
     engine.launch_turn_sequence_deferred_no_transitions(
         owner,
@@ -272,7 +271,6 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
         Some(9),
         0.0,
         0.0,
-        Some(stale_retained_goal),
     );
 
     // The outgoing actor slot may run after facing registers its deferred
@@ -384,7 +382,6 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
 fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
     use std::num::NonZeroU32;
@@ -425,7 +422,6 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
-        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(old_sequence, 0);
         entity.position_iface_mut().set_map_goal(old_goal);
     }
 
@@ -436,7 +432,6 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         OrderType::RunningUpright,
     );
     replacement.priority = SequencePriority::Normal;
-    replacement.retained_movement_goal = Some(old_goal);
     let replacement_sequence = engine.orders.sequence_manager.insert_element(replacement);
     engine
         .orders

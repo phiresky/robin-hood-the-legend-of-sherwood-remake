@@ -9,7 +9,6 @@ fn native_round_trip(engine: &EngineInner) -> EngineInner {
 fn native_snapshot_rejects_unversioned_and_truncated_bytes() {
     let engine = engine_snapshot_fixture();
     let bytes = super::super::snapshot::encode_native_engine_inner(&engine);
-    assert_eq!(&bytes[..8], b"RHNS\x01\x00\x00\x00");
     let unversioned = super::super::snapshot::decode_native_engine_inner(&bytes[8..])
         .err()
         .expect("unversioned domain bytes must not be admitted");
@@ -24,7 +23,9 @@ fn native_snapshot_rejects_unversioned_and_truncated_bytes() {
 
 #[test]
 fn native_snapshot_rejects_version_before_decoding_domain_payloads() {
-    for version in [0_u32, 2] {
+    let encoded = super::super::snapshot::encode_native_engine_inner(&engine_snapshot_fixture());
+    let current = u32::from_le_bytes(encoded[4..8].try_into().unwrap());
+    for version in [current - 1, current + 1] {
         let mut bytes = b"RHNS".to_vec();
         bytes.extend_from_slice(&version.to_le_bytes());
         // The version error wins even though no domain payload follows.
@@ -33,7 +34,7 @@ fn native_snapshot_rejects_version_before_decoding_domain_payloads() {
             .expect("only the current native snapshot shape is supported");
         assert_eq!(
             error,
-            format!("unsupported native snapshot version {version}; expected 1")
+            format!("unsupported native snapshot version {version}; expected {current}")
         );
     }
 }

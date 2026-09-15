@@ -110,11 +110,9 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
 }
 
 fn corpse_exit_initialization_fixture(
-    active_drop: bool,
     command: crate::element::Command,
 ) -> (EngineInner, EntityId, EntityId, crate::sequence::SequenceId) {
     use crate::element::Posture;
-    use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
@@ -173,6 +171,7 @@ fn corpse_exit_initialization_fixture(
     let mut element = SequenceElement::new(1, command, Some(carrier));
     let mut transition_order = Order::new(transition, 0.0, 0.0, order_id);
     transition_order.compute_direction = false;
+    transition_order.antagonist = Some(body);
     element.orders.push_back(transition_order);
     if command == crate::element::Command::EnterSwordfight {
         let raising_id = engine.orders.allocate_order_id();
@@ -196,22 +195,6 @@ fn corpse_exit_initialization_fixture(
         sequence,
         0,
     );
-    if active_drop {
-        engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_ability = ActiveAbility {
-            kind: Some(AbilityKind::Drop),
-            sequence_id: Some(sequence),
-            element_index: 0,
-            target: Some(body),
-            order_id: Some(order_id),
-            done_effect_applied: false,
-            strangle_initialized: false,
-        };
-    }
     (engine, carrier, body, sequence)
 }
 

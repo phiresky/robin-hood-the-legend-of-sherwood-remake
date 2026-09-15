@@ -232,32 +232,30 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
 }
 
 #[test]
-fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
+fn interrupt_corpse_exit_initialization_aligns_body_from_selected_order() {
     use crate::movement::AbilityKind;
     use crate::order::OrderType;
 
     let (mut engine, carrier, body, _) =
-        corpse_exit_initialization_fixture(false, crate::element::Command::WhistleCmd);
+        corpse_exit_initialization_fixture(crate::element::Command::WhistleCmd);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let body_position = engine
         .get_entity(body)
         .unwrap()
         .element_data()
         .position_map();
     assert_eq!(
-        engine
-            .get_entity(carrier)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .kind,
-        None
+        crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            carrier
+        )
+        .map(|ability| ability.kind),
+        Some(AbilityKind::Drop)
     );
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 9);
@@ -266,16 +264,15 @@ fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
     assert_eq!(
         engine.get_entity(carrier).unwrap().sprite().last_action,
         OrderType::TransitionCarryingCorpseWaitingUpright,
-        "the no-ability transition must enter the generic action-processing arm"
+        "the selected corpse-exit order must execute its animation"
     );
-    assert_ne!(
-        engine
-            .get_entity(carrier)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .kind,
+    assert_eq!(
+        crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            carrier
+        )
+        .map(|ability| ability.kind),
         Some(AbilityKind::Drop)
     );
 
@@ -284,10 +281,7 @@ fn interrupt_corpse_exit_initialization_aligns_body_without_active_drop() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(3);
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 3);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 3);
@@ -466,6 +460,11 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         .unwrap()
         .action_state = ActionState::MovingFast;
     let retained_goal = MapPoint::new(321.0, 654.0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .position_iface_mut()
+        .set_map_goal(retained_goal);
 
     let sequence = engine.launch_turn_sequence_deferred_no_transitions(
         owner,
@@ -473,7 +472,6 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         Some(9),
         0.0,
         0.0,
-        Some(retained_goal),
     );
     let deferred = engine
         .orders
@@ -527,7 +525,6 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
 fn explicit_halt_then_goto_keeps_single_stop_transition() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
     use std::num::NonZeroU32;
@@ -570,8 +567,6 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
-        entity.actor_data_mut().unwrap().active_movement =
-            ActiveMovement::new(movement_sequence, 0);
         entity.position_iface_mut().set_map_goal(old_goal);
     }
     engine.halt_actor(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
@@ -675,7 +670,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
 }
 
 #[test]
-fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_execute() {
+fn ability_command_with_generic_order_does_not_suppress_generic_execute() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -697,20 +692,6 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
         seq_id,
         0,
     );
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_ability = crate::movement::ActiveAbility {
-        kind: Some(crate::movement::AbilityKind::Eat),
-        sequence_id: Some(seq_id),
-        element_index: 0,
-        target: None,
-        order_id: Some(order_id),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
 
     let mut observed = None;
     engine.tick_actor_animation_action_change_slots_with_hooks(
@@ -723,15 +704,24 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
     );
     assert_eq!(observed, Some((owner, None)));
     assert_eq!(
+        crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .map(|ability| ability.order_id),
+        None,
+        "the selected generic order does not become an ability from its command"
+    );
+    assert_eq!(
         engine
-            .get_entity(owner)
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, owner)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
+            .2
             .order_id,
-        Some(order_id),
-        "a stale type mismatch remains latent and does not execute"
+        order_id
     );
     assert_eq!(
         engine
@@ -811,14 +801,13 @@ fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
         SequenceState::Postponed
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active(),
-        "postponing the selected Eat deletes its order and must also delete Rust's order mirror"
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .is_some(),
+        "postponing Eat removes it from selected ability execution"
     );
 
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -851,123 +840,15 @@ fn injury_postponement_rebuilds_eat_with_a_fresh_ability_identity() {
         .expect("resumed Eat must be translated again");
     assert_eq!(resumed_order.order_type, OrderType::Eating);
     assert_ne!(resumed_order.order_id, first_order);
-    let active = &engine
-        .get_entity(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_ability;
-    assert_eq!(active.sequence_id, Some(eat));
+    let active = crate::abilities::selected_ability(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        owner,
+    )
+    .unwrap();
+    assert_eq!(active.sequence_id, eat);
     assert_eq!(active.element_index, 0);
-    assert_eq!(active.order_id, Some(resumed_order.order_id));
-}
-
-#[test]
-fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
-    use crate::element::{Command, Posture};
-    use crate::movement::{AbilityKind, ActiveAbility};
-    use crate::order::{Order, OrderType};
-    use crate::sequence::{SequenceElement, SequenceId};
-
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    let original = ActiveAbility {
-        kind: Some(AbilityKind::Listen),
-        sequence_id: Some(SequenceId(41)),
-        element_index: 2,
-        target: None,
-        order_id: Some(std::num::NonZeroU32::new(9).unwrap()),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
-    let actor = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
-    actor.active_ability = original.clone();
-    actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-    actor.listen_wait_time = 7;
-    engine.cleanup_aborted_ability(
-        owner,
-        AbilityKind::Listen,
-        SequenceId(99),
-        2,
-        original.order_id,
-    );
-    let retained = &engine
-        .get_entity(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_ability;
-    assert_eq!(
-        (
-            retained.kind,
-            retained.sequence_id,
-            retained.element_index,
-            retained.order_id
-        ),
-        (
-            original.kind,
-            original.sequence_id,
-            original.element_index,
-            original.order_id
-        ),
-        "stale abort must not clear another selected identity"
-    );
-
-    engine.cleanup_aborted_ability(
-        owner,
-        AbilityKind::Listen,
-        SequenceId(41),
-        2,
-        original.order_id,
-    );
-    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-    assert!(!actor.active_ability.is_active());
-    assert_eq!(actor.listen_phase, crate::element::ListenPhase::Inactive);
-    assert_eq!(actor.listen_wait_time, 0);
-
-    // This is an owner-selection fixture, not an Eat validity fixture.
-    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
-    let order = Order::test_new(OrderType::Eating, 0.0, 0.0);
-    let order_id = order.order_id;
-    element.orders.push_back(order);
-    let seq = engine.orders.sequence_manager.insert_element(element);
-    engine.orders.sequence_manager.start_sequence_level(seq);
-    engine.select_sequence_element(owner, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_ability = ActiveAbility {
-        kind: Some(AbilityKind::Eat),
-        sequence_id: Some(seq),
-        element_index: 0,
-        target: None,
-        order_id: Some(order_id),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
-    let mut selected = None;
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        |_, _| {},
-        |_, _| {},
-        |_, id, _, _, _, ability, _| selected = Some((id, ability)),
-        |_, _, _| {},
-    );
-    assert_eq!(selected, Some((owner, Some((seq, 0, order_id)))));
+    assert_eq!(active.order_id, resumed_order.order_id);
 }
 
 #[test]
@@ -1245,13 +1126,12 @@ fn fork_pay_completion_branches(
         SequenceState::InProgress
     );
     assert!(
-        !invalid_completion
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .done_effect_applied
+        !crate::abilities::selected_ability(
+            &invalid_completion.world.entities,
+            &invalid_completion.orders.sequence_manager,
+            pc
+        )
+        .is_some_and(|ability| ability.order_done)
     );
     assert!(
         !invalid_completion
@@ -1379,13 +1259,12 @@ fn assert_invalid_pay_completion_aborts(
                 .sequence_manager
                 .get_element(seq, 0)
                 .is_some_and(|element| element.state != SequenceState::InProgress)
-                && !invalid_completion
-                    .get_entity(pc)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .active_ability
-                    .is_active()
+                && !crate::abilities::selected_ability(
+                    &invalid_completion.world.entities,
+                    &invalid_completion.orders.sequence_manager,
+                    pc,
+                )
+                .is_some()
             {
                 break;
             }
@@ -1432,13 +1311,12 @@ fn assert_invalid_pay_completion_aborts(
         "completion failure must not launch any response sequence"
     );
     assert!(
-        !invalid_completion
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        !crate::abilities::selected_ability(
+            &invalid_completion.world.entities,
+            &invalid_completion.orders.sequence_manager,
+            pc
+        )
+        .is_some()
     );
 }
 
@@ -1482,12 +1360,11 @@ fn assert_valid_pay_completion_launches_response(
             .sequence_manager
             .get_element(seq, 0)
             .map(|element| element.state),
-        valid_completion
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability,
+        crate::abilities::selected_ability(
+            &valid_completion.world.entities,
+            &valid_completion.orders.sequence_manager,
+            pc
+        ),
         valid_completion
             .get_entity(pc)
             .unwrap()
@@ -1778,25 +1655,14 @@ fn run_enter_listen_until_counting_down(fx: &mut LeaveListenFixture) {
     for _ in 0..20 {
         engine.perform_hourglass(display, &mut InputState::default(), assets, dev);
         if engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .listen_phase
-            == crate::element::ListenPhase::CountingDown
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, owner)
+            .is_some_and(|(_, _, order)| order.order_type == OrderType::Listening)
         {
             break;
         }
     }
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .listen_phase,
-        crate::element::ListenPhase::CountingDown
-    );
     assert_eq!(
         engine
             .orders
@@ -1847,10 +1713,15 @@ fn launch_leave_listen_postponed_behind_enter(
         .unwrap();
     assert_eq!(leave.state, SequenceState::Postponed);
     assert!(leave.orders.is_empty());
-    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-    assert_eq!(actor.active_ability.sequence_id, Some(enter_seq));
-    assert_eq!(actor.active_ability.element_index, 0);
-    assert_eq!(actor.active_ability.order_id, Some(listening_order_id));
+    let ability = crate::abilities::selected_ability(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        owner,
+    )
+    .unwrap();
+    assert_eq!(ability.sequence_id, enter_seq);
+    assert_eq!(ability.element_index, 0);
+    assert_eq!(ability.order_id, listening_order_id);
     assert_eq!(
         engine
             .orders
@@ -1884,13 +1755,12 @@ fn enter_listen_finishes_through_its_own_exit(fx: &mut LeaveListenFixture) {
             .get_element(enter_seq, 0)
             .and_then(|element| element.current_order())
             .is_some_and(|order| order.order_type == OrderType::TransitionListeningWaitingUpright);
-        if !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        if !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner,
+        )
+        .is_some()
         {
             break;
         }
@@ -1900,13 +1770,12 @@ fn enter_listen_finishes_through_its_own_exit(fx: &mut LeaveListenFixture) {
         "EnterListen must own its existing exit order"
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .is_some()
     );
     assert_eq!(
         engine
@@ -1916,15 +1785,6 @@ fn enter_listen_finishes_through_its_own_exit(fx: &mut LeaveListenFixture) {
             .unwrap()
             .state,
         SequenceState::Terminated
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .listen_phase,
-        crate::element::ListenPhase::Inactive
     );
     assert_eq!(
         engine
@@ -2080,13 +1940,12 @@ fn released_leave_listen_is_consumed_once(
     );
     assert!(leave.orders.is_empty());
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active(),
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .is_some(),
         "released LeaveListen must not install stale ability ownership"
     );
 }

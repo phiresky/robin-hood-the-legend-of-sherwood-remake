@@ -70,12 +70,11 @@ impl EngineInner {
         elem_idx: usize,
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
-    ) -> OwnerActionBarrier {
+    ) {
         match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
-            MovePathOutcome::Success | MovePathOutcome::Pending => OwnerActionBarrier::Reach,
+            MovePathOutcome::Success | MovePathOutcome::Pending => (),
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                OwnerActionBarrier::Skip
             }
             MovePathOutcome::Failed => {
                 // Path request insertion calls Stop + Wait when it
@@ -83,22 +82,9 @@ impl EngineInner {
                 // request to either path queue. `try_dispatch_move_path`
                 // already performed those owner effects; there is no failed
                 // A* request to retain or time out here.
-                OwnerActionBarrier::Skip
             }
         }
     }
-}
-
-/// Whether an extracted owner-command dispatcher reaches the synchronous
-/// successor splice at the bottom of the action loop.
-///
-/// Several legacy command paths deliberately `continue` after updating their
-/// sequence element. Keeping that distinction in the return type prevents a
-/// helper extraction from silently changing same-call action ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::engine) enum OwnerActionBarrier {
-    Reach,
-    Skip,
 }
 
 pub(in crate::engine) fn required_canonical_door<'a>(
@@ -168,7 +154,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let movement = self
             .orders
             .sequence_manager
@@ -198,7 +184,7 @@ impl EngineInner {
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let live_position = entity.element_data().position_map();
         let live_sector = entity.element_data().sector();
@@ -234,7 +220,6 @@ impl EngineInner {
         // synchronous condolence clears the actor's selected sequence element, so
         // instruction handling observes the changed pointer and skips its ordinary
         // IN_PROGRESS/order-publication epilogue.
-        OwnerActionBarrier::Skip
     }
 }
 
@@ -381,7 +366,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let antagonist = self.orders.sequence_manager
             .get_element(seq_id, elem_idx)
             .unwrap_or_else(|| {
@@ -439,7 +424,7 @@ impl EngineInner {
             });
         if blocked {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         let mut order = crate::order::Order::new(
@@ -457,8 +442,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -478,7 +461,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let owner_entity = self
             .world
             .entities
@@ -498,7 +481,7 @@ impl EngineInner {
             // terminates redundant equip commands whenever the actor is
             // already aiming.
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         let command_body_already_queued = self
@@ -706,18 +689,6 @@ impl EngineInner {
                 _ => unreachable!("non-bow command passed to bow transition context"),
             }
         }
-
-        let has_orders = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .is_some_and(|element| !element.orders.is_empty());
-        if has_orders {
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        }
-        OwnerActionBarrier::Reach
     }
     fn sequence_bow_set_action_state_after_transition(
         &mut self,
@@ -784,7 +755,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         preserve_trigger_visual: bool,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some(animation) = animation else {
             tracing::warn!(
                 entity = ?owner,
@@ -792,12 +763,12 @@ impl EngineInner {
                 "PlayAnim*: missing/invalid AnimationId — terminating",
             );
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
 
         let Some(owner_entity) = self.world.entities.get(owner) else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         if owner_entity.is_human() {
             let wrapper = match command {
@@ -813,18 +784,18 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
+
             // This is an ordinary accepted actor-instruction boundary. Let the
             // outer dispatcher publish the actor order and project IN_PROGRESS after
             // the manager drain, just like every other translated actor
             // command. Returning Skip here used to strand the outgoing
             // animation's terminal motion edge on PlayAnim instructions.
-            return OwnerActionBarrier::Reach;
+            return;
         }
 
         if !owner_entity.kind().is_fx_target() {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         if preserve_trigger_visual
@@ -836,7 +807,7 @@ impl EngineInner {
             // after ActivatedBy* returns and captures its reversible patches.
             // Complete normally so following mission messages still run once.
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+            return;
         }
 
         let progression_ordinal = match command {
@@ -868,7 +839,6 @@ impl EngineInner {
             );
         }
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -886,7 +856,7 @@ impl EngineInner {
         target: Option<EntityId>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         // SEARCH is the one command in this group that does not belong to
         // a target. Human-actor search translation
         // inserts a single SEARCHING / SEARCHING_CROUCHED order carrying
@@ -912,12 +882,12 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+
+            return;
         }
         let Some(target) = target else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         if !self
             .world
@@ -926,7 +896,7 @@ impl EngineInner {
             .is_some_and(|entity| entity.kind().is_fx_target())
         {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
         let order_types: &[crate::order::OrderType] = match owner_command {
             // Player-character hit-target translation raises the sword,
@@ -955,8 +925,6 @@ impl EngineInner {
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
         }
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -973,7 +941,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match command {
             Command::Turn | Command::TurnFast => {
                 let element = self.orders.sequence_manager.get_element(seq_id, elem_idx);
@@ -991,14 +959,6 @@ impl EngineInner {
                         crate::sequence::FieldValue::Integer(direction) => Some(*direction as i16),
                         _ => None,
                     });
-                let retained_movement_goal = element
-                    .and_then(|element| {
-                        element.get_property(crate::sequence::Field::RetainedMovementGoal)
-                    })
-                    .and_then(|value| match value {
-                        crate::sequence::FieldValue::GeoPoint2D { x, y } => Some((*x, *y)),
-                        _ => None,
-                    });
                 if let Some(entity) = self.world.entities.get_mut(owner) {
                     if let Some(direction) = explicit_direction {
                         entity.element_data_mut().set_direction_goal(direction);
@@ -1009,29 +969,6 @@ impl EngineInner {
                             target_y - position.y,
                         );
                         entity.element_data_mut().set_direction_goal(direction);
-                    }
-                    if let Some((x, y)) = retained_movement_goal
-                        && entity.position_iface().map_goal() == crate::coordinates::MapPoint::ZERO
-                    {
-                        // Deferred facing caches the outgoing movement goal
-                        // because eager Rust halt cleanup can erase it before
-                        // Turn is instructed. The outgoing actor slot can
-                        // still advance its live sprite goal in the meantime,
-                        // though. The original game's movement stop leaves that newer
-                        // goal in place, so only repair an actually-cleared
-                        // goal here.
-                        tracing::trace!(
-                            target: "parity_owner_handoff",
-                            ?owner,
-                            ?seq_id,
-                            elem_idx,
-                            x,
-                            y,
-                            "Turn restoring retained movement goal"
-                        );
-                        entity
-                            .position_iface_mut()
-                            .set_map_goal(crate::coordinates::MapPoint::new(x, y));
                     }
                 }
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
@@ -1111,8 +1048,6 @@ impl EngineInner {
             }
             _ => unreachable!("non-turn command passed to turn command context"),
         }
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -1162,7 +1097,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let (
             is_soldier,
             is_pc,
@@ -1524,11 +1459,9 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
-        OwnerActionBarrier::Reach
     }
 
     fn sequence_wait_is_entity_vip(&self, assets: &LevelAssets, entity: &Entity) -> bool {
@@ -1558,7 +1491,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match command {
             Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
                 let order_type = match command {
@@ -1577,7 +1510,6 @@ impl EngineInner {
                     (0.0, 0.0),
                     false,
                 );
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             Command::StartMenace
             | Command::StopMenace
@@ -1654,11 +1586,9 @@ impl EngineInner {
                 // final order. The original game only appends the translated orders;
                 // it never terminates START_MENACE / STOP_MENACE /
                 // STOP_SLEEP at instruction time.
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             _ => unreachable!("non-NPC-state command passed to NPC state context"),
         }
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -1679,7 +1609,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match command {
             Command::LookLeft | Command::LookRight | Command::LeanOut => {
                 let order_type = self.world.entities.get(owner).map(|entity| {
@@ -1708,7 +1638,6 @@ impl EngineInner {
                         (0.0, 0.0),
                         false,
                     );
-                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 } else {
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 }
@@ -1722,26 +1651,23 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .map(|element| element.posture_after_transition)
                     .unwrap_or_default();
-                if self.sequence_dispatch_attentive(
+                if !self.sequence_dispatch_attentive(
                     owner,
                     command,
                     posture_after_transition,
                     seq_id,
                     elem_idx,
                 ) {
-                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-                } else {
                     // Soldier translation terminates the element in this
                     // branch. That can replace the selected sequence element while
                     // Translation is still active, so actor instruction handling
                     // returns before publishing the actor order or IN_PROGRESS.
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
             }
             _ => unreachable!("non-attention command passed to NPC attention context"),
         }
-        OwnerActionBarrier::Reach
     }
 
     fn sequence_dispatch_attentive(
@@ -1843,10 +1769,10 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some(entity) = self.world.entities.get(owner) else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+            return;
         };
         let live_posture = entity.element_data().posture();
 
@@ -1864,7 +1790,7 @@ impl EngineInner {
 
         let Some(transition) = crate::stealth::stealth_transition(command) else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+            return;
         };
 
         // These PC commands are animation bodies in Original, following any
@@ -1895,8 +1821,8 @@ impl EngineInner {
                     .sequence_manager
                     .push_order_on(seq_id, elem_idx, order);
             }
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+
+            return;
         }
 
         // Player command translation only appends the crouch transition order. The actor's
@@ -1910,14 +1836,14 @@ impl EngineInner {
             self.orders
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Reach;
+
+            return;
         }
 
         let hidden_phase = if transition.result_posture.is_hidden() {
             let Some(Entity::Pc(pc)) = self.world.entities.get(owner) else {
                 self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Reach;
+                return;
             };
             let profile = assets
                 .profile_manager
@@ -2004,7 +1930,6 @@ impl EngineInner {
         }
 
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -2024,13 +1949,13 @@ impl EngineInner {
         ammo_available: bool,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match command {
             Command::TieCmd => {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 };
                 let result = abilities::begin_tie(
                     &mut self.world.entities,
@@ -2054,7 +1979,7 @@ impl EngineInner {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 };
                 let result = abilities::begin_untie(
                     &mut self.world.entities,
@@ -2078,11 +2003,11 @@ impl EngineInner {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 };
                 if !ammo_available {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 }
                 let result = abilities::begin_heal(
                     &mut self.world.entities,
@@ -2123,7 +2048,7 @@ impl EngineInner {
             Command::EatCmd => {
                 if !ammo_available {
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
                 let result = abilities::begin_eat(
                     &mut self.world.entities,
@@ -2146,7 +2071,7 @@ impl EngineInner {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 };
                 let result = match command {
                     Command::HitCmd => abilities::begin_hit(
@@ -2221,7 +2146,6 @@ impl EngineInner {
                 // entry/listening/exit chain has restored Waiting. Re-dispatch
                 // then fails MUST_BE_LISTENING and is Impossible.
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                OwnerActionBarrier::Reach
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
                 let field = match command {
@@ -2237,11 +2161,11 @@ impl EngineInner {
                     .and_then(|element| read_sequence_map_point_property(element, field))
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 };
                 if !ammo_available {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Reach;
+                    return;
                 }
                 let result = match command {
                     Command::ThrowNet => abilities::begin_throw_net(
@@ -2285,7 +2209,7 @@ impl EngineInner {
             Command::ThrowApple | Command::ThrowStone => {
                 if !ammo_available {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 }
                 if command == Command::ThrowStone
                     && let Some(target) = self
@@ -2327,7 +2251,7 @@ impl EngineInner {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 };
                 let result = match command {
                     Command::ThrowApple => abilities::begin_throw_apple(
@@ -2385,16 +2309,13 @@ impl EngineInner {
         result: AbilityBeginResult,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match result {
-            AbilityBeginResult::Started => {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx)
-            }
+            AbilityBeginResult::Started => {}
             AbilityBeginResult::Impossible => {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
             }
         }
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -2411,7 +2332,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         use crate::order::OrderType;
 
         match command {
@@ -2468,16 +2389,6 @@ impl EngineInner {
                         true,
                     );
                 }
-                if self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .is_some_and(|element| !element.orders.is_empty())
-                {
-                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-                } else {
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-                }
             }
             Command::WakeUp => {
                 let target = self
@@ -2493,7 +2404,7 @@ impl EngineInner {
                 let Some(target) = target else {
                     tracing::warn!(?owner, ?seq_id, elem_idx, "WakeUp element has no target");
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 };
                 let Some(target_position) = self
                     .world
@@ -2509,7 +2420,7 @@ impl EngineInner {
                         "WakeUp target is missing"
                     );
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return OwnerActionBarrier::Skip;
+                    return;
                 };
                 let owner_position = self
                     .world
@@ -2549,7 +2460,6 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .push_order_on(seq_id, elem_idx, order);
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
             }
             Command::Knee => {
                 OrderEmitter::new(&mut self.orders.next_order_id).push(
@@ -2564,7 +2474,6 @@ impl EngineInner {
             }
             _ => unreachable!("non-recovery command passed to recovery context"),
         }
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -2581,7 +2490,7 @@ impl EngineInner {
         command: Command,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let owner_is_pc = self.world.entities.get(owner).is_some_and(Entity::is_pc);
         let antagonist = self
             .orders
@@ -2654,8 +2563,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 }
 
@@ -3166,7 +3073,7 @@ mod sequence_phase_context_tests {
         let seq_id = engine.orders.sequence_manager.insert_element(element);
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-        let barrier = engine.dispatch_bow_transition(
+        engine.dispatch_bow_transition(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             &mut Vec::new(),
@@ -3181,7 +3088,6 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .get_element(seq_id, 0)
             .expect("redundant EquipBow element survives as terminal history");
-        assert_eq!(barrier, OwnerActionBarrier::Skip);
         assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
         assert_eq!(
             element.orders.len(),
@@ -3548,7 +3454,6 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn shield_context_preserves_transition_orders_and_states() {
-        let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::order::OrderType;
         use crate::sequence::{SequenceElement, SequenceState};
@@ -3556,6 +3461,7 @@ mod sequence_phase_context_tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
         let target = engine.add_test_entity(shield_pc(ActionState::Waiting));
+        let assets = engine.test_runtime_assets();
         let seq_id =
             engine
                 .orders
@@ -3568,17 +3474,17 @@ mod sequence_phase_context_tests {
                 ));
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-        let follow_up = engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        let handled = engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::RaiseShield,
             seq_id,
             0,
         );
 
-        assert!(follow_up.is_none());
+        assert!(handled);
         let element = engine
             .orders
             .sequence_manager
@@ -3615,12 +3521,12 @@ mod sequence_phase_context_tests {
             .orders
             .sequence_manager
             .start_sequence_level(instant_seq);
-        engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::RaiseShieldInstantly,
             instant_seq,
             0,
         );
@@ -3658,12 +3564,12 @@ mod sequence_phase_context_tests {
             .actor_data_mut()
             .expect("shield owner has actor data")
             .action_state = ActionState::HoldingShield;
-        engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::LowerShield,
             lower_seq,
             0,
         );
@@ -3686,12 +3592,12 @@ mod sequence_phase_context_tests {
             .orders
             .sequence_manager
             .start_sequence_level(parry_seq);
-        engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::ParryShield,
             parry_seq,
             0,
         );
@@ -3751,12 +3657,12 @@ mod sequence_phase_context_tests {
             .expect("lower-shield element exists")
             .initialize_transition_orders();
 
-        engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::LowerShield,
             seq_id,
             0,
         );
@@ -3800,18 +3706,17 @@ mod sequence_phase_context_tests {
                 .get_entity_mut(owner)
                 .expect("recovery owner exists")
                 .set_posture(Posture::Lying);
-            let seq_id = engine
-                .orders
-                .sequence_manager
-                .insert_element(SequenceElement::new(1, command, Some(owner)));
+            let mut recovery = SequenceElement::new(1, command, Some(owner));
+            recovery.priority = crate::sequence::SequencePriority::Normal;
+            let seq_id = engine.orders.sequence_manager.insert_element(recovery);
             engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-            engine.dispatch_recovery_command(
+            engine.select_sequence_element(owner, None);
+            engine.instruct_owner(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::default(),
                 &mut Vec::new(),
                 owner,
-                command,
                 seq_id,
                 0,
             );
@@ -3840,47 +3745,30 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn raise_shield_from_sword_state_preserves_lowering_transition() {
-        let assets = LevelAssets::new();
         use crate::element::ActionState;
-        use crate::order::{Order, OrderType};
+        use crate::order::OrderType;
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(shield_pc(ActionState::WaitingSword));
+        let assets = engine.test_runtime_assets();
         let seq_id = engine
             .orders
             .sequence_manager
             .insert_element(SequenceElement::new(1, Command::RaiseShield, Some(owner)));
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-        let lowering = Order::new(
-            OrderType::TransitionLoweringSword,
-            0.0,
-            0.0,
-            engine.orders.allocate_order_id(),
-        );
-        engine
-            .orders
-            .sequence_manager
-            .push_order_on(seq_id, 0, lowering);
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, 0)
-            .expect("raise-shield element exists")
-            .initialize_transition_orders();
-
-        let follow_up = engine.dispatch_shield_command(
+        engine.select_sequence_element(owner, None);
+        let handled = engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             owner,
-            Command::RaiseShield,
             seq_id,
             0,
         );
 
-        assert!(follow_up.is_none());
+        assert!(handled);
         let element = engine
             .orders
             .sequence_manager
@@ -4036,14 +3924,6 @@ impl<'a> OrderEmitter<'a> {
     /// Allocate the next order id.
     pub(in crate::engine) fn alloc_id(&mut self) -> std::num::NonZeroU32 {
         crate::order::alloc_order_id(self.next_order_id)
-    }
-
-    /// Raw counter for shared translation helpers in other modules that
-    /// allocate their own ids.
-    // TODO: route those helpers (abilities::begin_*, posture transitions) through
-    // `OrderEmitter` instead of the raw counter.
-    pub(in crate::engine) fn counter(&mut self) -> &mut u32 {
-        &mut *self.next_order_id
     }
 
     /// Allocate one order and append it to `(seq_id, elem_idx)`. Direction

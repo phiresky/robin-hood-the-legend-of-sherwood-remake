@@ -661,11 +661,8 @@ impl crate::engine::EngineInner {
     )> {
         let entity = self.get_entity(owner)?;
         let actor = entity.actor_data()?;
-        let seq_id = actor.active_movement.sequence_id?;
-        let elem_idx = actor.active_movement.element_index;
-        if self.world.entities.current_element_for_actor(owner) != Some((seq_id, elem_idx)) {
-            return None;
-        }
+        let selected = actor.selected_sequence_element?;
+        let (seq_id, elem_idx) = (selected.sequence_id, selected.element_index);
         let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
         if !matches!(
             elem.command,
@@ -891,13 +888,9 @@ impl crate::engine::EngineInner {
             return true;
         }
 
-        self.get_entity(target)
-            .and_then(|e| e.actor_data())
-            .and_then(|a| {
-                a.active_movement
-                    .sequence_id
-                    .map(|seq_id| (seq_id, a.active_movement.element_index))
-            })
+        self.world
+            .entities
+            .current_element_for_actor(target)
             .and_then(|(seq_id, elem_idx)| {
                 self.orders.sequence_manager.get_element(seq_id, elem_idx)
             })

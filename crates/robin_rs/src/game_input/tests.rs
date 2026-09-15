@@ -858,7 +858,7 @@ fn eat_click_launches_eat_ability() {
 }
 
 #[test]
-fn listen_click_enters_listen_from_inactive_phase() {
+fn listen_click_launches_enter_listen() {
     let (mut engine, assets, mut host) = fixture();
     let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
     select(&mut engine, &assets, pc);

@@ -9,7 +9,7 @@ use crate::ingame_menu::resources::{
 use crate::renderer::Renderer;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::element::{Entity, ListenPhase};
+use robin_engine::element::Entity;
 use robin_engine::engine::{MULTI_SELECTION_THRESHOLD, MissionCountdownMode, PresentationView};
 
 /// Render the author-controlled active-play countdown at the top centre.
@@ -372,29 +372,17 @@ pub(crate) fn render_listen_ping(
     const WHISTLE_STEP_RADIUS: f32 = NOISE_VOLUME_PFIIIT / TIME_LISTEN as f32;
 
     for entity in engine.entities_iter() {
-        // Guard: `wait_time != 0 && anim ∈ {Listening, Whistling}`
-        // and `wait_time < TIME_LISTEN`.  Listen and Whistle are
-        // tracked on separate fields (`listen_wait_time` /
-        // `whistle_wait_time`) — only one ability can be active at a
-        // time so they never collide.
         let (position, radius) = match entity {
             Entity::Pc(pc) => {
-                let listen_active = pc.actor.listen_phase == ListenPhase::CountingDown
-                    && pc.actor.listen_wait_time != 0
-                    && pc.actor.listen_wait_time < TIME_LISTEN;
-                let whistle_active = matches!(
-                    pc.actor.active_ability.kind,
-                    Some(robin_engine::movement::AbilityKind::Whistle)
-                ) && pc.actor.whistle_wait_time != 0
-                    && pc.actor.whistle_wait_time < TIME_LISTEN;
-
-                let (wait_time, step) = if listen_active {
-                    (pc.actor.listen_wait_time, LISTEN_STEP_RADIUS)
-                } else if whistle_active {
-                    (pc.actor.whistle_wait_time, WHISTLE_STEP_RADIUS)
-                } else {
-                    continue;
+                let step = match pc.actor.installed_order.map(|order| order.order_type) {
+                    Some(robin_engine::order::OrderType::Listening) => LISTEN_STEP_RADIUS,
+                    Some(robin_engine::order::OrderType::Whistling) => WHISTLE_STEP_RADIUS,
+                    _ => continue,
                 };
+                let wait_time = pc.actor.wait_time;
+                if wait_time == 0 || wait_time >= TIME_LISTEN {
+                    continue;
+                }
                 // radius = (TIME_LISTEN - wait_time) * STEP
                 let frames_in = TIME_LISTEN - wait_time;
                 let radius = (frames_in as f32 * step) as u16;

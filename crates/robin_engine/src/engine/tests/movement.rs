@@ -636,7 +636,6 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
 #[test]
 fn completed_step_back_publishes_history_at_motion_terminal() {
     use crate::element::{ActionState, Camp};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript};
@@ -746,7 +745,6 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
         .actor_data_mut()
         .unwrap();
     actor.action_state = ActionState::MovingSword;
-    actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
     let sim = crate::sim_rng::test_context();
     for _ in 0..8 {
@@ -776,7 +774,6 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
 #[test]
 fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history() {
     use crate::element::{ActionState, Camp};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript};
@@ -886,7 +883,6 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
         .actor_data_mut()
         .unwrap();
     actor.action_state = ActionState::MovingSword;
-    actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
     let sim = crate::sim_rng::test_context();
     for _ in 0..8 {
@@ -926,7 +922,6 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use crate::element::{
         ActionState, Camp, Detectable, DetectableType, Entity, EyeStatus, Posture,
     };
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{MoveFlags, SequenceElement};
     use crate::sprite::Sprite;
@@ -1056,12 +1051,6 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
             .unwrap(),
         Some((sequence, 0)),
     );
-    engine
-        .get_entity_mut(carrier)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(sequence, 0);
 
     // Body cadence is `(universal frame + observer creation order) % 8`.
     engine.control.frame_counter = 6;
@@ -2160,7 +2149,6 @@ fn install_rider_charge_fixture(
     frame_delays: Vec<u16>,
 ) -> (EntityId, crate::sequence::SequenceId, std::num::NonZeroU32) {
     use crate::element::{ActionState, Camp, Command, Entity, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::Order;
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, SoldierProfile};
     use crate::sequence::{MoveFlags, SequenceElement};
@@ -2272,12 +2260,7 @@ fn install_rider_charge_fixture(
             .unwrap(),
         Some((sequence_id, 0)),
     );
-    engine
-        .get_entity_mut(rider_id)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(sequence_id, 0);
+
     (rider_id, sequence_id, order_id)
 }
 
@@ -2352,7 +2335,6 @@ fn install_charge_victim_motion(
 ) {
     let assets = LevelAssets::new();
     use crate::element::{ActionState, Command};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
@@ -2420,12 +2402,6 @@ fn install_charge_victim_motion(
             .unwrap(),
         Some((sequence, 0)),
     );
-    engine
-        .get_entity_mut(victim_id)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(sequence, 0);
 }
 
 #[test]
@@ -2458,9 +2434,10 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
         .sprite
         .last_processed_order_id = u32::MAX;
     let movement_seq = engine
-        .get_entity(mover_id)
-        .and_then(crate::element::Entity::actor_data)
-        .and_then(|actor| actor.active_movement.sequence_id)
+        .world
+        .entities
+        .current_element_for_actor(mover_id)
+        .map(|(sequence, _)| sequence)
         .expect("movement is armed");
 
     let foreign_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -3679,7 +3656,6 @@ fn rider_charge_requires_weapon_profile() {
 fn current_movement_bootstraps_from_waiting_with_destination_state() {
     let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite::MotionOrderContext;
@@ -3753,12 +3729,6 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
             .unwrap(),
         Some((sequence_id, 0)),
     );
-    engine
-        .get_entity_mut(mover_id)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(sequence_id, 0);
 
     assert_eq!(
         engine
@@ -3805,7 +3775,6 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
 fn move_waiting_freeze_does_not_enter_destination_motion() {
     let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
@@ -3891,12 +3860,6 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
             .unwrap(),
         Some((sequence_id, 0)),
     );
-    engine
-        .get_entity_mut(mover_id)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(sequence_id, 0);
 
     engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
     engine.tick_actor_animation_action_change_slots(
@@ -4051,7 +4014,6 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
 #[test]
 fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::{Direction, SectorHandle};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
@@ -4133,7 +4095,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .actor_data_mut()
             .expect("movement owner is an actor");
         actor.action_state = ActionState::Moving;
-        actor.active_movement = ActiveMovement::new(sequence_id, 0);
+
         if seek_target.is_some() {
             // The live-target arrival test uses the actor-owned seek
             // distance (the unadapted interaction radius), not the
@@ -4298,7 +4260,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
@@ -4372,7 +4333,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
         .actor_data_mut()
         .expect("mover is an actor");
     actor.action_state = ActionState::Moving;
-    actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
     // A newly-seen motion order spends one tick in MotionState::Start.
     // On the next tick the destination is within one animation step. The
@@ -4415,7 +4375,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
 fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snapping() {
     let assets = LevelAssets::new();
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
@@ -4522,7 +4481,6 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
         .actor_data_mut()
         .unwrap();
     actor.action_state = ActionState::Moving;
-    actor.active_movement = ActiveMovement::new(sequence_id, 0);
 
     let sim = crate::sim_rng::test_context();
     engine.tick_entity_movement(&sim, &assets);

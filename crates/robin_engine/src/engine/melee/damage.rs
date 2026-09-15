@@ -2971,10 +2971,7 @@ impl EngineInner {
         );
         let seq_id = self.launch_element(sim, assets, elem);
         let elem_idx = 0;
-        if !self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
-            return;
-        }
-        self.dispatch_receive_damage(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
+        self.instruct_owner(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
     }
 
     /// Register a projectile damage sequence for the sequence-manager phase.
@@ -3464,20 +3461,7 @@ impl EngineInner {
         // ownership before the remaining death cleanup.
         self.detach_npc_death_relationships(victim_id);
 
-        let victim = self.expect_entity_mut(victim_id, "fresh death cleanup victim");
-
-        // Clear movement-side state on the actor so no stale path or
-        // active-movement handle is left pointing at the torn-down
-        // walk sequence.  We intentionally do NOT set `posture` or
-        // `action_state` here — the dying animation's
-        // `apply_dying_start_side_effect` (in `animation.rs`) sets
-        // them when the anim starts.  Setting posture=Dead eagerly
-        // makes the sprite snap to the corpse pose before the dying
-        // transition plays, skipping the visible animation.
-        if let Some(actor) = victim.actor_data_mut() {
-            actor.active_movement.clear();
-            actor.clear_path();
-        }
+        let victim = self.expect_entity(victim_id, "fresh death cleanup victim");
 
         // Clear stale pre-death work, apply the alert/music transition,
         // then enter the terminal state.

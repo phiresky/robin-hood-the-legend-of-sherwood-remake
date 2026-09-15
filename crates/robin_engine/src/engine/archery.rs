@@ -163,67 +163,6 @@ mod arrow_hurtable_tests {
 impl EngineInner {
     // ─── Bow shots & arrow projectiles ───────────────────────────
 
-    /// Rebuild Rust's derived active-shot latch after loading an Original
-    /// save in the middle of a shooting order. Original needs no parallel
-    /// latch: the selected sequence element and current order are sufficient
-    /// for execution to shoot the bow on the action-done pulse.
-    pub(crate) fn restore_loaded_active_shots(&mut self) {
-        let owners = self
-            .world
-            .entities
-            .actors()
-            .map(|(id, _)| EntityId::from(id))
-            .collect::<Vec<_>>();
-        let active = owners
-            .into_iter()
-            .filter_map(|owner| {
-                let (sequence_id, element_index, _order) = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, owner)?;
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)?;
-                if !matches!(element.command, Command::ShootBow | Command::ShootBowOnce) {
-                    return None;
-                }
-                let (shoot_mode, shoot_order_id) = element.orders.iter().find_map(|order| {
-                    crate::bow_shot::shoot_mode_for_order(order.order_type)
-                        .map(|mode| (mode, order.order_id))
-                })?;
-                let target = match &element.data {
-                    crate::sequence::SequenceElementData::Interaction { antagonist } => {
-                        (*antagonist)?
-                    }
-                    _ => return None,
-                };
-                Some((
-                    owner,
-                    crate::movement::ActiveShot {
-                        sequence_id: Some(sequence_id),
-                        element_index,
-                        target: Some(target),
-                        order_id: Some(shoot_order_id),
-                        released: false,
-                        shoot_mode: Some(shoot_mode),
-                    },
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        for (owner, shot) in active {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("loaded bow-shot owner {owner:?} is missing required actor state")
-                })
-                .active_shot = shot;
-        }
-    }
-
     pub(super) fn apply_projectile_landing_resolution(
         &mut self,
         assets: &LevelAssets,
@@ -434,15 +373,17 @@ impl EngineInner {
         &self,
         owner: EntityId,
     ) -> Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)> {
-        let shot = self.get_entity(owner)?.actor_data()?.active_shot;
         let (seq_id, elem_idx, order) = self
             .orders
             .sequence_manager
             .current_order_for_actor(&self.world.entities, owner)?;
-        (shot.is_active()
-            && shot.sequence_id == Some(seq_id)
-            && shot.element_index == elem_idx
-            && bow_shot::is_active_bow_order(order.order_type))
+        (matches!(
+            self.orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)?
+                .command,
+            Command::ShootBow | Command::ShootBowOnce
+        ) && bow_shot::is_active_bow_order(order.order_type))
         .then_some((seq_id, elem_idx, order.order_id))
     }
 
@@ -507,610 +448,729 @@ impl EngineInner {
             );
         }
     }
-
-    /// Advance one exact selected bow arm without detaching or restoring any
-    /// other actor state.
-    pub(super) fn tick_bow_shot_for(
+    /// Execute one bow order and close its callbacks before returning to the actor loop.
+    pub(crate) fn tick_bow_shot_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         shooter_id: EntityId,
         expected_order_id: std::num::NonZeroU32,
     ) -> Vec<EntityId> {
-        let mut spawned_projectiles = Vec::new();
-        if self
-            .get_entity(shooter_id)
-            .and_then(Entity::actor_data)
-            .is_some_and(|actor| actor.execution_frozen)
+        use crate::element::{ActionState, Posture};
+        use crate::sprite::MotionState;
+
+        let shooter = self.expect_entity(shooter_id, "bow execution owner");
+        let actor = shooter.actor_data().expect("bow owner must be an actor");
+        if actor.execution_frozen {
+            return Vec::new();
+        }
+        let Some((sequence_id, element_index, order_id)) = self.selected_bow_order(shooter_id)
+        else {
+            return Vec::new();
+        };
+        if order_id != expected_order_id {
+            return Vec::new();
+        }
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, element_index)
+            .expect("selected bow element must exist");
+        let order_type = element
+            .current_order()
+            .expect("selected bow order must exist")
+            .order_type;
+        let target_id = match element.data {
+            crate::sequence::SequenceElementData::Interaction { antagonist } => antagonist,
+            _ => None,
+        };
+        let script_driven = element.script_driven;
+        if bow_shot::is_shoot_order(order_type) && actor.execute_order_initialising {
+            let target_id =
+                target_id.expect("shooting initialization requires an interaction target");
+            let target = self.expect_entity(target_id, "bow initialization target");
+            let (target_position, shooter_position) =
+                if order_type == OrderType::ShootingWithBowLeaningOut {
+                    (
+                        target.element_data().position_map(),
+                        shooter.element_data().position_map(),
+                    )
+                } else {
+                    let position = shooter.element_data().position();
+                    (
+                        bow_shot::bow_target_ground_position(target),
+                        MapPoint::new(position.x, position.y),
+                    )
+                };
+            self.expect_entity_mut(shooter_id, "bow initialization owner")
+                .element_data_mut()
+                .set_direction_goal(crate::position_interface::vector_to_sector_0_to_15_iso(
+                    target_position.x - shooter_position.x,
+                    target_position.y - shooter_position.y,
+                ));
+        }
+        let frozen = self.actors_frozen();
+        let shooter = self.expect_entity_mut(shooter_id, "bow animation owner");
+        let progression = if bow_shot::is_shoot_order(order_type)
+            && shooter.element_data_mut().sprite.position_iface.turn()
         {
-            return spawned_projectiles;
-        }
-        let sprite_frozen = self.actors_frozen();
-        let events = bow_shot::tick_bow_shot_for_owner(
-            sim,
-            &mut self.world.entities,
-            &mut self.orders.sequence_manager,
-            shooter_id,
-            expected_order_id,
-            sprite_frozen,
-        );
-        for pc_id in events.pc_equip_actions {
-            // The specialized active-shot owner bypasses generic animation
-            // side effects. Close human action execution's synchronous
-            // MSG_SELECT_ACTION(BOW) callback before this actor slot returns.
-            self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Bow);
-        }
-        for result in events.fired {
-            let Some(shooter_entity) = self.get_entity(result.shooter) else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    target = ?result.target,
-                    "Bow shot release skipped: shooter entity missing"
-                );
-                continue;
-            };
-            let layer = shooter_entity.element_data().layer();
-            let trajectory_origin_sector =
-                super::ai::ai_view_position_sector(self, shooter_entity.element_data());
-            let shooter_is_pc = shooter_entity.kind().is_pc();
-
-            let Some(target_entity) = self.get_entity(result.target) else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    target = ?result.target,
-                    "Bow shot release skipped: target entity missing"
-                );
-                continue;
-            };
-            let target_is_fx_target = target_entity.kind().is_fx_target();
-            let target_is_human = target_entity.is_human();
-            let target_posture = target_entity.element_data().posture();
-
-            // ── Determine shoot mode from action state ───────────
-            let shoot_mode = result.shoot_mode;
-            let flat_shot = bow_shot::is_flat_shot(shoot_mode);
-            let mass = bow_shot::arrow_mass(shoot_mode);
-
-            // ── Look up bow profile for damage and hit chance ────
-            let Some((bow_profile_idx, shooting_ability)) =
-                self.bow_profile_and_ability(assets, result.shooter)
-            else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    "Bow shot release skipped: shooter has no bow profile data"
-                );
-                continue;
-            };
-
-            let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
-                tracing::warn!(
-                    shooter = ?result.shooter,
-                    bow_profile_idx,
-                    "Bow shot release skipped: missing bow profile"
-                );
-                continue;
-            };
-
-            use crate::weapons::{BowState, ShootMode};
-            // Create a temporary BowState just for the lookup.
-            let bow = BowState::new(bow_profile_idx, bow_profile, 1);
-            // Down maps to Normal for damage lookup (flat shots use Normal,
-            // arced shots use Long).
-            let lookup_mode = match shoot_mode {
-                ShootMode::Down => ShootMode::Normal,
-                other => other,
-            };
-            let damage = bow.get_damage(bow_profile, lookup_mode);
-
-            // ── Compute bow point (hand position) ────────────────
-            let bow_point = bow_shot::compute_bow_point(
-                result.shooter_position,
-                shoot_mode,
-                result.shooter_direction,
-                result.sprite_hand_point,
-            );
-
-            // ── Target belt point (resolved in tick_bow_shots) ───
-            // For LEANING_OUT targets the belt can be obstructed by
-            // the parapet/crenel, so we fall back to the eyes point if the
-            // belt aim would only be reachable as a long shot (or not at
-            // all).  Non-leaning targets always aim at belt.
-            //
-            // Only applies when the planned shoot mode is Normal: re-run
-            // `can_shoot_with_bow_at_point` against the belt and swap to
-            // eyes when that re-check fails or upgrades to a long shot.
-            // `can_shoot_with_bow_at_point` folds in range / posture-
-            // override / ammo semantics.
-            let mut target_point = result.target_point;
-            if target_posture == crate::element::Posture::LeaningOut
-                && shoot_mode == crate::weapons::ShootMode::Normal
+            crate::sprite::FrameProgression::FrozenFirstFrame
+        } else {
+            crate::sprite::FrameProgression::Default
+        };
+        let direction = u16::try_from(shooter.element_data().direction())
+            .expect("bow shooter direction must be nonnegative");
+        let motion = if frozen {
+            MotionState::InProgress
+        } else {
+            shooter.element_data_mut().sprite.perform_action(
+                sim,
+                Some(expected_order_id),
+                order_type,
+                direction,
+                progression,
+                false,
+            )
+        };
+        if bow_shot::is_bow_transition_order(order_type) {
+            bow_shot::apply_bow_transition_state_side_effect(shooter, order_type, motion);
+            if shooter.is_pc()
+                && !script_driven
+                && motion == MotionState::Start
+                && matches!(
+                    order_type,
+                    OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
+                )
             {
-                let (belt_status, belt_mode) =
-                    self.can_shoot_with_bow_at_point(assets, result.shooter, target_point, false);
-                let belt_failed =
-                    belt_status != BowTarget::Valid || belt_mode == crate::weapons::ShootMode::Long;
-                if belt_failed
-                    && let Some(eyes) = self
-                        .get_entity(result.target)
-                        .and_then(|e| e.compute_eyes_point(None))
-                {
-                    target_point = eyes;
-                }
+                self.set_pc_action_from_message(
+                    sim,
+                    assets,
+                    0,
+                    shooter_id,
+                    crate::profiles::Action::Bow,
+                );
             }
+        } else if motion == MotionState::Done {
+            let target_id = target_id.expect("bow release requires an interaction target");
+            let shoot_mode = match shooter.actor_data().unwrap().action_state {
+                ActionState::AimingWithBow => crate::weapons::ShootMode::Normal,
+                ActionState::AimingWithBowUp => crate::weapons::ShootMode::Long,
+                ActionState::AimingWithBowDown => crate::weapons::ShootMode::Down,
+                state => panic!("bow release requires an aiming action, got {state:?}"),
+            };
+            let arrow = self.release_bow_arrow(sim, assets, shooter_id, target_id, shoot_mode);
+            let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
+            shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+            if order_type == OrderType::ShootingWithBowLeaningOut {
+                shooter
+                    .element_data_mut()
+                    .publish_order_posture(Posture::LeaningOut);
+            } else if shooter.element_data().posture() != Posture::AnonymousArcher {
+                shooter
+                    .element_data_mut()
+                    .publish_order_posture(Posture::Upright);
+            }
+            return arrow.into_iter().collect();
+        }
+        if matches!(motion, MotionState::Terminated | MotionState::Aborted) {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence_id, element_index)
+                .expect("terminating bow order lost its element");
+            element.orders.pop_front();
+            let installed_order =
+                element
+                    .current_order()
+                    .map(|order| crate::element::InstalledActorOrder {
+                        order_id: order.order_id,
+                        order_type: order.order_type,
+                    });
+            let complete = element.orders.is_empty();
+            let actor = self
+                .expect_entity_mut(shooter_id, "bow order advancement owner")
+                .actor_data_mut()
+                .unwrap();
+            actor.installed_order = installed_order;
+            if complete {
+                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
+            }
+        }
+        Vec::new()
+    }
 
-            // ── Lead a moving target ─────────────────────────────
-            // For human targets, read their forecasted movement so the
-            // shot leads them; FX targets pass None.
-            //
-            // PositionInterface returns canonical world XYZ data; projectile
-            // code still carries the older element-local 3D type for now.
-            let target_movement = target_is_human.then_some(result.target_forecasted_movement);
+    fn release_bow_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        shooter_id: EntityId,
+        target_id: EntityId,
+        shoot_mode: crate::weapons::ShootMode,
+    ) -> Option<EntityId> {
+        let shooter = self.expect_entity(shooter_id, "bow release shooter");
+        let shooter_direction = shooter.element_data().direction();
+        let position = shooter.element_data().position_map();
+        let shooter_position = crate::coordinates::WorldPoint3D {
+            x: position.x,
+            y: position.y,
+            z: shooter.position_iface().get_elevation(),
+        };
+        let Some(sprite_hand_point) =
+            bow_shot::bow_sprite_hand_point(shooter, shoot_mode, shooter_direction)
+        else {
+            tracing::warn!(?shooter_id, "Bow release skipped: missing hand hotspot");
+            return None;
+        };
+        let target = self.expect_entity(target_id, "bow release target");
+        let target_pos = target.element_data().position_map();
+        let target_point = if target.is_human() {
+            target.compute_belt_point()
+        } else if target.is_fx_target() {
+            target.compute_target_center()
+        } else {
+            panic!("bow target {target_id:?} is neither human nor target");
+        };
+        let Some(target_point) = target_point else {
+            tracing::warn!(?target_id, "Bow release skipped: missing target hotspot");
+            return None;
+        };
+        let target_forecasted_movement = target.position_iface().get_forecasted_movement();
+        let layer = shooter.element_data().layer();
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, shooter.element_data());
+        let shooter_is_pc = shooter.kind().is_pc();
+        let target_is_fx_target = target.kind().is_fx_target();
+        let target_is_human = target.is_human();
+        let target_posture = target.element_data().posture();
 
-            // ── Compute velocity ─────────────────────────────────
-            // `compute_shot_velocity_params` forwards `target_movement`
-            // into `compute_initial_throw_velocity`, which adds
-            // `movement * 0.5 * TIME_FLYSEGMENT` to lead a moving target.
-            // Adding the lead a second time here would double-correct,
-            // so we trust the helper.
-            let (mut velocity, _flight_time, _apex) = bow_shot::compute_shot_velocity_params(
-                bow_point,
-                target_point,
-                shoot_mode,
-                target_movement,
+        // ── Determine shoot mode from action state ───────────
+        let flat_shot = bow_shot::is_flat_shot(shoot_mode);
+        let mass = bow_shot::arrow_mass(shoot_mode);
+
+        // ── Look up bow profile for damage and hit chance ────
+        let Some((bow_profile_idx, shooting_ability)) =
+            self.bow_profile_and_ability(assets, shooter_id)
+        else {
+            tracing::warn!(
+                shooter = ?shooter_id,
+                "Bow shot release skipped: shooter has no bow profile data"
             );
+            return None;
+        };
 
-            self.warn_shield_target_of_arrow(sim, assets, result.shooter, result.target);
+        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+            tracing::warn!(
+                shooter = ?shooter_id,
+                bow_profile_idx,
+                "Bow shot release skipped: missing bow profile"
+            );
+            return None;
+        };
 
-            // ── Hit chance roll ──────────────────────────────────
-            // The original game only applies the bow's hit chance in the
-            // human-target branch of bow shooting.
-            // Scripted FX targets use the exact center-point trajectory.
-            let hit_distance = {
-                let dx = target_point.x - bow_point.x;
-                let dy = target_point.y - bow_point.y;
-                let dz = target_point.z - bow_point.z;
-                (dx * dx + dy * dy + dz * dz).sqrt()
-            };
+        use crate::weapons::{BowState, ShootMode};
+        // Create a temporary BowState just for the lookup.
+        let bow = BowState::new(bow_profile_idx, bow_profile, 1);
+        // Down maps to Normal for damage lookup (flat shots use Normal,
+        // arced shots use Long).
+        let lookup_mode = match shoot_mode {
+            ShootMode::Down => ShootMode::Normal,
+            other => other,
+        };
+        let damage = bow.get_damage(bow_profile, lookup_mode);
 
-            let hit_chance = if target_is_human {
-                let bow = crate::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
-                bow.get_hit_chance(bow_profile, shooting_ability, hit_distance as u32)
+        // ── Compute bow point (hand position) ────────────────
+        let bow_point = bow_shot::compute_bow_point(
+            shooter_position,
+            shoot_mode,
+            shooter_direction,
+            sprite_hand_point,
+        );
+
+        // ── Target belt point ───────────────────────────────
+        // For LEANING_OUT targets the belt can be obstructed by
+        // the parapet/crenel, so we fall back to the eyes point if the
+        // belt aim would only be reachable as a long shot (or not at
+        // all).  Non-leaning targets always aim at belt.
+        //
+        // Only applies when the planned shoot mode is Normal: re-run
+        // `can_shoot_with_bow_at_point` against the belt and swap to
+        // eyes when that re-check fails or upgrades to a long shot.
+        // `can_shoot_with_bow_at_point` folds in range / posture-
+        // override / ammo semantics.
+        let mut target_point = target_point;
+        if target_posture == crate::element::Posture::LeaningOut
+            && shoot_mode == crate::weapons::ShootMode::Normal
+        {
+            let (belt_status, belt_mode) =
+                self.can_shoot_with_bow_at_point(assets, shooter_id, target_point, false);
+            let belt_failed =
+                belt_status != BowTarget::Valid || belt_mode == crate::weapons::ShootMode::Long;
+            if belt_failed
+                && let Some(eyes) = self
+                    .get_entity(target_id)
+                    .and_then(|e| e.compute_eyes_point(None))
+            {
+                target_point = eyes;
+            }
+        }
+
+        // ── Lead a moving target ─────────────────────────────
+        // For human targets, read their forecasted movement so the
+        // shot leads them; FX targets pass None.
+        //
+        // PositionInterface returns canonical world XYZ data; projectile
+        // code still carries the older element-local 3D type for now.
+        let target_movement = target_is_human.then_some(target_forecasted_movement);
+
+        // ── Compute velocity ─────────────────────────────────
+        // `compute_shot_velocity_params` forwards `target_movement`
+        // into `compute_initial_throw_velocity`, which adds
+        // `movement * 0.5 * TIME_FLYSEGMENT` to lead a moving target.
+        // Adding the lead a second time here would double-correct,
+        // so we trust the helper.
+        let (mut velocity, _flight_time, _apex) = bow_shot::compute_shot_velocity_params(
+            bow_point,
+            target_point,
+            shoot_mode,
+            target_movement,
+        );
+
+        self.warn_shield_target_of_arrow(sim, assets, shooter_id, target_id);
+
+        // ── Hit chance roll ──────────────────────────────────
+        // The original game only applies the bow's hit chance in the
+        // human-target branch of bow shooting.
+        // Scripted FX targets use the exact center-point trajectory.
+        let hit_distance = {
+            let dx = target_point.x - bow_point.x;
+            let dy = target_point.y - bow_point.y;
+            let dz = target_point.z - bow_point.z;
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        };
+
+        let hit_chance = if target_is_human {
+            let bow = crate::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
+            bow.get_hit_chance(bow_profile, shooting_ability, hit_distance as u32)
+        } else {
+            100
+        };
+
+        // human-status capacity, not the difficulty-/alcohol-adjusted
+        // shooting-ability value used by the hit-chance lookup.
+        let bow_skill_capacity = self
+            .bow_skill_capacity(assets, shooter_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "bow shot shooter {:?} is missing its authoritative bow skill capacity",
+                    shooter_id
+                )
+            });
+
+        if target_is_human
+            && let Some(bias) =
+                bow_shot::roll_hit_and_compute_bias(sim, hit_chance, bow_skill_capacity)
+        {
+            // Miss — deflect the velocity.
+            velocity.x += bias.x;
+            velocity.y += bias.y;
+            velocity.z += bias.z;
+            tracing::debug!(
+                shooter = ?shooter_id,
+                ?hit_chance,
+                ?bias,
+                "Bow shot missed (bias applied)"
+            );
+        }
+
+        // ── Bloodseeker-oil check ────────────────────────────
+        // When a PC shoots an FX target in a forest level the
+        // arrow gets magic-bullet mode, bypassing obstacle collision so
+        // it can pass through trees to reach the target.
+        let magic_bullet =
+            target_is_fx_target && shooter_is_pc && self.world.weather.is_forest_level;
+
+        // ── Compute ballistic trajectory ─────────────────────
+        let obstacle_list = self.sight_obstacles(assets);
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles: obstacle_list,
+            water_zones: Some(&assets.environment.water_zones),
+        };
+        let collision_debug_identity =
+            crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
+                crate::sight_obstacle::ProjectileCollisionDebugIdentity {
+                    frame: self.control.frame_counter,
+                    shooter: shooter_id.index(),
+                    projectile_creation_order: self.world.next_original_creation_order,
+                }
+            });
+        let capture_collision_debug = collision_debug_identity
+            .is_some_and(crate::sight_obstacle::projectile_collision_debug_matches);
+        let compute_trajectory = || {
+            bow_shot::compute_trajectory_ballistic_with_terminal_impact(
+                bow_point,
+                velocity,
+                mass,
+                flat_shot,
+                // Magic-bullet short-circuit: skip the obstacle check entirely.
+                if magic_bullet {
+                    None
+                } else {
+                    Some(&obstacle_check)
+                },
+            )
+        };
+        let (
+            trajectory,
+            terminal_obstacle,
+            terminal_impact,
+            terminal_lands_in_hole,
+            terminal_lands_in_water,
+        ) = if capture_collision_debug {
+            crate::sight_obstacle::with_projectile_collision_debug_identity(
+                collision_debug_identity.expect("matched collision debug has no identity"),
+                compute_trajectory,
+            )
+        } else {
+            compute_trajectory()
+        };
+        let terminal_obstacle_plane =
+            bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
+        let trajectory_end = trajectory.last().map(|tp| tp.position);
+        // Trajectory calculation resolves and stores the eventual impact
+        // membership before the projectile's explicit pre-add
+        // update. It is therefore observable throughout flight, not
+        // only after the projectile lands.
+        //
+        // A terminal impact that classifies as water or hole returns from
+        // trajectory calculation *before* the membership block
+        // (setting the dive flag and returning; and
+        // adding a fall-into-hole trajectory and returning, both
+        // before clearing the layer when no obstacle is present).
+        // Neither fall-into-hole trajectory creation, projectile-impact
+        // handling, nor the dive flag touches
+        // layer, sector or obstacle, so such a projectile keeps the
+        // clearing the layer, sector, and obstacle that
+        // installed for the whole of its fall.
+        let terminal_membership =
+            terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
+        let initial_landing_resolution = terminal_membership.then(|| {
+            let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
+            if let Some(obstacle) = terminal_obstacle {
+                self.world
+                    .fast_grid
+                    .resolve_projectile_landing_with_obstacle(
+                        end.to_map(),
+                        Some(obstacle),
+                        obstacle_list,
+                    )
             } else {
-                100
-            };
+                self.world
+                    .fast_grid
+                    .resolve_projectile_ground_landing(end.to_map())
+            }
+        });
+        tracing::debug!(
+            shooter = ?shooter_id,
+            target = ?target_id,
+            ?shoot_mode,
+            ?bow_point,
+            ?target_point,
+            ?trajectory_end,
+            trajectory_len = trajectory.len(),
+            magic_bullet,
+            predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
+            "Bow shot trajectory computed"
+        );
+        // Launch-parameter snapshot, on its own target so it can be
+        // enabled without the rest of the combat module's chatter:
+        // `RUST_LOG=arrow_launch=trace`.
+        tracing::trace!(
+            target: "arrow_launch",
+            frame = self.control.frame_counter,
+            shooter = shooter_id.index(),
+            target_id = target_id.index(),
+            ?shoot_mode,
+            shooter_pos = ?shooter_position,
+            shooter_dir = shooter_direction,
+            hand = ?sprite_hand_point,
+            ?bow_point,
+            ?target_point,
+            target_movement = ?target_movement,
+            ?velocity,
+            hit_chance,
+            trajectory_len = trajectory.len(),
+            first_waypoint = ?trajectory.first().map(|tp| tp.position),
+            "arrow launch parameters"
+        );
 
-            // human-status capacity, not the difficulty-/alcohol-adjusted
-            // shooting-ability value used by the hit-chance lookup.
-            let bow_skill_capacity = self
-                .bow_skill_capacity(assets, result.shooter)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "bow shot shooter {:?} is missing its authoritative bow skill capacity",
-                        result.shooter
+        // ── Spawn the arrow ──────────────────────────────────
+        let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
+            shooter: shooter_id,
+            bow_point,
+            trajectory_origin: crate::coordinates::MapPoint {
+                x: shooter_position.x,
+                y: shooter_position.y,
+            },
+            target: target_id,
+            target_pos: target_pos,
+            trajectory,
+            damage,
+            layer,
+            lands_in_hole: terminal_lands_in_hole,
+            initial_velocity: velocity,
+        });
+        let diagnostic_identity = arrow_publication_debug_gate().enabled().then(|| {
+            (
+                self.control
+                    .frame_counter
+                    .checked_add(1)
+                    .expect("frame counter overflow while recording arrow publication diagnostic"),
+                self.world.original_creation_order(shooter_id),
+            )
+        });
+        if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
+            record_arrow_publication_debug(
+                "after_spawn_arrow",
+                frame_after,
+                shooter_creation_order,
+                None,
+                &arrow,
+            );
+        }
+        let Entity::Projectile(arrow_projectile) = &mut arrow else {
+            panic!("spawn_arrow returned a non-projectile entity");
+        };
+        // Trajectory calculation retains the dive flag across a later ricochet
+        // trajectory. Its terminal update must therefore still take
+        // the water-return path even when the recomputed fall ends dry.
+        arrow_projectile.projectile.dive = terminal_lands_in_water;
+        set_projectile_trajectory_origin(
+            &mut arrow_projectile.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
+        let arrow_id = self.add_entity(arrow);
+        if capture_collision_debug {
+            crate::sight_obstacle::validate_projectile_collision_debug_spawn(
+                arrow_id,
+                self.world.original_creation_order(arrow_id),
+            );
+        }
+        let diagnostic_projectile_creation_order =
+            diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
+        if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+            diagnostic_identity.zip(diagnostic_projectile_creation_order)
+        {
+            record_arrow_publication_debug(
+                "after_add_entity",
+                frame_after,
+                shooter_creation_order,
+                Some(projectile_creation_order),
+                self.world
+                    .entities
+                    .get(arrow_id)
+                    .expect("new arrow missing immediately after add_entity"),
+            );
+        }
+        if let Some(resolution) = initial_landing_resolution {
+            if projectile_landing_debug_matches(self.control.frame_counter, shooter_id, arrow_id) {
+                let obstacle_list = self.sight_obstacles(assets);
+                let obstacle = terminal_obstacle.map(|handle| {
+                    let index = usize::from(handle);
+                    let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
+                        panic!("diagnostic terminal obstacle {index} disappeared")
+                    });
+                    (
+                        index,
+                        obstacle_list.is_active(index),
+                        obstacle.is_projection_area(),
+                        obstacle.projection_area_ref(),
+                        obstacle.contains_point_projection(
+                            trajectory_end
+                                .expect("terminal impact lost its endpoint")
+                                .to_map(),
+                        ),
                     )
                 });
-
-            if target_is_human
-                && let Some(bias) =
-                    bow_shot::roll_hit_and_compute_bias(sim, hit_chance, bow_skill_capacity)
-            {
-                // Miss — deflect the velocity.
-                velocity.x += bias.x;
-                velocity.y += bias.y;
-                velocity.z += bias.z;
-                tracing::debug!(
-                    shooter = ?result.shooter,
-                    ?hit_chance,
-                    ?bias,
-                    "Bow shot missed (bias applied)"
-                );
-            }
-
-            // ── Bloodseeker-oil check ────────────────────────────
-            // When a PC shoots an FX target in a forest level the
-            // arrow gets magic-bullet mode, bypassing obstacle collision so
-            // it can pass through trees to reach the target.
-            let magic_bullet =
-                target_is_fx_target && shooter_is_pc && self.world.weather.is_forest_level;
-
-            // ── Compute ballistic trajectory ─────────────────────
-            let obstacle_list = self.sight_obstacles(assets);
-            let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-                fast_find_grid: &self.world.fast_grid,
-                sight_obstacles: obstacle_list,
-                water_zones: Some(&assets.environment.water_zones),
-            };
-            let collision_debug_identity =
-                crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
-                    crate::sight_obstacle::ProjectileCollisionDebugIdentity {
-                        frame: self.control.frame_counter,
-                        shooter: result.shooter.index(),
-                        projectile_creation_order: self.world.next_original_creation_order,
-                    }
+                let landing = trajectory_end
+                    .expect("terminal impact lost its endpoint")
+                    .to_map();
+                let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
+                    let index = usize::from(handle);
+                    obstacle_list.get(index).unwrap_or_else(|| {
+                        panic!("diagnostic terminal obstacle {index} disappeared")
+                    })
                 });
-            let capture_collision_debug = collision_debug_identity
-                .is_some_and(crate::sight_obstacle::projectile_collision_debug_matches);
-            let compute_trajectory = || {
-                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
-                    bow_point,
-                    velocity,
-                    mass,
-                    flat_shot,
-                    // Magic-bullet short-circuit: skip the obstacle check entirely.
-                    if magic_bullet {
-                        None
-                    } else {
-                        Some(&obstacle_check)
-                    },
-                )
-            };
-            let (
-                trajectory,
-                terminal_obstacle,
-                terminal_impact,
-                terminal_lands_in_hole,
-                terminal_lands_in_water,
-            ) = if capture_collision_debug {
-                crate::sight_obstacle::with_projectile_collision_debug_identity(
-                    collision_debug_identity.expect("matched collision debug has no identity"),
-                    compute_trajectory,
-                )
-            } else {
-                compute_trajectory()
-            };
-            let terminal_obstacle_plane =
-                bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
-            let trajectory_end = trajectory.last().map(|tp| tp.position);
-            // Trajectory calculation resolves and stores the eventual impact
-            // membership before the projectile's explicit pre-add
-            // update. It is therefore observable throughout flight, not
-            // only after the projectile lands.
-            //
-            // A terminal impact that classifies as water or hole returns from
-            // trajectory calculation *before* the membership block
-            // (setting the dive flag and returning; and
-            // adding a fall-into-hole trajectory and returning, both
-            // before clearing the layer when no obstacle is present).
-            // Neither fall-into-hole trajectory creation, projectile-impact
-            // handling, nor the dive flag touches
-            // layer, sector or obstacle, so such a projectile keeps the
-            // clearing the layer, sector, and obstacle that
-            // installed for the whole of its fall.
-            let terminal_membership =
-                terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
-            let initial_landing_resolution = terminal_membership.then(|| {
-                let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
-                if let Some(obstacle) = terminal_obstacle {
-                    self.world
-                        .fast_grid
-                        .resolve_projectile_landing_with_obstacle(
-                            end.to_map(),
-                            Some(obstacle),
-                            obstacle_list,
-                        )
-                } else {
-                    self.world
-                        .fast_grid
-                        .resolve_projectile_ground_landing(end.to_map())
-                }
-            });
-            tracing::debug!(
-                shooter = ?result.shooter,
-                target = ?result.target,
-                ?shoot_mode,
-                ?bow_point,
-                ?target_point,
-                ?trajectory_end,
-                trajectory_len = trajectory.len(),
-                magic_bullet,
-                predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
-                "Bow shot trajectory computed"
-            );
-            // Launch-parameter snapshot, on its own target so it can be
-            // enabled without the rest of the combat module's chatter:
-            // `RUST_LOG=arrow_launch=trace`.
-            tracing::trace!(
-                target: "arrow_launch",
-                frame = self.control.frame_counter,
-                shooter = result.shooter.index(),
-                target_id = result.target.index(),
-                ?shoot_mode,
-                shooter_pos = ?result.shooter_position,
-                shooter_dir = result.shooter_direction,
-                hand = ?result.sprite_hand_point,
-                ?bow_point,
-                ?target_point,
-                target_movement = ?target_movement,
-                ?velocity,
-                hit_chance,
-                trajectory_len = trajectory.len(),
-                first_waypoint = ?trajectory.first().map(|tp| tp.position),
-                "arrow launch parameters"
-            );
-
-            // ── Spawn the arrow ──────────────────────────────────
-            let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
-                shooter: result.shooter,
-                bow_point,
-                trajectory_origin: crate::coordinates::MapPoint {
-                    x: result.shooter_position.x,
-                    y: result.shooter_position.y,
-                },
-                target: result.target,
-                target_pos: result.target_pos,
-                trajectory,
-                damage,
-                layer,
-                lands_in_hole: terminal_lands_in_hole,
-                initial_velocity: velocity,
-            });
-            let diagnostic_identity = arrow_publication_debug_gate().enabled().then(|| {
-                (
-                    self.control.frame_counter.checked_add(1).expect(
-                        "frame counter overflow while recording arrow publication diagnostic",
-                    ),
-                    self.world.original_creation_order(result.shooter),
-                )
-            });
-            if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
-                record_arrow_publication_debug(
-                    "after_spawn_arrow",
-                    frame_after,
-                    shooter_creation_order,
-                    None,
-                    &arrow,
-                );
-            }
-            let Entity::Projectile(arrow_projectile) = &mut arrow else {
-                panic!("spawn_arrow returned a non-projectile entity");
-            };
-            // Trajectory calculation retains the dive flag across a later ricochet
-            // trajectory. Its terminal update must therefore still take
-            // the water-return path even when the recomputed fall ends dry.
-            arrow_projectile.projectile.dive = terminal_lands_in_water;
-            set_projectile_trajectory_origin(
-                &mut arrow_projectile.projectile,
-                trajectory_origin_sector,
-                layer,
-            );
-            let arrow_id = self.add_entity(arrow);
-            if capture_collision_debug {
-                crate::sight_obstacle::validate_projectile_collision_debug_spawn(
-                    arrow_id,
-                    self.world.original_creation_order(arrow_id),
-                );
-            }
-            let diagnostic_projectile_creation_order =
-                diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
-            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
-                diagnostic_identity.zip(diagnostic_projectile_creation_order)
-            {
-                record_arrow_publication_debug(
-                    "after_add_entity",
-                    frame_after,
-                    shooter_creation_order,
-                    Some(projectile_creation_order),
-                    self.world
-                        .entities
-                        .get(arrow_id)
-                        .expect("new arrow missing immediately after add_entity"),
-                );
-            }
-            if let Some(resolution) = initial_landing_resolution {
-                if projectile_landing_debug_matches(
-                    self.control.frame_counter,
-                    result.shooter,
-                    arrow_id,
-                ) {
-                    let obstacle_list = self.sight_obstacles(assets);
-                    let obstacle = terminal_obstacle.map(|handle| {
-                        let index = usize::from(handle);
-                        let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
-                            panic!("diagnostic terminal obstacle {index} disappeared")
-                        });
-                        (
-                            index,
-                            obstacle_list.is_active(index),
-                            obstacle.is_projection_area(),
-                            obstacle.projection_area_ref(),
-                            obstacle.contains_point_projection(
-                                trajectory_end
-                                    .expect("terminal impact lost its endpoint")
-                                    .to_map(),
-                            ),
-                        )
-                    });
-                    let landing = trajectory_end
-                        .expect("terminal impact lost its endpoint")
-                        .to_map();
-                    let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
-                        let index = usize::from(handle);
-                        obstacle_list.get(index).unwrap_or_else(|| {
-                            panic!("diagnostic terminal obstacle {index} disappeared")
-                        })
-                    });
-                    let material_inputs = terminal_obstacle_ref.map(|obstacle| {
-                        let sectors = obstacle
-                            .material_sectors
-                            .iter()
-                            .enumerate()
-                            .map(|(index, sector)| {
-                                (
-                                    index,
-                                    sector.material,
-                                    sector.bounding_box.contains_point(landing),
-                                    sector.contains(landing),
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        (obstacle.material, sectors)
-                    });
-                    let ground_material_inputs = assets
-                        .environment
-                        .water_zones
-                        .zones
+                let material_inputs = terminal_obstacle_ref.map(|obstacle| {
+                    let sectors = obstacle
+                        .material_sectors
                         .iter()
                         .enumerate()
-                        .map(|(index, zone)| {
+                        .map(|(index, sector)| {
                             (
                                 index,
-                                zone.material,
-                                zone.bounding_box.contains_point(landing),
-                                zone.contains(landing),
+                                sector.material,
+                                sector.bounding_box.contains_point(landing),
+                                sector.contains(landing),
                             )
                         })
                         .collect::<Vec<_>>();
-                    let scoped_material = crate::water_zones::determine_water_hole_scoped(
-                        &assets.environment.water_zones,
-                        terminal_obstacle_ref,
-                        landing,
-                    )
-                    .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
-                    let candidate_layer = obstacle
-                        .filter(|(_, active, projection, topology, _)| {
-                            *active && *projection && topology.is_some()
+                    (obstacle.material, sectors)
+                });
+                let ground_material_inputs = assets
+                    .environment
+                    .water_zones
+                    .zones
+                    .iter()
+                    .enumerate()
+                    .map(|(index, zone)| {
+                        (
+                            index,
+                            zone.material,
+                            zone.bounding_box.contains_point(landing),
+                            zone.contains(landing),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let scoped_material = crate::water_zones::determine_water_hole_scoped(
+                    &assets.environment.water_zones,
+                    terminal_obstacle_ref,
+                    landing,
+                )
+                .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
+                let candidate_layer = obstacle
+                    .filter(|(_, active, projection, topology, _)| {
+                        *active && *projection && topology.is_some()
+                    })
+                    .map_or(0, |(_, _, _, topology, _)| {
+                        topology.expect("filtered projection topology").layer.get()
+                    });
+                let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
+                    let block = self
+                        .world
+                        .fast_grid
+                        .get_block_index(landing, candidate_layer);
+                    self.world
+                        .fast_grid
+                        .get_sectors_at_block(block, crate::sector::SectorType::MOTION)
+                        .into_iter()
+                        .map(|(index, sector)| {
+                            (
+                                index,
+                                i16::from(sector.sector_number),
+                                sector.sector_type.is_area(),
+                                sector.bounding_box.contains_point(landing),
+                                sector.contains_point(landing),
+                            )
                         })
-                        .map_or(0, |(_, _, _, topology, _)| {
-                            topology.expect("filtered projection topology").layer.get()
-                        });
-                    let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
-                        let block = self
-                            .world
-                            .fast_grid
-                            .get_block_index(landing, candidate_layer);
-                        self.world
-                            .fast_grid
-                            .get_sectors_at_block(block, crate::sector::SectorType::MOTION)
-                            .into_iter()
-                            .map(|(index, sector)| {
-                                (
-                                    index,
-                                    i16::from(sector.sector_number),
-                                    sector.sector_type.is_area(),
-                                    sector.bounding_box.contains_point(landing),
-                                    sector.contains_point(landing),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    } else {
-                        Vec::new()
-                    };
-                    eprintln!(
-                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_impact={} lands_in_water={} lands_in_hole={} terminal_obstacle={obstacle:?} material_inputs={material_inputs:?} ground_material_inputs={ground_material_inputs:?} scoped_material={scoped_material:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
-                        self.control.frame_counter,
-                        result.shooter.index(),
-                        arrow_id.index(),
-                        trajectory_end
-                            .expect("terminal impact lost its endpoint")
-                            .x
-                            .to_bits(),
-                        trajectory_end
-                            .expect("terminal impact lost its endpoint")
-                            .y
-                            .to_bits(),
-                        trajectory_end
-                            .expect("terminal impact lost its endpoint")
-                            .z
-                            .to_bits(),
-                        landing.x.to_bits(),
-                        landing.y.to_bits(),
-                        terminal_impact,
-                        terminal_lands_in_water,
-                        terminal_lands_in_hole,
-                        candidate_layer,
-                    );
-                }
-                let entity = self
-                    .world
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
+                eprintln!(
+                    "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_impact={} lands_in_water={} lands_in_hole={} terminal_obstacle={obstacle:?} material_inputs={material_inputs:?} ground_material_inputs={ground_material_inputs:?} scoped_material={scoped_material:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
+                    self.control.frame_counter,
+                    shooter_id.index(),
+                    arrow_id.index(),
+                    trajectory_end
+                        .expect("terminal impact lost its endpoint")
+                        .x
+                        .to_bits(),
+                    trajectory_end
+                        .expect("terminal impact lost its endpoint")
+                        .y
+                        .to_bits(),
+                    trajectory_end
+                        .expect("terminal impact lost its endpoint")
+                        .z
+                        .to_bits(),
+                    landing.x.to_bits(),
+                    landing.y.to_bits(),
+                    terminal_impact,
+                    terminal_lands_in_water,
+                    terminal_lands_in_hole,
+                    candidate_layer,
+                );
+            }
+            let entity = self
+                .world
+                .entities
+                .get_mut(arrow_id)
+                .expect("newly added arrow vanished before landing-state initialization");
+            let element = entity.element_data_mut();
+            element.set_sector(resolution.sector);
+            if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
+                element.set_layer(
+                    resolution
+                        .layer
+                        .expect("authorized projectile landing has no resolved layer")
+                        .get(),
+                );
+            }
+        }
+        if terminal_membership {
+            // obstacle assignment lives inside the same membership
+            // block the water/hole `return`s skip
+            // for flying projectiles, so a projectile that ends in
+            // water or a hole stays bound to no obstacle.
+            let element = self
+                .world
+                .entities
+                .get_mut(arrow_id)
+                .expect("newly added arrow vanished before obstacle binding")
+                .element_data_mut();
+            bow_shot::bind_trajectory_obstacle(element, terminal_obstacle, terminal_obstacle_plane);
+        }
+        // Hydrate the arrow's sprite from the accessory registry so
+        // the flying arrow renders its proper sprite instead of the
+        // colored-rect fallback.
+        self.attach_accessory_sprite(assets, arrow_id);
+        if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+            diagnostic_identity.zip(diagnostic_projectile_creation_order)
+        {
+            record_arrow_publication_debug(
+                "after_attach_accessory_sprite",
+                frame_after,
+                shooter_creation_order,
+                Some(projectile_creation_order),
+                self.world
                     .entities
-                    .get_mut(arrow_id)
-                    .expect("newly added arrow vanished before landing-state initialization");
-                let element = entity.element_data_mut();
-                element.set_sector(resolution.sector);
-                if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
-                    element.set_layer(
-                        resolution
-                            .layer
-                            .expect("authorized projectile landing has no resolved layer")
-                            .get(),
-                    );
-                }
-            }
-            if terminal_membership {
-                // obstacle assignment lives inside the same membership
-                // block the water/hole `return`s skip
-                // for flying projectiles, so a projectile that ends in
-                // water or a hole stays bound to no obstacle.
-                let element = self
-                    .world
-                    .entities
-                    .get_mut(arrow_id)
-                    .expect("newly added arrow vanished before obstacle binding")
-                    .element_data_mut();
-                bow_shot::bind_trajectory_obstacle(
-                    element,
-                    terminal_obstacle,
-                    terminal_obstacle_plane,
-                );
-            }
-            // Hydrate the arrow's sprite from the accessory registry so
-            // the flying arrow renders its proper sprite instead of the
-            // colored-rect fallback.
-            self.attach_accessory_sprite(assets, arrow_id);
-            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
-                diagnostic_identity.zip(diagnostic_projectile_creation_order)
-            {
-                record_arrow_publication_debug(
-                    "after_attach_accessory_sprite",
-                    frame_after,
-                    shooter_creation_order,
-                    Some(projectile_creation_order),
-                    self.world
-                        .entities
-                        .get(arrow_id)
-                        .expect("new arrow missing after accessory sprite attachment"),
-                );
-            }
-            self.tick_new_projectile_once(sim, assets, arrow_id);
-            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
-                diagnostic_identity.zip(diagnostic_projectile_creation_order)
-            {
-                record_arrow_publication_debug(
-                    "after_first_hourglass",
-                    frame_after,
-                    shooter_creation_order,
-                    Some(projectile_creation_order),
-                    self.world
-                        .entities
-                        .get(arrow_id)
-                        .expect("new arrow missing after its first hourglass"),
-                );
-            }
-            spawned_projectiles.push(arrow_id);
-
-            tracing::debug!(
-                shooter = ?result.shooter,
-                target = ?result.target,
-                arrow = ?arrow_id,
-                ?shoot_mode,
-                damage,
-                ?hit_chance,
-                "Arrow spawned from bow shot"
+                    .get(arrow_id)
+                    .expect("new arrow missing after accessory sprite attachment"),
             );
-
-            // ── Decrement bow ammo after shot ───────────────────
-            // Decrement ammo by 1; disable the bow action if ammo hits 0.
-            self.decrement_bow_ammo(assets, result.shooter);
-
-            // The sequence element stays in progress after release so
-            // the shoot animation and reload/unequip orders can finish.
-            // `tick_bow_shots` emits completion when the final bow order
-            // terminates.
         }
-        for (seq_id, elem_idx) in events.completed {
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.tick_new_projectile_once(sim, assets, arrow_id);
+        if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+            diagnostic_identity.zip(diagnostic_projectile_creation_order)
+        {
+            record_arrow_publication_debug(
+                "after_first_hourglass",
+                frame_after,
+                shooter_creation_order,
+                Some(projectile_creation_order),
+                self.world
+                    .entities
+                    .get(arrow_id)
+                    .expect("new arrow missing after its first hourglass"),
+            );
         }
-        spawned_projectiles
+
+        tracing::debug!(
+            shooter = ?shooter_id,
+            target = ?target_id,
+            arrow = ?arrow_id,
+            ?shoot_mode,
+            damage,
+            ?hit_chance,
+            "Arrow spawned from bow shot"
+        );
+
+        // ── Decrement bow ammo after shot ───────────────────
+        // Decrement ammo by 1; disable the bow action if ammo hits 0.
+        self.decrement_bow_ammo(assets, shooter_id);
+
+        Some(arrow_id)
     }
 
     /// Put an arrow into non-shield falling state — the "armor ricochet"
@@ -3503,10 +3563,14 @@ impl EngineInner {
         let strangle_victim_after_attacker = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                (actor.active_ability.kind == Some(crate::movement::AbilityKind::Strangle)
-                    && actor.active_ability.done_effect_applied)
-                    .then_some(actor.active_ability.target)
+            .and_then(|_| {
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Strangle && ability.order_done)
+                    .then_some(ability.target)
                     .flatten()
             })
             .map(|victim_id| {
@@ -3575,44 +3639,24 @@ impl EngineInner {
         use crate::abilities::AbilityTickResult;
         match result {
             AbilityTickResult::Terminated {
-                actor_id,
-                kind,
-                seq_id,
-                elem_idx,
-            } => self.finish_ability_order(sim, assets, actor_id, kind, seq_id, elem_idx),
+                seq_id, elem_idx, ..
+            } => self.do_next_order(sim, assets, seq_id, elem_idx),
             AbilityTickResult::Aborted {
                 actor_id,
-                kind,
                 seq_id,
                 elem_idx,
-                order_id,
+                ..
             } => {
-                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, order_id);
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                if kind == crate::movement::AbilityKind::Strangle {}
             }
             AbilityTickResult::CarryDone {
                 carrier_id,
                 target_id,
                 ..
             } => self.apply_ability_carry_done(carrier_id, target_id),
-            AbilityTickResult::DropDone {
-                carrier_id,
-                target_id,
-                drop_posture,
-                carrier_pos,
-                carrier_direction,
-                ..
-            } => {
-                self.apply_completed_corpse_drop(
-                    sim,
-                    assets,
-                    carrier_id,
-                    target_id,
-                    drop_posture,
-                    carrier_pos,
-                    carrier_direction,
-                );
+            AbilityTickResult::DropDone { carrier_id } => {
+                self.execute_corpse_drop_done(sim, assets, carrier_id);
             }
             AbilityTickResult::TieDone {
                 actor_id,
@@ -3739,85 +3783,6 @@ impl EngineInner {
                 elem_idx,
                 sprite_frozen,
             ),
-        }
-    }
-
-    fn finish_ability_order(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor_id: EntityId,
-        kind: crate::movement::AbilityKind,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
-        self.do_next_order(sim, assets, seq_id, elem_idx);
-        // Order advancement terminates the exhausted element, and
-        // The original game immediately sends the condolence notification before
-        // returning from that state-change stack. This is required
-        // for every ability, not only Strangle: it clears the
-        // actor's selected element (so the command becomes Wait)
-        // and may synchronously instruct a successor.
-        let next = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| element.current_order())
-            .map(|order| (order.order_id, order.order_type));
-        if let Some(actor) = self
-            .get_entity_mut(actor_id)
-            .and_then(Entity::actor_data_mut)
-            && actor.active_ability.kind == Some(kind)
-            && actor.active_ability.sequence_id == Some(seq_id)
-            && actor.active_ability.element_index == elem_idx
-        {
-            match (kind, next) {
-                (
-                    crate::movement::AbilityKind::Listen,
-                    Some((order_id, crate::order::OrderType::Listening)),
-                ) => {
-                    actor.listen_phase = crate::element::ListenPhase::CountingDown;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::Listen,
-                    Some((order_id, crate::order::OrderType::TransitionListeningWaitingUpright)),
-                ) => {
-                    actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::ReceivePurse,
-                    Some((order_id, crate::order::OrderType::WaitingWithPurse)),
-                ) => {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Waiting;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::ReceivePurse,
-                    Some((
-                        order_id,
-                        crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright,
-                    )),
-                ) => {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Transition;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                _ => {
-                    if kind == crate::movement::AbilityKind::Listen {
-                        actor.listen_phase = crate::element::ListenPhase::Inactive;
-                        actor.listen_wait_time = 0;
-                    } else if kind == crate::movement::AbilityKind::ReceivePurse {
-                        actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-                    }
-                    actor.active_ability.clear();
-                    actor.action_state = crate::element::ActionState::Waiting;
-                }
-            }
         }
     }
 
@@ -4249,8 +4214,7 @@ impl EngineInner {
         actor_id: EntityId,
     ) {
         // Entry transition animation just finished; the
-        // PC is now in ActionState::Listening /
-        // ListenPhase::CountingDown.  Forward
+        // PC is now executing the Listening order. Forward
         // PcMessage::SelectAction(Listen) so HUD/UI
         // reflects the active listen.
         // The message's gameplay half runs inline, the same way
@@ -4462,13 +4426,7 @@ impl EngineInner {
             )
         };
         if !valid {
-            self.cleanup_aborted_ability(
-                pc_id,
-                crate::movement::AbilityKind::Pay,
-                seq_id,
-                elem_idx,
-                Some(order_id),
-            );
+            self.record_aborted_ability_motion(pc_id);
             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
@@ -4822,15 +4780,7 @@ impl EngineInner {
                 layer,
             )
         {
-            self.cleanup_aborted_ability(
-                actor_id,
-                crate::movement::AbilityKind::Strangle,
-                seq_id,
-                elem_idx,
-                self.get_entity(actor_id)
-                    .and_then(Entity::actor_data)
-                    .and_then(|actor| actor.active_ability.order_id),
-            );
+            self.record_aborted_ability_motion(actor_id);
             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
@@ -4886,21 +4836,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Pay)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Pay
                     && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Pay initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Pay initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Pay initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -4923,13 +4873,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Pay,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -4964,21 +4908,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Hit)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Hit
                     && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Hit initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Hit initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Hit initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5023,13 +4967,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Hit,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5047,8 +4985,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                let kind = ability.kind?;
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                let kind = ability.kind;
                 (matches!(
                     kind,
                     crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
@@ -5056,16 +4998,12 @@ impl EngineInner {
                     .then(|| {
                         (
                             kind,
-                            ability
-                                .sequence_id
-                                .expect("pending tying initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending tying initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending tying initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5095,7 +5033,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5137,8 +5075,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Carry)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Carry
                     && actor.execute_order_initialising
                     && actor.installed_order.is_some_and(|installed| {
                         installed.order_type
@@ -5175,8 +5117,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::ClimbOnShoulders
                     && actor.execute_order_initialising
                     && actor.installed_order.is_some_and(|installed| {
                         installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
@@ -5204,8 +5150,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Heal)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Heal
                     && actor.execute_order_initialising)
                     .then_some(ability.target)
                     .flatten()
@@ -5249,21 +5199,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
-                    && !ability.strangle_initialized)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Strangle
+                    && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Strangle initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Strangle initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Strangle initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5288,13 +5238,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Strangle,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5326,25 +5270,11 @@ impl EngineInner {
                 .expect("validated Strangle victim vanished before direction initialization")
                 .element_data_mut()
                 .set_direction_goal(facing);
-            self.get_entity_mut(actor_id)
-                .expect("validated strangler vanished before initialization latch")
-                .actor_data_mut()
-                .expect("validated strangler lost actor state before initialization latch")
-                .active_ability
-                .strangle_initialized = true;
         }
         true
     }
 
-    pub(super) fn cleanup_aborted_ability(
-        &mut self,
-        actor_id: EntityId,
-        kind: crate::movement::AbilityKind,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_id: Option<std::num::NonZeroU32>,
-    ) {
-        // Every caller reaches this helper because the selected derived
+    pub(super) fn record_aborted_ability_motion(&mut self, actor_id: EntityId) {
         // The execution arm returned an aborted motion. Publish that result for
         // the actor-owner envelope as well. In particular, Tie deliberately
         // fails validity one frame after DONE changed its victim from Lying
@@ -5359,23 +5289,6 @@ impl EngineInner {
                 .expect("ability owner must retain actor state during abort cleanup")
                 .continuation
                 .motion_state = crate::sprite::MotionState::Aborted;
-        }
-        if let Some(actor) = self
-            .get_entity_mut(actor_id)
-            .and_then(Entity::actor_data_mut)
-            && actor.active_ability.kind == Some(kind)
-            && actor.active_ability.sequence_id == Some(seq_id)
-            && actor.active_ability.element_index == elem_idx
-            && actor.active_ability.order_id == order_id
-        {
-            actor.active_ability.clear();
-            if kind == crate::movement::AbilityKind::Listen {
-                actor.listen_phase = crate::element::ListenPhase::Inactive;
-                actor.listen_wait_time = 0;
-            } else if kind == crate::movement::AbilityKind::ReceivePurse {
-                actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-            }
-            actor.action_state = crate::element::ActionState::Waiting;
         }
     }
 
@@ -5985,13 +5898,11 @@ mod tests {
                 Some(target_id),
             ));
         engine.orders.sequence_manager.start_sequence_level(lower);
-        engine.select_sequence_element(target_id, Some((lower, 0)));
-        engine.dispatch_shield_command(
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &assets,
             &mut Vec::new(),
             target_id,
-            Command::LowerShield,
             lower,
             0,
         );
@@ -6654,21 +6565,25 @@ mod tests {
                 .action_state(ActionState::Waiting)
                 .build(),
         );
-        let selected = crate::movement::ActiveAbility {
-            kind: Some(crate::movement::AbilityKind::Carry),
-            sequence_id: Some(crate::sequence::SequenceId(91)),
-            element_index: 2,
-            target: Some(target),
-            done_effect_applied: true,
-            ..Default::default()
-        };
+        let mut element = crate::sequence::SequenceElement::new_interaction(
+            1,
+            crate::element::Command::TakeCorpse,
+            Some(carrier),
+            Some(target),
+        );
+        element.orders.push_back(crate::order::Order::test_new(
+            OrderType::TransitionWaitingUprightCarryingCorpse,
+            0.0,
+            0.0,
+        ));
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        let selected = crate::sequence::SequenceElementRef::new(sequence, 0);
         engine
             .get_entity_mut(carrier)
             .unwrap()
             .actor_data_mut()
             .unwrap()
-            .active_ability = selected.clone();
-        let selected_before = bitcode::encode(&selected);
+            .selected_sequence_element = Some(selected);
 
         engine.apply_ability_tick_result(
             &crate::sim_rng::test_context(),
@@ -6678,16 +6593,16 @@ mod tests {
                 carrier_id: carrier,
                 target_id: target,
                 carried_posture: Posture::Lying,
-                seq_id: crate::sequence::SequenceId(91),
-                elem_idx: 2,
+                seq_id: sequence,
+                elem_idx: 0,
             },
         );
 
         let carrier = engine.get_entity(carrier).unwrap();
         assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
         assert_eq!(
-            bitcode::encode(&carrier.actor_data().unwrap().active_ability),
-            selected_before
+            carrier.actor_data().unwrap().selected_sequence_element,
+            Some(selected)
         );
         let target = engine.get_entity(target).unwrap();
         assert_eq!(target.posture(), Posture::Carried);
@@ -6695,13 +6610,17 @@ mod tests {
             target.actor_data().unwrap().action_state,
             ActionState::Waiting
         );
-        assert!(
+        assert_eq!(engine.orders.sequence_manager.sequences_iter().count(), 1);
+        assert_eq!(
             engine
                 .orders
                 .sequence_manager
-                .sequences_iter()
-                .next()
-                .is_none()
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::TransitionWaitingUprightCarryingCorpse,
         );
     }
 

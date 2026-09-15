@@ -134,7 +134,9 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
     use crate::order::OrderType;
 
     let (mut engine, carrier, body, _) =
-        corpse_exit_initialization_fixture(false, Command::EnterSwordfight);
+        corpse_exit_initialization_fixture(Command::EnterSwordfight);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     assert_eq!(
         engine.get_entity(carrier).unwrap().posture(),
@@ -151,10 +153,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         "translation frame must retain the registered corpse-exit owner"
     );
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let carrier_entity = engine.get_entity(carrier).unwrap();
     assert_eq!(carrier_entity.posture(), Posture::Upright);
@@ -389,13 +388,14 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                     .motion_state,
                 crate::sprite::MotionState::Terminated
             );
-            let healer_actor = engine
-                .get_entity(healer)
-                .and_then(Entity::actor_data)
-                .unwrap();
             assert!(
-                !healer_actor.active_ability.is_active(),
-                "the synchronous owner condolence must clear the terminated Heal mirror"
+                crate::abilities::selected_ability(
+                    &engine.world.entities,
+                    &engine.orders.sequence_manager,
+                    healer
+                )
+                .is_none(),
+                "the synchronous owner condolence must retire the terminated Heal selection"
             );
             assert!(
                 engine
@@ -474,16 +474,16 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     let order = element
         .current_order()
         .expect("strangle order must remain selected");
-    let active = &engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_ability;
-    assert_eq!(active.sequence_id, Some(seq));
+    let active = crate::abilities::selected_ability(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        attacker,
+    )
+    .unwrap();
+    assert_eq!(active.sequence_id, seq);
     assert_eq!(active.element_index, 0);
     assert_eq!(active.target, Some(victim));
-    assert_eq!(active.order_id, Some(order.order_id));
+    assert_eq!(active.order_id, order.order_id);
 
     let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
     assert!(
@@ -578,13 +578,12 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
             .contains(crate::ai::AiLockFlags::FREEZE)
     );
     assert!(
-        !invalid
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        !crate::abilities::selected_ability(
+            &invalid.world.entities,
+            &invalid.orders.sequence_manager,
+            attacker
+        )
+        .is_some()
     );
 
     engine
@@ -798,13 +797,12 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     let mut display = CameraDisplayState::default();
     engine.tick_ability_for(&sim, &mut display, &assets, attacker);
     assert!(
-        !engine
+        !(engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .done_effect_applied,
+            .sprite()
+            .last_motion_state
+            == Some(crate::sprite::MotionState::Done)),
         "the first valid Execute must leave a later terminal boundary to recheck"
     );
     engine
@@ -830,25 +828,23 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     for branch in [&mut in_range, &mut out_of_range] {
         for _ in 0..10 {
             branch.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, attacker);
-            if branch
+            if (branch
                 .get_entity(attacker)
                 .unwrap()
-                .actor_data()
-                .unwrap()
-                .active_ability
-                .done_effect_applied
+                .sprite()
+                .last_motion_state
+                == Some(crate::sprite::MotionState::Done))
             {
                 break;
             }
         }
         assert!(
-            branch
+            (branch
                 .get_entity(attacker)
                 .unwrap()
-                .actor_data()
-                .unwrap()
-                .active_ability
-                .done_effect_applied,
+                .sprite()
+                .last_motion_state
+                == Some(crate::sprite::MotionState::Done)),
             "both branches must reach the real Hitting Done boundary"
         );
     }
@@ -984,13 +980,12 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
                 engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-                if !engine
-                    .get_entity(attacker)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .active_ability
-                    .is_active()
+                if !crate::abilities::selected_ability(
+                    &engine.world.entities,
+                    &engine.orders.sequence_manager,
+                    attacker,
+                )
+                .is_some()
                 {
                     break;
                 }
@@ -1184,8 +1179,7 @@ fn launch_initialized_strangle(
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .active_ability
-        .strangle_initialized = true;
+        .execute_order_initialising = false;
     let attacker_topology = {
         let element = engine.get_entity(attacker).unwrap().element_data();
         (
@@ -1231,13 +1225,12 @@ fn assert_failed_strangle_cleanup(
     } = launch;
 
     assert!(
-        !engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            attacker
+        )
+        .is_some()
     );
     assert_eq!(
         engine

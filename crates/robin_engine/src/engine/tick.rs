@@ -10,8 +10,6 @@ mod tick_action_change_step;
 use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
-#[cfg(test)]
-use super::sequence_runtime::OwnerActionBarrier;
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
@@ -272,35 +270,6 @@ fn waiting_sword_does_not_publish_its_sprite_terminal_edge() {
     assert!(specialized_execute_uses_sprite_motion(
         ExecuteOwnerFamily::Movement
     ));
-}
-
-/// Return the canonical order installed by command translation for the active
-/// ability.  Execute-owner selection must match that order, even when an
-/// ability later asks the sprite to perform a different animation.  In
-/// In particular, the original game installs the healing animation for every Heal command
-/// and substitutes the eating animation only during player execution for self-heal.
-fn active_ability_order_type(actor: &crate::element::ActorData) -> Option<crate::order::OrderType> {
-    use crate::element::{ListenPhase, ReceivePursePhase};
-    use crate::movement::AbilityKind;
-    use crate::order::OrderType;
-
-    match actor.active_ability.kind? {
-        AbilityKind::Listen => match actor.listen_phase {
-            ListenPhase::EnterTransition => Some(OrderType::TransitionWaitingUprightListening),
-            ListenPhase::CountingDown => Some(OrderType::Listening),
-            ListenPhase::ExitTransition => Some(OrderType::TransitionListeningWaitingUpright),
-            ListenPhase::Inactive => None,
-        },
-        AbilityKind::ReceivePurse => match actor.receive_purse_phase {
-            ReceivePursePhase::Receiving => Some(OrderType::ReceivingPurse),
-            ReceivePursePhase::Waiting => Some(OrderType::WaitingWithPurse),
-            ReceivePursePhase::Transition => {
-                Some(OrderType::TransitionWaitingWithPurseWaitingUpright)
-            }
-            ReceivePursePhase::Inactive => None,
-        },
-        kind => Some(crate::abilities::ability_order_type(kind)),
-    }
 }
 
 macro_rules! actor_execute_arm_catalog {
@@ -1224,7 +1193,11 @@ impl EngineInner {
         let actor = entity
             .actor_data()
             .unwrap_or_else(|| panic!("Drop boundary owner {owner:?} is not an actor"));
-        let ability = &actor.active_ability;
+        let ability = crate::abilities::selected_ability(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            owner,
+        );
         let selected_state = selected_order.and_then(|(seq, elem, _)| {
             self.orders
                 .sequence_manager
@@ -1232,12 +1205,8 @@ impl EngineInner {
                 .map(|element| element.state)
         });
         eprintln!(
-            "DROPBOUND frame={frame} phase={phase} owner={owner:?} execute_initialising={} active_kind={:?} active_seq={:?} active_elem={} active_order={:?} selected={selected_order:?} selected_state={selected_state:?} installed={:?} actor_last_execute={:?} sprite_last_processed={} sprite_action={:?}",
+            "DROPBOUND frame={frame} phase={phase} owner={owner:?} execute_initialising={} ability={ability:?} selected={selected_order:?} selected_state={selected_state:?} installed={:?} actor_last_execute={:?} sprite_last_processed={} sprite_action={:?}",
             actor.execute_order_initialising,
-            ability.kind,
-            ability.sequence_id,
-            ability.element_index,
-            ability.order_id,
             actor.installed_order,
             actor.last_execute_order_id,
             entity.element_data().sprite.last_processed_order_id,
@@ -1836,7 +1805,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                self.finish_move_path(sim, assets, request, waypoints);
+                self.finish_move_path(sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(
@@ -2609,17 +2578,16 @@ impl EngineInner {
                     engine.tick_bow_shot_for(sim, assets, owner, order_id);
                 }
                 if ability.is_some() {
-                    let listen_phase = engine
-                        .get_entity(owner)
-                        .and_then(Entity::actor_data)
-                        .filter(|actor| {
-                            actor.active_ability.kind
-                                == Some(crate::movement::AbilityKind::Listen)
-                        })
-                        .map(|actor| actor.listen_phase);
-                    let listen_counting = listen_phase
-                        == Some(crate::element::ListenPhase::CountingDown);
-                    let listen_advanced = listen_phase.is_some()
+                    let listen = crate::abilities::selected_ability(
+                        &engine.world.entities,
+                        &engine.orders.sequence_manager,
+                        owner,
+                    )
+                    .filter(|ability| ability.kind == crate::movement::AbilityKind::Listen);
+                    let listen_counting = listen.is_some_and(|ability| {
+                        ability.order_type == crate::order::OrderType::Listening
+                    });
+                    let listen_advanced = listen.is_some()
                         && engine.tick_enemy_ai_blip_detection_for_owner(sim, assets, owner);
                     // The original game's listening-animation update ignores
                     // the sprite's DONE/TERMINATED states and remains in

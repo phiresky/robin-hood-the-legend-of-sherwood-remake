@@ -519,8 +519,6 @@ impl MovementStepCtx<'_> {
                             .expect("door owner disappeared")
                             .actor_data_mut()
                             .expect("door owner must be an actor");
-                        actor.clear_path();
-                        actor.active_movement.clear();
                         actor.active_door_pass = None;
                     }
                     DoorPassAdvance::NoActive => {
@@ -2706,8 +2704,6 @@ impl MovementStepCtx<'_> {
         if final_entity_seek_arrival == Some(true) {
             let actor = entity.actor_data_mut().expect("actor-only branch");
             if actor.post_seek_sequence.is_some() && actor.active_door_pass.is_none() {
-                actor.clear_path();
-                actor.active_movement.clear();
                 actor.active_door_pass = None;
                 deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
                     self.sim,
@@ -2839,8 +2835,6 @@ impl MovementStepCtx<'_> {
         }
         let actor = entity.actor_data_mut().expect("actor-only branch");
         if final_actor_owned_post_seek_arrival {
-            actor.clear_path();
-            actor.active_movement.clear();
             actor.active_door_pass = None;
             deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
                 self.sim,
@@ -2876,14 +2870,9 @@ impl MovementStepCtx<'_> {
             .expect("movement owner disappeared during execution")
             .actor_data_mut()
             .expect("actor-only branch");
-        // Pop via the element we actually dispatched (`move_seq_id` /
-        // `move_elem_idx`), not `actor.active_movement.sequence_id`
-        // — the latter can be stale/None when the Move element was
-        // launched by the AI without setting active_movement
-        // (soldier chase paths).
         deferred.completion = Some(MotionState::Terminated);
         // Last order of the Move element just completed — flip
-        // back to Waiting and clear the active movement.
+        // back to Waiting.
         // Matches the `DoorPassAdvance::Done` arm below but for
         // the transition-terminated path.
         if is_final_waypoint {
@@ -2942,13 +2931,11 @@ impl MovementStepCtx<'_> {
                     );
                 }
                 DoorPassAdvance::Done { completed } => {
-                    actor.clear_path();
                     actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
                         crate::element::ActionState::WaitingSword
                     } else {
                         crate::element::ActionState::Waiting
                     };
-                    actor.active_movement.clear();
                     actor.active_door_pass = None;
                     clear_completed_movement_goal = true;
                     if let Some((door_index, direct)) =

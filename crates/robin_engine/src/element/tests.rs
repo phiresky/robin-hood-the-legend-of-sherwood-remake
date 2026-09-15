@@ -32,7 +32,10 @@ fn hit_seek_abort_preserves_independent_actor_latches() {
         seek_refresh_wait: 7,
         seek_target: Some(EntityId::Pc(crate::entity_id::PcId(42))),
         post_seek_sequence: Some(crate::sequence::Sequence::new().into_post_seek()),
-        active_movement: ActiveMovement::new(crate::sequence::SequenceId(9), 2),
+        selected_sequence_element: Some(crate::sequence::SequenceElementRef::new(
+            crate::sequence::SequenceId(9),
+            2,
+        )),
         seek_distance: 23.5,
         last_seek_target_position: MapPoint::new(14.0, 27.0),
         last_execute_order_id: std::num::NonZeroU32::new(17),
@@ -48,7 +51,7 @@ fn hit_seek_abort_preserves_independent_actor_latches() {
     expected.wait_time = expected.seek_refresh_wait;
     expected.seek_target = None;
     expected.post_seek_sequence = None;
-    expected.clear_path();
+
     expected.active_door_pass = None;
     actor.abort_out_of_range_hit_seek();
     assert_eq!(bitcode::encode(&actor), bitcode::encode(&expected));

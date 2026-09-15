@@ -47,7 +47,6 @@ use crate::human_control::{
     MissionRole,
 };
 use crate::jump_line::JumpLineIndex;
-use crate::movement::{ActiveMovement, ActiveShot};
 use crate::order::OrderType;
 use crate::position_interface::{PositionInterface, SectorHandle};
 use crate::profiles::{
@@ -977,20 +976,16 @@ pub struct ActorData {
     /// Original-game new-order state for the currently entered execution. Set at
     /// owner selection and cleared after Execute/completion/ActionChange.
     pub execute_order_initialising: bool,
-    /// Orphaned WaitingSword identity retained across an already-satisfied
-    /// EnterSwordfight terminal callback until the replacement Wait publishes.
-    #[serde(default)]
-    pub retained_waiting_sword_order_id: Option<std::num::NonZeroU32>,
 
     // Wait
     pub wait_time: u32,
 
     /// Countdown for the Listen ability's one-shot reveal.  Armed to
     /// `TIME_LISTEN_WAIT` (25) by the ai.rs section 2a listen pass
-    /// when the PC enters the `ListenPhase::CountingDown` phase, then
+    /// when the PC enters the Listening order, then
     /// decremented each subsequent frame.  When it reaches 0, the blip
     /// reveal + FX target `Heard()` callback fires exactly once and
-    /// the phase advances to `ExitTransition`.
+    /// execution advances to the exit transition.
     pub listen_wait_time: u32,
 
     /// Countdown for the Whistle ability's expanding-noise ellipse
@@ -1000,19 +995,6 @@ pub struct ActorData {
     /// expanding circle during the last `TIME_LISTEN` (5) frames (the
     /// Whistling arm of the shared Listen/Whistle ellipse render).
     pub whistle_wait_time: u32,
-
-    /// Current phase of the Listen ability, if any.  We carry an
-    /// explicit phase so owner-local ability animation and countdown work
-    /// can coordinate
-    /// without re-parsing order types every frame.
-    pub listen_phase: ListenPhase,
-
-    /// Current phase of the beggar's `ReceivePurse` animation chain, if
-    /// any.  The three-order queue `ReceivingPurse → WaitingWithPurse →
-    /// Transition` is driven phase-by-phase so the `WaitingWithPurse`
-    /// completion can fire `EngineInner::reveal_scrolls` at the right
-    /// moment.
-    pub receive_purse_phase: ReceivePursePhase,
 
     // Seeking
     pub seek_target: Option<EntityId>,
@@ -1041,24 +1023,11 @@ pub struct ActorData {
 
     pub script_class: String,
 
-    /// Tracks the sequence element that initiated the current movement,
-    /// so we can notify the sequence manager when movement completes.
-    pub active_movement: ActiveMovement,
-
     /// Multi-step door-pass state. When set, the movement tick processes
     /// steps one at a time: walk steps set waypoints, PassingDoor steps
     /// fire the layer/sector callback, and Transition steps play
     /// animations in place. See [`ActiveDoorPass`].
     pub active_door_pass: Option<ActiveDoorPass>,
-
-    /// Tracks the sequence element that initiated an in-progress ranged
-    /// action (currently only bow shots).  See
-    /// [`ActiveShot`][crate::movement::ActiveShot] for details.
-    pub active_shot: ActiveShot,
-
-    /// Tracks an in-progress hero ability (carry, tie, heal, whistle, etc.).
-    /// See [`ActiveAbility`][crate::movement::ActiveAbility] for details.
-    pub active_ability: crate::movement::ActiveAbility,
 
     /// Destination point for rolling after a death/knockout fall on a slope.
     /// When `combat_anim` finishes and this is set, a Rolling animation is
@@ -1147,12 +1116,10 @@ impl Default for ActorData {
             installed_order: None,
             selected_sequence_element: None,
             execute_order_initialising: false,
-            retained_waiting_sword_order_id: None,
+
             wait_time: 0,
             listen_wait_time: 0,
             whistle_wait_time: 0,
-            listen_phase: ListenPhase::Inactive,
-            receive_purse_phase: ReceivePursePhase::Inactive,
             seek_target: None,
             last_seek_target_position: MapPoint::default(),
             seek_distance: 0.0,
@@ -1160,10 +1127,7 @@ impl Default for ActorData {
             post_seek_sequence: None,
             passing_door_directly: false,
             script_class: String::new(),
-            active_movement: ActiveMovement::none(),
             active_door_pass: None,
-            active_shot: ActiveShot::none(),
-            active_ability: crate::movement::ActiveAbility::default(),
             pending_roll: None,
             shield_face_point: None,
             active_jump: None,
@@ -1198,7 +1162,6 @@ impl ActorData {
         self.wait_time = self.seek_refresh_wait;
         self.seek_target = None;
         self.post_seek_sequence = None;
-        self.clear_path();
         self.active_door_pass = None;
     }
 
@@ -1210,7 +1173,6 @@ impl ActorData {
         jump: crate::engine::jump::ActiveJump,
         first_order: InstalledActorOrder,
     ) {
-        self.clear_path();
         self.active_jump = Some(jump);
         self.jump_z_offset = 0.0;
         self.installed_order = Some(first_order);
@@ -1234,17 +1196,6 @@ impl ActorData {
         self.active_jump_target_3d = state.step.target_3d;
         self.active_jump_airborne = state.step.airborne;
         jump.current = Some(state);
-    }
-
-    /// Decouple this actor from its active Move element.  Legacy
-    /// name for "stop this actor moving now" — most ability-setup
-    /// sites call this before installing their own sequence element,
-    /// and priority arbitration will interrupt the orphaned Move
-    /// soon after.  For a hard teardown (terminate the Move
-    /// immediately so its remaining orders can't animate), use
-    /// `EngineInner::abort_actor_movement` instead.
-    pub fn clear_path(&mut self) {
-        self.active_movement.clear();
     }
 }
 

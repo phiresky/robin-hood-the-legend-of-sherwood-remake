@@ -11,7 +11,7 @@ impl EngineInner {
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some((
             command,
             stored_destination,
@@ -58,7 +58,7 @@ impl EngineInner {
                 "Move/Seek action has invalid sequence-element data"
             );
             self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
-            return OwnerActionBarrier::Skip;
+            return;
         };
 
         // The one SEEK exception to MOVE fallthrough is a self target.
@@ -87,7 +87,7 @@ impl EngineInner {
             }
             self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             self.start_post_seek_sequence(sim, assets, active_scripts, owner, None);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         // Original-game owner instruction lets SEEK fall through the
@@ -97,7 +97,7 @@ impl EngineInner {
         // the wrapper without ever reaching ordinary path dispatch.
         if !self.extract_move_instruction_owner(owner) {
             self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
@@ -122,7 +122,7 @@ impl EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         // Actor instruction handling disables anti-collision as soon as a MAP movement
@@ -192,62 +192,14 @@ impl EngineInner {
                         if self.current_sequence_element_for_actor(owner)
                             != Some((sequence_id, element_index))
                         {
-                            return OwnerActionBarrier::Skip;
+                            return;
                         }
-                        // Original resumes translation after seek refresh's
-                        // early return and rewrites SEEK to MOVE. The return
-                        // only leaves the movement body empty: transition
-                        // generation has already run before priority
-                        // arbitration and may have populated the order list
-                        // during instruction arbitration. In that
-                        // case actor instruction handling installs the transition and
-                        // leaves the Move IN_PROGRESS while the target passes
-                        // its door. Only a genuinely orderless element takes
-                        // the selected-element-clear / TERMINATED path
-                        // which clears the active element and terminates.
-                        let retained_transition = if let Some(element) = self
-                            .orders
+                        self.orders
                             .sequence_manager
                             .get_element_mut(sequence_id, element_index)
-                            .filter(|element| {
-                                matches!(
-                                    element.state,
-                                    crate::sequence::SequenceState::Todo
-                                        | crate::sequence::SequenceState::Postponed
-                                )
-                            }) {
-                            element.command = Command::Move;
-                            !element.orders.is_empty()
-                        } else {
-                            false
-                        };
-                        self.world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::actor_data_mut)
-                            .expect("accepted same-sector Seek lost its actor")
-                            .continuation
-                            .motion_state = crate::sprite::MotionState::InProgress;
-                        if retained_transition {
-                            self.element_in_progress(
-                                sim,
-                                assets,
-                                active_scripts,
-                                sequence_id,
-                                element_index,
-                            );
-                        } else {
-                            self.select_sequence_element(owner, None);
-                            self.publish_selected_order_as_installed(owner);
-                            self.element_terminated(
-                                sim,
-                                assets,
-                                active_scripts,
-                                sequence_id,
-                                element_index,
-                            );
-                        }
-                        return OwnerActionBarrier::Reach;
+                            .expect("translated Seek element disappeared")
+                            .command = Command::Move;
+                        return;
                     }
                     let target_position = self
                         .world
@@ -288,7 +240,7 @@ impl EngineInner {
                         },
                         seek_distance,
                     ) {
-                        return OwnerActionBarrier::Skip;
+                        return;
                     }
                     let Some(resolved) =
                         self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
@@ -300,7 +252,7 @@ impl EngineInner {
                             sequence_id,
                             element_index,
                         );
-                        return OwnerActionBarrier::Skip;
+                        return;
                     };
                     if let Some(crate::sequence::SequenceElementData::Movement {
                         destination,
@@ -375,7 +327,7 @@ impl EngineInner {
                     "building interior move",
                 );
                 self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
-                return OwnerActionBarrier::Skip;
+                return;
             }
 
             let has_post_seek = self
@@ -390,7 +342,7 @@ impl EngineInner {
                     owner,
                     Some((sequence_id, element_index)),
                 );
-                return OwnerActionBarrier::Skip;
+                return;
             }
 
             let order_id = self.orders.allocate_order_id();
@@ -404,8 +356,8 @@ impl EngineInner {
                     order_id,
                 ),
             );
-            self.element_in_progress(sim, assets, active_scripts, sequence_id, element_index);
-            return OwnerActionBarrier::Reach;
+
+            return;
         }
 
         // The original game's seek translation and refresh do not flatten the
@@ -440,7 +392,7 @@ impl EngineInner {
                 },
             )
         {
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         if is_seek {
@@ -450,7 +402,7 @@ impl EngineInner {
                 .get_element(sequence_id, element_index)
                 .map(|element| element.data.clone())
             else {
-                return OwnerActionBarrier::Skip;
+                return;
             };
             if let crate::sequence::SequenceElementData::Movement { flags, .. } =
                 &mut replacement_data
@@ -477,7 +429,7 @@ impl EngineInner {
                 element_index,
                 replacement,
             );
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         self.dispatch_prepared_move_instruction(
@@ -553,29 +505,6 @@ impl EngineInner {
             // Falling out of the whole loop instead would strand the
             // successor until the next frame and leave the actor orderless.
             self.dispatch_sequence_phase_action(sim, assets, action);
-        }
-
-        // The redundant-EnterSwordfight retention above is only a bridge
-        // across a re-entrant actor-update lazy Wait. If that Wait is
-        // published, `publish_selected_order_as_installed` consumes the marker
-        // and transfers the running sprite identity. Work first instructed by
-        // The sequence-manager tick is already past every actor slot, so an
-        // unconsumed marker here means no replacement Wait exists this frame.
-        // The original game's interrupted Wait has cleared the actor order in that case.
-        for (_, entity) in self.world.entities.actors_mut() {
-            let actor = entity
-                .actor_data_mut()
-                .expect("actor iterator yielded non-actor entity");
-            let Some(retained_order_id) = actor.retained_waiting_sword_order_id else {
-                continue;
-            };
-            if actor
-                .installed_order
-                .is_some_and(|order| order.order_id == retained_order_id)
-            {
-                actor.installed_order = None;
-            }
-            actor.retained_waiting_sword_order_id = None;
         }
     }
 

@@ -893,9 +893,13 @@ impl EngineInner {
         let Some(victim_id) = interaction_victim_id(element) else {
             return false;
         };
-        let owns_active_release = actor.actor_data().is_some_and(|actor| {
-            actor.active_ability.kind == Some(crate::movement::AbilityKind::Untie)
-                && actor.active_ability.target == Some(victim_id)
+        let selected_ability = crate::abilities::selected_ability(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            actor_id,
+        );
+        let owns_active_release = selected_ability.is_some_and(|ability| {
+            ability.kind == crate::movement::AbilityKind::Untie && ability.target == Some(victim_id)
         });
         if !self.control.sim_config.enable_unbinding && !owns_active_release {
             return false;
@@ -913,9 +917,8 @@ impl EngineInner {
         // the remaining reversed frames play instead of turning the
         // successful release into an Impossible sequence.
         let finishing_successful_release = victim.element_data().posture() == Posture::Lying
-            && actor.actor_data().is_some_and(|actor| {
-                owns_active_release && actor.active_ability.done_effect_applied
-            });
+            && owns_active_release
+            && selected_ability.is_some_and(|ability| ability.order_done);
         if !target_is_tied && !finishing_successful_release {
             return false;
         }
@@ -1457,33 +1460,6 @@ impl EngineInner {
         match terminal {
             ValidityArmTerminal::Aborted => {
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                // The bow driver is keyed independently from the selected
-                // sequence element. Once this Execute guard aborts a shot,
-                // the specialized bow tick no longer sees a selected shoot
-                // order and therefore cannot clear that runtime latch for
-                // us. Only detach the exact shot that was actually made
-                // Impossible: NonInterruptable elements deliberately ignore
-                // `element_impossible` and must retain their live driver.
-                let became_impossible = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .is_some_and(|element| {
-                        element.state == crate::sequence::SequenceState::Impossible
-                    });
-                if became_impossible {
-                    let actor = self
-                        .world
-                        .entities
-                        .get_mut(entity_id)
-                        .and_then(Entity::actor_data_mut)
-                        .expect("aborted bow-validity owner lost actor data");
-                    if actor.active_shot.sequence_id == Some(seq_id)
-                        && actor.active_shot.element_index == elem_idx
-                    {
-                        actor.active_shot.clear();
-                    }
-                }
             }
             ValidityArmTerminal::Terminated => {
                 self.do_next_order(sim, assets, seq_id, elem_idx);
@@ -2504,24 +2480,11 @@ mod tests {
     }
 
     #[test]
-    fn aborted_bow_release_clears_matching_active_shot_and_allows_the_next_launch() {
+    fn aborted_bow_release_clears_selection_and_allows_the_next_launch() {
         use crate::bow_shot::{BeginShotResult, begin_bow_shot};
-        use crate::movement::ActiveShot;
         use crate::weapons::ShootMode;
 
         let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
-        engine
-            .get_entity_mut(shooter)
-            .and_then(Entity::actor_data_mut)
-            .expect("test shooter actor data")
-            .active_shot = ActiveShot {
-            sequence_id: Some(sequence),
-            element_index: 0,
-            target: Some(target),
-            order_id: Some(std::num::NonZeroU32::new(77).expect("nonzero test order")),
-            released: false,
-            shoot_mode: Some(ShootMode::Normal),
-        };
         engine
             .get_entity_mut(target)
             .and_then(Entity::human_data_mut)
@@ -2544,13 +2507,8 @@ mod tests {
             crate::sequence::SequenceState::Impossible,
         );
         assert!(
-            !engine
-                .get_entity(shooter)
-                .and_then(Entity::actor_data)
-                .expect("test shooter actor data after abort")
-                .active_shot
-                .is_active(),
-            "execute-time abort must detach its matching bow runtime"
+            engine.selected_bow_order(shooter).is_none(),
+            "execute-time abort must detach its selected bow order"
         );
 
         let next_sequence =
@@ -2581,33 +2539,18 @@ mod tests {
         assert_eq!(
             result,
             BeginShotResult::Started,
-            "the stale ActiveShot latch must not reject a later bow launch"
+            "a completed cancellation must allow a later bow launch"
         );
     }
 
     #[test]
-    fn non_interruptable_bow_validity_noop_retains_matching_active_shot() {
-        use crate::movement::ActiveShot;
-        use crate::weapons::ShootMode;
-
+    fn non_interruptable_bow_validity_noop_retains_selected_order() {
         let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
         engine.orders.sequence_manager.set_element_priority(
             sequence,
             0,
             crate::sequence::SequencePriority::NonInterruptable,
         );
-        engine
-            .get_entity_mut(shooter)
-            .and_then(Entity::actor_data_mut)
-            .expect("test shooter actor data")
-            .active_shot = ActiveShot {
-            sequence_id: Some(sequence),
-            element_index: 0,
-            target: Some(target),
-            order_id: Some(std::num::NonZeroU32::new(78).expect("nonzero test order")),
-            released: false,
-            shoot_mode: Some(ShootMode::Normal),
-        };
         engine
             .get_entity_mut(target)
             .and_then(Entity::human_data_mut)
@@ -2630,13 +2573,8 @@ mod tests {
             crate::sequence::SequenceState::InProgress,
         );
         assert!(
-            engine
-                .get_entity(shooter)
-                .and_then(Entity::actor_data)
-                .expect("test shooter actor data after guarded abort")
-                .active_shot
-                .is_active(),
-            "a blocked Impossible transition must retain its matching bow runtime"
+            engine.selected_bow_order(shooter).is_some(),
+            "a blocked Impossible transition must retain the selected bow order"
         );
     }
 

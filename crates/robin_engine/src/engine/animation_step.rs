@@ -202,10 +202,9 @@ impl EngineInner {
         else {
             return None;
         };
-        let exact_selected_bow = actor.active_shot.is_active()
-            && actor.active_shot.sequence_id == Some(seq_id)
-            && actor.active_shot.element_index == elem_idx
-            && crate::bow_shot::is_active_bow_order(order.order_type);
+        let exact_selected_bow = self
+            .selected_bow_order(entity_id)
+            .is_some_and(|(sequence, index, _)| (sequence, index) == (seq_id, elem_idx));
         if exact_selected_bow {
             return None;
         }
@@ -648,8 +647,6 @@ pub(super) struct ActorAnimationOrderView {
     cur_command: Option<Command>,
     cur_command_level: Option<u16>,
     current_element_script_driven: bool,
-    element_retains_movement_goal: bool,
-    turn_resumed_from_legacy_save: bool,
     selected_order_is_custom_animation: bool,
     requested_custom_animation: Option<OrderType>,
     pointing_direction_goal: Option<i16>,
@@ -802,10 +799,10 @@ impl ActorAnimationStepCtx<'_> {
             )
         };
         if let Some((seq_id, elem_idx)) = order_seq_elem
-            && actor.active_shot.is_active()
-            && actor.active_shot.sequence_id == Some(seq_id)
-            && actor.active_shot.element_index == elem_idx
-            && crate::bow_shot::is_active_bow_order(anim_type)
+            && self
+                .engine
+                .selected_bow_order(self.entity_id)
+                .is_some_and(|(sequence, index, _)| (sequence, index) == (seq_id, elem_idx))
         {
             return ControlFlow::Break(());
         }
@@ -839,25 +836,6 @@ impl ActorAnimationStepCtx<'_> {
                 .sequence_manager
                 .get_element(s, e)
                 .is_some_and(|element| element.script_driven)
-        });
-        let element_retains_movement_goal = order_seq_elem.is_some_and(|(s, e)| {
-            self.engine
-                .orders
-                .sequence_manager
-                .get_element(s, e)
-                .is_some_and(|element| {
-                    element.retained_movement_goal.is_some()
-                        || element
-                            .get_property(crate::sequence::Field::RetainedMovementGoal)
-                            .is_some()
-                })
-        });
-        let turn_resumed_from_legacy_save = order_seq_elem.is_some_and(|(s, e)| {
-            self.engine
-                .orders
-                .sequence_manager
-                .get_element(s, e)
-                .is_some_and(|element| element.legacy_v48.is_some())
         });
         // The sequence element keeps its PlayAnim* command while
         // Transition generation temporarily puts ordinary posture/action
@@ -919,8 +897,6 @@ impl ActorAnimationStepCtx<'_> {
             cur_command,
             cur_command_level,
             current_element_script_driven,
-            element_retains_movement_goal,
-            turn_resumed_from_legacy_save,
             selected_order_is_custom_animation,
             requested_custom_animation,
             pointing_direction_goal,
@@ -997,8 +973,6 @@ impl ActorAnimationStepCtx<'_> {
             order_id,
             antagonist,
             cur_command,
-            element_retains_movement_goal,
-            turn_resumed_from_legacy_save,
             pointing_direction_goal,
             ..
         } = view;
@@ -1169,39 +1143,6 @@ impl ActorAnimationStepCtx<'_> {
         } else {
             None
         };
-        if order_is_initialising
-            && matches!(cur_command, Some(Command::Turn | Command::TurnFast))
-            && !element_retains_movement_goal
-            && !turn_resumed_from_legacy_save
-        {
-            // Facing can be instructed re-entrantly after a
-            // just-launched approach has already written its map
-            // goal. Original leaves that value observable for the
-            // launch frame, then the outgoing movement's
-            // removal notification clears it before the turn
-            // element executes its first order. Rust stages those
-            // callbacks, so reproduce the selected-actor boundary
-            // here rather than retaining the superseded movement
-            // destination throughout the turn transition. A
-            // deferred facing carrying RetainedMovementGoal is
-            // different: the outgoing movement's card observed
-            // that Turn as selected, so Original preserves the
-            // goal and turn execution never clears it. A restored
-            // in-progress Turn likewise has no outgoing movement
-            // condolence in this actor slot: its serialized sprite
-            // goal must remain observable while the loaded order
-            // resumes.
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                owner = ?entity_id,
-                ?cur_command,
-                goal = ?entity.position_iface().map_goal(),
-                "turn launch clearing superseded movement goal"
-            );
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-        }
         let weak_stunned_action_before_perform =
             weak_stunned_start_action_before_perform(entity, anim_type, order_is_initialising);
         ActorAnimationPrep {

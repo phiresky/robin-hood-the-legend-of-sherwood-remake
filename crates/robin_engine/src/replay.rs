@@ -150,7 +150,9 @@ pub struct ReplayHeader {
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
 /// Version 44 removes deferred gameplay and message queues from engine state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 44;
+/// Version 45 removes retained instruction handoff fields from actor state.
+/// Version 46 removes duplicated movement, shot, and ability execution trackers.
+pub const REPLAY_SCHEMA_VERSION: u32 = 46;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
