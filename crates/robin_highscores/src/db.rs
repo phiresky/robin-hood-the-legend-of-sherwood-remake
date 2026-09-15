@@ -1,6 +1,6 @@
 use crate::config::ServerConfig;
 use crate::identity::normalized_username;
-use crate::model::{ChallengePurpose, NewSubmission, SubmissionLifecycle, WorkerJob, now_epoch_ms};
+use crate::model::{NewSubmission, SubmissionLifecycle, WorkerJob, now_epoch_ms};
 use robin_run_protocol::{Digest32, OpaqueId, VerifiedAchievementEvaluationV1};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{
@@ -36,16 +36,20 @@ pub enum DbError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("not found")]
     NotFound,
-    #[error("challenge is expired, consumed, stale, or for a different operation")]
-    InvalidChallenge,
     #[error("submission queue is full")]
     QueueFull,
     #[error("new submission storage admission is temporarily unavailable")]
     AdmissionUnavailable,
-    #[error("submission challenge was already used for different immutable content")]
+    #[error("upload reservation belongs to different immutable content")]
     SubmissionConflict,
     #[error("replay is already pending or verified")]
     DuplicateReplay,
+    #[error("uploader already holds the maximum number of concurrent upload leases")]
+    UploadConcurrencyLimit,
+    #[error("upload lease expired or was replaced before the upload completed")]
+    UploadLeaseLost,
+    #[error("username update is not newer than the last accepted update")]
+    UsernameUpdateSuperseded,
     #[error("worker does not hold the current submission lease")]
     LeaseLost,
     #[error("verifier result violates admission invariants: {0}")]
@@ -64,11 +68,13 @@ impl DbError {
             Self::Migration(_) => "database_migration",
             Self::Clock(_) => "system_clock",
             Self::NotFound => "not_found",
-            Self::InvalidChallenge => "invalid_challenge",
             Self::QueueFull => "queue_full",
             Self::AdmissionUnavailable => "storage_admission_unavailable",
             Self::SubmissionConflict => "submission_conflict",
             Self::DuplicateReplay => "duplicate_replay",
+            Self::UploadConcurrencyLimit => "upload_concurrency_limit",
+            Self::UploadLeaseLost => "upload_lease_lost",
+            Self::UsernameUpdateSuperseded => "username_update_superseded",
             Self::LeaseLost => "lease_lost",
             Self::ResultInvariant(_) => "result_invariant",
             Self::Corrupt(_) => "stored_data_corrupt",
@@ -109,6 +115,7 @@ pub struct Database {
     max_pending_submissions: u32,
     max_concurrent_sensitive_writers: u64,
     max_concurrent_upload_writers: u64,
+    max_concurrent_uploads_per_key: u32,
     /// Keep the exact parent, database inode and live WAL/SHM inodes pinned for
     /// the entire pool lifetime. The pool connects through the retained main
     /// file descriptor, never through the mutable configured pathname.
@@ -138,23 +145,14 @@ impl MaintenanceWriteClass {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct IssuedChallenge {
-    pub id: String,
-    pub nonce: robin_run_protocol::ChallengeNonce32,
-    pub expires_at_ms: u64,
-}
-
 /// Immutable storage projection of one authenticated upload. Serializable
 /// data, not proof of authentication on its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubmissionUploadIntent {
     pub proposed_submission_id: String,
-    pub upload_challenge_id: String,
-    pub upload_challenge_nonce: [u8; 32],
-    pub upload_challenge_expires_at_ms: u64,
-    pub envelope_json: String,
+    /// Canonical JSON of the exact signed submission.
+    pub signed_request_json: String,
     pub uploader_public_key: [u8; 32],
     pub replay_sha256: [u8; 32],
 }
@@ -163,7 +161,6 @@ pub struct SubmissionUploadIntent {
 #[serde(deny_unknown_fields)]
 pub struct SubmissionUploadLease {
     pub submission_id: String,
-    pub upload_challenge_id: String,
     pub lease_token: String,
     pub lease_expires_at_ms: u64,
     pub reservation_expires_at_ms: u64,
@@ -421,6 +418,7 @@ impl Database {
             max_concurrent_upload_writers: u64::try_from(config.max_concurrent_uploads).map_err(
                 |_| DbError::ResultInvariant("upload writer limit overflows".to_owned()),
             )?,
+            max_concurrent_uploads_per_key: config.max_concurrent_uploads_per_key,
             _database_parent: database_parent,
             _database_file: database_file,
             _database_sidecars: Arc::new(sidecars),
@@ -493,176 +491,14 @@ impl Database {
         nonnegative_u64(sequence, "leaderboard_visibility_revision")
     }
 
-    /// Issue a one-use challenge for `purpose` bound to `public_key`.
-    pub async fn issue_challenge(
+    /// Lifecycle of a live submission uploaded by `uploader_public_key`.
+    /// Unknown, deleted and differently owned submissions are all `NotFound`,
+    /// so a caller cannot distinguish them.
+    pub async fn owner_submission_lifecycle(
         &self,
-        purpose: ChallengePurpose,
-        public_key: [u8; 32],
-        ttl: Duration,
-    ) -> Result<IssuedChallenge, DbError> {
-        if purpose == ChallengePurpose::OwnerStatus {
-            return Err(DbError::ResultInvariant(
-                "owner-status challenges use their dedicated namespace".to_owned(),
-            ));
-        }
-        let now = now_epoch_ms()?;
-        let ttl_ms = i64::try_from(ttl.as_millis())
-            .map_err(|_| DbError::Corrupt("challenge TTL does not fit i64".to_owned()))?;
-        let expires = now
-            .checked_add(ttl_ms)
-            .ok_or_else(|| DbError::Corrupt("challenge expiry overflow".to_owned()))?;
-        let id = uuid::Uuid::now_v7().to_string();
-        let nonce: [u8; 32] = rand::random();
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        sqlx::query(
-            "DELETE FROM upload_challenges WHERE consumed_at_ms IS NULL AND expires_at_ms < ?",
-        )
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let outstanding: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM upload_challenges \
-             WHERE consumed_at_ms IS NULL AND expires_at_ms >= ? AND purpose = ?",
-        )
-        .bind(now)
-        .bind(purpose.as_str())
-        .fetch_one(&mut *tx)
-        .await?;
-        let purpose_multiplier = match purpose {
-            ChallengePurpose::Submission => 2,
-            ChallengePurpose::UsernameUpdate
-            | ChallengePurpose::Deletion
-            | ChallengePurpose::OwnerStatus => 1,
-        };
-        if outstanding >= i64::from(self.max_pending_submissions) * purpose_multiplier {
-            return Err(DbError::QueueFull);
-        }
-        sqlx::query(
-            "INSERT INTO challenge_generations (public_key, purpose, generation) VALUES (?, ?, 0) \
-             ON CONFLICT(public_key, purpose) DO NOTHING",
-        )
-        .bind(public_key.as_slice())
-        .bind(purpose.as_str())
-        .execute(&mut *tx)
-        .await?;
-        let generation: i64 = sqlx::query_scalar(
-            "UPDATE challenge_generations SET generation = generation + 1 \
-             WHERE public_key = ? AND purpose = ? RETURNING generation",
-        )
-        .bind(public_key.as_slice())
-        .bind(purpose.as_str())
-        .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO upload_challenges \
-             (id, nonce, purpose, public_key, generation, issued_at_ms, expires_at_ms) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(nonce.as_slice())
-        .bind(purpose.as_str())
-        .bind(public_key.as_slice())
-        .bind(generation)
-        .bind(now)
-        .bind(expires)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(IssuedChallenge {
-            id,
-            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(nonce),
-            expires_at_ms: u64::try_from(expires)
-                .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
-        })
-    }
-
-    /// Issue an owner-status challenge without consulting submission storage.
-    /// This intentionally cannot reveal whether the requested ID exists or is
-    /// controlled by the supplied key.
-    pub async fn issue_owner_status_challenge(
-        &self,
-        controller_public_key: [u8; 32],
-        submission_id: &str,
-        ttl: Duration,
-    ) -> Result<IssuedChallenge, DbError> {
-        let now = now_epoch_ms()?;
-        let ttl_ms = i64::try_from(ttl.as_millis())
-            .map_err(|_| DbError::Corrupt("challenge TTL does not fit i64".to_owned()))?;
-        let expires = now
-            .checked_add(ttl_ms)
-            .ok_or_else(|| DbError::Corrupt("challenge expiry overflow".to_owned()))?;
-        let issued = IssuedChallenge {
-            id: uuid::Uuid::now_v7().to_string(),
-            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(rand::random()),
-            expires_at_ms: u64::try_from(expires)
-                .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
-        };
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        sqlx::query(
-            "DELETE FROM submission_owner_status_challenges \
-             WHERE consumed_at_ms IS NOT NULL OR expires_at_ms < ?",
-        )
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let outstanding: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM submission_owner_status_challenges \
-             WHERE consumed_at_ms IS NULL",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-        if outstanding >= i64::from(self.max_pending_submissions) * 2 {
-            return Err(DbError::QueueFull);
-        }
-        sqlx::query(
-            "INSERT INTO submission_owner_status_challenges \
-             (id, nonce, controller_public_key, submission_id, issued_at_ms, expires_at_ms) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&issued.id)
-        .bind(issued.nonce.as_bytes().as_slice())
-        .bind(controller_public_key.as_slice())
-        .bind(submission_id)
-        .bind(now)
-        .bind(expires)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(issued)
-    }
-
-    /// Atomically consumes a one-use challenge, then evaluates ownership. A
-    /// missing, deleted, or differently owned submission has the same
-    /// externally visible error as any other invalid challenge.
-    pub async fn consume_owner_status_challenge(
-        &self,
-        challenge_id: &str,
-        challenge_nonce: [u8; 32],
-        expires_at_ms: u64,
-        controller_public_key: [u8; 32],
+        uploader_public_key: [u8; 32],
         submission_id: &str,
     ) -> Result<SubmissionLifecycle, DbError> {
-        let now = now_epoch_ms()?;
-        let expires_at_ms = i64::try_from(expires_at_ms).map_err(|_| DbError::InvalidChallenge)?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let consumed = sqlx::query(
-            "UPDATE submission_owner_status_challenges SET consumed_at_ms = ? \
-             WHERE id = ? AND nonce = ? AND controller_public_key = ? AND submission_id = ? \
-               AND expires_at_ms = ? AND expires_at_ms >= ? AND consumed_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(challenge_id)
-        .bind(challenge_nonce.as_slice())
-        .bind(controller_public_key.as_slice())
-        .bind(submission_id)
-        .bind(expires_at_ms)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        if consumed.rows_affected() != 1 {
-            tx.commit().await?;
-            return Err(DbError::InvalidChallenge);
-        }
         let row = sqlx::query(
             "SELECT s.id, s.status, s.rejection_code, s.created_at_ms, s.updated_at_ms, \
                     r.id AS run_id \
@@ -670,47 +506,31 @@ impl Database {
              WHERE s.id = ? AND s.uploader_public_key = ? AND s.tombstoned_at_ms IS NULL",
         )
         .bind(submission_id)
-        .bind(controller_public_key.as_slice())
-        .fetch_optional(&mut *tx)
-        .await?;
-        let lifecycle = row.map(lifecycle_from_row).transpose()?;
-        tx.commit().await?;
-        lifecycle.ok_or(DbError::InvalidChallenge)
+        .bind(uploader_public_key.as_slice())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(DbError::NotFound)?;
+        lifecycle_from_row(row)
     }
 
-    pub async fn attach_deletion_challenge(
-        &self,
-        challenge_id: &str,
-        challenge_json: &str,
-    ) -> Result<(), DbError> {
-        let changed = sqlx::query(
-            "UPDATE upload_challenges SET offer_json = ? \
-             WHERE id = ? AND purpose = 'deletion' AND consumed_at_ms IS NULL \
-                 AND offer_json IS NULL",
-        )
-        .bind(challenge_json)
-        .bind(challenge_id)
-        .execute(&self.pool)
-        .await?;
-        if changed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
+    /// Tombstone an owned submission or run. Idempotent per owner and target:
+    /// a repeated request (including a replay of the same signed request)
+    /// returns the stored receipt without any further effect. A target that
+    /// is already tombstoned for another reason is recorded with its existing
+    /// tombstone.
     pub async fn apply_deletion(
         &self,
-        challenge_id: &str,
-        challenge_nonce: [u8; 32],
         public_key: [u8; 32],
+        signed_at_unix_ms: u64,
         target_kind: &str,
         target_id: &str,
-        challenge_json: &str,
         request_json: &str,
         retention: Option<Duration>,
     ) -> Result<DeletionRecord, DbError> {
         let now = now_epoch_ms()?;
+        let signed_at = i64::try_from(signed_at_unix_ms).map_err(|_| {
+            DbError::ResultInvariant("signed timestamp does not fit SQLite INTEGER".to_owned())
+        })?;
         let purge = retention
             .map(|duration| {
                 i64::try_from(duration.as_millis())
@@ -720,27 +540,22 @@ impl Database {
             })
             .transpose()?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let challenge = sqlx::query(
-            "SELECT purpose, public_key, nonce, expires_at_ms, consumed_at_ms, offer_json \
-             FROM upload_challenges WHERE id = ?",
+        let existing = sqlx::query(
+            "SELECT id, tombstoned_at_ms, purge_eligible_at_ms FROM deletion_requests \
+             WHERE owner_public_key = ? AND target_kind = ? AND target_id = ?",
         )
-        .bind(challenge_id)
+        .bind(public_key.as_slice())
+        .bind(target_kind)
+        .bind(target_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(DbError::InvalidChallenge)?;
-        if challenge.try_get::<String, _>("purpose")? != ChallengePurpose::Deletion.as_str()
-            || challenge.try_get::<Vec<u8>, _>("public_key")?.as_slice() != public_key
-            || challenge.try_get::<Vec<u8>, _>("nonce")?.as_slice() != challenge_nonce
-            || challenge.try_get::<i64, _>("expires_at_ms")? < now
-            || challenge
-                .try_get::<Option<i64>, _>("consumed_at_ms")?
-                .is_some()
-            || challenge
-                .try_get::<Option<String>, _>("offer_json")?
-                .as_deref()
-                != Some(challenge_json)
-        {
-            return Err(DbError::InvalidChallenge);
+        .await?;
+        if let Some(existing) = existing {
+            tx.commit().await?;
+            return deletion_record(
+                existing.try_get("id")?,
+                existing.try_get("tombstoned_at_ms")?,
+                existing.try_get("purge_eligible_at_ms")?,
+            );
         }
         let submission_id: Option<String> = match target_kind {
             "submission" => {
@@ -770,70 +585,73 @@ impl Database {
             }
         };
         let submission_id = submission_id.ok_or(DbError::NotFound)?;
-        let was_public: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM verified_runs WHERE submission_id = ?)",
+        let prior_tombstone = sqlx::query(
+            "SELECT tombstoned_at_ms, purge_eligible_at_ms FROM submissions WHERE id = ?",
         )
         .bind(&submission_id)
         .fetch_one(&mut *tx)
         .await?;
-        let changed = sqlx::query(
-            "UPDATE submissions SET tombstoned_at_ms = ?, purge_eligible_at_ms = ?, \
-                lease_owner = NULL, lease_expires_at_ms = NULL, \
-                status = CASE WHEN status = 'verifying' THEN 'retry_pending' ELSE status END, \
-                updated_at_ms = ? WHERE id = ? AND tombstoned_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(purge)
-        .bind(now)
-        .bind(&submission_id)
-        .execute(&mut *tx)
-        .await?;
-        if changed.rows_affected() != 1 {
-            return Err(DbError::NotFound);
-        }
-        if was_public != 0 {
-            sqlx::query("INSERT INTO leaderboard_visibility_events (created_at_ms) VALUES (?)")
+        let (tombstoned_at, purge_eligible_at) = match prior_tombstone
+            .try_get::<Option<i64>, _>("tombstoned_at_ms")?
+        {
+            Some(tombstoned_at) => (
+                tombstoned_at,
+                prior_tombstone.try_get::<Option<i64>, _>("purge_eligible_at_ms")?,
+            ),
+            None => {
+                let was_public: i64 = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM verified_runs WHERE submission_id = ?)",
+                )
+                .bind(&submission_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                let changed = sqlx::query(
+                    "UPDATE submissions SET tombstoned_at_ms = ?, purge_eligible_at_ms = ?, \
+                        lease_owner = NULL, lease_expires_at_ms = NULL, \
+                        status = CASE WHEN status = 'verifying' THEN 'retry_pending' ELSE status END, \
+                        updated_at_ms = ? WHERE id = ? AND tombstoned_at_ms IS NULL",
+                )
                 .bind(now)
+                .bind(purge)
+                .bind(now)
+                .bind(&submission_id)
                 .execute(&mut *tx)
                 .await?;
-        }
+                if changed.rows_affected() != 1 {
+                    return Err(DbError::Corrupt(
+                        "untombstoned submission changed inside its deletion transaction"
+                            .to_owned(),
+                    ));
+                }
+                if was_public != 0 {
+                    sqlx::query(
+                        "INSERT INTO leaderboard_visibility_events (created_at_ms) VALUES (?)",
+                    )
+                    .bind(now)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                (now, purge)
+            }
+        };
         let deletion_id = uuid::Uuid::now_v7().to_string();
         sqlx::query(
-            "INSERT INTO deletion_requests (id, challenge_id, owner_public_key, target_kind, \
-                target_id, request_json, tombstoned_at_ms, purge_eligible_at_ms) \
+            "INSERT INTO deletion_requests (id, owner_public_key, target_kind, target_id, \
+                request_json, signed_at_unix_ms, tombstoned_at_ms, purge_eligible_at_ms) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&deletion_id)
-        .bind(challenge_id)
         .bind(public_key.as_slice())
         .bind(target_kind)
         .bind(target_id)
         .bind(request_json)
-        .bind(now)
-        .bind(purge)
+        .bind(signed_at)
+        .bind(tombstoned_at)
+        .bind(purge_eligible_at)
         .execute(&mut *tx)
         .await?;
-        let consumed = sqlx::query(
-            "UPDATE upload_challenges SET consumed_at_ms = ? \
-             WHERE id = ? AND consumed_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(challenge_id)
-        .execute(&mut *tx)
-        .await?;
-        if consumed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
-        }
         tx.commit().await?;
-        Ok(DeletionRecord {
-            id: deletion_id,
-            tombstoned_at_ms: u64::try_from(now)
-                .map_err(|_| DbError::Corrupt("negative tombstone timestamp".to_owned()))?,
-            purge_eligible_at_ms: purge
-                .map(u64::try_from)
-                .transpose()
-                .map_err(|_| DbError::Corrupt("negative purge timestamp".to_owned()))?,
-        })
+        deletion_record(deletion_id, tombstoned_at, purge_eligible_at)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1087,91 +905,78 @@ impl Database {
             .collect()
     }
 
+    /// Apply an authenticated username update signed at `signed_at_unix_ms`.
+    /// The update must be signed strictly later than the last accepted one for
+    /// the key, so replaying an older (or the same) signed update within its
+    /// freshness window cannot roll a newer name back.
     pub async fn apply_username_update(
         &self,
-        challenge_id: &str,
-        challenge_nonce: [u8; 32],
         public_key: [u8; 32],
+        signed_at_unix_ms: u64,
         username: &str,
     ) -> Result<(), DbError> {
         let now = now_epoch_ms()?;
+        let signed_at = i64::try_from(signed_at_unix_ms).map_err(|_| {
+            DbError::ResultInvariant("signed timestamp does not fit SQLite INTEGER".to_owned())
+        })?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let challenge = sqlx::query(
-            "SELECT purpose, public_key, nonce, generation, expires_at_ms, consumed_at_ms \
-             FROM upload_challenges WHERE id = ?",
-        )
-        .bind(challenge_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(DbError::InvalidChallenge)?;
-        let challenge_key: Vec<u8> = challenge.try_get("public_key")?;
-        let stored_nonce: Vec<u8> = challenge.try_get("nonce")?;
-        let generation: i64 = challenge.try_get("generation")?;
-        let expires_at: i64 = challenge.try_get("expires_at_ms")?;
-        let consumed_at: Option<i64> = challenge.try_get("consumed_at_ms")?;
-        if challenge.try_get::<String, _>("purpose")? != ChallengePurpose::UsernameUpdate.as_str()
-            || challenge_key.as_slice() != public_key
-            || stored_nonce.as_slice() != challenge_nonce
-            || expires_at < now
-            || consumed_at.is_some()
-        {
-            return Err(DbError::InvalidChallenge);
-        }
-
         let prior = sqlx::query(
-            "SELECT username, username_generation FROM identities WHERE public_key = ?",
+            "SELECT username, username_generation, username_signed_at_unix_ms \
+             FROM identities WHERE public_key = ?",
         )
         .bind(public_key.as_slice())
         .fetch_optional(&mut *tx)
         .await?;
-        if prior
+        let generation = match &prior {
+            Some(row) => {
+                if row.try_get::<i64, _>("username_signed_at_unix_ms")? >= signed_at {
+                    return Err(DbError::UsernameUpdateSuperseded);
+                }
+                row.try_get::<i64, _>("username_generation")?
+                    .checked_add(1)
+                    .ok_or_else(|| DbError::Corrupt("username generation overflow".to_owned()))?
+            }
+            None => 1,
+        };
+        let previous_username = prior
             .as_ref()
-            .is_some_and(|row| row.get::<i64, _>("username_generation") >= generation)
-        {
-            return Err(DbError::InvalidChallenge);
-        }
+            .map(|row| row.try_get::<String, _>("username"))
+            .transpose()?;
         sqlx::query(
             "INSERT INTO identities \
-             (public_key, username, username_normalized, username_generation, created_at_ms, \
-              updated_at_ms) VALUES (?, ?, ?, ?, ?, ?) \
+             (public_key, username, username_normalized, username_generation, \
+              username_signed_at_unix_ms, created_at_ms, updated_at_ms) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(public_key) DO UPDATE SET \
                  username = excluded.username, \
                  username_normalized = excluded.username_normalized, \
                  username_generation = excluded.username_generation, \
+                 username_signed_at_unix_ms = excluded.username_signed_at_unix_ms, \
                  updated_at_ms = excluded.updated_at_ms",
         )
         .bind(public_key.as_slice())
         .bind(username)
         .bind(normalized_username(username))
         .bind(generation)
+        .bind(signed_at)
         .bind(now)
         .bind(now)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
             "INSERT INTO username_history \
-             (public_key, challenge_id, generation, previous_username, new_username, changed_at_ms) \
+             (public_key, generation, signed_at_unix_ms, previous_username, new_username, \
+              changed_at_ms) \
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(public_key.as_slice())
-        .bind(challenge_id)
         .bind(generation)
-        .bind(prior.as_ref().map(|row| row.get::<String, _>("username")))
+        .bind(signed_at)
+        .bind(previous_username)
         .bind(username)
         .bind(now)
         .execute(&mut *tx)
         .await?;
-        let consumed = sqlx::query(
-            "UPDATE upload_challenges SET consumed_at_ms = ? \
-             WHERE id = ? AND consumed_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(challenge_id)
-        .execute(&mut *tx)
-        .await?;
-        if consumed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
-        }
         tx.commit().await?;
         Ok(())
     }
@@ -1242,46 +1047,32 @@ async fn recover_upload_reservations_in(
     .execute(&mut **tx)
     .await?
     .rows_affected();
+    // Expired reservations are bounded durable state: remove them so an
+    // abandoned upload cannot pin its replay hash forever.
     let expired = sqlx::query(
-        "DELETE FROM submission_upload_reservations \
-         WHERE state != 'committed' AND reservation_expires_at_ms < ?",
+        "DELETE FROM submission_upload_reservations WHERE reservation_expires_at_ms < ?",
     )
     .bind(now)
     .execute(&mut **tx)
     .await?
     .rows_affected();
-    // A reserved submission challenge is consumed before streaming. Once its
-    // bounded retry reservation expires, remove that otherwise-unreferenced
-    // challenge too so abandoned attackers cannot grow durable state.
-    sqlx::query(
-        "DELETE FROM upload_challenges \
-         WHERE purpose = 'submission' AND consumed_at_ms IS NOT NULL \
-           AND NOT EXISTS (SELECT 1 FROM submission_upload_reservations r \
-                           WHERE r.upload_challenge_id = upload_challenges.id) \
-           AND NOT EXISTS (SELECT 1 FROM submissions s \
-                           WHERE s.upload_challenge_id = upload_challenges.id)",
-    )
-    .execute(&mut **tx)
-    .await?;
     abandoned
         .checked_add(expired)
         .ok_or_else(|| DbError::Corrupt("upload recovery count overflow".to_owned()))
 }
 
-async fn lifecycle_by_submission_id(
-    tx: &mut sqlx::Transaction<'_, Sqlite>,
-    submission_id: &str,
-) -> Result<Option<SubmissionLifecycle>, DbError> {
-    let row = sqlx::query(
-        "SELECT s.id, s.status, s.rejection_code, s.created_at_ms, s.updated_at_ms, \
-                r.id AS run_id \
-         FROM submissions s LEFT JOIN verified_runs r ON r.submission_id = s.id \
-         WHERE s.id = ? AND s.tombstoned_at_ms IS NULL",
-    )
-    .bind(submission_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    row.map(lifecycle_from_row).transpose()
+fn deletion_record(
+    id: String,
+    tombstoned_at_ms: i64,
+    purge_eligible_at_ms: Option<i64>,
+) -> Result<DeletionRecord, DbError> {
+    Ok(DeletionRecord {
+        id,
+        tombstoned_at_ms: nonnegative_u64(tombstoned_at_ms, "tombstoned_at_ms")?,
+        purge_eligible_at_ms: purge_eligible_at_ms
+            .map(|value| nonnegative_u64(value, "purge_eligible_at_ms"))
+            .transpose()?,
+    })
 }
 
 async fn verify_pinned_database_leaf(

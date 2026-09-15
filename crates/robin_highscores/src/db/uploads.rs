@@ -1,27 +1,7 @@
-//! Upload reservations and durable finalization. Challenge consumption,
-//! replay de-duplication and queue insertion stay in their own transactions.
+//! Upload reservations and durable finalization. Replay de-duplication, the
+//! per-uploader concurrency cap and queue insertion stay in their own
+//! transactions.
 use super::*;
-
-fn check_reserved_intent(
-    existing: &SqliteRow,
-    intent: &SubmissionUploadIntent,
-    envelope_sha256: &[u8; 32],
-) -> Result<(), DbError> {
-    if existing.try_get::<String, _>("envelope_json")? != intent.envelope_json
-        || existing
-            .try_get::<Vec<u8>, _>("envelope_sha256")?
-            .as_slice()
-            != envelope_sha256
-        || existing
-            .try_get::<Vec<u8>, _>("uploader_public_key")?
-            .as_slice()
-            != intent.uploader_public_key
-        || existing.try_get::<Vec<u8>, _>("replay_sha256")?.as_slice() != intent.replay_sha256
-    {
-        return Err(DbError::SubmissionConflict);
-    }
-    Ok(())
-}
 
 async fn ensure_uploader_identity(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
@@ -40,28 +20,57 @@ async fn ensure_uploader_identity(
     Ok(())
 }
 
-/// A replay that is pending or was ever accepted cannot be uploaded again, and
-/// only one uncommitted upload of the same replay may be in flight.
-async fn ensure_replay_is_not_live(
+/// A replay that is pending or was ever accepted cannot be uploaded again.
+/// The byte-identical signed request that created that submission is an exact
+/// retry and observes its lifecycle; any other request is a duplicate.
+async fn live_submission_for_replay(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     replay_sha256: &[u8; 32],
-    upload_challenge_id: &str,
-) -> Result<(), DbError> {
-    let live: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM submissions WHERE replay_sha256 = ? \
-             AND (status = 'accepted' \
-                  OR (status IN ('queued', 'verifying', 'retry_pending') \
-                      AND tombstoned_at_ms IS NULL))) \
-         OR EXISTS(SELECT 1 FROM submission_upload_reservations \
-             WHERE replay_sha256 = ? AND state != 'committed' AND upload_challenge_id != ?)",
+    signed_request_json: &str,
+) -> Result<Option<SubmissionLifecycle>, DbError> {
+    let row = sqlx::query(
+        "SELECT s.id, s.status, s.rejection_code, s.created_at_ms, s.updated_at_ms, \
+                s.signed_request_json, r.id AS run_id \
+         FROM submissions s LEFT JOIN verified_runs r ON r.submission_id = s.id \
+         WHERE s.replay_sha256 = ? \
+           AND (s.status = 'accepted' \
+                OR (s.status IN ('queued', 'verifying', 'retry_pending') \
+                    AND s.tombstoned_at_ms IS NULL)) \
+         LIMIT 1",
     )
     .bind(replay_sha256.as_slice())
-    .bind(replay_sha256.as_slice())
-    .bind(upload_challenge_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    match row {
+        None => Ok(None),
+        Some(row) if row.try_get::<String, _>("signed_request_json")? == signed_request_json => {
+            lifecycle_from_row(row).map(Some)
+        }
+        Some(_) => Err(DbError::DuplicateReplay),
+    }
+}
+
+/// Enforce the per-uploader cap on uploads holding a live lease. `except`
+/// excludes the reservation being reacquired.
+async fn ensure_uploader_concurrency(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    uploader_public_key: &[u8; 32],
+    now: i64,
+    maximum: u32,
+    except: Option<&str>,
+) -> Result<(), DbError> {
+    let active: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM submission_upload_reservations \
+         WHERE uploader_public_key = ? AND state IN ('reserved', 'uploaded') \
+           AND lease_expires_at_ms >= ? AND submission_id != ?",
+    )
+    .bind(uploader_public_key.as_slice())
+    .bind(now)
+    .bind(except.unwrap_or(""))
     .fetch_one(&mut **tx)
     .await?;
-    if live != 0 {
-        return Err(DbError::DuplicateReplay);
+    if active >= i64::from(maximum) {
+        return Err(DbError::UploadConcurrencyLimit);
     }
     Ok(())
 }
@@ -74,10 +83,9 @@ fn unique_violation_as(error: sqlx::Error, mapped: DbError) -> DbError {
 }
 
 impl Database {
-    /// Atomically consume a signed submission challenge and acquire the only
-    /// lease which may ingest its replay bytes. Exact retries either resume
-    /// the durable uploaded state, return the already-created lifecycle, or
-    /// fail before the caller writes anything.
+    /// Acquire the only lease which may ingest this replay's bytes. Exact
+    /// retries return the already-created lifecycle; a re-signed retry by the
+    /// same uploader resumes its abandoned or durably uploaded reservation.
     pub async fn reserve_submission_upload(
         &self,
         intent: &SubmissionUploadIntent,
@@ -89,8 +97,8 @@ impl Database {
     }
 
     /// The HTTP layer passes the capacity admission verdict sampled immediately
-    /// before this transaction. Committed and active exact retries remain
-    /// observable while admission is red, but no challenge is consumed and no
+    /// before this transaction. Completed exact retries and uploaded
+    /// reservations remain observable while admission is red, but no new
     /// artifact-writing reservation is acquired until it is green again.
     pub async fn reserve_submission_upload_if_admitted(
         &self,
@@ -109,68 +117,41 @@ impl Database {
                 "upload reservation TTL must cover its lease".to_owned(),
             ));
         }
-        let configured_lease_expires = now
+        let lease_expires = now
             .checked_add(lease_ms)
             .ok_or_else(|| DbError::Corrupt("upload lease expiry overflow".to_owned()))?;
-        let configured_reservation_expires = now
+        let reservation_expires = now
             .checked_add(reservation_ms)
             .ok_or_else(|| DbError::Corrupt("upload reservation expiry overflow".to_owned()))?;
-        let envelope_sha256 = Digest32::digest_bytes(intent.envelope_json.as_bytes()).into_bytes();
-        let signed_expiry = i64::try_from(intent.upload_challenge_expires_at_ms)
-            .map_err(|_| DbError::InvalidChallenge)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         recover_upload_reservations_in(&mut tx, now).await?;
 
-        let challenge = sqlx::query(
-            "SELECT purpose, public_key, nonce, expires_at_ms, consumed_at_ms \
-             FROM upload_challenges WHERE id = ?",
-        )
-        .bind(&intent.upload_challenge_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(DbError::InvalidChallenge)?;
-        let challenge_expires = challenge.try_get::<i64, _>("expires_at_ms")?;
-        if challenge.try_get::<String, _>("purpose")? != ChallengePurpose::Submission.as_str()
-            || challenge.try_get::<Vec<u8>, _>("public_key")?.as_slice()
-                != intent.uploader_public_key
-            || challenge.try_get::<Vec<u8>, _>("nonce")?.as_slice() != intent.upload_challenge_nonce
-            || challenge_expires != signed_expiry
+        if let Some(lifecycle) =
+            live_submission_for_replay(&mut tx, &intent.replay_sha256, &intent.signed_request_json)
+                .await?
         {
-            return Err(DbError::InvalidChallenge);
-        }
-        let reservation_expires = configured_reservation_expires.min(challenge_expires);
-        let lease_expires = configured_lease_expires.min(reservation_expires);
-        if lease_expires <= now {
-            return Err(DbError::InvalidChallenge);
+            tx.commit().await?;
+            return Ok(SubmissionUploadReservation::Existing { lifecycle });
         }
 
         let existing = sqlx::query(
-            "SELECT submission_id, envelope_json, envelope_sha256, uploader_public_key, \
-                    replay_sha256, state, lease_expires_at_ms, reservation_expires_at_ms \
-             FROM submission_upload_reservations WHERE upload_challenge_id = ?",
+            "SELECT submission_id, uploader_public_key, state, lease_expires_at_ms, \
+                    reservation_expires_at_ms \
+             FROM submission_upload_reservations WHERE replay_sha256 = ?",
         )
-        .bind(&intent.upload_challenge_id)
+        .bind(intent.replay_sha256.as_slice())
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(existing) = existing {
-            check_reserved_intent(&existing, intent, &envelope_sha256)?;
+            if existing
+                .try_get::<Vec<u8>, _>("uploader_public_key")?
+                .as_slice()
+                != intent.uploader_public_key
+            {
+                return Err(DbError::DuplicateReplay);
+            }
             let submission_id: String = existing.try_get("submission_id")?;
             let state: String = existing.try_get("state")?;
-            if state == "committed" {
-                let lifecycle = lifecycle_by_submission_id(&mut tx, &submission_id)
-                    .await?
-                    .ok_or_else(|| {
-                        DbError::Corrupt(
-                            "committed upload reservation has no live submission".to_owned(),
-                        )
-                    })?;
-                tx.commit().await?;
-                return Ok(SubmissionUploadReservation::Existing { lifecycle });
-            }
-            let stored_reservation_expires: i64 = existing.try_get("reservation_expires_at_ms")?;
-            if stored_reservation_expires < now {
-                return Err(DbError::InvalidChallenge);
-            }
             let current_lease_expires: Option<i64> = existing.try_get("lease_expires_at_ms")?;
             if matches!(state.as_str(), "reserved" | "uploaded")
                 && let Some(current_lease_expires) = current_lease_expires
@@ -190,11 +171,20 @@ impl Database {
             if !resume_uploaded && !admission_available {
                 return Err(DbError::AdmissionUnavailable);
             }
-            let lease_token = uuid::Uuid::now_v7().to_string();
+            ensure_uploader_concurrency(
+                &mut tx,
+                &intent.uploader_public_key,
+                now,
+                self.max_concurrent_uploads_per_key,
+                Some(&submission_id),
+            )
+            .await?;
+            let stored_reservation_expires: i64 = existing.try_get("reservation_expires_at_ms")?;
             let next_lease_expires = lease_expires.min(stored_reservation_expires);
             if next_lease_expires <= now {
-                return Err(DbError::InvalidChallenge);
+                return Err(DbError::UploadLeaseLost);
             }
+            let lease_token = uuid::Uuid::now_v7().to_string();
             let next_state = if resume_uploaded {
                 "uploaded"
             } else {
@@ -203,25 +193,25 @@ impl Database {
             let changed = sqlx::query(
                 "UPDATE submission_upload_reservations \
                  SET state = ?, lease_token = ?, lease_expires_at_ms = ?, updated_at_ms = ?, \
-                     abandoned_at_ms = NULL \
-                 WHERE upload_challenge_id = ? AND state = ?",
+                     abandoned_at_ms = NULL, signed_request_json = ? \
+                 WHERE submission_id = ? AND state = ?",
             )
             .bind(next_state)
             .bind(&lease_token)
             .bind(next_lease_expires)
             .bind(now)
-            .bind(&intent.upload_challenge_id)
+            .bind(&intent.signed_request_json)
+            .bind(&submission_id)
             .bind(&state)
             .execute(&mut *tx)
             .await?;
             if changed.rows_affected() != 1 {
-                return Err(DbError::InvalidChallenge);
+                return Err(DbError::UploadLeaseLost);
             }
             tx.commit().await?;
             return Ok(SubmissionUploadReservation::Acquired {
                 lease: SubmissionUploadLease {
                     submission_id,
-                    upload_challenge_id: intent.upload_challenge_id.clone(),
                     lease_token,
                     lease_expires_at_ms: nonnegative_u64(
                         next_lease_expires,
@@ -236,13 +226,6 @@ impl Database {
             });
         }
 
-        if challenge_expires < now
-            || challenge
-                .try_get::<Option<i64>, _>("consumed_at_ms")?
-                .is_some()
-        {
-            return Err(DbError::InvalidChallenge);
-        }
         if !admission_available {
             return Err(DbError::AdmissionUnavailable);
         }
@@ -252,7 +235,7 @@ impl Database {
                  WHERE status IN ('queued', 'verifying', 'retry_pending') \
                    AND tombstoned_at_ms IS NULL) + \
                 (SELECT COUNT(*) FROM submission_upload_reservations \
-                 WHERE state != 'committed' AND reservation_expires_at_ms >= ?)",
+                 WHERE reservation_expires_at_ms >= ?)",
         )
         .bind(now)
         .fetch_one(&mut *tx)
@@ -260,22 +243,26 @@ impl Database {
         if occupied >= i64::from(self.max_pending_submissions) {
             return Err(DbError::QueueFull);
         }
+        ensure_uploader_concurrency(
+            &mut tx,
+            &intent.uploader_public_key,
+            now,
+            self.max_concurrent_uploads_per_key,
+            None,
+        )
+        .await?;
         ensure_uploader_identity(&mut tx, &intent.uploader_public_key).await?;
-        ensure_replay_is_not_live(&mut tx, &intent.replay_sha256, &intent.upload_challenge_id)
-            .await?;
 
         let lease_token = uuid::Uuid::now_v7().to_string();
         sqlx::query(
             "INSERT INTO submission_upload_reservations (\
-                upload_challenge_id, submission_id, envelope_json, envelope_sha256, \
-                uploader_public_key, replay_sha256, state, lease_token, \
-                lease_expires_at_ms, reservation_expires_at_ms, reserved_at_ms, updated_at_ms) \
-             VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?)",
+                submission_id, signed_request_json, uploader_public_key, replay_sha256, state, \
+                lease_token, lease_expires_at_ms, reservation_expires_at_ms, reserved_at_ms, \
+                updated_at_ms) \
+             VALUES (?, ?, ?, ?, 'reserved', ?, ?, ?, ?, ?)",
         )
-        .bind(&intent.upload_challenge_id)
         .bind(&intent.proposed_submission_id)
-        .bind(&intent.envelope_json)
-        .bind(envelope_sha256.as_slice())
+        .bind(&intent.signed_request_json)
         .bind(intent.uploader_public_key.as_slice())
         .bind(intent.replay_sha256.as_slice())
         .bind(&lease_token)
@@ -286,22 +273,10 @@ impl Database {
         .execute(&mut *tx)
         .await
         .map_err(|error| unique_violation_as(error, DbError::DuplicateReplay))?;
-        let consumed = sqlx::query(
-            "UPDATE upload_challenges SET consumed_at_ms = ? \
-             WHERE id = ? AND purpose = 'submission' AND consumed_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(&intent.upload_challenge_id)
-        .execute(&mut *tx)
-        .await?;
-        if consumed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
-        }
         tx.commit().await?;
         Ok(SubmissionUploadReservation::Acquired {
             lease: SubmissionUploadLease {
                 submission_id: intent.proposed_submission_id.clone(),
-                upload_challenge_id: intent.upload_challenge_id.clone(),
                 lease_token,
                 lease_expires_at_ms: nonnegative_u64(lease_expires, "lease_expires_at_ms")?,
                 reservation_expires_at_ms: nonnegative_u64(
@@ -320,12 +295,11 @@ impl Database {
         let now = now_epoch_ms()?;
         let changed = sqlx::query(
             "UPDATE submission_upload_reservations SET state = 'uploaded', updated_at_ms = ? \
-             WHERE upload_challenge_id = ? AND submission_id = ? AND state = 'reserved' \
+             WHERE submission_id = ? AND state = 'reserved' \
                AND lease_token = ? AND lease_expires_at_ms >= ? \
                AND reservation_expires_at_ms >= ?",
         )
         .bind(now)
-        .bind(&lease.upload_challenge_id)
         .bind(&lease.submission_id)
         .bind(&lease.lease_token)
         .bind(now)
@@ -333,12 +307,12 @@ impl Database {
         .execute(&self.pool)
         .await?;
         if changed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
+            return Err(DbError::UploadLeaseLost);
         }
         Ok(())
     }
 
-    /// Release a failed partial stream for an exact retry. A process crash is
+    /// Release a failed partial stream for a retry. A process crash is
     /// handled by lease expiry/recovery.
     pub async fn abandon_submission_upload(
         &self,
@@ -349,13 +323,11 @@ impl Database {
             "UPDATE submission_upload_reservations \
              SET state = 'abandoned', lease_token = NULL, lease_expires_at_ms = NULL, \
                  abandoned_at_ms = ?, updated_at_ms = ? \
-             WHERE upload_challenge_id = ? AND submission_id = ? \
-               AND state IN ('reserved', 'uploaded') \
+             WHERE submission_id = ? AND state IN ('reserved', 'uploaded') \
                AND lease_token = ?",
         )
         .bind(now)
         .bind(now)
-        .bind(&lease.upload_challenge_id)
         .bind(&lease.submission_id)
         .bind(&lease.lease_token)
         .execute(&self.pool)
@@ -371,38 +343,42 @@ impl Database {
         Ok(changed)
     }
 
-    /// Atomically publish a replay already durably stored by an upload
-    /// reservation. The reservation is the only authority to create the
-    /// submission: the one-use challenge was consumed before storage writes.
+    /// Atomically publish a replay already durably stored under an upload
+    /// reservation. The reservation lease is the only authority to create the
+    /// submission; it is deleted in the same transaction.
     pub(crate) async fn finalize_submission_upload(
         &self,
         submission: &NewSubmission,
         lease: &SubmissionUploadLease,
     ) -> Result<SubmissionLifecycle, DbError> {
         let now = now_epoch_ms()?;
-        if submission.id != lease.submission_id
-            || submission.upload_challenge_id != lease.upload_challenge_id
-        {
+        if submission.id != lease.submission_id {
             return Err(DbError::SubmissionConflict);
         }
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let reservation = sqlx::query(
-            "SELECT submission_id, envelope_json, envelope_sha256, uploader_public_key, \
-                    replay_sha256, state, lease_token, lease_expires_at_ms, \
-                    reservation_expires_at_ms \
-             FROM submission_upload_reservations WHERE upload_challenge_id = ?",
+            "SELECT signed_request_json, uploader_public_key, replay_sha256, state, lease_token, \
+                    lease_expires_at_ms, reservation_expires_at_ms \
+             FROM submission_upload_reservations WHERE submission_id = ?",
         )
-        .bind(&submission.upload_challenge_id)
+        .bind(&submission.id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or(DbError::InvalidChallenge)?;
-        let envelope_sha256 = Digest32::digest_bytes(submission.envelope_json.as_bytes());
-        if reservation.try_get::<String, _>("submission_id")? != submission.id
-            || reservation.try_get::<String, _>("envelope_json")? != submission.envelope_json
+        .ok_or(DbError::UploadLeaseLost)?;
+        if reservation.try_get::<String, _>("state")? != "uploaded"
             || reservation
-                .try_get::<Vec<u8>, _>("envelope_sha256")?
-                .as_slice()
-                != envelope_sha256.as_bytes()
+                .try_get::<Option<String>, _>("lease_token")?
+                .as_deref()
+                != Some(lease.lease_token.as_str())
+            || reservation
+                .try_get::<Option<i64>, _>("lease_expires_at_ms")?
+                .is_none_or(|expires| expires < now)
+            || reservation.try_get::<i64, _>("reservation_expires_at_ms")? < now
+        {
+            return Err(DbError::UploadLeaseLost);
+        }
+        if reservation.try_get::<String, _>("signed_request_json")?
+            != submission.signed_request_json
             || reservation
                 .try_get::<Vec<u8>, _>("uploader_public_key")?
                 .as_slice()
@@ -413,39 +389,6 @@ impl Database {
                 != submission.replay_sha256
         {
             return Err(DbError::SubmissionConflict);
-        }
-        let reservation_state: String = reservation.try_get("state")?;
-        if reservation_state == "committed" {
-            let lifecycle = lifecycle_by_submission_id(&mut tx, &submission.id)
-                .await?
-                .ok_or_else(|| {
-                    DbError::Corrupt("committed upload reservation has no submission".to_owned())
-                })?;
-            tx.commit().await?;
-            return Ok(lifecycle);
-        }
-        if reservation_state != "uploaded"
-            || reservation
-                .try_get::<Option<String>, _>("lease_token")?
-                .as_deref()
-                != Some(lease.lease_token.as_str())
-            || reservation
-                .try_get::<Option<i64>, _>("lease_expires_at_ms")?
-                .is_none_or(|expires| expires < now)
-            || reservation.try_get::<i64, _>("reservation_expires_at_ms")? < now
-        {
-            return Err(DbError::InvalidChallenge);
-        }
-        let consumed: Option<Option<i64>> = sqlx::query_scalar(
-            "SELECT consumed_at_ms FROM upload_challenges WHERE id = ? AND purpose = 'submission'",
-        )
-        .bind(&submission.upload_challenge_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if !matches!(consumed, Some(Some(_))) {
-            return Err(DbError::Corrupt(
-                "upload reservation is detached from its consumed challenge".to_owned(),
-            ));
         }
 
         let pending: i64 = sqlx::query_scalar(
@@ -458,12 +401,16 @@ impl Database {
             return Err(DbError::QueueFull);
         }
         ensure_uploader_identity(&mut tx, &submission.uploader_public_key).await?;
-        ensure_replay_is_not_live(
+        if live_submission_for_replay(
             &mut tx,
             &submission.replay_sha256,
-            &submission.upload_challenge_id,
+            &submission.signed_request_json,
         )
-        .await?;
+        .await?
+        .is_some()
+        {
+            return Err(DbError::DuplicateReplay);
+        }
 
         let replay_bytes = i64::try_from(submission.replay_bytes).map_err(|_| {
             DbError::ResultInvariant("replay length does not fit SQLite INTEGER".to_owned())
@@ -472,14 +419,13 @@ impl Database {
 
         sqlx::query(
             "INSERT INTO submissions (\
-                id, upload_challenge_id, envelope_json, uploader_public_key, public_disclosure, \
+                id, signed_request_json, uploader_public_key, public_disclosure, \
                 board_id, mission_id, replay_sha256, replay_bytes, replay_schema_version, \
                 requested_metrics_json, status, next_attempt_at_ms, created_at_ms, updated_at_ms\
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
         )
         .bind(&submission.id)
-        .bind(&submission.upload_challenge_id)
-        .bind(&submission.envelope_json)
+        .bind(&submission.signed_request_json)
         .bind(submission.uploader_public_key.as_slice())
         .bind(submission.public_disclosure)
         .bind(&submission.board_id)
@@ -495,21 +441,15 @@ impl Database {
         .await
         .map_err(|error| unique_violation_as(error, DbError::DuplicateReplay))?;
         let committed = sqlx::query(
-            "UPDATE submission_upload_reservations \
-             SET state = 'committed', lease_token = NULL, lease_expires_at_ms = NULL, \
-                 committed_at_ms = ?, updated_at_ms = ? \
-             WHERE upload_challenge_id = ? AND submission_id = ? AND state = 'uploaded' \
-               AND lease_token = ?",
+            "DELETE FROM submission_upload_reservations \
+             WHERE submission_id = ? AND state = 'uploaded' AND lease_token = ?",
         )
-        .bind(now)
-        .bind(now)
-        .bind(&submission.upload_challenge_id)
         .bind(&submission.id)
         .bind(&lease.lease_token)
         .execute(&mut *tx)
         .await?;
         if committed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
+            return Err(DbError::UploadLeaseLost);
         }
         tx.commit().await?;
         let now = nonnegative_u64(now, "submission timestamp")?;

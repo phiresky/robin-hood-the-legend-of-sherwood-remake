@@ -49,17 +49,28 @@ pub(crate) fn replay_artifact(bytes: &[u8]) -> ReplayArtifactV1 {
     }
 }
 
-/// An unsigned submission of `replay` to the default board and mission.
+/// Current server-clock Unix milliseconds for `signed_at_unix_ms`.
+pub(crate) fn now_ms() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+
+/// An unsigned submission of `replay` to the default board and mission,
+/// signed "now".
 pub(crate) fn submission(
     key: &SigningKey,
-    upload_challenge: UploadChallengeV1,
     replay: &[u8],
     public_disclosure: ParticipantPublicDisclosureV1,
-) -> SubmissionV2 {
-    SubmissionV2 {
-        schema_version: SCHEMA_VERSION_V2,
-        upload_challenge,
+) -> SubmissionV3 {
+    SubmissionV3 {
+        schema_version: SCHEMA_VERSION_V3,
         uploader_public_key: protocol_public_key(key),
+        signed_at_unix_ms: now_ms(),
         public_disclosure,
         board_id: OpaqueId::new(BOARD_ID).unwrap(),
         mission_id: MISSION_ID.to_owned(),
@@ -68,17 +79,47 @@ pub(crate) fn submission(
     }
 }
 
-pub(crate) fn signed_submission(key: &SigningKey, submission: SubmissionV2) -> SignedSubmissionV2 {
-    let signature = sign(
-        key,
-        &SignedSubmissionV2::signing_bytes(&submission).unwrap(),
-    );
-    SignedSubmissionV2 {
+/// Sign any player claim with its own operation domain.
+pub(crate) fn signed<T: SignedRequestClaim>(key: &SigningKey, request: T) -> SignedRequestV2<T> {
+    let signature = sign(key, &SignedRequestV2::<T>::signing_bytes(&request).unwrap());
+    SignedRequestV2 {
         schema_version: SCHEMA_VERSION_V2,
-        submission,
+        request,
         algorithm: SignatureAlgorithmV1::Ed25519,
         signature,
     }
+}
+
+pub(crate) fn signed_submission(key: &SigningKey, submission: SubmissionV3) -> SignedSubmissionV3 {
+    signed(key, submission)
+}
+
+pub(crate) fn username_update(
+    key: &SigningKey,
+    username: &str,
+    signed_at_unix_ms: u64,
+) -> SignedUsernameUpdateV2 {
+    signed(
+        key,
+        UsernameUpdateV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            public_key: protocol_public_key(key),
+            signed_at_unix_ms,
+            username: username.to_owned(),
+        },
+    )
+}
+
+pub(crate) fn username_request(
+    update: &SignedUsernameUpdateV2,
+    address: Ipv4Addr,
+) -> Request<Body> {
+    json_request(
+        Method::PUT,
+        &format!("/api/v1/players/{}/username", update.request.public_key),
+        update,
+        address,
+    )
 }
 
 pub(crate) fn peer(address: Ipv4Addr) -> ConnectInfo<SocketAddr> {
@@ -147,7 +188,7 @@ pub(crate) fn multipart_parts(parts: &[Part<'_>]) -> Request<Body> {
         .unwrap()
 }
 
-pub(crate) fn multipart_request(signed: &SignedSubmissionV2, replay: &[u8]) -> Request<Body> {
+pub(crate) fn multipart_request(signed: &SignedSubmissionV3, replay: &[u8]) -> Request<Body> {
     let metadata = serde_json::to_vec(signed).unwrap();
     multipart_parts(&[
         ("submission", "application/json", &metadata),

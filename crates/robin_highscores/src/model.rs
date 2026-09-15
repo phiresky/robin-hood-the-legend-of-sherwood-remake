@@ -4,26 +4,6 @@ pub const API_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ChallengePurpose {
-    Submission,
-    UsernameUpdate,
-    Deletion,
-    OwnerStatus,
-}
-
-impl ChallengePurpose {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Submission => "submission",
-            Self::UsernameUpdate => "username_update",
-            Self::Deletion => "deletion",
-            Self::OwnerStatus => "owner_status",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum SubmissionStatus {
     Queued,
     Verifying,
@@ -58,13 +38,13 @@ impl SubmissionStatus {
     }
 }
 
-/// Server-side projection of one authenticated `SignedSubmissionV2`, derived
+/// Server-side projection of one authenticated `SignedSubmissionV3`, derived
 /// once from the signed document and persisted by upload finalization.
 #[derive(Debug, Clone)]
 pub(crate) struct NewSubmission {
     pub id: String,
-    pub upload_challenge_id: String,
-    pub envelope_json: String,
+    /// Canonical JSON of the exact signed request.
+    pub signed_request_json: String,
     pub uploader_public_key: [u8; 32],
     pub public_disclosure: &'static str,
     pub board_id: String,

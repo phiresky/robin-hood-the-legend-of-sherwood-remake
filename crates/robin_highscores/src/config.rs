@@ -1,12 +1,13 @@
 use robin_run_protocol::{
     BoardSimulationPolicyV1, BoardV2, LeaderboardMetadataV2, OfficialContentEditionV1, OpaqueId,
-    SCHEMA_VERSION_V2, TickDurationV1, Validate as _, ViewerContentRequirementV2,
+    SCHEMA_VERSION_V2, SIGNED_REQUEST_DEFAULT_MAX_AGE_MS,
+    SIGNED_REQUEST_DEFAULT_MAX_FUTURE_SKEW_MS, SignedRequestWindowV1, TickDurationV1,
+    Validate as _, ViewerContentRequirementV2,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The API transport cap is the canonical compact codec's input cap. The API
 /// uses its allocation-free lexical preflight, but must never invoke base64,
@@ -33,7 +34,17 @@ pub struct ServerConfig {
     /// peer must supply exactly one canonical IP address or the request fails
     /// closed; untrusted peers' forwarding headers are ignored.
     pub trusted_proxy_cidrs: Vec<String>,
-    pub challenge_requests_per_minute_per_ip: u32,
+    /// Per effective client address, per operation: username updates,
+    /// deletion requests and private submission status reads.
+    pub signed_requests_per_minute_per_ip: u32,
+    /// Submission attempts per effective client address, checked before the
+    /// body is parsed.
+    pub submissions_per_hour_per_ip: u32,
+    /// Submission attempts per uploader key, checked after signature
+    /// verification.
+    pub submissions_per_hour_per_key: u32,
+    /// Uploads holding a live reservation lease per uploader key.
+    pub max_concurrent_uploads_per_key: u32,
     pub abuse_reports_per_hour_per_ip: u32,
     pub abuse_reports_per_hour_per_key: u32,
     pub abuse_reports_per_hour_per_target: u32,
@@ -43,11 +54,10 @@ pub struct ServerConfig {
     pub max_concurrent_requests: usize,
     pub max_concurrent_uploads: usize,
     pub upload_timeout_seconds: u64,
-    /// Durable retry window for an upload whose signed metadata has already
-    /// reserved and consumed its one-use challenge.
+    /// Durable window in which the uploader may resume a reserved or crash-
+    /// abandoned upload of the same replay.
     pub upload_reservation_ttl_seconds: u64,
     pub max_page_size: u32,
-    pub challenge_ttl_seconds: u64,
     pub database_busy_timeout_ms: u64,
     pub tombstone_retention_days: Option<u64>,
     pub rejected_replay_retention_hours: u64,
@@ -55,9 +65,52 @@ pub struct ServerConfig {
     /// Free bytes which must remain after the full bounded admission plan.
     /// Production validation keeps this at or above one GiB.
     pub minimum_storage_free_bytes: u64,
+    /// Acceptance window for `signed_at_unix_ms` of every player-signed
+    /// request. Kept after all scalar keys so it serializes as a TOML table.
+    pub signed_requests: SignedRequestConfig,
     /// Ranked boards. Empty is fail-closed: metadata lists no boards and every
     /// upload is rejected.
     pub boards: Vec<BoardV2>,
+}
+
+/// `[signed_requests]`: how far a player's signing clock may lag behind or run
+/// ahead of the server when a request arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SignedRequestConfig {
+    pub max_age_seconds: u64,
+    pub max_future_skew_seconds: u64,
+}
+
+impl Default for SignedRequestConfig {
+    fn default() -> Self {
+        Self {
+            max_age_seconds: SIGNED_REQUEST_DEFAULT_MAX_AGE_MS / 1_000,
+            max_future_skew_seconds: SIGNED_REQUEST_DEFAULT_MAX_FUTURE_SKEW_MS / 1_000,
+        }
+    }
+}
+
+impl SignedRequestConfig {
+    /// Validated bounds keep the millisecond products far from overflow.
+    pub fn window(self) -> SignedRequestWindowV1 {
+        SignedRequestWindowV1 {
+            max_age_ms: self.max_age_seconds.saturating_mul(1_000),
+            max_future_skew_ms: self.max_future_skew_seconds.saturating_mul(1_000),
+        }
+    }
+
+    fn validate(self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (30..=60 * 60).contains(&self.max_age_seconds),
+            "signed_requests.max_age_seconds must be between 30 seconds and one hour"
+        );
+        anyhow::ensure!(
+            self.max_future_skew_seconds <= 10 * 60,
+            "signed_requests.max_future_skew_seconds must not exceed ten minutes"
+        );
+        Ok(())
+    }
 }
 
 impl Default for ServerConfig {
@@ -72,7 +125,10 @@ impl Default for ServerConfig {
             moderation_bearer_token: None,
             allowed_origins: Vec::new(),
             trusted_proxy_cidrs: Vec::new(),
-            challenge_requests_per_minute_per_ip: 120,
+            signed_requests_per_minute_per_ip: 120,
+            submissions_per_hour_per_ip: 120,
+            submissions_per_hour_per_key: 60,
+            max_concurrent_uploads_per_key: 2,
             abuse_reports_per_hour_per_ip: 10,
             abuse_reports_per_hour_per_key: 25,
             abuse_reports_per_hour_per_target: 10,
@@ -84,12 +140,12 @@ impl Default for ServerConfig {
             upload_timeout_seconds: 120,
             upload_reservation_ttl_seconds: 30 * 60,
             max_page_size: 100,
-            challenge_ttl_seconds: 10 * 60,
             database_busy_timeout_ms: 5_000,
             tombstone_retention_days: Some(30),
             rejected_replay_retention_hours: 24,
             orphan_replay_retention_hours: 24,
             minimum_storage_free_bytes: 1024 * 1024 * 1024,
+            signed_requests: SignedRequestConfig::default(),
             boards: Vec::new(),
         }
     }
@@ -255,13 +311,13 @@ impl ServerConfig {
             "max_page_size must be in 1..={HARD_MAX_PAGE_SIZE}"
         );
         anyhow::ensure!(
-            self.challenge_ttl_seconds >= 30,
-            "challenge TTL is too short"
+            (1..=self.max_concurrent_uploads).contains(
+                &usize::try_from(self.max_concurrent_uploads_per_key)
+                    .map_err(|_| anyhow::anyhow!("max_concurrent_uploads_per_key overflows"))?
+            ),
+            "max_concurrent_uploads_per_key must be in 1..=max_concurrent_uploads"
         );
-        anyhow::ensure!(
-            self.challenge_ttl_seconds <= Duration::from_secs(24 * 60 * 60).as_secs(),
-            "challenge TTL must not exceed one day"
-        );
+        self.signed_requests.validate()?;
         Ok(())
     }
 
@@ -326,10 +382,22 @@ impl ServerConfig {
     }
 
     fn validate_network_limits(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            (1..=10_000).contains(&self.challenge_requests_per_minute_per_ip),
-            "challenge_requests_per_minute_per_ip must be in 1..=10000"
-        );
+        for (name, value) in [
+            (
+                "signed_requests_per_minute_per_ip",
+                self.signed_requests_per_minute_per_ip,
+            ),
+            (
+                "submissions_per_hour_per_ip",
+                self.submissions_per_hour_per_ip,
+            ),
+            (
+                "submissions_per_hour_per_key",
+                self.submissions_per_hour_per_key,
+            ),
+        ] {
+            anyhow::ensure!((1..=10_000).contains(&value), "{name} must be in 1..=10000");
+        }
         for (name, value) in [
             (
                 "abuse_reports_per_hour_per_ip",
@@ -701,6 +769,43 @@ missions = [{ mission_id = "Dem_Lei_MP", display_name = "Leicester" }]
             ..Default::default()
         };
         assert!(config.validate().is_err());
+
+        let mut config = ServerConfig::default();
+        config.max_concurrent_uploads_per_key = 0;
+        assert!(config.validate().is_err());
+        config.max_concurrent_uploads_per_key =
+            u32::try_from(config.max_concurrent_uploads + 1).unwrap();
+        assert!(config.validate().is_err());
+
+        let config = ServerConfig {
+            submissions_per_hour_per_key: 0,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        for (max_age_seconds, max_future_skew_seconds, valid) in [
+            (300, 60, true),
+            (29, 60, false),
+            (3_601, 60, false),
+            (300, 601, false),
+        ] {
+            let config = ServerConfig {
+                signed_requests: SignedRequestConfig {
+                    max_age_seconds,
+                    max_future_skew_seconds,
+                },
+                ..Default::default()
+            };
+            assert_eq!(
+                config.validate().is_ok(),
+                valid,
+                "{max_age_seconds}/{max_future_skew_seconds}"
+            );
+        }
+        assert_eq!(
+            SignedRequestConfig::default().window(),
+            SignedRequestWindowV1::default()
+        );
 
         for (origin, valid) in [
             ("http://example.com", false),

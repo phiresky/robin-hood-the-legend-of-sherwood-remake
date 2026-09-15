@@ -84,9 +84,9 @@ impl StorageVolume {
     }
 }
 
-/// Readiness and upload-challenge issuance reserve enough room for a complete
-/// maximum upload in every HTTP slot.
-pub fn ensure_challenge_capacity(
+/// Readiness reserves enough room for a complete maximum upload in every HTTP
+/// slot.
+pub fn ensure_maximum_upload_capacity(
     config: &ServerConfig,
     database: &Database,
     replay_store: &ReplayStore,
@@ -94,9 +94,9 @@ pub fn ensure_challenge_capacity(
     ensure_capacity(config, database, replay_store, config.max_replay_bytes)
 }
 
-/// Recheck capacity immediately before the database may consume the one-use
-/// challenge. The current slot uses the authenticated exact length; only the
-/// other concurrently active slots use configured maxima.
+/// Recheck capacity immediately before the database may reserve an upload.
+/// The current slot uses the authenticated exact length; only the other
+/// concurrently active slots use configured maxima.
 pub fn ensure_upload_capacity(
     config: &ServerConfig,
     database: &Database,
