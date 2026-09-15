@@ -15,11 +15,6 @@ use robin_engine::profiles::ProfileManager;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use robin_engine::sbfile::SbFileError;
 use robin_engine::sbfile::{SbFile, SbFileSystem};
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-use robin_run_protocol::{
-    OfficialBuiltInOverlaySourceManifestV2, OfficialProjectionSourceFormatV1, ResourceLocaleRootV1,
-    RulesConfigIdentityV1,
-};
 use thiserror::Error;
 
 /// Coarse startup stage used by launchers to classify initialization failures
@@ -128,9 +123,6 @@ pub enum InitError {
         #[source]
         source: anyhow::Error,
     },
-
-    #[error("official projection initialization rejected: {message}")]
-    OfficialProjectionAuthority { message: String },
 }
 
 impl InitError {
@@ -151,9 +143,9 @@ impl InitError {
             | Self::ContentAudioDurations { .. }
             | Self::ContentLocalization { .. } => InitErrorCategory::Content,
             Self::PlayerProfileState { .. } => InitErrorCategory::PlayerProfile,
-            Self::PlatformShippingDatadirInstall { .. }
-            | Self::PlatformCoreOverlay { .. }
-            | Self::OfficialProjectionAuthority { .. } => InitErrorCategory::Platform,
+            Self::PlatformShippingDatadirInstall { .. } | Self::PlatformCoreOverlay { .. } => {
+                InitErrorCategory::Platform
+            }
         }
     }
 }
@@ -454,161 +446,6 @@ pub(crate) fn rust_init_with_roots(
     };
 
     rust_init_finish(shipping, files)
-}
-
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-fn forbidden_official_projection_environment() -> Vec<String> {
-    let mut names = std::env::vars_os()
-        .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| name.starts_with("ROBIN") || name.starts_with("PARITY_DEBUG_"))
-        .collect::<Vec<_>>();
-    names.sort();
-    names
-}
-
-/// Initialize a fresh exporter process from an already authenticated source
-/// closure. This path deliberately bypasses all persisted profile, identity,
-/// localization-preference, save, mod, and duration-cache discovery.
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub fn rust_init_official_projection(
-    data_dir: &Path,
-    core_overlay_root: &Path,
-    core_overlay_manifest: &OfficialBuiltInOverlaySourceManifestV2,
-    resource_locale_root: &ResourceLocaleRootV1,
-    source_format: OfficialProjectionSourceFormatV1,
-    rules_config: &RulesConfigIdentityV1,
-) -> Result<RustInit, InitError> {
-    crate::init_tracing();
-    fn authority_error(message: impl Into<String>) -> InitError {
-        InitError::OfficialProjectionAuthority {
-            message: message.into(),
-        }
-    }
-
-    let forbidden_environment = forbidden_official_projection_environment();
-    if !forbidden_environment.is_empty() {
-        return Err(authority_error(format!(
-            "environment overrides are forbidden: {}",
-            forbidden_environment.join(", ")
-        )));
-    }
-    if engine_api::GlobalOptions::global().is_some() {
-        return Err(authority_error(
-            "process-global launcher options were installed before official initialization",
-        ));
-    }
-    if assets_shipping_datadir::global().is_some() {
-        return Err(authority_error(
-            "a shipping datadir was installed before official initialization",
-        ));
-    }
-    let mounts = SbFile::mount_snapshot();
-    if !mounts.alternate_paths.is_empty()
-        || mounts.selected_locale.is_some()
-        || mounts.fallback_locale.is_some()
-        || !mounts.overlay_paths.is_empty()
-        || mounts.primary_path.is_some()
-        || !mounts.asset_vfs.is_empty()
-        || mounts.official_projection_strict
-    {
-        return Err(authority_error(format!(
-            "filesystem/VFS authorities were installed before official initialization: {mounts:?}"
-        )));
-    }
-
-    crate::core_overlay::validate_official_projection_source(
-        core_overlay_root,
-        core_overlay_manifest,
-    )
-    .map_err(|error| authority_error(format!("invalid built-in overlay: {error:#}")))?;
-    let sim_config =
-        robin_engine::simulation_inputs::validate_official_projection_rules_config_v1(rules_config)
-            .map_err(|error| authority_error(format!("invalid rules config: {error}")))?;
-
-    SbFile::configure_official_projection_mounts(
-        data_dir,
-        resource_locale_root.as_str(),
-        core_overlay_root,
-    )
-    .map_err(authority_error)?;
-
-    // Seal both filesystem views while the shared VFS is still empty.
-    // Installing shipping data below mounts its authenticated raw/locale
-    // bundles; doing that first makes the fresh-authority check reject them.
-    let files = std::sync::Arc::new(SbFileSystem::new(robin_util::asset_fs::global().clone()));
-    files
-        .configure_official_projection_mounts(
-            data_dir,
-            resource_locale_root.as_str(),
-            core_overlay_root,
-        )
-        .map_err(authority_error)?;
-
-    let shipping_path = robin_engine::sbfile::resolve_data_path("Data/datadir.bin");
-    let shipping = match source_format {
-        OfficialProjectionSourceFormatV1::LooseNativeV1 => {
-            if shipping_path.is_some() {
-                return Err(authority_error(
-                    "loose official source unexpectedly contains Data/datadir.bin",
-                ));
-            }
-            None
-        }
-        OfficialProjectionSourceFormatV1::ShippingDatadirV10 => {
-            let path = shipping_path.ok_or_else(|| {
-                authority_error("shipping official source is missing Data/datadir.bin")
-            })?;
-            let datadir = assets_shipping_datadir::ShippingDatadir::load_from_file(&path)
-                .map_err(|error| authority_error(format!("decode shipping datadir: {error:#}")))?;
-            let locale = datadir
-                .locale(resource_locale_root.as_str())
-                .map_err(|error| authority_error(format!("inspect shipping locale: {error:#}")))?
-                .ok_or_else(|| {
-                    authority_error(format!(
-                        "shipping datadir has no exact LCID {}",
-                        resource_locale_root.as_str()
-                    ))
-                })?;
-            if locale.source_lcid.as_deref() != Some(resource_locale_root.as_str()) {
-                return Err(authority_error(format!(
-                    "shipping locale source identity differs: expected {}, found {:?}",
-                    resource_locale_root.as_str(),
-                    locale.source_lcid
-                )));
-            }
-            let datadir = assets_shipping_datadir::install_global(std::sync::Arc::new(datadir))
-                .map_err(|error| authority_error(format!("install shipping datadir: {error:#}")))?;
-            datadir
-                .set_active_locale(Some(resource_locale_root.as_str()))
-                .map_err(|error| authority_error(format!("select shipping LCID: {error:#}")))?;
-            Some(datadir)
-        }
-    };
-
-    let options = engine_api::GlobalOptions {
-        script_enabled: sim_config.script_enabled,
-        highlander: sim_config.highlander,
-        highlander2: sim_config.highlander2,
-        golden_eye: sim_config.golden_eye,
-        ignore_default_loose: sim_config.ignore_default_loose,
-        bypass_fog_sprites_crash: sim_config.bypass_fog_sprites_crash,
-        ..Default::default()
-    };
-    let profiles = std::sync::Arc::new(load_profiles_with_files(
-        shipping.as_deref(),
-        &options,
-        &files,
-    )?);
-    let application_context = ApplicationContext::complete_official_projection_with_files(
-        options,
-        sim_config,
-        shipping,
-        Some(files),
-    )
-    .and_then(crate::host::ReadyApplicationContext::try_from)
-    .map_err(authority_error)?;
-    let campaign = Campaign::create(&profiles, application_context.sim_config().difficulty);
-    Ok((campaign, profiles, application_context))
 }
 
 /// Initialize from a shipping datadir decoded and installed by the platform

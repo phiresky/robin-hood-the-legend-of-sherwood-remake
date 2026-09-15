@@ -14,13 +14,9 @@ authentication = ["dep:ed25519-dalek"]
 [dependencies]
 ed25519-dalek = { workspace = true, optional = true }
 zstd.workspace = true
-bitcode.workspace = true
-hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-semver = "1"
 robin_run_types.workspace = true
-sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

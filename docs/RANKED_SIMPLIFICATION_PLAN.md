@@ -116,9 +116,14 @@ campaign templates, source-tree manifests, rules/ruleset/policy/build documents.
 | Multiplayer `content_identity.rs`, join tickets, web `manifest.json` `multiplayerContent`/`javascriptModules`, `preload-assets.json`, `latest.json`, `runtime-contract.json` | Non-ranked multiplayer compatibility and runtime selection. |
 | bwrap/prlimit verifier sandbox (pending C5 detail) | Real trust boundary for hostile replays. |
 
-### (C) Ask the user
+### (C) Asked the user — decided 2026-09-15: all as recommended
 
-See the ask list sent to the coordinator; the recommendations are repeated here.
+All eight items below were accepted as recommended: remove 1, 2, 3, 6, 8;
+keep identity + signer origin but trim it (4); keep the sandbox without hash
+pins (5); replay schema + network protocol compatibility only (7). For item 8
+`scripts/release.sh --web-only [--rebuild-datadir]` must keep working on the
+existing staging `live` layout, keep publishing retained Demo generations,
+and `scripts/test_release.sh` covers the new flow.
 
 1. **Multiplayer ranked co-signing** (`ranked_session.rs`, `ranked_client.rs`,
    `ranked_port.rs`, `browser_ranked.rs`, named-seat join attestations,
@@ -158,6 +163,113 @@ See the ask list sent to the coordinator; the recommendations are repeated here.
 8. **Web deploy proof scripts** listed in (A): they sit in the live
    `release.sh` path. Recommendation: remove, replaced by `datadir-release.json`
    and the existing `smoke-cloudflare-deployment.mjs`.
+
+## Protocol V2 (implementation contract)
+
+All leaderboard documents that change shape move to `V2` names and
+`schema_version: 2`; unchanged documents keep their `V1` names. HTTP paths
+stay under `/api/v1`.
+
+### Leaf types (`robin_run_types`)
+
+- Keep `ArtifactRefV1`, canonical JSON, digests, validation,
+  `OfficialContentEditionV1`, `RankedSimulationPolicyV1` (+ preset/difficulty).
+- Add `BoardSimulationPolicyV1 = Fixed { policy: RankedSimulationPolicyV1 } |
+  AnyConfig`. `Fixed` admits exactly the preset's expected `SimConfig`;
+  `AnyConfig` admits any validated `SimConfig` under a `Custom` policy whose
+  difficulty is derived from the config (the old `preset_id = "any"` boards).
+- Remove `RulesConfigIdentityV1`, content manifests and components,
+  `ResourceLocaleRootV1`, `SpeechTimingAuthorityV1`,
+  `PreparedMissionInputsSealV1`, `bitcode_value`, `RANKED_CAMPAIGN_MEDIA_TYPE_V1`.
+- `co_sign.rs` and `ReplaySessionTranscriptV1`/seat lifecycle types are
+  removed together with multiplayer ranked co-signing (client work item).
+
+### Submission (`robin_run_protocol::submission`)
+
+- `UploadChallengeRequestV2 { schema_version, public_key }` →
+  `UploadChallengeV1` (unchanged shape; issued for that key, one use, expiring).
+- `SubmissionV2 { schema_version, upload_challenge: UploadChallengeV1,
+  uploader_public_key, public_disclosure: ParticipantPublicDisclosureV1,
+  board_id: OpaqueId, mission_id, replay: ReplayArtifactV1,
+  requested_metrics: Vec<BoardMetricV1> }`.
+- `SignedSubmissionV2 { schema_version, submission, algorithm, signature }`,
+  signature = Ed25519 over `domain_separated_bytes(
+  "robinhood/leaderboards/2/submission\0", submission)` by the uploader key.
+- Kept as is: `ReplayArtifactV1`, `RANKED_REPLAY_MEDIA_TYPE_V1`,
+  username challenge/update, deletion, abuse reports, owner-status challenge
+  and envelope, diagnostics, `SubmissionAcceptedV1`, `PublicSubmissionStatusV1`.
+  `SubmissionLifecycleV1::Accepted { run_id }` loses the campaign receipt.
+- Removed: offers and offer requests, session genesis, ranked session config,
+  participant claims/signatures, join attestations, co-sign, preflight and
+  competition grants, campaign continuation/authorization/chain receipts,
+  `InitialStateExpectationV1`, starting-campaign artifacts.
+
+### Verifier (`robin_run_protocol::verification`)
+
+- Input `VerifierJobV2 { schema_version, job_id: OpaqueId, edition,
+  mission_id, simulation_policy: BoardSimulationPolicyV1, allow_state_load,
+  replay: ReplayArtifactV1, resource_locale_root: String,
+  limits: VerificationLimitsV1 }`, written by the worker (trusted).
+- CLI: `robin-replay-verifier --job PATH --replay PATH --content-root DIR
+  --result PATH`. A malformed job is an infrastructure failure (non-zero exit).
+- Output `VerifierOutputV2 { schema_version, job_sha256, replay_sha256,
+  input_provenance: Option<InputProvenanceStatusV1>, status:
+  VerificationStatusV2 }`, `VerificationStatusV2 = Verified(VerifiedRunV2) |
+  Rejected(VerificationRejectionV1) | FailedInfrastructure(...)`.
+- `VerifiedRunV2 { recorded_engine_version, sim_config: CanonicalValue,
+  max_concurrent_players, participant_instance_count, outcome,
+  starting_campaign_score, final_campaign_score, original_score_delta,
+  final_state_sha256, replay_frames, active_simulation_ticks,
+  ransom_collected, achievements: Vec<VerifiedAchievementV1> }`.
+- Achievement catalog and Required/Optional modes are a compiled constant
+  (`official_achievement_policies()`), not a ruleset document.
+- Rejection codes drop `BuildNotAllowed`.
+
+### Boards and queries (`robin_run_protocol::board`, `::query`)
+
+- `BoardV2 { board_id, display_name, edition, preset_id, preset_name,
+  difficulty_id, difficulty_name, simulation_policy, allow_state_load,
+  metrics, viewer_content_requirement, missions: Vec<BoardMissionV2 {
+  mission_id, display_name }> }`; `LeaderboardMetadataV2 { schema_version,
+  boards }`.
+- `RunFilterV2 { schema_version, board_id, mission_id, metric,
+  max_concurrent_players, player_public_key }`; flat `LeaderboardQueryV2`
+  adds `limit`, `cursor`.
+- `BoardMetricValueV2 = OriginalScore { points } | FastestSuccess {
+  active_simulation_ticks }` (tick duration is the compiled engine constant).
+- `LeaderboardEntryV2`, `LeaderboardCursorV2`, `LeaderboardPageV2`,
+  `RunSummaryV2`, `PlayerRunHistory*V2`, `PlayerPersonalBestV2`: as V1 without
+  composition, content/rules/ruleset/competition digests or aggregate
+  participants; participants are the optional named uploader
+  (`PublicParticipantV1`, seat 0) plus anonymous counts.
+- `RunDetailV2 { schema_version, run_id, board_id, mission_id, edition,
+  metrics, max_concurrent_players, participant_instance_count, uploader,
+  verified_at_unix_ms, replay, recorded_engine_version, sim_config,
+  starting_campaign_score, final_campaign_score, achievements, viewer:
+  ViewerLaunchV2 { availability, content_requirement, runtime_build } }`.
+
+### HTTP API
+
+Kept: `leaderboard-metadata`, `leaderboards`, `runs/{id}`, `runs/{id}/replay`,
+`players/*`, username, deletion, reports, submission public/private status,
+diagnostics, operator, health. New: `POST /api/v1/upload-challenges`.
+`POST /api/v1/submissions` multipart has two fields: `submission`
+(`SignedSubmissionV2`) and `replay`. Removed: `submission-offers`, all
+preflight/competition grant routes, all immutable manifest routes
+(`builds`, `content-manifests`, `campaign-content-manifests`, `rules-configs`,
+`ruleset-manifests`, `published-rulesets`, `competitions`, `policies`),
+`runs/{id}/campaigns/*`, `runs/{id}/sessions/*`.
+
+### Server and worker configuration
+
+`server.toml` loses `manifest_directory`, `admission_profiles`,
+`competitions`, grant key paths, `campaign_state_directory` and
+`run_preflight_ttl_seconds`, and gains `[[boards]]` entries shaped like
+`BoardV2`. `worker.toml` loses the catalog, source-tree manifests and all
+executable hashes and gains `[content.demo|full] { root,
+resource_locale_root }`; `[verifier_launcher]` keeps program paths and limits.
+DB migration 0006 drops and recreates submission/run tables (no live rows) and
+drops competition, campaign, genesis and aggregate tables.
 
 ## Phasing
 

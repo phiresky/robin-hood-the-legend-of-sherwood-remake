@@ -472,28 +472,16 @@ pub struct ValidatedReplayCampaign {
 #[derive(Debug)]
 struct ValidatedReplayCampaignSeal;
 
-/// Manifest identities asserted by the verifier's approved, read-only content
-/// resolver. The worker must compare these with its signed request before
-/// allowing the returned capability to reach engine construction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReplayCampaignApprovedContentIdentity {
-    pub build_manifest_sha256: [u8; 32],
-    pub content_manifest_sha256: [u8; 32],
-}
-
-/// Opaque proof that every deferred identity was checked against approved,
-/// mounted content. There is intentionally no public or crate-visible
-/// unchecked constructor. The approved-content phase owns the sole private
-/// construction site and must return this only after exhausting all carried
-/// references.
+/// Opaque proof that every deferred identity was checked against the official
+/// raw content. There is intentionally no public or crate-visible unchecked
+/// constructor. The approved-content phase owns the sole private construction
+/// site and must return this only after exhausting all carried references.
 ///
 /// This capability is deliberately not deserializable: an admission token is
 /// process-local evidence, not data a submitter can provide.
 #[derive(Debug)]
 pub struct ApprovedReplayCampaignContent {
     validated: ValidatedReplayCampaign,
-    approved_identity: ReplayCampaignApprovedContentIdentity,
     _seal: ApprovedReplayCampaignContentSeal,
 }
 
@@ -501,32 +489,19 @@ pub struct ApprovedReplayCampaignContent {
 struct ApprovedReplayCampaignContentSeal;
 
 mod engine_preparation;
-pub use engine_preparation::{ApprovedRankedReplayPreparation, ApprovedReplayEngine};
+pub use engine_preparation::ApprovedReplayEngine;
 
 impl ApprovedReplayCampaignContent {
     pub fn validated(&self) -> &ValidatedReplayCampaign {
         &self.validated
     }
 
-    pub const fn approved_identity(&self) -> ReplayCampaignApprovedContentIdentity {
-        self.approved_identity
-    }
-
     /// Consume phase-one and phase-two proof together. This is the only path
     /// which exposes a campaign carrying deferred content-dependent
     /// references.
-    fn into_playback_parts(
-        self,
-    ) -> (
-        Campaign,
-        usize,
-        MissionLocation,
-        [u8; 32],
-        ReplayCampaignApprovedContentIdentity,
-    ) {
+    fn into_playback_parts(self) -> (Campaign, usize, MissionLocation, [u8; 32]) {
         let Self {
             validated,
-            approved_identity,
             _seal: _,
         } = self;
         let ValidatedReplayCampaign {
@@ -542,7 +517,6 @@ impl ApprovedReplayCampaignContent {
             mission_index,
             mission_location,
             submitted_campaign_sha256,
-            approved_identity,
         )
     }
 }
@@ -552,8 +526,7 @@ mod approved_content;
 use approved_content::validate_replay_campaign_approved_content_with_work_limit;
 pub use approved_content::{
     ReplayCampaignApprovedBeamMe, ReplayCampaignApprovedContentMetadata,
-    ReplayCampaignApprovedContentResolver, ReplayCampaignApprovedMapPoint,
-    ReplayCampaignApprovedScriptZone, ReplayCampaignApprovedSector,
+    ReplayCampaignApprovedMapPoint, ReplayCampaignApprovedScriptZone, ReplayCampaignApprovedSector,
     ReplayCampaignApprovedStaticObstacle, ReplayCampaignContentValidationError,
     ReplayCampaignMetadataDerivationError, ReplayCampaignProductionPointTopology,
     derive_replay_campaign_approved_content_metadata, validate_replay_campaign_approved_content,
@@ -1844,20 +1817,6 @@ mod tests {
             });
         campaign.snapshot_with_simulation(0x5eed, robin_engine::engine::SimConfig::default());
 
-        struct Resolver(ReplayCampaignApprovedContentMetadata);
-        impl ReplayCampaignApprovedContentResolver for Resolver {
-            fn approved_content_identity(&self) -> ReplayCampaignApprovedContentIdentity {
-                ReplayCampaignApprovedContentIdentity {
-                    build_manifest_sha256: [1; 32],
-                    content_manifest_sha256: [2; 32],
-                }
-            }
-
-            fn sherwood_campaign_metadata(&self) -> Option<&ReplayCampaignApprovedContentMetadata> {
-                Some(&self.0)
-            }
-        }
-        let resolver = Resolver(metadata);
         let validated = decode_and_validate_replay_campaign(
             &bitcode::encode(&campaign),
             "Sherwood",
@@ -1865,7 +1824,7 @@ mod tests {
             &ReplayAdmissionLimits::default(),
         )
         .expect("real full HQ campaign phase one");
-        validate_replay_campaign_approved_content(validated, &resolver)
+        validate_replay_campaign_approved_content(validated, Some(&metadata))
             .expect("real full HQ campaign exact phase two");
 
         campaign.production_sectors[0].production_points[0].sector = u16::MAX;
@@ -1878,7 +1837,7 @@ mod tests {
         )
         .expect("forged topology remains a phase-two identity");
         assert!(matches!(
-            validate_replay_campaign_approved_content(forged, &resolver),
+            validate_replay_campaign_approved_content(forged, Some(&metadata)),
             Err(ReplayCampaignContentValidationError::ProductionPointTopologyMissing { .. })
         ));
     }
@@ -2350,63 +2309,14 @@ mod tests {
         ));
     }
 
-    struct ApprovedFixture(ReplayCampaignApprovedContentMetadata);
-
-    impl ReplayCampaignApprovedContentResolver for ApprovedFixture {
-        fn approved_content_identity(&self) -> ReplayCampaignApprovedContentIdentity {
-            approved_identity()
-        }
-
-        fn sherwood_campaign_metadata(&self) -> Option<&ReplayCampaignApprovedContentMetadata> {
-            Some(&self.0)
-        }
-    }
-
-    fn approved_identity() -> ReplayCampaignApprovedContentIdentity {
-        ReplayCampaignApprovedContentIdentity {
-            build_manifest_sha256: [0x42; 32],
-            content_manifest_sha256: [0x24; 32],
-        }
-    }
-
-    struct ApprovedIdentityWithoutMetadata;
-
-    impl ReplayCampaignApprovedContentResolver for ApprovedIdentityWithoutMetadata {
-        fn approved_content_identity(&self) -> ReplayCampaignApprovedContentIdentity {
-            approved_identity()
-        }
-
-        fn sherwood_campaign_metadata(&self) -> Option<&ReplayCampaignApprovedContentMetadata> {
-            None
-        }
-    }
-
     #[test]
     fn approved_content_phase_needs_no_sherwood_metadata_without_deferred_references() {
         let (profiles, campaign) = fixture();
         let validated = validate(&profiles, &campaign).unwrap();
         assert!(validated.deferred_content_checks().is_empty());
 
-        let approved =
-            validate_replay_campaign_approved_content(validated, &ApprovedIdentityWithoutMetadata)
-                .unwrap();
-        assert_eq!(approved.approved_identity(), approved_identity());
+        let approved = validate_replay_campaign_approved_content(validated, None).unwrap();
         assert_eq!(approved.validated().mission_index(), 0);
-    }
-
-    struct UnboundApprovedFixture(ReplayCampaignApprovedContentMetadata);
-
-    impl ReplayCampaignApprovedContentResolver for UnboundApprovedFixture {
-        fn approved_content_identity(&self) -> ReplayCampaignApprovedContentIdentity {
-            ReplayCampaignApprovedContentIdentity {
-                build_manifest_sha256: [0; 32],
-                content_manifest_sha256: [0x24; 32],
-            }
-        }
-
-        fn sherwood_campaign_metadata(&self) -> Option<&ReplayCampaignApprovedContentMetadata> {
-            Some(&self.0)
-        }
     }
 
     fn square() -> Vec<ReplayCampaignApprovedMapPoint> {
@@ -2437,7 +2347,7 @@ mod tests {
             });
         campaign.characters[0].status.beam_me_index_in_sherwood = 0;
         let validated = validate(&profiles, &campaign).unwrap();
-        let approved = ApprovedFixture(ReplayCampaignApprovedContentMetadata {
+        let approved = ReplayCampaignApprovedContentMetadata {
             static_sight_obstacles: vec![ReplayCampaignApprovedStaticObstacle {
                 projection_topology: Some(topology),
                 projected_polygon: square(),
@@ -2453,24 +2363,22 @@ mod tests {
                 topology,
                 polygon: square(),
             }],
-        });
-        let token = validate_replay_campaign_approved_content(validated, &approved).unwrap();
+        };
+        let token = validate_replay_campaign_approved_content(validated, Some(&approved)).unwrap();
         assert_eq!(token.validated().mission_index(), 0);
-        assert_eq!(token.approved_identity(), approved_identity());
-        let (_campaign, mission_index, location, _digest, identity) = token.into_playback_parts();
+        let (_campaign, mission_index, location, _digest) = token.into_playback_parts();
         assert_eq!(mission_index, 0);
         assert_eq!(location, MissionLocation::Nottingham);
-        assert_eq!(identity, approved_identity());
 
         let validated = validate(&profiles, &campaign).unwrap();
-        let mut wrong = approved.0.clone();
+        let mut wrong = approved.clone();
         wrong.static_sight_obstacles[0].projection_topology =
             Some(ReplayCampaignProductionPointTopology {
                 map_layer: 9,
                 sector: 4,
             });
         assert!(matches!(
-            validate_replay_campaign_approved_content(validated, &ApprovedFixture(wrong)),
+            validate_replay_campaign_approved_content(validated, Some(&wrong)),
             Err(
                 ReplayCampaignContentValidationError::ProductionPointObstacleTopologyMismatch { .. }
             )
@@ -2487,7 +2395,7 @@ mod tests {
             obstacle: robin_engine::sight_obstacle::SightObstacleIndex::new(0),
         });
         let validated = validate(&profiles, &campaign).unwrap();
-        let approved = ApprovedFixture(ReplayCampaignApprovedContentMetadata {
+        let approved = ReplayCampaignApprovedContentMetadata {
             static_sight_obstacles: vec![ReplayCampaignApprovedStaticObstacle {
                 projection_topology: Some(ReplayCampaignProductionPointTopology {
                     map_layer: 3,
@@ -2498,26 +2406,10 @@ mod tests {
             script_zones: Vec::new(),
             beam_mes: Vec::new(),
             production_sectors: Vec::new(),
-        });
+        };
         assert!(matches!(
-            validate_replay_campaign_approved_content(validated, &approved),
+            validate_replay_campaign_approved_content(validated, Some(&approved)),
             Err(ReplayCampaignContentValidationError::ProductionOccupantOutsideObstacle { .. })
-        ));
-    }
-
-    #[test]
-    fn approved_content_phase_rejects_unbound_identity_before_metadata_use() {
-        let (profiles, campaign) = fixture();
-        let validated = validate(&profiles, &campaign).unwrap();
-        let resolver = UnboundApprovedFixture(ReplayCampaignApprovedContentMetadata {
-            static_sight_obstacles: Vec::new(),
-            script_zones: Vec::new(),
-            beam_mes: Vec::new(),
-            production_sectors: Vec::new(),
-        });
-        assert!(matches!(
-            validate_replay_campaign_approved_content(validated, &resolver),
-            Err(ReplayCampaignContentValidationError::InvalidApprovedContentIdentity { .. })
         ));
     }
 
@@ -2538,7 +2430,7 @@ mod tests {
                 obstacle: None,
             });
         let validated = validate(&profiles, &campaign).unwrap();
-        let approved = ApprovedFixture(ReplayCampaignApprovedContentMetadata {
+        let approved = ReplayCampaignApprovedContentMetadata {
             static_sight_obstacles: Vec::new(),
             script_zones: Vec::new(),
             beam_mes: Vec::new(),
@@ -2546,9 +2438,13 @@ mod tests {
                 topology,
                 polygon: square(),
             }],
-        });
+        };
         assert!(matches!(
-            validate_replay_campaign_approved_content_with_work_limit(validated, &approved, 3),
+            validate_replay_campaign_approved_content_with_work_limit(
+                validated,
+                Some(&approved),
+                3
+            ),
             Err(
                 ReplayCampaignContentValidationError::ApprovedContainmentWorkLimit {
                     attempted: 4,
@@ -2579,7 +2475,7 @@ mod tests {
             .deferred_content_checks
             .production_point_topology_references[0]
             .point_index = usize::MAX;
-        let approved = ApprovedFixture(ReplayCampaignApprovedContentMetadata {
+        let approved = ReplayCampaignApprovedContentMetadata {
             static_sight_obstacles: Vec::new(),
             script_zones: Vec::new(),
             beam_mes: Vec::new(),
@@ -2587,9 +2483,9 @@ mod tests {
                 topology,
                 polygon: square(),
             }],
-        });
+        };
         assert!(matches!(
-            validate_replay_campaign_approved_content(validated, &approved),
+            validate_replay_campaign_approved_content(validated, Some(&approved)),
             Err(
                 ReplayCampaignContentValidationError::DeferredTopologyPointOutOfRange {
                     point_count: 1,

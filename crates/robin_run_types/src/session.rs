@@ -1,134 +1,13 @@
-//! Prepared-input seal, speech timing authority and the anonymous replay seat
-//! transcript consumed by the deterministic engine.
+//! Anonymous replay seat transcript derived from a recording.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Digest32, OfficialContentEditionV1, OfficialContentSubjectV1, ResourceLocaleRootV1,
-    SimulationSeed64, Validate, ValidationError,
-};
+use crate::{Digest32, Validate, ValidationError};
 
 pub const MAX_REPLAY_SEATS_V1: u16 = 4;
 pub const MAX_PARTICIPANT_INSTANCES_V1: u16 = 1_024;
-/// Exact media type for the bitcode campaign artifact consumed by the ranked
-/// Engine.
-pub const RANKED_CAMPAIGN_MEDIA_TYPE_V1: &str = "application/x-robin-campaign+bitcode";
-
-/// Host-authored immutable facts frozen before ranked simulation starts.
-///
-/// The signed genesis is retained outside the replay. Current canonical replay
-/// bytes carry only its canonical digest, the random session/participant IDs,
-/// and the keyless seat lifecycle transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SpeechTimingAuthorityV1 {
-    /// Required English timing metadata in the engine core datadir.
-    CoreAudioDurationsV1,
-    /// Validated base `Data/Sounds` timing with no locale override.
-    BaseInstallation,
-    LanguagePack {
-        canonical_locale: String,
-    },
-}
-
-impl SpeechTimingAuthorityV1 {
-    pub fn validate(&self) -> Result<(), ValidationError> {
-        match self {
-            Self::BaseInstallation | Self::CoreAudioDurationsV1 => Ok(()),
-            Self::LanguagePack { canonical_locale } => {
-                crate::validation::text(
-                    "ranked_session.speech_timing.canonical_locale",
-                    canonical_locale,
-                    64,
-                )?;
-                if canonical_locale.starts_with('-')
-                    || canonical_locale.ends_with('-')
-                    || canonical_locale
-                        .split('-')
-                        .any(|part| part.is_empty() || part.len() > 8)
-                    || !canonical_locale
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                {
-                    return Err(ValidationError::ClaimMismatch {
-                        field: "ranked_session.speech_timing.canonical_locale",
-                    });
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-/// Canonical seal over the exact run-specific inputs consumed by the engine.
-/// The static content manifest is prepublished; `prepared_inputs_projection`
-/// additionally binds the mutable team/inventory/reinforcement closure
-/// derived from the starting campaign. Ranked verification recomputes this
-/// document before consuming the engine's single-use prepared capability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparedMissionInputsSealV1 {
-    pub schema_version: u32,
-    pub prepared_inputs_projection_sha256: Digest32,
-    pub content_manifest_sha256: Digest32,
-    pub content_edition: OfficialContentEditionV1,
-    pub content_subject: OfficialContentSubjectV1,
-    pub starting_campaign_sha256: Digest32,
-    pub starting_campaign_byte_length: u64,
-    pub simulation_seed: SimulationSeed64,
-    pub rules_config_sha256: Digest32,
-    pub resource_locale_root: ResourceLocaleRootV1,
-    pub speech_timing: SpeechTimingAuthorityV1,
-    /// Reserved for explicitly unranked Spellforge simulations. Official
-    /// ranked seals reject it until immutable policy semantics exist.
-    pub spellforge_content_sha256: Option<Digest32>,
-    /// Original-parity RNG streams are replay inputs, not ranked RNG. Their
-    /// presence makes the seal unrankable.
-    pub original_rng_replay_sha256: Option<Digest32>,
-}
-
-impl Validate for PreparedMissionInputsSealV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("PreparedMissionInputsSealV1", self.schema_version)?;
-        self.content_subject.validate()?;
-        if [
-            self.prepared_inputs_projection_sha256,
-            self.content_manifest_sha256,
-            self.starting_campaign_sha256,
-            self.rules_config_sha256,
-        ]
-        .into_iter()
-        .any(|digest| digest.is_zero())
-            || self.starting_campaign_byte_length == 0
-            || self
-                .spellforge_content_sha256
-                .is_some_and(|digest| digest.is_zero())
-            || self
-                .original_rng_replay_sha256
-                .is_some_and(|digest| digest.is_zero())
-        {
-            return Err(ValidationError::Zero {
-                field: "prepared_mission_inputs_seal.identity_digest",
-            });
-        }
-        self.resource_locale_root.validate()?;
-        self.speech_timing.validate()
-    }
-}
-
-impl PreparedMissionInputsSealV1 {
-    pub fn validate_rankable(&self) -> Result<(), ValidationError> {
-        self.validate()?;
-        if self.spellforge_content_sha256.is_some() || self.original_rng_replay_sha256.is_some() {
-            return Err(ValidationError::ClaimMismatch {
-                field: "prepared_mission_inputs_seal.unranked_input_mode",
-            });
-        }
-        Ok(())
-    }
-}
 
 /// Anonymous-safe seat lifecycle recorded by current canonical replays. Random IDs
 /// remain stable across reconnects; no username, EndpointId, public key, or

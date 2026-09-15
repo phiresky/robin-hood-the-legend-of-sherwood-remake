@@ -93,7 +93,6 @@ mlua = { workspace = true, optional = true }
 robin_replay_format = { workspace = true, features = ["native-admission"] }
 # OS data directories are standard for every native build.
 dirs = "7"
-robin_manifest_tool = { workspace = true, optional = true }
 rayon = { version = "1", optional = true }
 ogg = { version = "0.9.2", optional = true }
 # convert_datadir: load the pinned libopus to verify its version string.
@@ -290,9 +289,6 @@ video = ["dep:ffmpeg-next", "audio"]
 # Gameplay always uses robin_spellforge; `full` must not link a second VM.
 # Standalone Lua developer tools belong to the robin_lua package.
 lua = ["dep:robin_lua", "dep:mlua"]
-# Closed, native-only feature for the reproducible official-content projection
-# executable. It intentionally stays out of every shipping client graph.
-projection-export = ["dep:robin_manifest_tool"]
 # Installed desktop builds can opt into Velopack startup and background update
 # checks. Developer builds do not need its HTTP and packaging dependency graph.
 auto-update = ["dep:semver", "dep:velopack"]
@@ -323,11 +319,6 @@ path = "src/bin/convert_datadir.rs"
 # Its unit tests run explicitly with --bin convert_datadir; see docs/TESTING.md.
 test = false
 required-features = ["tools"]
-
-[[example]]
-name = "export_simulation_content"
-path = "examples/export_simulation_content.rs"
-required-features = ["projection-export"]
 
 [lints]
 workspace = true

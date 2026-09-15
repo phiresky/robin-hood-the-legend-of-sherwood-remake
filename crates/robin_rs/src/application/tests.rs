@@ -3,25 +3,6 @@ use crate::host::{FrontendPreferenceEffects, FrontendPreferences, Host, HostFron
 use robin_engine::player_profile::DifficultyLevel;
 use winit::keyboard::KeyCode;
 
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-#[test]
-fn nondefault_projection_rules_survive_host_only_profile_updates() {
-    let mut exact = engine_api::SimConfig::original_parity_ranked(DifficultyLevel::Hard);
-    exact.synchronous_pathfinding = true;
-    let application = ApplicationContext::complete_official_projection(
-        engine_api::GlobalOptions::default(),
-        exact,
-        None,
-    )
-    .unwrap();
-    application
-        .with_player_profiles_mut(|profiles| {
-            profiles.get_active_mut().unwrap().minimap_x = 123.0;
-        })
-        .unwrap();
-    assert_eq!(application.sim_config(), exact);
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn save_recovery_conflict_does_not_regenerate_profiles() {
@@ -815,71 +796,6 @@ fn production_host_rejects_decoded_services_without_an_active_profile() {
     let mut encoded = serde_json::to_value(context).unwrap();
     encoded["services"]["player_profiles"]["profiles"] = serde_json::json!([]);
     assert!(serde_json::from_value::<ReadyApplicationContext>(encoded).is_err());
-}
-
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-#[test]
-fn official_projection_context_preserves_the_exact_current_sim_config() {
-    let sim_config = engine_api::SimConfig {
-        script_enabled: false,
-        highlander: true,
-        amount_of_speaking: 2,
-        synchronous_pathfinding: true,
-        item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
-        ..engine_api::SimConfig::default()
-    };
-    let options = engine_api::GlobalOptions {
-        script_enabled: false,
-        highlander: true,
-        ..Default::default()
-    };
-    let context =
-        ApplicationContext::complete_official_projection(options, sim_config, None).unwrap();
-
-    assert_eq!(context.sim_config(), sim_config);
-    assert!(context.save_player_profiles().unwrap().persistence.is_err());
-    assert!(context.cache_clear_status().is_err());
-    assert_eq!(
-        serde_json::to_value(context.recording_index()).unwrap()["directory"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        context
-            .clone()
-            .with_options(context.options().clone())
-            .sim_config(),
-        sim_config,
-        "ordinary headless handoff and exporter must seal byte-identical rules"
-    );
-    let profiles = context.player_profiles_snapshot().unwrap();
-    assert_eq!(profiles.save_directory, "official-projection-memory-only");
-    assert_eq!(profiles.profiles.len(), 1);
-    assert_eq!(
-        profiles
-            .get_active()
-            .unwrap()
-            .sound_config
-            .amount_of_speaking,
-        2
-    );
-    assert!(
-        context
-            .active_spellforge_trust_grants()
-            .unwrap_err()
-            .contains("disabled in the closed official projection context")
-    );
-    assert!(
-        context
-            .clear_distributed_mod_cache()
-            .unwrap_err()
-            .contains("disabled in the closed official projection context")
-    );
-
-    let mut mismatched = context.options().clone();
-    mismatched.script_enabled = true;
-    assert!(
-        ApplicationContext::complete_official_projection(mismatched, sim_config, None).is_err()
-    );
 }
 
 #[test]

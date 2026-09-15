@@ -81,7 +81,6 @@ impl CacheKey {
             && self.mounts.ranked_verifier_primary_path == other.mounts.ranked_verifier_primary_path
             && self.mounts.alternate_paths == other.mounts.alternate_paths
             && self.mounts.overlay_paths == other.mounts.overlay_paths
-            && self.mounts.official_projection_strict == other.mounts.official_projection_strict
             && self.mission_generation == other.mission_generation
             && self.content_generation == other.content_generation
     }

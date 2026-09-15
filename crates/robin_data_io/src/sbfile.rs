@@ -97,17 +97,12 @@ struct MountState {
     overlay_paths: Vec<OverlayRoot>,
     primary_path: Option<PathBuf>,
     ranked_verifier_primary_path: Option<PathBuf>,
-    official_projection_strict: bool,
 }
 
 impl MountState {
     fn ensure_mutable(&self, operation: &str) -> Result<(), SbFileError> {
         if self.ranked_verifier_primary_path.is_some() {
             tracing::warn!("ranked verifier filesystem rejected {operation}");
-            return Err(SbFileError::Sealed);
-        }
-        if self.official_projection_strict {
-            tracing::warn!("sealed filesystem rejected {operation}");
             return Err(SbFileError::Sealed);
         }
         Ok(())
@@ -175,21 +170,8 @@ impl MountState {
                 .map(|candidate| Layer::Ranked { root, candidate })
                 .collect());
         }
-        let strict = self.official_projection_strict;
-        match api {
-            LookupApi::DataDirectory => {
-                if strict && shape != RequestedPath::Plain {
-                    return Err(LookupRejection::SealedProjection);
-                }
-            }
-            LookupApi::DataPath | LookupApi::Open | LookupApi::Exists => {
-                if strict && shape == RequestedPath::Absolute {
-                    return Err(LookupRejection::SealedProjection);
-                }
-                if shape == RequestedPath::Escaping {
-                    return Err(LookupRejection::Escaping);
-                }
-            }
+        if !matches!(api, LookupApi::DataDirectory) && shape == RequestedPath::Escaping {
+            return Err(LookupRejection::Escaping);
         }
         // Byte and existence lookups address an absolute host path directly
         // and never consult the mount stack for it.
@@ -230,9 +212,7 @@ impl MountState {
                                 prefix: Some(LayerPrefix::Alternate(alternate)),
                             });
                         }
-                        if !strict {
-                            layers.push(Layer::Host(LayerPrefix::Alternate(alternate)));
-                        }
+                        layers.push(Layer::Host(LayerPrefix::Alternate(alternate)));
                     }
                     continue;
                 }
@@ -246,9 +226,7 @@ impl MountState {
                     prefix: Some(LayerPrefix::Locale(locale_root.to_owned())),
                 });
             }
-            if !strict {
-                layers.push(Layer::Host(LayerPrefix::Locale(locale_root.to_owned())));
-            }
+            layers.push(Layer::Host(LayerPrefix::Locale(locale_root.to_owned())));
         }
         if !order.contains(&LocaleLayer::Shared) {
             layers.push(Layer::RequiredLocaleMissing);
@@ -300,9 +278,6 @@ enum LookupApi {
 enum LookupRejection {
     /// A ranked verifier only accepts plain relative paths.
     RankedConfinement,
-    /// A sealed official projection refused an absolute (or, for directory
-    /// lookups, any non-plain) path.
-    SealedProjection,
     /// A relative path containing `..`.
     Escaping,
 }
@@ -318,11 +293,9 @@ enum Layer<'a> {
         root: &'a Path,
         prefix: Option<LayerPrefix<'a>>,
     },
-    /// Host-relative `prefix/requested`; never produced for sealed official
-    /// projections.
+    /// Host-relative `prefix/requested`.
     Host(LayerPrefix<'a>),
-    /// The requested path itself. Callers must not probe the host filesystem
-    /// here for sealed official projections.
+    /// The requested path itself.
     Direct,
     /// A required localized asset is absent from the selected pack; lower
     /// layers must not substitute for it.
@@ -389,7 +362,6 @@ pub struct SbFileMountSnapshot {
     /// Confinement changes the lookup graph even if the primary root matches.
     pub ranked_verifier_primary_path: Option<PathBuf>,
     pub asset_vfs: robin_util::asset_fs::AssetVfsAuthoritySnapshot,
-    pub official_projection_strict: bool,
 }
 
 impl SbFileSystem {
@@ -950,15 +922,10 @@ impl SbFileSystem {
         let normalised = rel_dir.replace('\\', "/");
         let layers = match mounts.lookup(&normalised, LookupApi::DataDirectory) {
             Ok(layers) => layers,
-            Err(LookupRejection::SealedProjection) => {
-                tracing::warn!("official projection rejected data-directory path {normalised:?}");
-                return Vec::new();
-            }
             Err(LookupRejection::RankedConfinement | LookupRejection::Escaping) => {
                 return Vec::new();
             }
         };
-        let official_strict = mounts.official_projection_strict;
         let host_directory = |dir: PathBuf| {
             let dir = self.physical_path(&dir);
             if dir.is_dir() {
@@ -978,7 +945,6 @@ impl SbFileSystem {
                     host_directory(primary_candidate(root, prefix.as_ref(), &normalised))
                 }
                 Layer::Host(prefix) => host_directory(prefix.host_join(&normalised)),
-                Layer::Direct if official_strict => None,
                 Layer::Direct => host_directory(PathBuf::from(&normalised)),
                 Layer::RequiredLocaleMissing => break,
             };
@@ -993,16 +959,11 @@ impl SbFileSystem {
         let layers = match mounts.lookup(&normalised, LookupApi::DataPath) {
             Ok(layers) => layers,
             Err(LookupRejection::RankedConfinement) => return None,
-            Err(LookupRejection::SealedProjection) => {
-                tracing::warn!("official projection rejected absolute data path {normalised:?}");
-                return None;
-            }
             Err(LookupRejection::Escaping) => {
                 tracing::warn!("resolve_data_path: rejected escaping path {normalised}");
                 return None;
             }
         };
-        let official_strict = mounts.official_projection_strict;
         let host_file = |path: &Path| {
             resolve_case_insensitive(&self.physical_path(path))
                 .filter(|resolved| resolved.is_file())
@@ -1020,7 +981,6 @@ impl SbFileSystem {
                     &primary_candidate(root, prefix.as_ref(), &normalised),
                 ),
                 Layer::Host(prefix) => host_file(Path::new(&prefix.legacy_host_path(&normalised))),
-                Layer::Direct if official_strict => None,
                 Layer::Direct => host_file(Path::new(&normalised)),
                 Layer::RequiredLocaleMissing => return None,
             };
@@ -1096,16 +1056,11 @@ impl SbFileSystem {
         let layers = match mounts.lookup(&normalised, LookupApi::Open) {
             Ok(layers) => layers,
             Err(LookupRejection::RankedConfinement) => return Err(SbFileError::Read(None)),
-            Err(LookupRejection::SealedProjection) => {
-                tracing::warn!("official projection rejected absolute open path {normalised:?}");
-                return Err(SbFileError::Read(None));
-            }
             Err(LookupRejection::Escaping) => {
                 tracing::warn!("SbFile::open: rejected escaping path {normalised}");
                 return Err(SbFileError::Read(None));
             }
         };
-        let official_strict = mounts.official_projection_strict;
         for layer in layers {
             let bytes = match layer {
                 Layer::Ranked { root, candidate } => {
@@ -1127,22 +1082,6 @@ impl SbFileSystem {
                     &primary_candidate(root, prefix.as_ref(), &normalised).to_string_lossy(),
                 )?,
                 Layer::Host(prefix) => try_read(self, &prefix.legacy_host_path(&normalised))?,
-                Layer::Direct if official_strict => {
-                    // Shipping archives install authenticated decoded bundles
-                    // into the VFS after the initially empty authority snapshot.
-                    match self.assets.read_shared(&normalised) {
-                        Ok(bytes) => return Ok(SbFile::from_bytes(bytes, normalised)),
-                        Err(robin_util::asset_fs::AssetError::NotFound(_)) => {}
-                        Err(error) => {
-                            tracing::warn!("official asset read failed for {normalised}: {error}");
-                            return Err(SbFileError::Read(None));
-                        }
-                    }
-                    tracing::warn!(
-                        "SbFile::open: {normalised} not found inside the sealed official mounts"
-                    );
-                    return Err(SbFileError::NotFound);
-                }
                 Layer::Direct => try_read(self, &normalised)?,
                 Layer::RequiredLocaleMissing => {
                     tracing::warn!(
@@ -1351,20 +1290,6 @@ impl SbFile {
         global_file_system().snapshot()
     }
 
-    /// Atomically install the only source, locale, and built-in overlay roots
-    /// visible to an official projection process.
-    pub fn configure_official_projection_mounts(
-        source_root: &Path,
-        resource_locale_root: &str,
-        core_overlay_root: &Path,
-    ) -> Result<(), String> {
-        global_file_system().configure_official_projection_mounts(
-            source_root,
-            resource_locale_root,
-            core_overlay_root,
-        )
-    }
-
     pub fn remove_alternate_path(path: &str) -> Result<(), SbFileError> {
         global_file_system().remove_alternate_path(path)
     }
@@ -1412,76 +1337,7 @@ impl SbFileSystem {
             primary_path: mounts.primary_path.clone(),
             ranked_verifier_primary_path: mounts.ranked_verifier_primary_path.clone(),
             asset_vfs: self.assets.authority_snapshot(),
-            official_projection_strict: mounts.official_projection_strict,
         }
-    }
-
-    pub fn configure_official_projection_mounts(
-        &self,
-        source_root: &Path,
-        resource_locale_root: &str,
-        core_overlay_root: &Path,
-    ) -> Result<(), String> {
-        fn exact_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
-            if !path.is_absolute() {
-                return Err(format!("{label} must be absolute: {}", path.display()));
-            }
-            let metadata = fs::symlink_metadata(path)
-                .map_err(|error| format!("cannot inspect {label} {}: {error}", path.display()))?;
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(format!(
-                    "{label} must be a non-symlink directory: {}",
-                    path.display()
-                ));
-            }
-            let canonical = fs::canonicalize(path).map_err(|error| {
-                format!("cannot canonicalize {label} {}: {error}", path.display())
-            })?;
-            if canonical != path {
-                return Err(format!(
-                    "{label} must be normalized (expected {}): {}",
-                    canonical.display(),
-                    path.display()
-                ));
-            }
-            Ok(canonical)
-        }
-
-        if resource_locale_root.is_empty()
-            || !resource_locale_root
-                .bytes()
-                .all(|byte| byte.is_ascii_digit())
-        {
-            return Err("official projection LCID must be one numeric component".to_owned());
-        }
-        let source_root = exact_directory(source_root, "official source root")?;
-        let core_overlay_root = exact_directory(core_overlay_root, "official core overlay root")?;
-        let mut guard = self.mounts.lock().unwrap();
-        let mounts = Arc::make_mut(&mut guard);
-        if !mounts.alternate_paths.is_empty()
-            || mounts.locale_paths.selected.is_some()
-            || mounts.locale_paths.fallback.is_some()
-            || mounts.locale_paths.language.is_some()
-            || !mounts.overlay_paths.is_empty()
-            || mounts.primary_path.is_some()
-            || mounts.ranked_verifier_primary_path.is_some()
-            || !self.assets.authority_snapshot().is_empty()
-            || mounts.official_projection_strict
-        {
-            return Err(
-                "filesystem/VFS authorities were installed before official projection".to_owned(),
-            );
-        }
-        mounts.official_projection_strict = true;
-        mounts.primary_path = Some(source_root);
-        mounts.locale_paths = LocaleLookup {
-            selected: Some(resource_locale_root.to_owned()),
-            ..LocaleLookup::default()
-        };
-        mounts
-            .overlay_paths
-            .push(OverlayRoot::Directory(core_overlay_root));
-        Ok(())
     }
 
     fn physical_path(&self, path: &Path) -> PathBuf {
@@ -1518,17 +1374,10 @@ impl SbFileSystem {
         let normalised = path.replace('\\', "/");
         let layers = match mounts.lookup(&normalised, LookupApi::Exists) {
             Ok(layers) => layers,
-            Err(LookupRejection::SealedProjection) => {
-                tracing::warn!(
-                    "official projection rejected absolute existence path {normalised:?}"
-                );
-                return Err(SbFileError::Read(None));
-            }
             Err(LookupRejection::RankedConfinement | LookupRejection::Escaping) => {
                 return Err(SbFileError::Read(None));
             }
         };
-        let official_strict = mounts.official_projection_strict;
         let requested = Path::new(&normalised);
         for layer in layers {
             let exists = match layer {
@@ -1547,7 +1396,7 @@ impl SbFileSystem {
                 Layer::Direct => match self.assets.try_exists(requested) {
                     Ok(true) => true,
                     Ok(false) | Err(robin_util::asset_fs::AssetError::InvalidPath(_)) => {
-                        !official_strict && self.resolve_instance_path(requested)?.is_some()
+                        self.resolve_instance_path(requested)?.is_some()
                     }
                     Err(error) => {
                         tracing::warn!("SbFileSystem::try_exists({normalised}): {error}");

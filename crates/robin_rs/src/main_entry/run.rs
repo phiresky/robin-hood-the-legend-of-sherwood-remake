@@ -259,18 +259,6 @@ fn prepare_run_args(
     Ok(args.bind_run(context.into(), cli, browser_join_redeemed))
 }
 
-fn projection_export_requested(args: &LaunchConfig) -> bool {
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    {
-        args.simulation_content_export.is_some()
-    }
-    #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
-    {
-        let _ = args;
-        false
-    }
-}
-
 /// Called after transport startup, in both graphical and headless entry paths.
 fn warm_run_assets(
     args: &LaunchConfig,
@@ -278,10 +266,9 @@ fn warm_run_assets(
 ) -> Result<(), LaunchError> {
     let context = &args.global_options;
     let shipping = context.shipping_arc().map_err(LaunchError::application)?;
-    if !projection_export_requested(args)
-        && !shipping
-            .as_ref()
-            .is_some_and(|datadir| !datadir.missions.is_empty())
+    if !shipping
+        .as_ref()
+        .is_some_and(|datadir| !datadir.missions.is_empty())
     {
         context
             .asset_cache()
@@ -1232,15 +1219,6 @@ async fn run_rust_game_headless_active(
             "--headless requires --sherwood, --replay, or a demo data dir; the main menu cannot be navigated without a display.",
         ));
     };
-
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    if projection_export_requested(&config) {
-        crate::game_session::export_official_mission_headless(
-            campaign, &profiles, idx, location, &request, rng_seed, sim_config,
-        )
-        .await?;
-        return Ok(0);
-    }
 
     let mut callbacks = RustCallbacks::new(application_context)?;
     let outcome = run_mission_headless(

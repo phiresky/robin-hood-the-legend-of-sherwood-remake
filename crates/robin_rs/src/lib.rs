@@ -275,8 +275,6 @@ pub mod mouse_trail;
 pub mod mouse_way;
 pub mod multiplayer;
 pub mod native_font;
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub mod official_projection_export;
 pub mod options_model;
 pub mod pc_info_overlay;
 pub mod player_profile_store;

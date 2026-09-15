@@ -2382,17 +2382,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "goblin"
-version = "0.10.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17582616a7718cca54cec18e534a76c7c4aec11a8b9a85695712f262fd15a4c8"
-dependencies = [
- "log",
- "plain",
- "scroll",
-]
-
-[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6140,27 +6129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "robin_manifest_tool"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
- "clap",
- "goblin",
- "robin_assets",
- "robin_engine",
- "robin_run_protocol",
- "robin_util",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "toml",
- "wait-timeout",
-]
-
-[[package]]
 name = "robin_modding_tools"
 version = "0.0.0"
 dependencies = [
@@ -6332,7 +6300,6 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
- "robin_manifest_tool",
  "robin_modding_tools",
  "robin_replay_format",
  "robin_run_protocol",
@@ -6379,15 +6346,11 @@ dependencies = [
 name = "robin_run_protocol"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
- "hex",
  "robin_run_types",
- "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sha2 0.11.0",
  "thiserror 2.0.20",
  "zstd",
 ]
@@ -6738,26 +6701,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "scroll"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1257cd4248b4132760d6524d6dda4e053bc648c9070b960929bf50cfb1e7add"
-dependencies = [
- "scroll_derive",
-]
-
-[[package]]
-name = "scroll_derive"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1a36a382ed65dbcc0ab47fd5e9a94112417ccd34560a392ef3b7b0f0ec39148"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.5",
-]
 
 [[package]]
 name = "sctk-adwaita"

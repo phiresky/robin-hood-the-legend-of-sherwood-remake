@@ -43,7 +43,7 @@ case "$1" in
         # Prove the production API lacks raw fixture access before opting in.
         cargo check --locked -p robin_highscores --lib --bins --no-default-features
         cargo test --locked -p robin_highscores --doc --no-default-features
-        cargo test --locked -p robin_highscores -p robin_manifest_tool -p robin_replay_verifier --features robin_highscores/test-support
+        cargo test --locked -p robin_highscores -p robin_replay_verifier --features robin_highscores/test-support
         ;;
     parity) cargo test --locked -p robin_parity ;;
     client)
@@ -60,8 +60,7 @@ case "$1" in
     tools)
         cargo test --locked -p robin_modding_tools
         cargo test --locked -p robin_rs --features tools --bin convert_datadir --bin dump_level
-        cargo test --locked -p robin_rs --no-default-features --features projection-export --example export_simulation_content
-        cargo check --locked -p robin_rs --features tools,projection-export --bins --examples
+        cargo check --locked -p robin_rs --features tools --bins --examples
         ;;
     wasm)
         cargo check --locked --profile wasm-dev --target wasm32-unknown-unknown -p robin_identity_signer --bin leaderboard_identity_bridge --features identity-signer-bridge

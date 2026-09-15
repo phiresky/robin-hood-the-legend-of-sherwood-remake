@@ -2,11 +2,10 @@
 use crate::VerificationRejectionCodeV1;
 
 impl VerificationRejectionCodeV1 {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 13] = [
         Self::MalformedReplay,
         Self::ResourceLimit,
         Self::UnsupportedSchema,
-        Self::BuildNotAllowed,
         Self::ContentNotAllowed,
         Self::ConfigMismatch,
         Self::StartingStateMismatch,
@@ -23,7 +22,6 @@ impl VerificationRejectionCodeV1 {
             Self::MalformedReplay => "malformed_replay",
             Self::ResourceLimit => "resource_limit",
             Self::UnsupportedSchema => "unsupported_schema",
-            Self::BuildNotAllowed => "build_not_allowed",
             Self::ContentNotAllowed => "content_not_allowed",
             Self::ConfigMismatch => "config_mismatch",
             Self::StartingStateMismatch => "starting_state_mismatch",
