@@ -189,6 +189,11 @@ impl EngineInner {
                             flags,
                         },
                     ) {
+                        if self.current_sequence_element_for_actor(owner)
+                            != Some((sequence_id, element_index))
+                        {
+                            return OwnerActionBarrier::Skip;
+                        }
                         // Original resumes translation after seek refresh's
                         // early return and rewrites SEEK to MOVE. The return
                         // only leaves the movement body empty: transition

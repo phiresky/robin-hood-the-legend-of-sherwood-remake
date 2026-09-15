@@ -5,6 +5,173 @@ use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
 #[test]
+fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+        Posture::Upright,
+    ));
+    let target = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
+        Posture::Upright,
+    ));
+    for actor in [owner, target] {
+        engine
+            .get_entity_mut(actor)
+            .unwrap()
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(1));
+    }
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+    level.map_bbox = crate::coordinates::MapBBox::from_coords(-100.0, -100.0, 100.0, 100.0);
+    level
+        .sector_number_map
+        .insert(crate::sector::SectorNumber::new(1), 0);
+    level.sectors.push(crate::fast_find_grid::GridSector {
+        points: Vec::new(),
+        bounding_box: level.map_bbox,
+        sector_type: crate::sector::SectorType::BUILDING,
+        layer: 0,
+        sector_number: crate::sector::SectorNumber::new(1),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    let replacement_order = engine.orders.allocate_order_id();
+    let mut replacement = SequenceElement::new(1, Command::Generic, Some(owner));
+    replacement.priority = SequencePriority::Wait;
+    replacement.orders.push_back(crate::order::Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        replacement_order,
+    ));
+    let mut post_seek = crate::sequence::Sequence::new();
+    post_seek.append_element(replacement);
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+    if let crate::sequence::SequenceElementData::Movement {
+        element,
+        flags,
+        post_seek_sequence,
+        ..
+    } = &mut seek.data
+    {
+        *element = Some(target);
+        *flags = crate::sequence::MoveFlags::SEEK | crate::sequence::MoveFlags::SEEK_IN_BUILDINGS;
+        *post_seek_sequence = Some(post_seek.into_post_seek());
+    }
+    let sequence = engine.orders.sequence_manager.insert_element(seek);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
+    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
+    let selected = engine
+        .world
+        .entities
+        .current_element_for_actor(owner)
+        .expect("post-seek carrier remains selected");
+    assert_ne!(selected, (sequence, 0));
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .unwrap()
+            .order_id,
+        replacement_order
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated
+    );
+}
+
+#[test]
+fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let owner = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::soldier(Posture::Upright).build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut make_carrier = || {
+        let order_id = engine.orders.allocate_order_id();
+        let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+        element.priority = SequencePriority::Normal;
+        element.orders.push_back(crate::order::Order::new(
+            OrderType::WaitingUpright,
+            0.0,
+            0.0,
+            order_id,
+        ));
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
+        (sequence, order_id)
+    };
+    let (outgoing, _) = make_carrier();
+    let (nested, nested_order) = make_carrier();
+    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, outgoing, 0));
+    let goal = crate::coordinates::MapPoint::new(23.0, 41.0);
+    let callback_assets = assets.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.seq_id == outgoing {
+                assert!(engine.instruct_owner(
+                    &crate::sim_rng::test_context(),
+                    &callback_assets,
+                    &mut Vec::new(),
+                    owner,
+                    nested,
+                    0
+                ));
+                engine
+                    .get_entity_mut(owner)
+                    .unwrap()
+                    .position_iface_mut()
+                    .set_map_goal(goal);
+            }
+        },
+        || engine.halt_actor(&sim, &assets, owner),
+    );
+    assert_eq!(
+        engine.world.entities.current_element_for_actor(owner),
+        Some((nested, 0))
+    );
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .unwrap()
+            .order_id,
+        nested_order
+    );
+    assert_eq!(entity.position_iface().map_goal(), goal);
+}
+
+#[test]
 fn nested_instruction_selection_survives_outer_callback_return() {
     for nested_has_order in [false, true] {
         let mut engine = EngineInner::new();

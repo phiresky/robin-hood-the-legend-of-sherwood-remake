@@ -2558,27 +2558,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        // Snapshot the actor-base selected element before Stop tears down the
-        // sequence-manager identity. The original game clears the
-        // sprite goal synchronously when this exact selected element is
-        // interrupted, regardless of whether it is a movement element. Rust
-        // delivers that card later, by which point replacement work may
-        // already be selected and obscure the relationship. This notably
-        // matters when a second facing command halts a turn whose front order is a
-        // running-to-waiting transition.
-        let selected_element =
-            self.world
-                .entities
-                .current_element_for_actor(owner)
-                .filter(|&(sequence, element)| {
-                    self.orders
-                        .sequence_manager
-                        .get_element(sequence, element)
-                        .is_some_and(|element| {
-                            element.state == crate::sequence::SequenceState::InProgress
-                        })
-                });
-
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
         {
@@ -2593,35 +2572,6 @@ impl EngineInner {
             owner,
             crate::sequence::SequencePriority::Preference,
         );
-        // Stop can retain the selected movement element by replacing its
-        // current walking order with a transition-to-waiting order. Original
-        // has not sent the actor condolence callback in that case, so the
-        // sprite's live movement goal remains owned by the retained element
-        // until the transition finishes. Clear it synchronously only when the
-        // stop actually detached the element selected before Halt. The same
-        // test covers selected non-movement work, which Stop normally detaches
-        // outright and whose Actor-base condolence clears the goal as well.
-        let selected_element_was_detached = selected_element.is_some_and(|selected| {
-            let remains_live = self
-                .orders
-                .sequence_manager
-                .get_element(selected.0, selected.1)
-                .is_some_and(|element| element.state == crate::sequence::SequenceState::InProgress);
-            !remains_live
-        });
-        if selected_element_was_detached && let Some(entity) = self.get_entity_mut(owner) {
-            entity
-                .position_iface_mut()
-                .set_map_goal(crate::coordinates::MapPoint::ZERO);
-            // Detaching the selected element clears its order at the same
-            // boundary as its goal. A live query immediately after Halt must
-            // see no order, even before the deferred removal card is drained.
-            entity
-                .actor_data_mut()
-                .expect("halted selected element requires actor data")
-                .installed_order = None;
-        }
-
         // Path-request cancellation fires from movement-element
         // interrupt.  When halt interrupts the actor's Move element,
         // any failed-path retry entry for that actor must be dropped —
