@@ -12,6 +12,11 @@ pub(crate) struct TestRig {
 
 impl TestRig {
     pub(crate) async fn new() -> Self {
+        Self::with_config(|_| {}).await
+    }
+
+    /// The default rig with further configuration overrides.
+    pub(crate) async fn with_config(configure: impl FnOnce(&mut ServerConfig)) -> Self {
         let _ = tracing_subscriber::fmt()
             .with_env_filter("robin_highscores=trace")
             .with_test_writer()
@@ -20,16 +25,19 @@ impl TestRig {
         let mut score_only =
             robin_highscores::test_support::demo_board(SCORE_ONLY_BOARD_ID, &[MISSION_ID]);
         score_only.metrics = vec![BoardMetricV1::OriginalScore];
-        let config = ServerConfig {
+        let mut config = ServerConfig {
             database_path: directory.path().join("highscores.sqlite3"),
             replay_directory: directory.path().join("replays"),
-            challenge_requests_per_minute_per_ip: 1_000,
+            signed_requests_per_minute_per_ip: 1_000,
+            submissions_per_hour_per_ip: 1_000,
+            submissions_per_hour_per_key: 1_000,
             boards: vec![
                 robin_highscores::test_support::demo_board(BOARD_ID, &[MISSION_ID]),
                 score_only,
             ],
             ..Default::default()
         };
+        configure(&mut config);
         config.validate().unwrap();
         let database = Database::migrate(&config).await.unwrap();
         let replay_store =
@@ -56,9 +64,7 @@ impl TestRig {
             database: database.clone(),
             replay_store: replay_store.clone(),
             cursor_hmac_key: [0x5a; 32],
-            challenge_rate_limiter: ChallengeRateLimiter::new(
-                config.challenge_requests_per_minute_per_ip,
-            ),
+            rate_limiter: RateLimiter::new(),
         })
         .unwrap()
     }
@@ -82,73 +88,31 @@ impl TestRig {
         self.app.clone().oneshot(request).await.unwrap()
     }
 
+    /// Register or rename `key` with an update signed now.
     pub(crate) async fn rename(&self, key: &SigningKey, username: &str, address: Ipv4Addr) {
-        let challenge: UsernameChallengeV1 = json_body(
-            self.send(json_request(
-                Method::POST,
-                "/api/v1/username-challenges",
-                &UsernameChallengeRequestV1 {
-                    schema_version: SCHEMA_VERSION_V1,
-                    public_key: protocol_public_key(key),
-                },
-                address,
-            ))
-            .await,
-        )
-        .await;
-        let mut update = UsernameUpdateEnvelopeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            username_challenge_id: challenge.username_challenge_id,
-            username_challenge_nonce: challenge.username_challenge_nonce,
-            public_key: protocol_public_key(key),
-            username: username.to_owned(),
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        update.signature = sign(key, &update.signing_bytes().unwrap());
         let response = self
-            .send(json_request(
-                Method::PUT,
-                &format!("/api/v1/players/{}/username", protocol_public_key(key)),
-                &update,
+            .send(username_request(
+                &username_update(key, username, now_ms()),
                 address,
             ))
             .await;
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "{}",
+            bad_request_message(response).await
+        );
     }
 
-    pub(crate) async fn upload_challenge(
-        &self,
-        key: &SigningKey,
-        address: Ipv4Addr,
-    ) -> UploadChallengeV1 {
-        let response = self
-            .send(json_request(
-                Method::POST,
-                "/api/v1/upload-challenges",
-                &UploadChallengeRequestV2 {
-                    schema_version: SCHEMA_VERSION_V2,
-                    public_key: protocol_public_key(key),
-                },
-                address,
-            ))
-            .await;
-        assert_eq!(response.status(), StatusCode::CREATED);
-        assert_dynamic_headers(&response);
-        let challenge: UploadChallengeV1 = json_body(response).await;
-        challenge.validate().unwrap();
-        challenge
-    }
-
-    /// Challenge, sign and upload `replay` to the default board; returns the
-    /// accepted queue response.
+    /// Sign and upload `replay` to the default board; returns the accepted
+    /// queue response.
     pub(crate) async fn submit(
         &self,
         key: &SigningKey,
         replay: &[u8],
         disclosure: ParticipantPublicDisclosureV1,
     ) -> SubmissionAcceptedV1 {
-        let challenge = self.upload_challenge(key, Ipv4Addr::LOCALHOST).await;
-        let signed = signed_submission(key, submission(key, challenge, replay, disclosure));
+        let signed = signed_submission(key, submission(key, replay, disclosure));
         let response = self.send(multipart_request(&signed, replay)).await;
         assert_eq!(
             response.status(),
@@ -156,6 +120,7 @@ impl TestRig {
             "{}",
             bad_request_message(response).await
         );
+        assert_dynamic_headers(&response);
         json_body(response).await
     }
 

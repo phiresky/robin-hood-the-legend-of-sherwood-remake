@@ -2,20 +2,19 @@
 //!
 //! The transport lexically preflights its bounded opaque replay before entering
 //! this workflow. The artifact ingestion closure is invoked only after
-//! acquiring the current reservation; committed/busy retries never invoke it.
+//! acquiring the current reservation; completed/busy retries never invoke it.
 use crate::{
     config::ServerConfig,
     db::{DbError, SubmissionUploadIntent, SubmissionUploadLease, SubmissionUploadReservation},
     error::ApiError,
     model::{NewSubmission, SubmissionLifecycle},
 };
-use robin_run_protocol::{
-    ParticipantPublicDisclosureV1, SignedSubmissionV2, Validate as _, canonical_json_bytes,
-};
+use robin_run_protocol::{ParticipantPublicDisclosureV1, SignedSubmissionV3, canonical_json_bytes};
 
-/// Proof that a signed submission passed shape validation, its uploader's
-/// signature and the configured board. Deliberately not serializable: a
-/// stored record is data, never a way to recreate authentication.
+/// Proof that a signed submission passed shape validation, the freshness
+/// window, its uploader's signature and the configured board. Deliberately not
+/// serializable: a stored record is data, never a way to recreate
+/// authentication.
 pub(crate) struct AuthenticatedSubmission {
     intent: SubmissionUploadIntent,
     projection: NewSubmission,
@@ -25,18 +24,21 @@ impl AuthenticatedSubmission {
     pub(crate) fn replay_bytes(&self) -> u64 {
         self.projection.replay_bytes
     }
+
+    pub(crate) fn uploader_public_key(&self) -> [u8; 32] {
+        self.projection.uploader_public_key
+    }
 }
 
-/// Validate, authenticate and board-admit one decoded signed submission.
+/// Validate, authenticate and board-admit one decoded signed submission at
+/// server time `now_unix_ms`.
 pub(crate) fn authenticate(
-    signed: &SignedSubmissionV2,
+    signed: &SignedSubmissionV3,
     config: &ServerConfig,
+    now_unix_ms: u64,
 ) -> Result<AuthenticatedSubmission, ApiError> {
-    signed.validate()?;
-    signed
-        .verify_signature()
-        .map_err(|_| ApiError::Unauthorized)?;
-    let submission = &signed.submission;
+    signed.verify(config.signed_requests.window(), now_unix_ms)?;
+    let submission = &signed.request;
     let board = config
         .board(&submission.board_id)
         .ok_or_else(|| ApiError::BadRequest(format!("unknown board `{}`", submission.board_id)))?;
@@ -55,7 +57,7 @@ pub(crate) fn authenticate(
             "requested metrics are not offered by the board".to_owned(),
         ));
     }
-    let envelope_json =
+    let signed_request_json =
         String::from_utf8(canonical_json_bytes(signed)?).map_err(|_| ApiError::Internal)?;
     let replay = &submission.replay.artifact;
     let uploader_public_key = submission.uploader_public_key.into_bytes();
@@ -63,28 +65,13 @@ pub(crate) fn authenticate(
     Ok(AuthenticatedSubmission {
         intent: SubmissionUploadIntent {
             proposed_submission_id: proposed_submission_id.clone(),
-            upload_challenge_id: submission
-                .upload_challenge
-                .upload_challenge_id
-                .as_str()
-                .to_owned(),
-            upload_challenge_nonce: submission
-                .upload_challenge
-                .upload_challenge_nonce
-                .into_bytes(),
-            upload_challenge_expires_at_ms: submission.upload_challenge.expires_at_unix_ms,
-            envelope_json: envelope_json.clone(),
+            signed_request_json: signed_request_json.clone(),
             uploader_public_key,
             replay_sha256: replay.sha256.into_bytes(),
         },
         projection: NewSubmission {
             id: proposed_submission_id,
-            upload_challenge_id: submission
-                .upload_challenge
-                .upload_challenge_id
-                .as_str()
-                .to_owned(),
-            envelope_json,
+            signed_request_json,
             uploader_public_key,
             public_disclosure: match submission.public_disclosure {
                 ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
@@ -102,9 +89,9 @@ pub(crate) fn authenticate(
 }
 
 /// Own the reserve-to-finalize transition without depending on multipart.
-/// Readiness is sampled immediately before the reservation transaction. Exact
-/// retries remain observable during unavailable admission; only acquired leases
-/// reach the caller's artifact I/O.
+/// Readiness is sampled immediately before the reservation transaction.
+/// Completed exact retries remain observable during unavailable admission;
+/// only acquired leases reach the caller's artifact I/O.
 pub(crate) async fn complete_upload<A, I, F>(
     database: &crate::Database,
     authenticated: &AuthenticatedSubmission,
@@ -170,8 +157,8 @@ async fn finish_reserved_upload(
         abandon_failed_upload(database, lease).await;
         return Err(error.into());
     }
-    // An abandoned reservation resumed by an exact retry keeps its original
-    // canonical submission ID rather than the retry's proposal.
+    // A resumed reservation keeps its original canonical submission ID rather
+    // than the retry's proposal.
     let mut submission = authenticated.projection.clone();
     submission.id = lease.submission_id.clone();
     Ok(database

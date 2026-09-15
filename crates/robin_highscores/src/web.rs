@@ -1,15 +1,17 @@
 mod extract;
+mod metering;
 
 #[cfg(test)]
 use extract::effective_client_ip;
 use extract::{ClientIp, ValidatedJson};
+pub use metering::RateLimiter;
+use metering::{RateLimitScope, RateLimitSubject};
 
 use crate::db::{BoardCursor, BoardQuery, BoardRow, PublicIdentity};
 use crate::error::{ApiError, OptionExt as _};
 use crate::identity::validate_username;
-use crate::model::ChallengePurpose;
 use crate::storage_admission::{
-    StorageAdmissionError, ensure_challenge_capacity, ensure_upload_capacity,
+    StorageAdmissionError, ensure_maximum_upload_capacity, ensure_upload_capacity,
 };
 use crate::{Database, ReplayStore, ServerConfig};
 use axum::body::Body;
@@ -29,26 +31,21 @@ use futures_util::stream;
 use robin_run_protocol::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
     AchievementSummaryV1, ArtifactRefV1, BoardMetricV1, BoardMetricValueV2, CanonicalDocument as _,
-    CanonicalValue, DeletionChallengeRequestV1, DeletionChallengeV1, DeletionReceiptV1,
-    DeletionRequestEnvelopeV1, DeletionTargetV1, Digest32, LeaderboardCursorV2, LeaderboardEntryV2,
-    LeaderboardMetadataV2, LeaderboardOrderAnchorV2, LeaderboardPageV2, LeaderboardQueryV2,
-    OpaqueId, PlayerPersonalBestV2, PlayerProfileV1, PlayerRunHistoryEntryV2,
+    CanonicalValue, DeletionReceiptV1, DeletionTargetV1, Digest32, LeaderboardCursorV2,
+    LeaderboardEntryV2, LeaderboardMetadataV2, LeaderboardOrderAnchorV2, LeaderboardPageV2,
+    LeaderboardQueryV2, OpaqueId, PlayerPersonalBestV2, PlayerProfileV1, PlayerRunHistoryEntryV2,
     PlayerRunHistoryPageV2, PlayerRunHistoryQueryV1, PublicAchievementDecisionV1, PublicKey32,
     PublicParticipantV1, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1, RunDetailV2, RunFilterV2,
-    RunMetricsV1, RunSummaryV2, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SignedSubmissionV2,
+    RunMetricsV1, RunSummaryV2, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SignedDeletionRequestV2,
+    SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3, SignedUsernameUpdateV2,
     SubmissionAcceptedV1, SubmissionFailureCodeV1, SubmissionLifecycleV1,
-    SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1, UploadChallengeRequestV2,
-    UploadChallengeV1, UsernameChallengeRequestV1, UsernameChallengeV1, UsernameUpdateEnvelopeV1,
-    Validate as _, VerificationRejectionCodeV1, ViewerAvailabilityV2, ViewerLaunchV2,
+    SubmissionOwnerStatusResponseV2, Validate as _, VerificationRejectionCodeV1,
+    ViewerAvailabilityV2, ViewerLaunchV2,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
-use std::net::IpAddr;
 use std::str::FromStr as _;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
@@ -66,6 +63,31 @@ fn submission_body_limit(config: &ServerConfig) -> Result<usize, ApiError> {
         .checked_add(config.max_metadata_bytes)
         .and_then(|value| value.checked_add(MULTIPART_ENVELOPE_OVERHEAD_BYTES))
         .or_internal("submission body limit overflows usize")
+}
+
+/// Refuse a declared `Content-Length` above the upload ceiling before the
+/// body is read. Bodies without a declared length stay bounded by
+/// `DefaultBodyLimit` while streaming.
+async fn reject_oversized_upload(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let limit =
+        u64::try_from(submission_body_limit(&state.config)?).map_err(|_| ApiError::Internal)?;
+    if let Some(value) = request.headers().get(CONTENT_LENGTH) {
+        let declared = value
+            .to_str()
+            .ok()
+            .and_then(|text| text.parse::<u64>().ok())
+            .ok_or_else(|| ApiError::BadRequest("invalid Content-Length".to_owned()))?;
+        if declared > limit {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "declared request body of {declared} bytes exceeds the {limit}-byte upload limit"
+            )));
+        }
+    }
+    Ok(next.run(request).await)
 }
 
 async fn read_bounded_field(
@@ -117,8 +139,8 @@ fn require_multipart_media_type(
 /// This deliberately does not base64-decode, decompress, or deserialize the
 /// replay. Those attacker-controlled expansion stages remain exclusive to
 /// the contained verifier. The bounded byte buffer lets us reject a JSONL or
-/// alternate-format upload before consuming its one-use upload challenge or
-/// creating anything in the durable replay store.
+/// alternate-format upload before reserving an upload or creating anything in
+/// the durable replay store.
 fn preflight_ranked_replay_transport(
     bytes: &[u8],
     artifact: &ArtifactRefV1,
@@ -196,49 +218,12 @@ pub struct AppState {
     pub replay_store: ReplayStore,
     /// Durable server-local secret used only to authenticate pagination state.
     pub cursor_hmac_key: [u8; 32],
-    pub challenge_rate_limiter: ChallengeRateLimiter,
+    /// Per-address and per-key request metering. Limits come from `config`.
+    pub rate_limiter: RateLimiter,
 }
 
-#[derive(Clone)]
-pub struct ChallengeRateLimiter {
-    maximum_per_minute: usize,
-    attempts:
-        Arc<tokio::sync::Mutex<HashMap<(IpAddr, &'static str), VecDeque<tokio::time::Instant>>>>,
-}
-
-impl ChallengeRateLimiter {
-    pub fn new(maximum_per_minute: u32) -> Self {
-        Self {
-            maximum_per_minute: maximum_per_minute as usize,
-            attempts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        }
-    }
-
-    async fn check(&self, address: IpAddr, purpose: ChallengePurpose) -> Result<(), ApiError> {
-        let now = tokio::time::Instant::now();
-        let cutoff = now - Duration::from_secs(60);
-        let mut attempts = self.attempts.lock().await;
-        if attempts.len() > 100_000 {
-            attempts.retain(|_, values| values.back().is_some_and(|last| *last >= cutoff));
-        }
-        let values = attempts.entry((address, purpose.as_str())).or_default();
-        while values.front().is_some_and(|instant| *instant < cutoff) {
-            values.pop_front();
-        }
-        if values.len() >= self.maximum_per_minute {
-            let retry_after = values.front().map_or(Duration::from_secs(60), |first| {
-                (*first + Duration::from_secs(60)).saturating_duration_since(now)
-            });
-            return Err(ApiError::RateLimited {
-                retry_after_ms: u64::try_from(retry_after.as_millis())
-                    .expect("a sixty-second rate limit fits in u64 milliseconds")
-                    .max(1),
-            });
-        }
-        values.push_back(now);
-        Ok(())
-    }
-}
+const RATE_WINDOW_MINUTE: Duration = Duration::from_secs(60);
+const RATE_WINDOW_HOUR: Duration = metering::LONGEST_RATE_WINDOW;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -299,6 +284,13 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(state.config.upload_timeout_seconds),
         ))
+        // Outside the concurrency limit and the maintenance write lease: a
+        // declared body above the upload ceiling is refused before any slot,
+        // lease or body byte is consumed.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            reject_oversized_upload,
+        ))
         .layer(SetResponseHeaderLayer::if_not_present(
             CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -307,26 +299,19 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
             X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
         ));
-    // These resources contain upload nonces, opaque lifecycle identifiers,
-    // deletion authorization, or moderation receipts. Apply no-store to both
-    // success and error responses so browser and intermediary caches cannot
-    // persist them.
+    // These resources contain opaque lifecycle identifiers, owner-signed
+    // requests, deletion receipts, or moderation receipts. Apply no-store to
+    // both success and error responses so browser and intermediary caches
+    // cannot persist them.
     let mut sensitive_router = Router::new()
-        .route("/api/v1/upload-challenges", post(upload_challenge))
         .route(
             "/api/v1/submissions/{submission_id}/public-status",
             get(submission_public_status),
         )
         .route(
-            "/api/v1/submission-owner-status-challenges",
-            post(submission_owner_status_challenge),
-        )
-        .route(
             "/api/v1/submissions/{submission_id}/private-status",
             post(submission_private_status),
         )
-        .route("/api/v1/username-challenges", post(username_challenge))
-        .route("/api/v1/deletion-challenges", post(deletion_challenge))
         .route("/api/v1/deletion-requests", post(deletion_request))
         .route("/api/v1/reports", post(abuse_report))
         .route(
@@ -687,7 +672,7 @@ async fn readiness(State(state): State<AppState>) -> Result<Json<HealthResponse>
     state.database.health_check().await?;
     // GET readiness is strictly observational. Writable create/fsync/remove
     // probes run during startup and on mutating admission paths.
-    ensure_challenge_capacity(&state.config, &state.database, &state.replay_store)
+    ensure_maximum_upload_capacity(&state.config, &state.database, &state.replay_store)
         .map_err(storage_admission_error)?;
     Ok(Json(HealthResponse {
         status: "ready",
@@ -818,42 +803,9 @@ async fn leaderboard_metadata(
         .map_err(|error| configuration_error("leaderboard metadata", error))
 }
 
-/// Issue a one-use upload challenge for one identity key. A client requests it
-/// after a run ends and embeds it in exactly one signed submission.
-async fn upload_challenge(
-    State(state): State<AppState>,
-    client: ClientIp,
-    Json(request): Json<UploadChallengeRequestV2>,
-) -> Result<(StatusCode, Json<UploadChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
-    request.validate()?;
-    // A red store or capacity plan must not issue a challenge that the service
-    // cannot safely redeem.
-    replay_store_ready(&state).await?;
-    ensure_challenge_capacity(&state.config, &state.database, &state.replay_store)
-        .map_err(storage_admission_error)?;
-    let issued = state
-        .database
-        .issue_challenge(
-            ChallengePurpose::Submission,
-            request.public_key.into_bytes(),
-            Duration::from_secs(state.config.challenge_ttl_seconds),
-        )
-        .await?;
-    let challenge = UploadChallengeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        upload_challenge_id: opaque(&issued.id)?,
-        upload_challenge_nonce: issued.nonce,
-        expires_at_unix_ms: issued.expires_at_ms,
-    };
-    challenge
-        .validate()
-        .map_err(|error| configuration_error("upload challenge", error))?;
-    Ok((StatusCode::CREATED, Json(challenge)))
-}
-
 async fn submit(
     State(state): State<AppState>,
+    client: ClientIp,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<SubmissionAcceptedV1>), ApiError> {
@@ -862,6 +814,17 @@ async fn submit(
             "submission requests must not use a transport content encoding".to_owned(),
         ));
     }
+    // Cheap per-address metering before any body byte is parsed.
+    let address = client.resolve(&state.config)?;
+    state
+        .rate_limiter
+        .check(
+            RateLimitScope::Submission,
+            RateLimitSubject::Address(address),
+            state.config.submissions_per_hour_per_ip,
+            RATE_WINDOW_HOUR,
+        )
+        .await?;
     let metadata = multipart
         .next_field()
         .await
@@ -874,16 +837,22 @@ async fn submit(
     }
     require_multipart_media_type(&metadata, "application/json", "submission")?;
     let metadata_bytes = read_bounded_field(metadata, state.config.max_metadata_bytes).await?;
-    let signed: SignedSubmissionV2 =
+    let signed: SignedSubmissionV3 =
         robin_run_protocol::strict_json::from_slice(&metadata_bytes)
             .map_err(|error| ApiError::BadRequest(format!("invalid submission JSON: {error}")))?;
-    let authenticated = crate::submission::authenticate(&signed, &state.config)?;
-    let submission = &signed.submission;
-    if submission.upload_challenge.expires_at_unix_ms < crate::model::now_unix_ms()? {
-        return Err(ApiError::Conflict(
-            "upload challenge has expired".to_owned(),
-        ));
-    }
+    let authenticated =
+        crate::submission::authenticate(&signed, &state.config, crate::model::now_unix_ms()?)?;
+    // Per-key metering only counts requests that the key actually signed.
+    state
+        .rate_limiter
+        .check(
+            RateLimitScope::Submission,
+            RateLimitSubject::PublicKey(authenticated.uploader_public_key()),
+            state.config.submissions_per_hour_per_key,
+            RATE_WINDOW_HOUR,
+        )
+        .await?;
+    let submission = &signed.request;
     if !state
         .database
         .identity_exists(submission.uploader_public_key.as_bytes())
@@ -981,7 +950,8 @@ fn submission_accepted_response(
             | SubmissionLifecycleV1::RetryPending
     ) {
         return Err(ApiError::Conflict(
-            "upload challenge was already redeemed; query the submission status".to_owned(),
+            "this signed upload already completed verification; query the submission status"
+                .to_owned(),
         ));
     }
     Ok((
@@ -993,35 +963,6 @@ fn submission_accepted_response(
             retry_after_ms: SUBMISSION_RETRY_AFTER_MS,
         }),
     ))
-}
-
-async fn submission_owner_status_challenge(
-    State(state): State<AppState>,
-    client: ClientIp,
-    Json(request): Json<SubmissionOwnerStatusChallengeRequestV1>,
-) -> Result<(StatusCode, Json<SubmissionOwnerStatusChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, &client, ChallengePurpose::OwnerStatus).await?;
-    request.validate()?;
-    let issued = state
-        .database
-        .issue_owner_status_challenge(
-            request.controller_public_key.into_bytes(),
-            request.submission_id.as_str(),
-            Duration::from_secs(state.config.challenge_ttl_seconds),
-        )
-        .await?;
-    let challenge = SubmissionOwnerStatusChallengeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        owner_status_challenge_id: opaque(&issued.id)?,
-        owner_status_challenge_nonce: issued.nonce,
-        expires_at_unix_ms: issued.expires_at_ms,
-        controller_public_key: request.controller_public_key,
-        submission_id: request.submission_id,
-    };
-    challenge
-        .validate()
-        .map_err(|error| configuration_error("owner status challenge", error))?;
-    Ok((StatusCode::CREATED, Json(challenge)))
 }
 
 async fn submission_public_status(
@@ -1042,52 +983,50 @@ async fn submission_public_status(
         .into_response())
 }
 
+/// Owner-signed private lifecycle. A replay of a captured request within the
+/// signing window returns only what the key owner can already see, and an
+/// unknown, deleted or foreign submission is indistinguishable (`401`).
 async fn submission_private_status(
     State(state): State<AppState>,
+    client: ClientIp,
     Path(submission_id): Path<String>,
-    ValidatedJson(envelope): ValidatedJson<SubmissionOwnerStatusEnvelopeV1>,
-) -> Result<Json<SubmissionOwnerStatusResponseV1>, ApiError> {
-    if envelope.challenge.submission_id.as_str() != submission_id {
+    Json(signed): Json<SignedSubmissionOwnerStatusRequestV2>,
+) -> Result<Json<SubmissionOwnerStatusResponseV2>, ApiError> {
+    rate_limit_signed_request(&state, &client, RateLimitScope::OwnerStatus).await?;
+    signed.verify(
+        state.config.signed_requests.window(),
+        crate::model::now_unix_ms()?,
+    )?;
+    let request = &signed.request;
+    if request.submission_id.as_str() != submission_id {
         return Err(ApiError::Unauthorized);
     }
-    let signing_bytes = envelope.signing_bytes()?;
-    verify_request_signature(
-        envelope.challenge.controller_public_key.as_bytes(),
-        envelope.signature.as_bytes(),
-        &signing_bytes,
-    )?;
     let lifecycle = state
         .database
-        .consume_owner_status_challenge(
-            envelope.challenge.owner_status_challenge_id.as_str(),
-            envelope.challenge.owner_status_challenge_nonce.into_bytes(),
-            envelope.challenge.expires_at_unix_ms,
-            envelope.challenge.controller_public_key.into_bytes(),
-            &submission_id,
-        )
+        .owner_submission_lifecycle(request.public_key.into_bytes(), &submission_id)
         .await
         .map_err(|error| match error {
-            crate::db::DbError::InvalidChallenge | crate::db::DbError::NotFound => {
-                ApiError::Unauthorized
-            }
+            crate::db::DbError::NotFound => ApiError::Unauthorized,
             other => other.into(),
         })?;
-    let response = SubmissionOwnerStatusResponseV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        submission_id: envelope.challenge.submission_id.clone(),
-        controller_public_key: envelope.challenge.controller_public_key,
-        owner_status_envelope_sha256: envelope
+    let response = SubmissionOwnerStatusResponseV2 {
+        schema_version: SCHEMA_VERSION_V2,
+        submission_id: request.submission_id.clone(),
+        public_key: request.public_key,
+        request_sha256: signed
             .canonical_digest()
             .map_err(|error| ApiError::BadRequest(error.to_string()))?,
         state: lifecycle_state(lifecycle),
     };
-    response.validate().map_err(|error| {
-        tracing::error!(
-            error_code = "owner_status_response_invalid",
-            "private status projection failed: {error}"
-        );
-        ApiError::Internal
-    })?;
+    response
+        .validate_against_request(&signed)
+        .map_err(|error| {
+            tracing::error!(
+                error_code = "owner_status_response_invalid",
+                "private status projection failed: {error}"
+            );
+            ApiError::Internal
+        })?;
     Ok(Json(response))
 }
 
@@ -1339,37 +1278,16 @@ async fn replay_response(
     Ok(response)
 }
 
-async fn username_challenge(
-    State(state): State<AppState>,
-    client: ClientIp,
-    Json(request): Json<UsernameChallengeRequestV1>,
-) -> Result<(StatusCode, Json<UsernameChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, &client, ChallengePurpose::UsernameUpdate).await?;
-    request.validate()?;
-    let challenge = state
-        .database
-        .issue_challenge(
-            ChallengePurpose::UsernameUpdate,
-            request.public_key.into_bytes(),
-            Duration::from_secs(state.config.challenge_ttl_seconds),
-        )
-        .await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(UsernameChallengeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            username_challenge_id: opaque(&challenge.id)?,
-            username_challenge_nonce: challenge.nonce,
-            expires_at_unix_ms: challenge.expires_at_ms,
-        }),
-    ))
-}
-
+/// Owner-signed rename. The signed timestamp must be newer than the last
+/// accepted update for the key (`409 username_update_superseded` otherwise).
 async fn update_username(
     State(state): State<AppState>,
+    client: ClientIp,
     Path(public_key): Path<String>,
-    ValidatedJson(update): ValidatedJson<UsernameUpdateEnvelopeV1>,
+    Json(signed): Json<SignedUsernameUpdateV2>,
 ) -> Result<Json<PlayerProfileV1>, ApiError> {
+    rate_limit_signed_request(&state, &client, RateLimitScope::UsernameUpdate).await?;
+    let update = &signed.request;
     let path_key = PublicKey32::from_str(&public_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if path_key != update.public_key {
@@ -1379,17 +1297,15 @@ async fn update_username(
     }
     let username = validate_username(&update.username)
         .map_err(|message| ApiError::BadRequest(message.to_owned()))?;
-    verify_request_signature(
-        update.public_key.as_bytes(),
-        update.signature.as_bytes(),
-        &update.signing_bytes()?,
+    signed.verify(
+        state.config.signed_requests.window(),
+        crate::model::now_unix_ms()?,
     )?;
     state
         .database
         .apply_username_update(
-            update.username_challenge_id.as_str(),
-            update.username_challenge_nonce.into_bytes(),
             update.public_key.into_bytes(),
+            update.signed_at_unix_ms,
             &username,
         )
         .await?;
@@ -1540,64 +1456,23 @@ async fn player_run_history(
     Ok(Json(page))
 }
 
-async fn deletion_challenge(
-    State(state): State<AppState>,
-    client: ClientIp,
-    Json(request): Json<DeletionChallengeRequestV1>,
-) -> Result<(StatusCode, Json<DeletionChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, &client, ChallengePurpose::Deletion).await?;
-    request.validate()?;
-    // Do not check target ownership before authentication. A check here would
-    // let anyone submit candidate public keys and link an anonymous run to its
-    // durable owner. apply_deletion performs the authoritative ownership check
-    // after verifying the signature.
-    let issued = state
-        .database
-        .issue_challenge(
-            ChallengePurpose::Deletion,
-            request.public_key.into_bytes(),
-            Duration::from_secs(state.config.challenge_ttl_seconds),
-        )
-        .await?;
-    let challenge = DeletionChallengeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        deletion_challenge_id: opaque(&issued.id)?,
-        deletion_challenge_nonce: issued.nonce,
-        expires_at_unix_ms: issued.expires_at_ms,
-        public_key: request.public_key,
-        target: request.target,
-    };
-    challenge
-        .validate()
-        .map_err(|error| configuration_error("deletion challenge", error))?;
-    state
-        .database
-        .attach_deletion_challenge(
-            &issued.id,
-            &serde_json::to_string(&challenge).map_err(internal_json)?,
-        )
-        .await?;
-    Ok((StatusCode::CREATED, Json(challenge)))
-}
-
+/// Owner-signed tombstone. Ownership is only checked after the signature is
+/// verified, so an unauthenticated caller cannot link an anonymous run to a
+/// key. Idempotent: repeating (or replaying) the request returns the stored
+/// receipt with no further effect.
 async fn deletion_request(
     State(state): State<AppState>,
-    ValidatedJson(request): ValidatedJson<DeletionRequestEnvelopeV1>,
+    client: ClientIp,
+    Json(signed): Json<SignedDeletionRequestV2>,
 ) -> Result<Json<DeletionReceiptV1>, ApiError> {
-    verify_request_signature(
-        request.challenge.public_key.as_bytes(),
-        request.signature.as_bytes(),
-        &request.signing_bytes()?,
+    rate_limit_signed_request(&state, &client, RateLimitScope::Deletion).await?;
+    signed.verify(
+        state.config.signed_requests.window(),
+        crate::model::now_unix_ms()?,
     )?;
-    let now = crate::model::now_unix_ms()?;
-    if request.challenge.expires_at_unix_ms < now {
-        return Err(ApiError::Conflict(
-            "deletion challenge has expired".to_owned(),
-        ));
-    }
-    let challenge_json = serde_json::to_string(&request.challenge).map_err(internal_json)?;
-    let request_json = serde_json::to_string(&request).map_err(internal_json)?;
-    let (target_kind, target_id) = match &request.challenge.target {
+    let request = &signed.request;
+    let request_json = serde_json::to_string(&signed).map_err(internal_json)?;
+    let (target_kind, target_id) = match &request.target {
         DeletionTargetV1::Submission { submission_id } => ("submission", submission_id.as_str()),
         DeletionTargetV1::Run { run_id } => ("run", run_id.as_str()),
     };
@@ -1613,12 +1488,10 @@ async fn deletion_request(
     let deleted = state
         .database
         .apply_deletion(
-            request.challenge.deletion_challenge_id.as_str(),
-            request.challenge.deletion_challenge_nonce.into_bytes(),
-            request.challenge.public_key.into_bytes(),
+            request.public_key.into_bytes(),
+            request.signed_at_unix_ms,
             target_kind,
             target_id,
-            &challenge_json,
             &request_json,
             retention,
         )
@@ -1626,7 +1499,7 @@ async fn deletion_request(
     Ok(Json(DeletionReceiptV1 {
         schema_version: SCHEMA_VERSION_V1,
         deletion_request_id: opaque(&deleted.id)?,
-        target: request.challenge.target,
+        target: request.target.clone(),
         tombstoned_at_unix_ms: deleted.tombstoned_at_ms,
         purge_eligible_at_unix_ms: deleted.purge_eligible_at_ms,
     }))
@@ -1765,22 +1638,23 @@ fn public_participant(identity: &PublicIdentity) -> PublicParticipantV1 {
     }
 }
 
-fn verify_request_signature(
-    public_key: &[u8; 32],
-    signature: &[u8; 64],
-    signing_bytes: &[u8],
-) -> Result<(), ApiError> {
-    crate::identity::verify_signature(public_key, signature, signing_bytes)
-        .map_err(|_| ApiError::Unauthorized)
-}
-
-async fn rate_limit_challenge(
+/// Per-address, per-operation metering for username, deletion and private
+/// status requests, applied before signature verification.
+async fn rate_limit_signed_request(
     state: &AppState,
     client: &ClientIp,
-    purpose: ChallengePurpose,
+    scope: RateLimitScope,
 ) -> Result<(), ApiError> {
     let address = client.resolve(&state.config)?;
-    state.challenge_rate_limiter.check(address, purpose).await
+    state
+        .rate_limiter
+        .check(
+            scope,
+            RateLimitSubject::Address(address),
+            state.config.signed_requests_per_minute_per_ip,
+            RATE_WINDOW_MINUTE,
+        )
+        .await
 }
 
 fn metric(value: &str) -> Result<BoardMetricV1, ApiError> {

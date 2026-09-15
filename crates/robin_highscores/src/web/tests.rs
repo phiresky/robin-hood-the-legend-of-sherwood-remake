@@ -2,7 +2,8 @@ use super::*;
 use crate::test_support::TestDeployment;
 use axum::extract::ConnectInfo;
 use http_body_util::BodyExt as _;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use tower::ServiceExt as _;
 
 #[tokio::test]
@@ -214,30 +215,46 @@ fn trusted_proxy_must_supply_exactly_one_canonical_forwarded_address() {
 }
 
 #[tokio::test]
-async fn challenge_rate_limit_is_per_address_and_purpose() {
-    let limiter = ChallengeRateLimiter::new(2);
-    let address: IpAddr = "198.51.100.1".parse().unwrap();
-    limiter
-        .check(address, ChallengePurpose::Submission)
+async fn rate_limit_is_per_scope_and_subject_and_slides_with_its_window() {
+    let limiter = RateLimiter::new();
+    let address = RateLimitSubject::Address("198.51.100.1".parse().unwrap());
+    let key = RateLimitSubject::PublicKey([7; 32]);
+    // Short real window: the crate does not enable tokio's paused test clock.
+    let window = Duration::from_millis(300);
+    for _ in 0..2 {
+        limiter
+            .check(RateLimitScope::Submission, address, 2, window)
+            .await
+            .unwrap();
+    }
+    let Err(ApiError::RateLimited { retry_after_ms }) = limiter
+        .check(RateLimitScope::Submission, address, 2, window)
         .await
-        .unwrap();
+    else {
+        panic!("third attempt within the window was not limited")
+    };
+    assert!((1..=300).contains(&retry_after_ms));
+    // Other scopes, addresses and keys have independent budgets.
     limiter
-        .check(address, ChallengePurpose::Submission)
-        .await
-        .unwrap();
-    assert!(matches!(
-        limiter.check(address, ChallengePurpose::Submission).await,
-        Err(ApiError::RateLimited { .. })
-    ));
-    limiter
-        .check(address, ChallengePurpose::Deletion)
+        .check(RateLimitScope::Deletion, address, 2, window)
         .await
         .unwrap();
     limiter
         .check(
-            "198.51.100.2".parse().unwrap(),
-            ChallengePurpose::Submission,
+            RateLimitScope::Submission,
+            RateLimitSubject::Address("198.51.100.2".parse().unwrap()),
+            2,
+            window,
         )
+        .await
+        .unwrap();
+    limiter
+        .check(RateLimitScope::Submission, key, 2, window)
+        .await
+        .unwrap();
+    tokio::time::sleep(window + Duration::from_millis(50)).await;
+    limiter
+        .check(RateLimitScope::Submission, address, 2, window)
         .await
         .unwrap();
 }

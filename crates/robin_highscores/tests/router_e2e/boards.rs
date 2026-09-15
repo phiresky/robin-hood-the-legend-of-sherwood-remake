@@ -284,72 +284,58 @@ async fn history_anonymity_reports_and_signed_tombstone_remain_consistent() {
     let before = page(&rig, &leaderboard_uri(BOARD_ID, "original_score", 1, None)).await;
     let stale_cursor = before.next_cursor.unwrap().opaque_token;
 
-    let challenge_request = DeletionChallengeRequestV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        public_key: protocol_public_key(&rival),
-        target: DeletionTargetV1::Run {
-            run_id: named_high.clone(),
-        },
+    let deletion = |key: &SigningKey, signed_at_unix_ms: u64| {
+        signed(
+            key,
+            DeletionRequestV2 {
+                schema_version: SCHEMA_VERSION_V2,
+                public_key: protocol_public_key(key),
+                signed_at_unix_ms,
+                target: DeletionTargetV1::Run {
+                    run_id: named_high.clone(),
+                },
+            },
+        )
     };
-    let rival_challenge: DeletionChallengeV1 = json_body(
-        rig.send(json_request(
-            Method::POST,
-            "/api/v1/deletion-challenges",
-            &challenge_request,
-            Ipv4Addr::LOCALHOST,
-        ))
-        .await,
-    )
-    .await;
-    let mut rival_request = DeletionRequestEnvelopeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        challenge: rival_challenge,
-        signature: Signature64::from_bytes([0; 64]),
+    let send_deletion = |request: SignedDeletionRequestV2| {
+        let rig = &rig;
+        async move {
+            rig.send(json_request(
+                Method::POST,
+                "/api/v1/deletion-requests",
+                &request,
+                Ipv4Addr::LOCALHOST,
+            ))
+            .await
+        }
     };
-    rival_request.signature = sign(&rival, &rival_request.signing_bytes().unwrap());
     assert_eq!(
-        rig.send(json_request(
-            Method::POST,
-            "/api/v1/deletion-requests",
-            &rival_request,
-            Ipv4Addr::LOCALHOST,
-        ))
-        .await
-        .status(),
+        send_deletion(deletion(&rival, now_ms())).await.status(),
         StatusCode::NOT_FOUND,
         "only the uploader may tombstone a run"
     );
+    // A deletion signed by the rival but claiming the owner's key fails
+    // authentication without revealing ownership.
+    let mut impersonation = deletion(&owner, now_ms());
+    impersonation.signature = deletion(&rival, impersonation.request.signed_at_unix_ms).signature;
+    assert_eq!(
+        send_deletion(impersonation).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
 
-    let owner_challenge: DeletionChallengeV1 = json_body(
-        rig.send(json_request(
-            Method::POST,
-            "/api/v1/deletion-challenges",
-            &DeletionChallengeRequestV1 {
-                public_key: protocol_public_key(&owner),
-                ..challenge_request
-            },
-            Ipv4Addr::LOCALHOST,
-        ))
-        .await,
-    )
-    .await;
-    let mut owner_request = DeletionRequestEnvelopeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        challenge: owner_challenge,
-        signature: Signature64::from_bytes([0; 64]),
-    };
-    owner_request.signature = sign(&owner, &owner_request.signing_bytes().unwrap());
-    let receipt = rig
-        .send(json_request(
-            Method::POST,
-            "/api/v1/deletion-requests",
-            &owner_request,
-            Ipv4Addr::LOCALHOST,
-        ))
-        .await;
+    let owner_request = deletion(&owner, now_ms());
+    let receipt = send_deletion(owner_request.clone()).await;
     assert_eq!(receipt.status(), StatusCode::OK);
     let receipt: DeletionReceiptV1 = json_body(receipt).await;
     receipt.validate().unwrap();
+    // Replaying the same signed request, or signing a new one, is idempotent.
+    for repeated in [owner_request, deletion(&owner, now_ms() + 1)] {
+        let response = send_deletion(repeated).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let repeated: DeletionReceiptV1 = json_body(response).await;
+        assert_eq!(repeated, receipt);
+    }
+    assert_eq!(rig.count("SELECT COUNT(*) FROM deletion_requests").await, 1);
 
     for uri in [
         format!("/api/v1/runs/{named_high}"),
@@ -458,4 +444,48 @@ async fn operator_routes_are_absent_without_a_token_and_authenticated_with_one()
             .unwrap()
             .contains("robin_highscores_accepted_runs 0")
     );
+}
+
+#[tokio::test]
+async fn an_older_signed_username_update_cannot_roll_back_a_newer_one() {
+    let rig = TestRig::new().await;
+    let key = SigningKey::from_bytes(&[0x81; 32]);
+    let address = Ipv4Addr::new(127, 0, 3, 1);
+    let now = now_ms();
+    let older = username_update(&key, "Robin", now - 2_000);
+    let newer = username_update(&key, "Locksley", now - 1_000);
+    for update in [&older, &newer] {
+        let response = rig.send(username_request(update, address)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let profile: PlayerProfileV1 = json_body(response).await;
+        assert_eq!(profile.username, update.request.username);
+    }
+    // Both captured requests are still inside the freshness window, but
+    // neither may be replayed over the latest accepted name.
+    for replayed in [&older, &newer] {
+        let response = rig.send(username_request(replayed, address)).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: serde_json::Value = json_body(response).await;
+        assert_eq!(body["error"]["code"], "username_update_superseded");
+    }
+    // A request signed for another key's path is refused before any write.
+    let other = SigningKey::from_bytes(&[0x82; 32]);
+    let mismatched = json_request(
+        Method::PUT,
+        &format!("/api/v1/players/{}/username", protocol_public_key(&other)),
+        &username_update(&key, "Hijack", now_ms()),
+        address,
+    );
+    assert_eq!(rig.send(mismatched).await.status(), StatusCode::BAD_REQUEST);
+    let profile: PlayerProfileV1 = json_body(
+        rig.send(empty_request(
+            Method::GET,
+            &format!("/api/v1/players/{}", protocol_public_key(&key)),
+            address,
+        ))
+        .await,
+    )
+    .await;
+    assert_eq!(profile.username, "Locksley");
+    assert_eq!(rig.count("SELECT COUNT(*) FROM username_history").await, 2);
 }

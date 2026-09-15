@@ -146,6 +146,6 @@ pub async fn app_state(config: crate::ServerConfig) -> crate::web::AppState {
         .unwrap(),
         config,
         cursor_hmac_key: [1; 32],
-        challenge_rate_limiter: crate::web::ChallengeRateLimiter::new(10),
+        rate_limiter: crate::web::RateLimiter::new(),
     }
 }

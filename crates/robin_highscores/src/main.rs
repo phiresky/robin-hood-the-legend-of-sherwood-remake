@@ -7,7 +7,7 @@ use clap::Parser;
 use robin_highscores::{
     Database, ReplayStore, ServerConfig, garbage_collect_replays, reconcile_replay_inventory,
     safe_error_code,
-    web::{AppState, ChallengeRateLimiter, router},
+    web::{AppState, RateLimiter, router},
 };
 use std::future::Future;
 use std::path::PathBuf;
@@ -194,9 +194,7 @@ async fn initialize_connected_api(
         database: database.clone(),
         replay_store: replay_store.clone(),
         cursor_hmac_key,
-        challenge_rate_limiter: ChallengeRateLimiter::new(
-            config.challenge_requests_per_minute_per_ip,
-        ),
+        rate_limiter: RateLimiter::new(),
     };
     let application = router(state)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;

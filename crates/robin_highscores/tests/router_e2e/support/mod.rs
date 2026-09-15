@@ -7,21 +7,20 @@ pub(crate) use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, X_CONTENT_TYPE_
 pub(crate) use axum::http::{Method, Request, StatusCode};
 pub(crate) use ed25519_dalek::{Signer as _, SigningKey};
 pub(crate) use http_body_util::BodyExt as _;
-pub(crate) use robin_highscores::web::{AppState, ChallengeRateLimiter, router};
+pub(crate) use robin_highscores::web::{AppState, RateLimiter, router};
 pub(crate) use robin_highscores::{Database, ReplayStore, ServerConfig};
 pub(crate) use robin_run_protocol::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
-    ArtifactRefV1, BoardMetricV1, BoardMetricValueV2, DeletionChallengeRequestV1,
-    DeletionChallengeV1, DeletionReceiptV1, DeletionRequestEnvelopeV1, DeletionTargetV1, Digest32,
-    LeaderboardMetadataV2, LeaderboardPageV2, OpaqueId, ParticipantPublicDisclosureV1,
-    PlayerRunHistoryPageV2, PublicKey32, PublicSubmissionStateV1, PublicSubmissionStatusV1,
-    RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1, RunDetailV2, SCHEMA_VERSION_V1,
-    SCHEMA_VERSION_V2, Signature64, SignatureAlgorithmV1, SignedSubmissionV2, SubmissionAcceptedV1,
-    SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    SubmissionOwnerStatusResponseV1, SubmissionV2, UploadChallengeRequestV2, UploadChallengeV1,
-    UsernameChallengeRequestV1, UsernameChallengeV1, UsernameUpdateEnvelopeV1, Validate as _,
-    VerifiedRunV2,
+    ArtifactRefV1, BoardMetricV1, BoardMetricValueV2, DeletionReceiptV1, DeletionRequestV2,
+    DeletionTargetV1, Digest32, LeaderboardMetadataV2, LeaderboardPageV2, OpaqueId,
+    ParticipantPublicDisclosureV1, PlayerProfileV1, PlayerRunHistoryPageV2, PublicKey32,
+    PublicSubmissionStateV1, PublicSubmissionStatusV1, RANKED_REPLAY_MEDIA_TYPE_V1,
+    ReplayArtifactV1, RunDetailV2, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3,
+    Signature64, SignatureAlgorithmV1, SignedDeletionRequestV2, SignedRequestClaim,
+    SignedRequestV2, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
+    SignedUsernameUpdateV2, SubmissionAcceptedV1, SubmissionLifecycleV1,
+    SubmissionOwnerStatusRequestV2, SubmissionOwnerStatusResponseV2, SubmissionV3,
+    UsernameUpdateV2, Validate as _, VerifiedRunV2,
 };
 pub(crate) use serde::Serialize;
 pub(crate) use serde::de::DeserializeOwned;

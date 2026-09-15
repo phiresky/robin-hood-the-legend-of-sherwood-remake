@@ -1,6 +1,7 @@
 use super::*;
 use crate::test_support::{TestDeployment, demo_board, verified_output, verified_run};
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const BOARD_ID: &str = "demo-standard-normal";
 const MISSION_ID: &str = "Dem_Lei_MP";
@@ -10,22 +11,15 @@ async fn test_database() -> (tempfile::TempDir, Database) {
     (directory, database)
 }
 
+/// Strictly increasing signed timestamps for fixture username updates.
+fn next_signed_at() -> u64 {
+    static CLOCK: AtomicU64 = AtomicU64::new(1_800_000_000_000);
+    CLOCK.fetch_add(1, Ordering::SeqCst)
+}
+
 async fn register_test_identity(database: &Database, public_key: [u8; 32], username: &str) {
-    let challenge = database
-        .issue_challenge(
-            ChallengePurpose::UsernameUpdate,
-            public_key,
-            Duration::from_secs(60),
-        )
-        .await
-        .unwrap();
     database
-        .apply_username_update(
-            &challenge.id,
-            challenge.nonce.into_bytes(),
-            public_key,
-            username,
-        )
+        .apply_username_update(public_key, next_signed_at(), username)
         .await
         .unwrap();
 }
@@ -43,34 +37,26 @@ struct SubmissionFixture {
     intent: SubmissionUploadIntent,
 }
 
-/// A registered uploader, a fresh submission challenge and the matching
-/// upload projection for replay digest `[replay_byte; 32]`.
+/// A registered uploader and the upload projection of one signed request
+/// (`request` distinguishes re-signed requests) for replay `[replay_byte; 32]`.
 async fn submission_fixture(
     database: &Database,
     uploader: [u8; 32],
     replay_byte: u8,
+    request: u32,
 ) -> SubmissionFixture {
     if !database.identity_exists(&uploader).await.unwrap() {
         register_test_identity(database, uploader, "Robin").await;
     }
-    let challenge = database
-        .issue_challenge(
-            ChallengePurpose::Submission,
-            uploader,
-            Duration::from_secs(60),
-        )
-        .await
-        .unwrap();
     let id = uuid::Uuid::now_v7().to_string();
-    let envelope_json = format!(
-        "{{\"fixture\":{replay_byte},\"challenge\":\"{}\"}}",
-        challenge.id
+    let signed_request_json = format!(
+        "{{\"fixture\":{replay_byte},\"uploader\":{},\"request\":{request}}}",
+        uploader[0]
     );
     SubmissionFixture {
         submission: NewSubmission {
             id: id.clone(),
-            upload_challenge_id: challenge.id.clone(),
-            envelope_json: envelope_json.clone(),
+            signed_request_json: signed_request_json.clone(),
             uploader_public_key: uploader,
             public_disclosure: "named_profile",
             board_id: BOARD_ID.to_owned(),
@@ -82,29 +68,27 @@ async fn submission_fixture(
         },
         intent: SubmissionUploadIntent {
             proposed_submission_id: id,
-            upload_challenge_id: challenge.id,
-            upload_challenge_nonce: challenge.nonce.into_bytes(),
-            upload_challenge_expires_at_ms: challenge.expires_at_ms,
-            envelope_json,
+            signed_request_json,
             uploader_public_key: uploader,
             replay_sha256: [replay_byte; 32],
         },
     }
 }
 
+async fn reserve(
+    database: &Database,
+    intent: &SubmissionUploadIntent,
+) -> Result<SubmissionUploadReservation, DbError> {
+    database
+        .reserve_submission_upload(intent, Duration::from_secs(30), Duration::from_secs(300))
+        .await
+}
+
 async fn acquire_upload_fixture(
     database: &Database,
     fixture: &SubmissionFixture,
 ) -> SubmissionUploadLease {
-    match database
-        .reserve_submission_upload(
-            &fixture.intent,
-            Duration::from_secs(30),
-            Duration::from_secs(300),
-        )
-        .await
-        .unwrap()
-    {
+    match reserve(database, &fixture.intent).await.unwrap() {
         SubmissionUploadReservation::Acquired {
             lease,
             resume_uploaded: false,
@@ -126,21 +110,6 @@ async fn insert_submission_fixture(
         .finalize_submission_upload(&fixture.submission, &lease)
         .await
         .unwrap()
-}
-
-#[test]
-fn issued_nonce_uses_protocol_hex_representation() {
-    let issued = IssuedChallenge {
-        id: "nonce-fixture".into(),
-        nonce: robin_run_protocol::ChallengeNonce32::from_bytes([0xab; 32]),
-        expires_at_ms: 123,
-    };
-    assert_eq!(
-        serde_json::to_value(issued).unwrap(),
-        serde_json::json!({
-            "id": "nonce-fixture", "nonce": "ab".repeat(32), "expires_at_ms": 123,
-        })
-    );
 }
 
 #[tokio::test]
@@ -276,19 +245,30 @@ async fn serving_connection_refuses_to_create_or_migrate_schema() {
 }
 
 #[test]
-fn migration_chain_ends_with_the_ranked_protocol_v2_schema() {
-    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
-    assert_eq!(MIGRATOR.migrations.len(), 6);
+fn migration_chain_ends_with_the_signed_player_request_schema() {
+    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
+    assert_eq!(MIGRATOR.migrations.len(), 7);
     assert_eq!(MIGRATOR.migrations[0].description.as_ref(), "initial");
-    let v2 = &MIGRATOR.migrations[5];
-    assert_eq!(v2.version, 6);
-    assert_eq!(v2.description.as_ref(), "ranked protocol v2");
+    assert_eq!(
+        MIGRATOR.migrations[5].description.as_ref(),
+        "ranked protocol v2"
+    );
+    let signed = &MIGRATOR.migrations[6];
+    assert_eq!(signed.version, 7);
+    assert_eq!(signed.description.as_ref(), "signed player requests");
     assert!(
         !MIGRATOR.migrations[0]
             .sql
             .as_str()
             .contains("maintenance_write_leases"),
         "the immutable initial migration was rewritten"
+    );
+    assert!(
+        MIGRATOR.migrations[5]
+            .sql
+            .as_str()
+            .contains("upload_challenge_id TEXT NOT NULL UNIQUE"),
+        "the deployed protocol V2 migration was rewritten"
     );
 }
 
@@ -326,6 +306,9 @@ async fn migrated_schema_drops_removed_concepts_and_keeps_security_indexes() {
         "used_replay_session_geneses",
         "submission_participants",
         "submission_terminal_failures",
+        "upload_challenges",
+        "challenge_generations",
+        "submission_owner_status_challenges",
     ] {
         assert!(
             !objects.contains(removed),
@@ -349,6 +332,16 @@ async fn migrated_schema_drops_removed_concepts_and_keeps_security_indexes() {
     ] {
         assert!(objects.contains(kept), "schema lost {kept}");
     }
+    let schema: String = sqlx::query_scalar(
+        "SELECT group_concat(sql, char(10)) FROM sqlite_master WHERE sql IS NOT NULL",
+    )
+    .fetch_one(database.fixture_pool())
+    .await
+    .unwrap();
+    assert!(
+        !schema.contains("challenge"),
+        "a challenge column or reference survived: {schema}"
+    );
     let index: String = sqlx::query_scalar(
         "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'submissions_live_replay_idx'",
     )
@@ -369,17 +362,28 @@ async fn migrated_schema_drops_removed_concepts_and_keeps_security_indexes() {
     }
 }
 
+/// Apply one migration the way sqlx does: inside its own transaction.
+async fn apply_migration(connection: &mut sqlx::SqliteConnection, index: usize) {
+    use sqlx::Connection as _;
+    let mut tx = connection.begin().await.unwrap();
+    sqlx::raw_sql(MIGRATOR.migrations[index].sql.as_str())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
 #[tokio::test]
 async fn protocol_v2_migration_preserves_identities_and_diagnostics() {
     use sqlx::Connection as _;
-    let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+    let options = SqliteConnectOptions::new()
+        .filename(":memory:")
+        .foreign_keys(true);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options)
         .await
         .unwrap();
-    for migration in &MIGRATOR.migrations[..5] {
-        sqlx::raw_sql(migration.sql.as_str())
-            .execute(&mut connection)
-            .await
-            .unwrap();
+    for index in 0..5 {
+        apply_migration(&mut connection, index).await;
     }
     sqlx::query(
         "INSERT INTO identities (public_key, username, username_normalized, username_generation, \
@@ -397,25 +401,15 @@ async fn protocol_v2_migration_preserves_identities_and_diagnostics() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO upload_challenges (id, nonce, purpose, public_key, generation, issued_at_ms, \
-             expires_at_ms, offer_json) VALUES ('01234567890123456789', ?, 'submission', ?, 1, 1, 2, '{}')",
-    )
-    .bind([2_u8; 32].as_slice())
-    .bind([7_u8; 32].as_slice())
-    .execute(&mut connection)
-    .await
-    .unwrap();
-    sqlx::query(
         "INSERT INTO campaign_objects (sha256, byte_length, created_at_ms) VALUES (?, 1, 1)",
     )
     .bind([3_u8; 32].as_slice())
     .execute(&mut connection)
     .await
     .unwrap();
-    sqlx::raw_sql(MIGRATOR.migrations[5].sql.as_str())
-        .execute(&mut connection)
-        .await
-        .unwrap();
+    for index in 5..7 {
+        apply_migration(&mut connection, index).await;
+    }
     let identities: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities")
         .fetch_one(&mut connection)
         .await
@@ -424,12 +418,147 @@ async fn protocol_v2_migration_preserves_identities_and_diagnostics() {
         .fetch_one(&mut connection)
         .await
         .unwrap();
-    let submission_challenges: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM upload_challenges WHERE purpose = 'submission'")
-            .fetch_one(&mut connection)
+    assert_eq!((identities, diagnostics), (1, 1));
+}
+
+/// 0007 must apply on top of a live 0006 database without losing players,
+/// history, deletion receipts, queued or verified submissions, or an
+/// in-flight uploaded reservation.
+#[tokio::test]
+async fn signed_request_migration_preserves_live_protocol_v2_rows() {
+    use sqlx::Connection as _;
+    let options = SqliteConnectOptions::new()
+        .filename(":memory:")
+        .foreign_keys(true);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    for index in 0..6 {
+        apply_migration(&mut connection, index).await;
+    }
+    let key = [7_u8; 32];
+    let replay = [3_u8; 32];
+    let in_flight_replay = [4_u8; 32];
+    for statement in [
+        "INSERT INTO identities (public_key, username, username_normalized, username_generation, \
+             created_at_ms, updated_at_ms) VALUES (?1, 'Robin', 'robin', 2, 1, 1)",
+        "INSERT INTO upload_challenges (id, nonce, purpose, public_key, generation, issued_at_ms, \
+             expires_at_ms) VALUES ('challenge-username-000001', ?2, 'username_update', ?1, 2, 1, 2)",
+        "INSERT INTO upload_challenges (id, nonce, purpose, public_key, generation, issued_at_ms, \
+             expires_at_ms, consumed_at_ms) \
+             VALUES ('challenge-submission-00001', ?3, 'submission', ?1, 1, 1, 2, 1)",
+        "INSERT INTO upload_challenges (id, nonce, purpose, public_key, generation, issued_at_ms, \
+             expires_at_ms, consumed_at_ms) \
+             VALUES ('challenge-submission-00002', ?4, 'submission', ?1, 2, 1, 99999999999999, 1)",
+        "INSERT INTO username_history (public_key, challenge_id, generation, previous_username, \
+             new_username, changed_at_ms) VALUES (?1, 'challenge-username-000001', 2, NULL, 'Robin', 1)",
+        "INSERT INTO deletion_requests (id, challenge_id, owner_public_key, target_kind, target_id, \
+             request_json, tombstoned_at_ms) \
+             VALUES ('deletion-1', 'challenge-username-000001', ?1, 'run', 'run-gone', '{}', 5)",
+        "INSERT INTO replay_objects (sha256, byte_length, created_at_ms) VALUES (?3, 4, 1)",
+        "INSERT INTO submissions (id, upload_challenge_id, envelope_json, uploader_public_key, \
+             public_disclosure, board_id, mission_id, replay_sha256, replay_bytes, \
+             replay_schema_version, requested_metrics_json, status, next_attempt_at_ms, \
+             created_at_ms, updated_at_ms) \
+             VALUES ('submission-00000000000001', 'challenge-submission-00001', '{\"v\":2}', ?1, \
+                     'named_profile', 'board', 'mission', ?3, 4, 1, '[]', 'accepted', 1, 1, 1)",
+        "INSERT INTO acceptance_sequences (created_at_ms) VALUES (1)",
+        "INSERT INTO verified_runs (id, submission_id, board_id, mission_id, edition, \
+             recorded_engine_version, sim_config_json, max_concurrent_players, \
+             participant_instance_count, starting_campaign_score, final_campaign_score, \
+             original_score_delta, final_state_sha256, replay_frames, active_simulation_ticks, \
+             ransom_collected, input_provenance_json, job_sha256, accepted_sequence, verified_at_ms) \
+             VALUES ('run-000000000000000000001', 'submission-00000000000001', 'board', 'mission', \
+                     'demo', 'engine', '{}', 1, 1, 0, 1, 1, ?3, 1, 1, 0, '{}', ?3, 1, 1)",
+        "INSERT INTO verified_run_metrics (run_id, metric, value) \
+             VALUES ('run-000000000000000000001', 'original_score', 1)",
+        "INSERT INTO worker_events (submission_id, kind, worker_id, created_at_ms) \
+             VALUES ('submission-00000000000001', 'accepted', 'worker', 1)",
+        "INSERT INTO submission_upload_reservations (upload_challenge_id, submission_id, \
+             envelope_json, envelope_sha256, uploader_public_key, replay_sha256, state, \
+             reservation_expires_at_ms, reserved_at_ms, updated_at_ms, committed_at_ms) \
+             VALUES ('challenge-submission-00001', 'submission-00000000000001', '{}', ?3, ?1, ?3, \
+                     'committed', 10, 1, 1, 1)",
+        "INSERT INTO submission_upload_reservations (upload_challenge_id, submission_id, \
+             envelope_json, envelope_sha256, uploader_public_key, replay_sha256, state, lease_token, \
+             lease_expires_at_ms, reservation_expires_at_ms, reserved_at_ms, updated_at_ms) \
+             VALUES ('challenge-submission-00002', 'submission-00000000000002', '{}', ?4, ?1, ?4, \
+                     'uploaded', 'lease-token-0000000000001', 50, 99999999999999, 1, 1)",
+    ] {
+        sqlx::query(statement)
+            .bind(key.as_slice())
+            .bind([9_u8; 32].as_slice())
+            .bind(replay.as_slice())
+            .bind(in_flight_replay.as_slice())
+            .execute(&mut connection)
             .await
             .unwrap();
-    assert_eq!((identities, diagnostics, submission_challenges), (1, 1, 0));
+    }
+
+    apply_migration(&mut connection, 6).await;
+
+    let violations = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut connection)
+        .await
+        .unwrap();
+    assert!(violations.is_empty(), "foreign keys dangle after 0007");
+    let count = |sql: &'static str| sqlx::query_scalar::<_, i64>(sql);
+    for (sql, expected) in [
+        (
+            "SELECT COUNT(*) FROM identities WHERE username_signed_at_unix_ms = 0",
+            1,
+        ),
+        (
+            "SELECT COUNT(*) FROM username_history WHERE signed_at_unix_ms = 0 AND generation = 2",
+            1,
+        ),
+        (
+            "SELECT COUNT(*) FROM deletion_requests WHERE signed_at_unix_ms = 0",
+            1,
+        ),
+        (
+            "SELECT COUNT(*) FROM submissions \
+             WHERE status = 'accepted' AND signed_request_json = '{\"v\":2}'",
+            1,
+        ),
+        ("SELECT COUNT(*) FROM verified_runs", 1),
+        ("SELECT COUNT(*) FROM verified_run_metrics", 1),
+        ("SELECT COUNT(*) FROM worker_events", 1),
+        (
+            "SELECT COUNT(*) FROM submission_upload_reservations \
+             WHERE state = 'uploaded' AND submission_id = 'submission-00000000000002'",
+            1,
+        ),
+        ("SELECT COUNT(*) FROM submission_upload_reservations", 1),
+        (
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE name IN ('upload_challenges', 'challenge_generations', \
+                            'submission_owner_status_challenges', 'submissions_v6_rows')",
+            0,
+        ),
+    ] {
+        assert_eq!(
+            count(sql).fetch_one(&mut connection).await.unwrap(),
+            expected,
+            "{sql}"
+        );
+    }
+    // The rebuilt unique live-replay index still guards the verified replay.
+    assert!(
+        sqlx::query(
+            "INSERT INTO submissions (id, signed_request_json, uploader_public_key, \
+                 public_disclosure, board_id, mission_id, replay_sha256, replay_bytes, \
+                 replay_schema_version, requested_metrics_json, status, next_attempt_at_ms, \
+                 created_at_ms, updated_at_ms) \
+             VALUES ('submission-00000000000003', '{}', ?, 'anonymous', 'board', 'mission', ?, 4, \
+                     1, '[]', 'queued', 1, 1, 1)",
+        )
+        .bind(key.as_slice())
+        .bind(replay.as_slice())
+        .execute(&mut connection)
+        .await
+        .is_err()
+    );
 }
 
 #[tokio::test]
@@ -536,29 +665,29 @@ async fn pinned_database_and_wal_survive_ancestor_swap_and_reopen() {
 }
 
 #[tokio::test]
-async fn username_changes_are_append_only_audited_and_old_challenges_cannot_roll_back() {
+async fn username_changes_are_audited_and_older_signed_updates_cannot_roll_back() {
     let (_directory, database) = test_database().await;
     let key = [42; 32];
-    let rollback = database
-        .issue_challenge(
-            ChallengePurpose::UsernameUpdate,
-            key,
-            Duration::from_secs(60),
-        )
+    database
+        .apply_username_update(key, 1_000, "Robin")
         .await
         .unwrap();
-    for username in ["Robin", "Locksley"] {
-        register_test_identity(&database, key, username).await;
+    database
+        .apply_username_update(key, 2_000, "Locksley")
+        .await
+        .unwrap();
+    // A replay of either earlier request, or of the latest one, is refused.
+    for (signed_at, username) in [(1_000, "Robin"), (1_500, "Rollback"), (2_000, "Locksley")] {
+        assert!(matches!(
+            database
+                .apply_username_update(key, signed_at, username)
+                .await,
+            Err(DbError::UsernameUpdateSuperseded)
+        ));
     }
-    assert!(matches!(
-        database
-            .apply_username_update(&rollback.id, rollback.nonce.into_bytes(), key, "Rollback")
-            .await,
-        Err(DbError::InvalidChallenge)
-    ));
     let rows = sqlx::query(
-        "SELECT previous_username, new_username FROM username_history \
-         WHERE public_key = ? ORDER BY generation",
+        "SELECT previous_username, new_username, generation, signed_at_unix_ms \
+         FROM username_history WHERE public_key = ? ORDER BY generation",
     )
     .bind(key.as_slice())
     .fetch_all(database.fixture_pool())
@@ -568,9 +697,107 @@ async fn username_changes_are_append_only_audited_and_old_challenges_cannot_roll
     assert_eq!(rows[0].get::<Option<String>, _>("previous_username"), None);
     assert_eq!(rows[1].get::<String, _>("previous_username"), "Robin");
     assert_eq!(
+        (
+            rows[1].get::<i64, _>("generation"),
+            rows[1].get::<i64, _>("signed_at_unix_ms")
+        ),
+        (2, 2_000)
+    );
+    assert_eq!(
         database.public_identity(&key).await.unwrap().username,
         "Locksley"
     );
+}
+
+#[tokio::test]
+async fn deletion_is_idempotent_owner_scoped_and_reuses_existing_tombstones() {
+    let (_directory, database) = test_database().await;
+    let owner = [9_u8; 32];
+    let fixture = submission_fixture(&database, owner, 1, 0).await;
+    let inserted = insert_submission_fixture(&database, &fixture).await;
+    register_test_identity(&database, [10; 32], "Stranger").await;
+
+    assert!(matches!(
+        database
+            .apply_deletion([10; 32], 1, "submission", &inserted.id, "{}", None)
+            .await,
+        Err(DbError::NotFound)
+    ));
+    let first = database
+        .apply_deletion(
+            owner,
+            1,
+            "submission",
+            &inserted.id,
+            "{}",
+            Some(Duration::from_secs(60)),
+        )
+        .await
+        .unwrap();
+    let repeated = database
+        .apply_deletion(
+            owner,
+            2,
+            "submission",
+            &inserted.id,
+            "{\"again\":true}",
+            Some(Duration::from_secs(120)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            repeated.id.as_str(),
+            repeated.tombstoned_at_ms,
+            repeated.purge_eligible_at_ms
+        ),
+        (
+            first.id.as_str(),
+            first.tombstoned_at_ms,
+            first.purge_eligible_at_ms
+        )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deletion_requests")
+            .fetch_one(database.fixture_pool())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(matches!(
+        database.submission_lifecycle(&inserted.id).await,
+        Err(DbError::NotFound)
+    ));
+    assert!(matches!(
+        database
+            .owner_submission_lifecycle(owner, &inserted.id)
+            .await,
+        Err(DbError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn owner_status_hides_foreign_and_unknown_submissions_alike() {
+    let (_directory, database) = test_database().await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
+    let inserted = insert_submission_fixture(&database, &fixture).await;
+    assert_eq!(
+        database
+            .owner_submission_lifecycle([9; 32], &inserted.id)
+            .await
+            .unwrap()
+            .id,
+        inserted.id
+    );
+    for (key, id) in [
+        ([10; 32], inserted.id.as_str()),
+        ([9; 32], "missing-submission"),
+    ] {
+        assert!(matches!(
+            database.owner_submission_lifecycle(key, id).await,
+            Err(DbError::NotFound)
+        ));
+    }
 }
 
 #[tokio::test]
@@ -681,89 +908,9 @@ async fn writer_heartbeats_and_class_limits_match_the_capacity_model() {
 }
 
 #[tokio::test]
-async fn purpose_quotas_reserve_submission_challenge_capacity() {
-    let (_directory, _config, database) = TestDeployment::new()
-        .configure(|_, config| config.max_pending_submissions = 2)
-        .migrate()
-        .await;
-    for key in [[1_u8; 32], [2_u8; 32]] {
-        database
-            .issue_challenge(
-                ChallengePurpose::UsernameUpdate,
-                key,
-                Duration::from_secs(60),
-            )
-            .await
-            .unwrap();
-    }
-    assert!(matches!(
-        database
-            .issue_challenge(
-                ChallengePurpose::UsernameUpdate,
-                [3_u8; 32],
-                Duration::from_secs(60)
-            )
-            .await,
-        Err(DbError::QueueFull)
-    ));
-    database
-        .issue_challenge(
-            ChallengePurpose::Submission,
-            [4_u8; 32],
-            Duration::from_secs(60),
-        )
-        .await
-        .unwrap();
-    assert!(
-        database
-            .issue_challenge(
-                ChallengePurpose::OwnerStatus,
-                [4_u8; 32],
-                Duration::from_secs(60)
-            )
-            .await
-            .is_err()
-    );
-}
-
-#[tokio::test]
-async fn concurrent_challenge_issuance_has_unique_monotonic_generations() {
-    let (_directory, database) = test_database().await;
-    let mut tasks = Vec::new();
-    for _ in 0..16 {
-        let database = database.clone();
-        tasks.push(tokio::spawn(async move {
-            database
-                .issue_challenge(
-                    ChallengePurpose::UsernameUpdate,
-                    [8; 32],
-                    Duration::from_secs(60),
-                )
-                .await
-                .unwrap();
-        }));
-    }
-    for task in tasks {
-        task.await.unwrap();
-    }
-    let row = sqlx::query(
-        "SELECT COUNT(*) AS total, COUNT(DISTINCT generation) AS distinct_total, \
-                MAX(generation) AS maximum \
-         FROM upload_challenges WHERE public_key = ? AND purpose = 'username_update'",
-    )
-    .bind([8; 32].as_slice())
-    .fetch_one(database.fixture_pool())
-    .await
-    .unwrap();
-    assert_eq!(row.get::<i64, _>("total"), 16);
-    assert_eq!(row.get::<i64, _>("distinct_total"), 16);
-    assert_eq!(row.get::<i64, _>("maximum"), 16);
-}
-
-#[tokio::test]
 async fn upload_reservation_is_exact_retryable_and_single_publish() {
     let (_directory, database) = test_database().await;
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     assert!(matches!(
         database
             .reserve_submission_upload_if_admitted(
@@ -776,82 +923,61 @@ async fn upload_reservation_is_exact_retryable_and_single_publish() {
         Err(DbError::AdmissionUnavailable)
     ));
     assert_eq!(
-        sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?"
-        )
-        .bind(&fixture.intent.upload_challenge_id)
-        .fetch_one(database.fixture_pool())
-        .await
-        .unwrap(),
-        None,
-        "red admission must not consume the one-use challenge"
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
+            .fetch_one(database.fixture_pool())
+            .await
+            .unwrap(),
+        0,
+        "red admission must not reserve anything"
     );
     let lease = acquire_upload_fixture(&database, &fixture).await;
     assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &fixture.intent,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await
-            .unwrap(),
+        reserve(&database, &fixture.intent).await.unwrap(),
         SubmissionUploadReservation::Busy { .. }
-    ));
-    let mut conflicting = fixture.intent.clone();
-    conflicting.envelope_json = "{\"immutable\":false}".to_owned();
-    assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &conflicting,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await,
-        Err(DbError::SubmissionConflict)
-    ));
-    let mut wrong_nonce = fixture.intent.clone();
-    wrong_nonce.upload_challenge_nonce[0] ^= 1;
-    assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &wrong_nonce,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await,
-        Err(DbError::InvalidChallenge)
     ));
     assert!(database.abandon_submission_upload(&lease).await.unwrap());
 
-    let mut retry_intent = fixture.intent.clone();
-    retry_intent.proposed_submission_id = uuid::Uuid::now_v7().to_string();
+    // A re-signed request (new signed_at, new canonical JSON) from the same
+    // uploader resumes the abandoned reservation under its original ID.
+    let resigned = submission_fixture(&database, [9; 32], 1, 1).await;
     let SubmissionUploadReservation::Acquired {
         lease: retry_lease,
         resume_uploaded: false,
-    } = database
-        .reserve_submission_upload(
-            &retry_intent,
-            Duration::from_secs(30),
-            Duration::from_secs(300),
-        )
-        .await
-        .unwrap()
+    } = reserve(&database, &resigned.intent).await.unwrap()
     else {
-        panic!("abandoned exact retry was not reacquired")
+        panic!("abandoned retry was not reacquired")
     };
     assert_eq!(retry_lease.submission_id, fixture.submission.id);
     database
         .mark_submission_upload_uploaded(&retry_lease)
         .await
         .unwrap();
+    // The original request's projection no longer matches the reservation.
+    let mut stale = fixture.submission.clone();
+    stale.id = retry_lease.submission_id.clone();
+    assert!(matches!(
+        database
+            .finalize_submission_upload(&stale, &retry_lease)
+            .await,
+        Err(DbError::SubmissionConflict)
+    ));
+    let mut finalized = resigned.submission.clone();
+    finalized.id = retry_lease.submission_id.clone();
     let inserted = database
-        .finalize_submission_upload(&fixture.submission, &retry_lease)
+        .finalize_submission_upload(&finalized, &retry_lease)
         .await
         .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
+            .fetch_one(database.fixture_pool())
+            .await
+            .unwrap(),
+        0,
+        "finalization must remove its reservation"
+    );
     let SubmissionUploadReservation::Existing { lifecycle } = database
         .reserve_submission_upload_if_admitted(
-            &retry_intent,
+            &resigned.intent,
             Duration::from_secs(30),
             Duration::from_secs(300),
             false,
@@ -862,6 +988,11 @@ async fn upload_reservation_is_exact_retryable_and_single_publish() {
         panic!("completed exact retry did not return its lifecycle")
     };
     assert_eq!(lifecycle.id, inserted.id);
+    // The original (now different) signed request is a duplicate replay.
+    assert!(matches!(
+        reserve(&database, &fixture.intent).await,
+        Err(DbError::DuplicateReplay)
+    ));
     assert!(
         database
             .lease_next("only-worker", Duration::from_secs(30))
@@ -880,21 +1011,43 @@ async fn upload_reservation_is_exact_retryable_and_single_publish() {
 }
 
 #[tokio::test]
+async fn per_uploader_concurrent_leases_are_capped() {
+    let (_directory, _config, database) = TestDeployment::new()
+        .configure(|_, config| config.max_concurrent_uploads_per_key = 2)
+        .migrate()
+        .await;
+    let mut leases = Vec::new();
+    for replay in 1..=2 {
+        let fixture = submission_fixture(&database, [9; 32], replay, 0).await;
+        leases.push(acquire_upload_fixture(&database, &fixture).await);
+    }
+    let third = submission_fixture(&database, [9; 32], 3, 0).await;
+    assert!(matches!(
+        reserve(&database, &third.intent).await,
+        Err(DbError::UploadConcurrencyLimit)
+    ));
+    // Other uploaders are unaffected, and a released lease frees a slot.
+    let other = submission_fixture(&database, [10; 32], 4, 0).await;
+    acquire_upload_fixture(&database, &other).await;
+    assert!(
+        database
+            .abandon_submission_upload(&leases[0])
+            .await
+            .unwrap()
+    );
+    acquire_upload_fixture(&database, &third).await;
+}
+
+#[tokio::test]
 async fn a_pending_or_verified_replay_cannot_be_uploaded_again_by_anyone() {
     let (_directory, database) = test_database().await;
-    let first = submission_fixture(&database, [9; 32], 1).await;
+    let first = submission_fixture(&database, [9; 32], 1, 0).await;
     let lease = acquire_upload_fixture(&database, &first).await;
-    // A second challenge (any uploader) for the same replay cannot reserve
-    // while the first upload is in flight...
-    let second = submission_fixture(&database, [10; 32], 1).await;
+    // Another uploader cannot reserve the same replay while the first upload
+    // is in flight...
+    let second = submission_fixture(&database, [10; 32], 1, 0).await;
     assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &second.intent,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await,
+        reserve(&database, &second.intent).await,
         Err(DbError::DuplicateReplay)
     ));
     database
@@ -907,13 +1060,7 @@ async fn a_pending_or_verified_replay_cannot_be_uploaded_again_by_anyone() {
         .unwrap();
     // ...nor once it is queued.
     assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &second.intent,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await,
+        reserve(&database, &second.intent).await,
         Err(DbError::DuplicateReplay)
     ));
     // A rejected replay may be retried.
@@ -932,14 +1079,7 @@ async fn a_pending_or_verified_replay_cannot_be_uploaded_again_by_anyone() {
         .await
         .unwrap();
     assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &second.intent,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await
-            .unwrap(),
+        reserve(&database, &second.intent).await.unwrap(),
         SubmissionUploadReservation::Acquired { .. }
     ));
 }
@@ -947,7 +1087,7 @@ async fn a_pending_or_verified_replay_cannot_be_uploaded_again_by_anyone() {
 #[tokio::test]
 async fn uploaded_crash_recovery_reuses_the_canonical_submission_id() {
     let (_directory, database) = test_database().await;
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     let lease = acquire_upload_fixture(&database, &fixture).await;
     database
         .mark_submission_upload_uploaded(&lease)
@@ -955,9 +1095,9 @@ async fn uploaded_crash_recovery_reuses_the_canonical_submission_id() {
         .unwrap();
     sqlx::query(
         "UPDATE submission_upload_reservations \
-         SET lease_expires_at_ms = reserved_at_ms + 1 WHERE upload_challenge_id = ?",
+         SET lease_expires_at_ms = reserved_at_ms + 1 WHERE submission_id = ?",
     )
-    .bind(&fixture.intent.upload_challenge_id)
+    .bind(&lease.submission_id)
     .execute(database.fixture_pool())
     .await
     .unwrap();
@@ -976,7 +1116,7 @@ async fn uploaded_crash_recovery_reuses_the_canonical_submission_id() {
         .await
         .unwrap()
     else {
-        panic!("uploaded exact recovery was not resumed while new admission was red")
+        panic!("uploaded recovery was not resumed while new admission was red")
     };
     assert_eq!(resumed.submission_id, fixture.submission.id);
     database
@@ -986,45 +1126,37 @@ async fn uploaded_crash_recovery_reuses_the_canonical_submission_id() {
 }
 
 #[tokio::test]
-async fn expired_abandoned_reservation_and_challenge_are_bounded() {
+async fn expired_abandoned_reservation_is_removed_and_frees_its_replay() {
     let (_directory, database) = test_database().await;
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     let lease = acquire_upload_fixture(&database, &fixture).await;
     assert!(database.abandon_submission_upload(&lease).await.unwrap());
     sqlx::query(
         "UPDATE submission_upload_reservations \
-         SET reservation_expires_at_ms = reserved_at_ms + 1 WHERE upload_challenge_id = ?",
+         SET reservation_expires_at_ms = reserved_at_ms + 1 WHERE submission_id = ?",
     )
-    .bind(&fixture.intent.upload_challenge_id)
+    .bind(&lease.submission_id)
     .execute(database.fixture_pool())
     .await
     .unwrap();
     tokio::time::sleep(Duration::from_millis(2)).await;
     assert!(database.recover_upload_reservations().await.unwrap() >= 1);
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_challenges WHERE id = ?")
-            .bind(&fixture.intent.upload_challenge_id)
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
             .fetch_one(database.fixture_pool())
             .await
             .unwrap(),
         0
     );
-    assert!(matches!(
-        database
-            .reserve_submission_upload(
-                &fixture.intent,
-                Duration::from_secs(30),
-                Duration::from_secs(300)
-            )
-            .await,
-        Err(DbError::InvalidChallenge)
-    ));
+    // Another uploader may now upload the same replay.
+    let other = submission_fixture(&database, [10; 32], 1, 0).await;
+    acquire_upload_fixture(&database, &other).await;
 }
 
 #[tokio::test]
 async fn exhausted_infrastructure_failure_is_terminal_private_and_not_a_rejection() {
     let (_directory, database) = test_database().await;
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     let inserted = insert_submission_fixture(&database, &fixture).await;
     let job = database
         .lease_next("worker-1", Duration::from_secs(60))
@@ -1056,14 +1188,14 @@ async fn exhausted_infrastructure_failure_is_terminal_private_and_not_a_rejectio
         "private verifier I/O failure"
     );
     // A failed replay may be submitted again.
-    let retry = submission_fixture(&database, [9; 32], 1).await;
+    let retry = submission_fixture(&database, [9; 32], 1, 1).await;
     acquire_upload_fixture(&database, &retry).await;
 }
 
 #[tokio::test]
 async fn expired_rejected_submission_releases_its_replay_reference() {
     let (_directory, database) = test_database().await;
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     let inserted = insert_submission_fixture(&database, &fixture).await;
     let job = database
         .lease_next("worker", Duration::from_secs(60))
@@ -1110,7 +1242,7 @@ async fn expired_rejected_submission_releases_its_replay_reference() {
 async fn accepted_run_is_published_and_bound_to_its_job_board_and_replay() {
     let (_directory, database) = test_database().await;
     let board = demo_board(BOARD_ID, &[MISSION_ID]);
-    let fixture = submission_fixture(&database, [9; 32], 1).await;
+    let fixture = submission_fixture(&database, [9; 32], 1, 0).await;
     let inserted = insert_submission_fixture(&database, &fixture).await;
     let job = database
         .lease_next("worker", Duration::from_secs(60))
