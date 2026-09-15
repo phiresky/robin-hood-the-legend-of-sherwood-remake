@@ -4,6 +4,29 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **In-game leaderboard registration.** Every submission checks the uploader's
+  server profile first: Previous Plays, mission-end buttons, retries, and
+  automatic uploads share one registration gate on native and browser builds.
+  New identities get a username prompt with Register and submit and Cancel
+  actions. Automatic uploads show the prompt even when mission-end boards are
+  hidden. Registration uses the same durable identity and server as the upload;
+  success resumes that upload, while cancellation prevents it. Invalid names
+  and network errors remain in the prompt for retry.
+
+- **Replay hash upgrades.** `robin --upgrade-replay INPUT --upgraded-replay OUTPUT`
+  runs the recording twice on the current engine, compares every frame, and
+  atomically publishes a new JSONL replay with current hashes and save markers.
+  Published hashes follow the normal 25-frame checkpoint interval; both passes
+  still compare every frame, including frames without a published checkpoint.
+  Inputs, campaign, settings and existing eligibility taints are preserved;
+  no migration-only taint is added. The server still verifies the resulting
+  replay and computes its leaderboard metrics. The native API is
+  `replay_upgrade::upgrade_replay`. JSONL recordings and mission archives from
+  schemas 43–47 have compatible inputs; current compact recordings also work.
+  Other input schemas and obsolete embedded saves require separate migrations.
+  Set `ROBINHOOD_DATA_DIR` to the matching game installation. The source and
+  any existing output are never overwritten.
+
 - **Replay compatibility across commits.** The verifier accepts any replay
   whose replay schema and network protocol versions match its own, without
   matching client source commits or save-format versions. Upload,

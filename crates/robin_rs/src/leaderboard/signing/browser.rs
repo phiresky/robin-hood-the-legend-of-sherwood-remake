@@ -125,6 +125,29 @@ fn encode_payload(value: &impl serde::Serialize) -> Result<String, LeaderboardSi
 pub struct BrowserSigner;
 
 impl GameIdentitySigner for BrowserSigner {
+    async fn sign_username_update(
+        request: robin_run_protocol::UsernameUpdateV2,
+    ) -> Result<robin_run_protocol::SignedUsernameUpdateV2, LeaderboardSigningError> {
+        request.validate().map_err(invalid_claim)?;
+        const OPERATION: &str = "sign_username_update";
+        let response =
+            request_browser_operation(OPERATION, Some(encode_payload(&request)?)).await?;
+        let result: BrowserSignedDocumentResult = decode_browser_result(OPERATION, &response)?;
+        if result.kind != "signed_document" {
+            return Err(LeaderboardSigningError::Identity(format!(
+                "{OPERATION} response has the wrong kind"
+            )));
+        }
+        let signed: robin_run_protocol::SignedUsernameUpdateV2 =
+            decode_browser_result(OPERATION, &result.document_json)?;
+        if signed.request != request {
+            return Err(LeaderboardSigningError::InvalidClaim(
+                "signer changed the username request".into(),
+            ));
+        }
+        verify_signed_request(&signed)?;
+        Ok(signed)
+    }
     async fn public_key() -> Result<PublicKey32, LeaderboardSigningError> {
         let response = request_browser_operation("public_key", None).await?;
         let result: BrowserPublicKeyResult = decode_browser_result("public_key", &response)?;

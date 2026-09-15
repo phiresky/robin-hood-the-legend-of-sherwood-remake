@@ -230,6 +230,8 @@ pub(crate) struct CampaignMapModalState {
     scroll_views: [ScrollView; 5],
     selected_play: usize,
     replay_status: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    registration: Option<crate::leaderboard_registration::RegistrationHandle>,
     /// Only native builds poll leaderboard submissions from the campaign map.
     #[cfg(not(target_arch = "wasm32"))]
     application: ApplicationContext,
@@ -314,6 +316,8 @@ impl CampaignMapModalState {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            registration: None,
             #[cfg(not(target_arch = "wasm32"))]
             application: application_context.clone(),
             mission_basenames: profiles
@@ -406,6 +410,8 @@ impl CampaignMapModalState {
             selected_play: 0,
             replay_status: String::new(),
             #[cfg(not(target_arch = "wasm32"))]
+            registration: None,
+            #[cfg(not(target_arch = "wasm32"))]
             application: application_context.clone(),
             mission_basenames: profiles
                 .missions
@@ -453,6 +459,8 @@ impl CampaignMapModalState {
             Some(&self.scroll_views),
             Some(&self.recording_index),
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        self.draw_registration(renderer, transform);
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
         }
@@ -538,6 +546,8 @@ impl CampaignMapModalState {
                 )
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.draw_registration(renderer, transform);
         if let Some(cursor) = &cursor {
             cursor.draw(renderer, transform, &self.input);
         }
@@ -694,7 +704,9 @@ impl CampaignMapModalState {
                     ),
                     edition,
                 )?;
-                Ok("Submission started. Check the replay status below.".into())
+                self.registration =
+                    robin_util::sync::lock(&self.recording_index.submissions).registration(path);
+                Ok("Checking leaderboard registration...".into())
             }
         })();
         self.replay_status = match result {
@@ -704,6 +716,40 @@ impl CampaignMapModalState {
                 error
             }
         };
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn registration_open(&self) -> bool {
+        self.registration
+            .as_ref()
+            .is_some_and(|handle| robin_util::sync::lock(handle).is_some())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn registration_event(&mut self, event: &GameEvent, transform: MenuTransform) {
+        let handle = self
+            .registration
+            .as_ref()
+            .expect("registration handle")
+            .clone();
+        let mut slot = robin_util::sync::lock(&handle);
+        if let Some(registration) = slot.as_mut() {
+            registration.event(event, transform, (240, 220));
+            if registration.cancelled {
+                self.registration = None;
+                self.replay_status = "Replay submission cancelled.".into();
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn draw_registration(&self, renderer: &mut Renderer, transform: MenuTransform) {
+        if let Some(handle) = &self.registration
+            && let Some(registration) = robin_util::sync::lock(handle).as_mut()
+        {
+            let font = self.assets.progress_font.as_ref().expect("campaign font");
+            registration.draw(renderer, font, transform, (240, 220));
+        }
     }
 
     fn watch_selected_play(&mut self) {
@@ -957,12 +1003,25 @@ impl CampaignMapModalState {
         self.poll_recording_index();
         #[cfg(not(target_arch = "wasm32"))]
         robin_util::sync::lock(&self.recording_index.submissions).poll(&self.application);
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.registration_open()
+            && let Some(handle) =
+                robin_util::sync::lock(&self.recording_index.submissions).active_registration()
+        {
+            self.registration = Some(handle);
+        }
         let mut final_choice = None;
         let input_enabled = self.pseudo_debrief_started_at_ms.is_none()
             || self.pseudo_debrief_due(crate::window::process_uptime_ms());
 
         self.sync_scroll_views(false);
         for event in events {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.registration_open() && !matches!(event, GameEvent::Quit) {
+                self.input.update_from_event(&event, transform);
+                self.registration_event(&event, transform);
+                continue;
+            }
             let previous_selection = self.selected_progress;
             if !input_enabled {
                 self.input.update_from_event(&event, transform);
@@ -3801,6 +3860,8 @@ mod browser_tests {
             selected_play: 0,
             replay_status: String::new(),
             #[cfg(not(target_arch = "wasm32"))]
+            registration: None,
+            #[cfg(not(target_arch = "wasm32"))]
             application: ApplicationContext::default(),
             mission_basenames: Default::default(),
             recording_index,
@@ -4050,6 +4111,69 @@ mod browser_tests {
             Some(CampaignMapChoice::Quit)
         );
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn username_modal_captures_editing_and_cancel_without_navigating() {
+        let mut state = browser();
+        state.registration = Some(std::sync::Arc::new(std::sync::Mutex::new(Some(
+            crate::leaderboard_registration::Registration::awaiting_name(),
+        ))));
+        let transform = progress_transform(1024, 768);
+        // Reopening the screen must recover a prompt owned by an upload worker.
+        let path = std::path::PathBuf::from("pending-registration.rhrec.jsonl");
+        {
+            let mut submissions = robin_util::sync::lock(&state.recording_index.submissions);
+            submissions.seed_capture_info(
+                path.clone(),
+                crate::leaderboard::history::ReplaySubmissionInfo {
+                    message: "Submitting replay...".into(),
+                    can_submit: false,
+                    url: None,
+                },
+            );
+            let handle = submissions.registration(&path).unwrap();
+            *robin_util::sync::lock(&handle) =
+                robin_util::sync::lock(state.registration.as_ref().unwrap()).take();
+        }
+        state.registration = None;
+        state.handle_events(Vec::new(), transform, true);
+        assert!(state.registration_open());
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Return)], transform, true),
+            None
+        );
+        assert!(
+            !robin_util::sync::lock(state.registration.as_ref().unwrap())
+                .as_ref()
+                .unwrap()
+                .busy()
+        );
+        state.handle_events(
+            vec![
+                GameEvent::TextInput {
+                    text: "Robin".into(),
+                },
+                key(Keycode::Backspace),
+            ],
+            transform,
+            true,
+        );
+        assert_eq!(
+            robin_util::sync::lock(state.registration.as_ref().unwrap())
+                .as_ref()
+                .unwrap()
+                .input
+                .edit_text,
+            "Robi"
+        );
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Escape)], transform, true),
+            None
+        );
+        assert!(state.registration.is_none());
+        assert_eq!(state.selected_progress, 0);
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -4125,7 +4249,24 @@ mod capture_tests {
                 }
             }
             write_capture_json(output, "campaign-graph.json", &state.graph);
-            capture_progress_views(&mut renderer, &state, output, width, height);
+            capture_progress_views(&mut renderer, &mut state, output, width, height);
+            let mut mission_renderer = Renderer::offscreen(gpu.clone(), 640, 480);
+            mission_renderer.begin_gpu_frame_clear();
+            mission_renderer.begin_ui_only_frame();
+            let mut registration = crate::leaderboard_registration::Registration::awaiting_name();
+            for ch in "Robin".chars() {
+                registration.input.insert_character(ch);
+            }
+            registration.draw(
+                &mut mission_renderer,
+                resources.label_font_any().unwrap(),
+                MenuTransform::centered(640, 480),
+                (48, 88),
+            );
+            write_capture_png(
+                &mut mission_renderer,
+                &output.join("registration-mission-end-640x480.png"),
+            );
         }
     }
 
@@ -4271,7 +4412,7 @@ mod capture_tests {
 
     fn capture_progress_views(
         renderer: &mut Renderer,
-        state: &CampaignMapModalState,
+        state: &mut CampaignMapModalState,
         output: &std::path::Path,
         width: u16,
         height: u16,
@@ -4283,7 +4424,16 @@ mod capture_tests {
             ("details", CampaignPresentationMode::ProgressTree),
             ("details-more", CampaignPresentationMode::ProgressTree),
             ("details-submitted", CampaignPresentationMode::ProgressTree),
+            ("registration", CampaignPresentationMode::ProgressTree),
         ] {
+            state.registration = (name == "registration").then(|| {
+                let mut registration =
+                    crate::leaderboard_registration::Registration::awaiting_name();
+                for ch in "Robin".chars() {
+                    registration.input.insert_character(ch);
+                }
+                std::sync::Arc::new(std::sync::Mutex::new(Some(registration)))
+            });
             for selected in capture_selections(state) {
                 renderer.begin_gpu_frame_clear();
                 renderer.begin_ui_only_frame();
@@ -4315,6 +4465,7 @@ mod capture_tests {
                     None,
                     Some(&state.recording_index),
                 );
+                state.draw_registration(renderer, progress_transform(width as i32, height as i32));
                 let path = output.join(format!("{name}-{width}x{height}-{selected}.png"));
                 write_capture_png(renderer, &path);
             }

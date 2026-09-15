@@ -77,8 +77,34 @@ impl MissionEndLeaderboardScreen {
     /// by the outer cooperative task; `None` keeps the overlay alive.
     pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<MissionEndLeaderboardEvent> {
         self.controller.poll();
+        if !self.controller.is_visible() {
+            return self.apply(MissionEndLeaderboardAction::Close);
+        }
         self.sync_widget_enabled();
         let screen = ScreenFrame::begin(io, &mut self.input);
+        if self.controller.needs_registration() {
+            let handle = self.controller.registration_handle();
+            let cancelled = {
+                let mut slot = robin_util::sync::lock(&handle);
+                if let Some(registration) = slot.as_mut() {
+                    for event in &screen.events {
+                        registration.event(event, screen.transform, (48, 88));
+                        if registration.cancelled {
+                            break;
+                        }
+                    }
+                    registration.cancelled
+                } else {
+                    false
+                }
+            };
+            self.input.end_frame();
+            if cancelled {
+                return self.apply(MissionEndLeaderboardAction::Close);
+            }
+            self.render(io, &screen);
+            return None;
+        }
         let mut outcome = None;
         // Actions apply in event order: a tab switch reads the tab selected
         // by the previous event.
@@ -243,6 +269,18 @@ impl MissionEndLeaderboardScreen {
         screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[0] {
             draw_screen_background(renderer, &background);
+        }
+        if self.controller.needs_registration() {
+            let handle = self.controller.registration_handle();
+            if let Some(registration) = robin_util::sync::lock(&handle).as_mut() {
+                let font = resources
+                    .label_font_any()
+                    .or_else(|| resources.title_font_any())
+                    .expect("leaderboard registration needs a readable font");
+                registration.draw(renderer, font, transform, (48, 88));
+            }
+            screen.finish(io, &self.input);
+            return;
         }
         if let Some(font) = resources.title_font_any() {
             let title = match self.controller.outcome() {

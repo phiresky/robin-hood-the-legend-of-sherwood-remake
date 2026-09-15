@@ -1435,6 +1435,7 @@ impl TimelineRuntime {
 /// against the recorded engine hash). A load-back restores it through the
 /// normal load path, applies slot-specific post-load synchronization, and
 /// resets rewind history, which no longer describes the engine's future.
+#[cfg(test)]
 pub(super) fn apply_replay_timeline_events_at_boundary(
     player: &ReplayPlayer,
     current_timeline: TimelineFrame,
@@ -1444,6 +1445,32 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     game: &mut Game,
     manager: &mut EngineManager,
     assets: &LevelAssets,
+) -> Result<Option<TimelineFrame>, MissionError> {
+    apply_replay_timeline_events_with_hash_policy(
+        player,
+        current_timeline,
+        pinned_saves,
+        rewind_buffer,
+        host,
+        game,
+        manager,
+        assets,
+        true,
+    )
+}
+
+/// Upgrade workers recompute marker hashes while retaining normal timeline and
+/// snapshot validation. Ordinary playback always verifies recorded hashes.
+pub(super) fn apply_replay_timeline_events_with_hash_policy(
+    player: &ReplayPlayer,
+    current_timeline: TimelineFrame,
+    pinned_saves: &mut BTreeMap<u32, GameRuntimeSnapshot>,
+    rewind_buffer: &mut RewindBuffer,
+    host: &mut Host,
+    game: &mut Game,
+    manager: &mut EngineManager,
+    assets: &LevelAssets,
+    verify_marker_hash: bool,
 ) -> Result<Option<TimelineFrame>, MissionError> {
     let frame = player.current_frame();
     let mut adopted_timeline = None;
@@ -1456,7 +1483,7 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             )));
         }
         let actual = robin_engine::replay::state_hash(&manager.engine);
-        if actual != marker.state_hash {
+        if verify_marker_hash && actual != marker.state_hash {
             return Err(MissionError::replay(format!(
                 "replay save-marker desync at frame {frame}: \
                  expected {:016x}, got {actual:016x}",
@@ -3359,6 +3386,24 @@ mod tests {
 
         assert!(error.contains("save-marker desync"), "{error}");
         assert!(pinned_saves.is_empty());
+
+        apply_replay_timeline_events_with_hash_policy(
+            &player,
+            TimelineFrame::ZERO,
+            &mut pinned_saves,
+            &mut rewind_buffer,
+            &mut host,
+            &mut game,
+            &mut manager,
+            &assets,
+            false,
+        )
+        .expect("upgrade worker captures the actual marker state");
+        assert!(pinned_saves.contains_key(&0));
+        assert_eq!(
+            robin_engine::replay::state_hash(&manager.engine),
+            actual_hash
+        );
     }
 
     #[test]

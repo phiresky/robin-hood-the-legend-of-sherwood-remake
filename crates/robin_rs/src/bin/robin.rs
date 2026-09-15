@@ -28,12 +28,14 @@ fn main() {
     install_crash_diagnostics();
     robin_rs::init_tracing();
     let args = robin_rs::main_entry::parse_cli();
-    robin_rs::bug_report::submit_pending();
+    if args.upgrade_replay.is_none() && args.replay_hash_output.is_none() {
+        robin_rs::bug_report::submit_pending();
+    }
     #[cfg(all(
         feature = "auto-update",
         any(target_os = "windows", target_os = "linux", target_os = "macos")
     ))]
-    let updater = if args.headless {
+    let updater = if args.headless || args.upgrade_replay.is_some() {
         None
     } else {
         robin_rs::auto_update::start_github_auto_update()
@@ -51,6 +53,30 @@ fn main() {
 /// run the async game on a dedicated thread (driven by `pollster`).
 #[cfg(not(target_arch = "wasm32"))]
 fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
+    if let Some(source) = args.upgrade_replay.as_deref() {
+        let upgrade = || -> anyhow::Result<_> {
+            robin_rs::replay_upgrade::upgrade_replay(
+                source,
+                args.upgraded_replay
+                    .as_deref()
+                    .expect("CLI requires upgrade output"),
+                &robin_rs::replay_upgrade::UpgradeOptions {
+                    executable: std::env::current_exe()?,
+                    timeout_seconds: 900,
+                },
+            )
+        };
+        return match upgrade() {
+            Ok(report) => {
+                tracing::info!(?report, "Replay upgrade verified and published");
+                0
+            }
+            Err(error) => {
+                tracing::error!("Replay upgrade failed: {error:#}");
+                1
+            }
+        };
+    }
     let args = robin_rs::main_entry::LaunchConfig::from(args);
     let (campaign, profiles, shipping) = match robin_rs::main_entry::rust_init() {
         Ok(c) => {
