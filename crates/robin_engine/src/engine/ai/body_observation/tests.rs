@@ -185,3 +185,42 @@ fn officer_body_reaction_examines_body_within_stretched_threshold() {
             .element_is_about_to_be_launched(owner, crate::element::Command::Move)
     );
 }
+
+#[test]
+fn self_body_sighting_updates_report_and_queues_another_examination() {
+    let (mut engine, assets, ids) = fixture(&[(500.0, 500.0), (600.0, 500.0)]);
+    let (owner, previous_body) = (ids[0], ids[1]);
+    engine.add_detectable_for_all_npc(owner, crate::element::DetectableType::Body);
+    let ai = engine.seek_enemy_mut(owner);
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingBodyReactiontime;
+    ai.base.detected_body = Some(AiEntityHandle::new(previous_body.index()));
+    ai.base.launch_timer(123, 0);
+    ai.current_task_priority = crate::ai_enemy::task_priority::BODY;
+    ai.new_task_priority = crate::ai_enemy::task_priority::BODY;
+    engine.execute_ai_seen_body(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        owner.index(),
+    );
+    let ai = engine.seek_enemy(owner);
+    assert!(
+        ai.base
+            .my_reconnaissance_report
+            .seen_bodies
+            .contains(&owner.index())
+    );
+    assert_eq!(
+        ai.base.my_reconnaissance_report.report_type,
+        ReportType::Body
+    );
+    assert_eq!(
+        ai.base.detected_body,
+        Some(AiEntityHandle::new(previous_body.index()))
+    );
+    assert_eq!(ai.other_bodies_to_examine, vec![owner.index()]);
+    assert_eq!(ai.base.current_substate, Substate::SeekingBodyReactiontime);
+    assert!(ai.base.timer_is_running);
+    assert_eq!(ai.base.when_does_timer_ring, 123);
+}
