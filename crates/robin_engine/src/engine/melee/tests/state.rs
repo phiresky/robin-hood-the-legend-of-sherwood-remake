@@ -35,8 +35,7 @@ fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal()
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    engine.select_sequence_element(victim, Some((sequence, 0)));
-    engine.dispatch_receive_damage(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         &mut Vec::new(),
@@ -426,17 +425,12 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
         _ => unreachable!("test target must remain a PC"),
     }
 
-    for (command, strike, expected_order) in [
+    for (command, expected_order) in [
         (
             Command::SwordstrikeThrustB,
-            SwordStrike::B,
             OrderType::StrikingStraightStrongSword,
         ),
-        (
-            Command::SwordstrikeThrustC,
-            SwordStrike::C,
-            OrderType::ExecutingSword,
-        ),
+        (Command::SwordstrikeThrustC, OrderType::ExecutingSword),
     ] {
         let element = crate::sequence::SequenceElement::new_interaction(
             1,
@@ -449,13 +443,11 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.dispatch_sword_strike(
+        engine.instruct_owner(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             &mut Vec::new(),
             attacker,
-            target,
-            strike,
             sequence,
             0,
         );
@@ -482,13 +474,11 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
         engine.orders.sequence_manager.start_sequence_level(id);
         id
     };
-    engine.dispatch_sword_strike(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
         &mut Vec::new(),
         attacker,
-        target,
-        SwordStrike::A,
         sequence,
         0,
     );

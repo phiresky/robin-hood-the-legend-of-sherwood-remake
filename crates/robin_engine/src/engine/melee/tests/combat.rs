@@ -616,7 +616,7 @@ fn scroll_civilian_hit_keeps_immunity_but_still_translates_reaction() {
         .civilians
         .push(crate::profiles::CivilianProfile::default());
 
-    engine.dispatch_receive_damage(
+    engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),

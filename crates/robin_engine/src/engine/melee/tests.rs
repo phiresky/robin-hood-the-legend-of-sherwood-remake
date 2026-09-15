@@ -534,12 +534,11 @@ fn dispatch_crowded_cross_sector_swordfight(
     let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
     engine.orders.sequence_manager.start_sequence_level(seq_id);
 
-    engine.dispatch_enter_swordfight(
+    engine.instruct_owner(
         &sim,
         &LevelAssets::default(),
         &mut Vec::new(),
         owner,
-        Some(opponent),
         seq_id,
         0,
     );
