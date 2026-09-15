@@ -100,7 +100,7 @@ fn dying_find_place_increment_after_crossing(
     let mut order = Order::test_new(OrderType::DyingSword, 0.0, 0.0);
     order.compute_direction = false;
     dying.orders.push_back(order);
-    let sequence_id = engine.orders.sequence_manager.launch_element(dying);
+    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, dying);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -209,7 +209,7 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
     let mut order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
     order.compute_direction = false;
     wait.orders.push_back(order);
-    let sequence_id = engine.orders.sequence_manager.launch_element(wait);
+    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

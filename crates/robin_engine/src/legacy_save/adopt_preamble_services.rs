@@ -77,9 +77,6 @@ impl LegacyPreambleServicesPlan {
         }
         engine.players.view_locked = self.view_locked;
         engine.players.seats[0].selected_action = self.selected_action;
-        // Original messenger restoration clears pending messages at this boundary.
-        engine.orders.messenger.clear();
-
         let ui = &mut engine.script_domains.mission_ui;
         ui.men_to_blazon_conversion_mode = self.game.men_to_blazon_conversion;
         ui.campaign_map = self.game.campaign_map;
@@ -257,11 +254,8 @@ fn convert_source(slot: usize, saved: &LegacySoundSource) -> Result<SoundSource,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        legacy_save::engine::{
-            LegacyPoint2, LegacySoundGeometry, LegacySoundSourceManager, LegacySoundSourceSlot,
-        },
-        messenger::{Message, MessageType, SimpleMessage},
+    use crate::legacy_save::engine::{
+        LegacyPoint2, LegacySoundGeometry, LegacySoundSourceManager, LegacySoundSourceSlot,
     };
 
     fn source() -> LegacySoundSource {
@@ -503,10 +497,6 @@ mod tests {
     #[test]
     fn apply_is_atomic_and_returns_host_only_output() {
         let mut engine = EngineInner::new();
-        engine
-            .orders
-            .messenger
-            .send(Message::new(MessageType::Simple(SimpleMessage::Pause)));
         let messenger = super::super::engine::LegacyMessenger {
             lock_view: true,
             setting_watch: true,
@@ -592,7 +582,6 @@ mod tests {
 
         let returned = plan.apply(&mut engine);
         assert_eq!(returned, host);
-        assert_eq!(engine.orders.messenger.count(), 0);
         assert_eq!(engine.players.seats[0].selected_action, Action::Bow);
         assert!(engine.players.view_locked);
         // Live changes after import must be the only action/view state captured
@@ -612,10 +601,6 @@ mod tests {
                 robin_util::state_hash::compute(&engine.players)
             );
         }
-        assert_eq!(
-            serde_json::to_value(&engine.orders.messenger).unwrap(),
-            serde_json::json!({ "queue": [] })
-        );
         assert!(
             engine
                 .script_domains

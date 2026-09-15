@@ -58,8 +58,8 @@ mod resumed_instruction_tests {
         };
         *destination = MapPoint::new(120.0, 100.0);
         flags.insert(MoveFlags::NO_TRANSITIONS);
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
         let sim = crate::sim_rng::test_context();
+        let sequence = engine.launch_element(&sim, &assets, movement);
         engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
 
         engine
@@ -96,141 +96,7 @@ mod resumed_instruction_tests {
 }
 
 impl EngineInner {
-    /// Close only the part of sequence registration that Original executes
-    /// on the current script callback stack.
-    ///
-    /// Immediate commands and waiting-priority successors recurse inline.
-    /// Ordinary owner/engine commands remain queued for
-    /// the sequence-manager tick, even though the script VM has returned.
-    pub(in crate::engine) fn drain_script_registration_inline_actions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        while let Some(action) = self
-            .orders
-            .sequence_manager
-            .pop_pending_registration_inline_action()
-        {
-            let failed_element = synchronous_action_element_ref(&action);
-            let continuation = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            let dispatch_result =
-                self.dispatch_script_synchronous_action(sim, assets, action, active_scripts);
-            let result = match dispatch_result {
-                Ok(()) => {
-                    self.drain_script_registration_inline_actions(sim, assets, active_scripts)
-                }
-                Err(mut error) => {
-                    if !error.sequence_element_failed {
-                        if let Some((sequence_id, element_index)) = failed_element {
-                            self.element_impossible(
-                                sim,
-                                assets,
-                                active_scripts,
-                                sequence_id,
-                                element_index,
-                            );
-                        }
-                        error.sequence_element_failed = true;
-                    }
-                    Err(error)
-                }
-            };
-            self.orders
-                .sequence_manager
-                .restore_pending_synchronous_actions(continuation);
-            result?;
-        }
-        Ok(())
-    }
-
-    /// Drain the sequence work emitted by a script-native callback as a
-    /// recursive stack, not a flat FIFO. Each action temporarily detaches its
-    /// older siblings; successors and nested callbacks therefore finish before
-    /// control returns to the next sibling, matching `Go()` in the original.
-    pub(crate) fn drain_script_synchronous_actions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        while let Some(action) = self.orders.sequence_manager.pop_pending_immediate_action() {
-            let failed_element = synchronous_action_element_ref(&action);
-            let continuation = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            let dispatch_result =
-                self.dispatch_script_synchronous_action(sim, assets, action, active_scripts);
-            let result = match dispatch_result {
-                Ok(()) => self.drain_script_synchronous_actions(sim, assets, active_scripts),
-                Err(mut error) => {
-                    if !error.sequence_element_failed {
-                        if let Some((sequence_id, element_index)) = failed_element {
-                            self.element_impossible(
-                                sim,
-                                assets,
-                                active_scripts,
-                                sequence_id,
-                                element_index,
-                            );
-                        }
-                        error.sequence_element_failed = true;
-                    }
-                    Err(error)
-                }
-            };
-            self.orders
-                .sequence_manager
-                .restore_pending_synchronous_actions(continuation);
-            result?;
-        }
-        Ok(())
-    }
-
-    /// Execute an action whose parent tail was detached by the yielding
-    /// native. Child work drains against an empty queue; the parent tail is
-    /// restored on every success and error path.
-    pub(in crate::engine) fn drive_detached_sequence_operation(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        operation: crate::interp::SynchronousSequenceOperation,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    ) -> Result<(), crate::engine::script::ScriptDriverError> {
-        let failed_element = synchronous_action_element_ref(&operation.action);
-        let dispatch_result =
-            self.dispatch_script_synchronous_action(sim, assets, operation.action, active_scripts);
-        let result = match dispatch_result {
-            Ok(()) => self.drain_script_synchronous_actions(sim, assets, active_scripts),
-            Err(mut error) => {
-                if !error.sequence_element_failed {
-                    if let Some((sequence_id, element_index)) = failed_element {
-                        self.element_impossible(
-                            sim,
-                            assets,
-                            active_scripts,
-                            sequence_id,
-                            element_index,
-                        );
-                    }
-                    error.sequence_element_failed = true;
-                }
-                Err(error)
-            }
-        };
-        self.orders
-            .sequence_manager
-            .restore_pending_synchronous_actions(operation.continuation);
-        result?;
-        self.drain_script_synchronous_actions(sim, assets, active_scripts)
-    }
-
-    pub(in crate::engine) fn dispatch_script_synchronous_action(
+    pub(crate) fn dispatch_script_synchronous_action(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -656,14 +522,14 @@ impl EngineInner {
 
                     result?;
                 } else {
-                    let message = self.dispatch_execute_immediate_owner(
+                    self.dispatch_execute_immediate_owner(
                         sim,
                         assets,
+                        active_scripts,
                         owner,
                         sequence_id,
                         element_index,
                     );
-                    debug_assert!(message.is_none());
                 }
             }
             SequenceAction::ExecuteImmediateEngine {
@@ -839,13 +705,7 @@ impl EngineInner {
                 self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             }
             Command::Timer => {
-                let timer = self.timer_immediate_entry(
-                    sim,
-                    assets,
-                    active_scripts,
-                    sequence_id,
-                    element_index,
-                );
+                let timer = self.timer_immediate_entry(sequence_id, element_index);
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Command::CameraJumpTo => {

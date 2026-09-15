@@ -177,7 +177,7 @@ impl EngineInner {
             .opponents
             .is_empty()
         {
-            self.execute_ai_end_swordfight(owner);
+            self.execute_ai_end_swordfight(sim, assets, owner);
         }
         self.finish_live_lost_enemy_pursuit(sim, assets, owner);
     }

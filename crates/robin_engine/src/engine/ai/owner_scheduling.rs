@@ -118,7 +118,7 @@ impl EngineInner {
                 crate::sequence::Field::Direction,
                 crate::sequence::FieldValue::Integer(u32::from(direction)),
             );
-            self.launch_element(turn);
+            self.launch_element(sim, assets, turn);
         } else {
             self.dispatch_filtered_stimulus_inner(
                 sim,
@@ -933,7 +933,7 @@ impl EngineInner {
                 };
                 self.duty_set_state(sim, assets, npc_id, AiState::Seeking, next);
                 if let Some(look) = look {
-                    self.execute_ai_look_sidewards(npc_id, look);
+                    self.execute_ai_look_sidewards(sim, assets, npc_id, look);
                 } else {
                     let frame = self.control.frame_counter;
                     self.observation_ai_mut(npc_id).base.launch_timer(3, frame);

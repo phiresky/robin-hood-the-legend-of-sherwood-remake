@@ -110,7 +110,11 @@ fn pride_range_uses_close_body_during_door_pass() {
     };
     *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
     *direction = 1;
-    let sequence = engine.orders.sequence_manager.launch_element(pass);
+    let sequence = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

@@ -246,7 +246,7 @@ impl EngineInner {
                 Some(owner),
                 Some(body),
             ));
-            self.launch_sequence(sequence);
+            self.launch_sequence(sim, assets, sequence);
 
             self.body_timer(owner, 50);
             self.seek_enemy_mut(owner).base.clear_emoticon();

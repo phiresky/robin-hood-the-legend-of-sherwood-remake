@@ -1,9 +1,11 @@
 //! Battle decisions retain local choices while actor calls complete inline.
 
 use super::*;
+#[cfg(test)]
+use crate::ai::AiEntityHandle;
 use crate::ai::{
-    AiEntityHandle, AiSpeechAttempt, AiState, Decision, DutyFlags, EmoticonType, GotoFlags,
-    HumanHandle, Position, Remark, Substate,
+    AiSpeechAttempt, AiState, Decision, DutyFlags, EmoticonType, GotoFlags, HumanHandle, Remark,
+    Substate,
 };
 use crate::ai_enemy::{
     AiMapVec, BattleDecisionInputs, PrimaryTargetFlags, SeekFlags, archer, combat,
@@ -173,11 +175,11 @@ impl EngineInner {
         owner: EntityId,
         command: crate::element::Command,
     ) {
-        self.launch_element(crate::sequence::SequenceElement::new(
-            1,
-            command,
-            Some(owner),
-        ));
+        self.launch_element(
+            sim,
+            assets,
+            crate::sequence::SequenceElement::new(1, command, Some(owner)),
+        );
     }
 
     fn battle_panic_remark(
@@ -586,7 +588,7 @@ impl EngineInner {
                                 .set_direction_instantly(direction as i16);
                         }
                     } else {
-                        self.launch_ai_raise_sword(owner);
+                        self.launch_ai_raise_sword(sim, assets, owner);
                     }
                     self.focus_battle_primary(sim, assets, owner);
                     self.battle_state_timer(

@@ -4,7 +4,12 @@ use super::*;
 use crate::engine::sequence_runtime::required_canonical_door_mut;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_waiting_upright(&mut self, effect: EntityId) {
+    pub(in crate::engine) fn execute_waiting_upright(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        effect: EntityId,
+    ) {
         let owner = effect;
         let soldier = self.expect_entity(owner, "WaitingUpright owner");
         let enemy = match soldier {
@@ -24,11 +29,11 @@ impl EngineInner {
             // alerted-waiting repair below, launch the sequence element
             // directly: enabling attentive mode would suppress the repair
             // precisely because desired attentiveness is already true.
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::EnterAttentiveMode,
-                Some(owner),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
+            );
         }
     }
 
@@ -57,11 +62,11 @@ impl EngineInner {
             // disabling attentive mode: that helper suppresses a request when
             // desired attentiveness is already false, while this corrective
             // Execute arm exists specifically for that inconsistent state.
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::LeaveAttentiveMode,
-                Some(owner),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
+            );
         }
 
         // A soldier playing the
@@ -93,6 +98,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_corpse_drop_done(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         effect: EntityId,
     ) {
@@ -140,6 +146,8 @@ impl EngineInner {
             )
         };
         self.apply_completed_corpse_drop(
+            sim,
+            assets,
             carrier_id,
             target_id,
             drop_posture,
@@ -196,6 +204,8 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_play_anim_frozen(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         effect: (EntityId, u16, crate::order::OrderType),
     ) {
         let (actor, command_level, anim) = effect;
@@ -208,7 +218,7 @@ impl EngineInner {
             crate::sequence::Field::AnimationId,
             crate::sequence::FieldValue::Animation(anim),
         );
-        self.orders.sequence_manager.launch_element(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     pub(in crate::engine) fn execute_seq_impossible(
@@ -611,15 +621,6 @@ impl EngineInner {
         );
     }
 
-    pub(in crate::engine) fn execute_stature_change_end(&mut self, effect: EntityId) {
-        let _pc_id = effect;
-        self.orders.messenger.send(crate::messenger::Message::new(
-            crate::messenger::MessageType::Simple(
-                crate::messenger::SimpleMessage::StatureChangeEnd,
-            ),
-        ));
-    }
-
     pub(in crate::engine) fn execute_hidden_titbit_removals(&mut self, effect: EntityId) {
         let entity_id = effect;
         self.feedback.titbit_manager.remove_titbit(
@@ -635,50 +636,9 @@ impl EngineInner {
         effect: (EntityId, bool),
     ) {
         let (pc_id, entering) = effect;
-        // Player-character execution waits inside both beggar
-        // transition DONE arms. This occurs in the actor's live legacy
-        // slot, before base Actor completion and the later
-        // sequence-manager tick drain. It is normally a fresh
-        // launch: ensure_wait_element intentionally suppresses a wait
-        // while the finishing transition is still current. The selected
-        // entry exception below represents the fresh Wait that Original's
-        // immediately-following Stop discards before it can translate.
-        let wait_sequence = self.actor_wait(pc_id);
-        let selected_entry = entering && self.players.seats[0].selection.contains(&pc_id);
-        if selected_entry {
-            self.interrupt_just_registered_wait_before_instruct(
-                sim,
-                assets,
-                &mut Vec::new(),
-                pc_id,
-                wait_sequence,
-            );
-        }
-        // The original game next forwards beggar action selection.
-        // When this PC is selected, action selection stops it at
-        // Normal priority even if Beggar was already the current action;
-        // that can discard the just-postponed low-priority Wait. For an
-        // unselected PC, SelectAction only stores the action and the Wait
-        // survives. Preserve that general message behavior and ordering.
-        // Starting a WAIT-priority sequence element is synchronous in
-        // Original. During entry it is postponed behind the still-live
-        // noninterruptible EnterBeggar element, then the immediately
-        // forwarded selected-PC SelectAction calls Stop(Normal) and
-        // discards that postponed Wait. This implementation drains this execute side effect
-        // after retiring the transition, so translating the Wait first
-        // would select it and actor stopping's default-Wait exclusion would
-        // preserve it. Suppress exactly that selected-entry Wait: the
-        // next actor update installs the ordinary beggar idle, after
-        // the same transient null-order frame as Original. Unselected
-        // entry and both leave paths still execute Wait synchronously.
-        if !selected_entry {
-            self.drain_script_registration_inline_actions(sim, assets, &mut Vec::new())
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "beggar transition Wait registration failed before action message for {pc_id:?}: {error:?}"
-                        )
-                    });
-        }
+        // Wait registers against the still-executing transition. The following
+        // action selection can synchronously stop that postponed wait.
+        self.actor_wait(sim, assets, pc_id);
         if entering {
             self.set_pc_action_from_message(sim, assets, 0, pc_id, crate::profiles::Action::Beggar);
         } else if self.players.seats[0].selection.contains(&pc_id) {
@@ -719,6 +679,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_smalltalk_strikes(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         effect: (EntityId, EntityId, crate::weapons::SwordStrike),
     ) {
@@ -756,7 +717,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("smalltalk attacker {actor_id:?} has no HtH weapon profile")
                 });
-            self.queue_sword_damage(target_id, actor_id, strike, profile_idx);
+            self.queue_sword_damage(sim, assets, target_id, actor_id, strike, profile_idx);
             return;
         }
 
@@ -791,7 +752,12 @@ impl EngineInner {
             });
     }
 
-    pub(in crate::engine) fn execute_killed_at_bottom(&mut self, effect: (EntityId, EntityId)) {
+    pub(in crate::engine) fn execute_killed_at_bottom(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        effect: (EntityId, EntityId),
+    ) {
         let (victim_id, killer_id) = effect;
         let mut elem = crate::sequence::SequenceElement::new_interaction(
             1,
@@ -800,7 +766,7 @@ impl EngineInner {
             Some(killer_id),
         );
         elem.priority = crate::sequence::SequencePriority::Lethal;
-        self.launch_element(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     pub(in crate::engine) fn execute_deactivate_entities(&mut self, effect: EntityId) {
@@ -814,6 +780,8 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_pc_target_activations(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         effect: (EntityId, EntityId, Command),
     ) {
         let (pc, target, activation_cmd) = effect;
@@ -833,7 +801,7 @@ impl EngineInner {
         activation.data = crate::sequence::SequenceElementData::Interaction {
             antagonist: Some(pc),
         };
-        self.launch_element(activation);
+        self.launch_element(sim, assets, activation);
     }
 
     pub(in crate::engine) fn execute_waking_up_done(
@@ -879,7 +847,7 @@ impl EngineInner {
             // element even while the old unconscious Wait is live, so
             // ordinary equal-priority arbitration replaces and
             // retranslates it immediately as StandingUp.
-            self.actor_wait(target);
+            self.actor_wait(sim, assets, target);
         }
 
         if target_is_pc {

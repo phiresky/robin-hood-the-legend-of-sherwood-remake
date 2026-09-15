@@ -1284,12 +1284,11 @@ impl EngineInner {
             } else {
                 crate::messenger::PcMessage::EnableAllActionsTemp
             };
-            self.orders
-                .messenger
-                .send(crate::messenger::Message::pc(pc_msg, Some(entity_id)));
-            self.orders.messenger.send(crate::messenger::Message::new(
-                crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
-            ));
+            self.forward_message(
+                sim,
+                assets,
+                crate::messenger::Message::pc(pc_msg, Some(entity_id)),
+            );
         }
         if let Some((sequence_id, element_index)) = jump_completion {
             self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
@@ -1472,15 +1471,13 @@ fn tick_jump_step(
         elem.orders.push_back(order);
     }
 
-    // Dispatch `MSG_DISABLE_ALL_ACTIONS_TEMP` for a jump-init transition
-    // that just started — addressed to the PC actor.  `value` carries the
-    // PC entity id so the dispatch in `tick.rs` targets the specific PC
-    // rather than fanning over the selection.
+    // Jump initiation disables this PC's actions before returning to execution.
     if send_init_message {
-        orders.messenger.send(crate::messenger::Message::pc(
-            crate::messenger::PcMessage::DisableAllActionsTemp,
-            Some(entity_id),
-        ));
+        entities
+            .get_mut(entity_id)
+            .and_then(crate::element::Entity::pc_data_mut)
+            .expect("jump-init PC disappeared")
+            .disable_all_actions_temp();
     }
 
     tick

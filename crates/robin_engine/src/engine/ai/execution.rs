@@ -2,7 +2,9 @@
 //! handler execution, and completion.
 
 use super::*;
-use crate::ai::{AiState, Stimulus, Substate};
+#[cfg(test)]
+use crate::ai::Stimulus;
+use crate::ai::{AiState, Substate};
 use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]

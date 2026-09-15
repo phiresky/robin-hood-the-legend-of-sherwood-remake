@@ -881,7 +881,12 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
         Some(pc_id),
     );
     wait.priority = crate::sequence::SequencePriority::Wait;
-    let wait_sequence = engine.inner.orders.sequence_manager.launch_element(wait);
+    let wait_sequence = engine.inner.orders.sequence_manager.insert_element(wait);
+    engine
+        .inner
+        .orders
+        .sequence_manager
+        .start_sequence_level(wait_sequence);
     engine.inner.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1244,11 +1249,11 @@ fn recorded_drop_ale_facts_round_trip_and_reject_atomically() {
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
     let fallback_sector =
         crate::position_interface::SectorHandle::new(25).expect("fallback sector is valid");
-    engine
-        .inner
-        .orders
-        .sequence_manager
-        .launch_element(pending_drop_ale_seek(owner, destination, fallback_sector));
+    engine.inner.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        pending_drop_ale_seek(owner, destination, fallback_sector),
+    );
 
     let fact = recorded_drop_ale_fact(owner, destination);
     let input = SimulationFrameInput::no_hourglass().with_external_facts(
@@ -1595,7 +1600,12 @@ fn rejected_external_fact_prevents_command_and_hourglass() {
         .inner
         .orders
         .sequence_manager
-        .launch_sequence(sequence);
+        .insert_sequence(sequence);
+    engine
+        .inner
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.inner.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1687,7 +1697,12 @@ fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
         .inner
         .orders
         .sequence_manager
-        .launch_sequence(sequence);
+        .insert_sequence(sequence);
+    engine
+        .inner
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.inner.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2909,7 +2924,7 @@ fn scripted_snapshot_fixture() -> (
         crate::element::Command::Generic,
         None,
     ));
-    let sequence_id = inner.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = inner.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
 
     (
         Engine {
@@ -3235,11 +3250,11 @@ fn save_restore_attaches_before_fixups_and_requests_redraw() {
     let mut live =
         Engine::restore_from_snapshot_with_observer(&mut display, snapshot, &assets, |inner| {
             observed_fixups.set(true);
-            assert_eq!(
-                inner.orders.messenger.count(),
-                3,
-                "zoom-end, stature, and select-action must already be queued"
+            assert!(
+                !inner.is_zooming(),
+                "restore must finish camera fixups before notification"
             );
+            assert!(!inner.feedback.cutscene_camera.zoom_init_done);
         })
         .expect("restore compatible save snapshot");
     assert!(observed_fixups.get());
@@ -3252,20 +3267,6 @@ fn save_restore_attaches_before_fixups_and_requests_redraw() {
         .as_ref()
         .expect("restored script");
     assert!(std::sync::Arc::ptr_eq(&script.manager.program, &program));
-    let messages = live.inner.orders.messenger.drain();
-    assert_eq!(messages.len(), 3);
-    assert_eq!(
-        messages[0].msg_type,
-        crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::ZoomUpEnd)
-    );
-    assert_eq!(
-        messages[1].msg_type,
-        crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature)
-    );
-    assert!(matches!(
-        messages[2].msg_type,
-        crate::messenger::MessageType::Pc(crate::messenger::PcMessage::SelectAction, _)
-    ));
     assert_eq!(display.display_op, crate::engine::DisplayOpCode::Redraw);
 }
 

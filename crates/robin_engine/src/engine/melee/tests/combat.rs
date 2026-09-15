@@ -54,7 +54,7 @@ fn sweep_state_uses_angles_returned_by_original_sword_getters() {
 
     let initial_angle = sweep.current_angle;
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     let advanced_angle = engine
         .get_entity(attacker)
         .unwrap()
@@ -298,7 +298,7 @@ fn damage_dispatcher_disables_direction_on_live_reaction_orders() {
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.launch_element(&sim, &assets, damage);
         let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
@@ -342,7 +342,8 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     }
 
     let element = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
-    let seq_id = engine.launch_element(element);
+    let seq_id = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.dispatch_hit_fall_animation(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
@@ -409,7 +410,11 @@ fn hit_translation_without_animation_terminates_despite_retained_transition_orde
         engine.orders.allocate_order_id(),
     ));
     damage.initialize_transition_orders();
-    let sequence = engine.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
 
     engine.dispatch_hit_fall_animation(
         &crate::sim_rng::test_context(),
@@ -460,7 +465,11 @@ fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let sequence = engine.launch_element(charge);
+    let sequence = engine.orders.sequence_manager.insert_element(charge);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
@@ -544,7 +553,11 @@ fn pc_hit_translation_inherits_silent_human_say_ouch() {
     let mut engine = make_engine();
     let victim = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
     let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
-    let sequence_id = engine.launch_element(damage);
+    let sequence_id = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
 
     engine.apply_hit_damage(
         &crate::sim_rng::test_context(),
@@ -592,7 +605,11 @@ fn scroll_civilian_hit_keeps_immunity_but_still_translates_reaction() {
         0,
         3,
     );
-    let sequence = engine.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let mut assets = LevelAssets::default();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .civilians
@@ -656,7 +673,8 @@ fn check_conscious_hit_eye_status(standard_range: u16, expected_eye_status: EyeS
         .unwrap()
         .hth_weapon_id = 1;
     let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
-    let seq_id = engine.launch_element(damage);
+    let seq_id = engine.orders.sequence_manager.insert_element(damage);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     let mut assets = assets_with_sword_profile(1, 50);
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Default as usize] = standard_range;
@@ -713,7 +731,8 @@ fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
         0,
         3,
     );
-    let seq_id = engine.launch_element(damage);
+    let seq_id = engine.orders.sequence_manager.insert_element(damage);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     let mut assets = assets_with_sword_profile(1, 50);
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Default as usize] = 50;
@@ -1056,7 +1075,7 @@ fn circle_done_initialization_advances_without_rotating_or_hitting() {
         .sword_sweep
         .current_angle;
 
-    engine.tick_sweep_for(&assets, attacker, true);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, true);
 
     let attacker_entity = engine.get_entity(attacker).unwrap();
     let sweep = &attacker_entity.human_data().unwrap().sword_sweep;
@@ -1099,7 +1118,7 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
         .unwrap()
         .sword_sweep
         .current_angle;
-    engine.tick_sweep_for(&assets, attacker, true);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, true);
 
     let current = engine
         .get_entity(attacker)
@@ -1180,7 +1199,14 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
         .unwrap()
         .tiredness = 11;
 
-    engine.queue_sword_damage(victim, attacker, SwordStrike::A, 1);
+    engine.queue_sword_damage(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        victim,
+        attacker,
+        SwordStrike::A,
+        1,
+    );
 
     assert_eq!(
         engine
@@ -1211,7 +1237,11 @@ fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
         Command::ReceiveSwordDamage,
         Some(victim),
     ));
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1283,7 +1313,7 @@ fn shoulder_damage_dispatches_partner_fall_without_direction_recompute() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.orders.sequence_manager.launch_element(damage);
+    engine.launch_element(&sim, &assets, damage);
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -1320,7 +1350,11 @@ fn parried_damage_still_learns_attackers_live_strike() {
     let attacker_sequence_id = engine
         .orders
         .sequence_manager
-        .launch_sequence(attacker_sequence);
+        .insert_sequence(attacker_sequence);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(attacker_sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1338,7 +1372,11 @@ fn parried_damage_still_learns_attackers_live_strike() {
     let damage_sequence_id = engine
         .orders
         .sequence_manager
-        .launch_sequence(damage_sequence);
+        .insert_sequence(damage_sequence);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(damage_sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1391,7 +1429,11 @@ fn push_damage_virtual_say_ouch_is_silent_for_pc() {
     );
     let damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
 
     assert!(engine.apply_push_effect(
         &sim,
@@ -1447,7 +1489,11 @@ fn push_damage_command_disables_direction_on_fall_and_successors() {
         1,
         0,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1590,7 +1636,11 @@ fn pc_shoulder_sword_damage_skips_good_strike_but_keeps_fall_translation() {
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        let sequence_id = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1713,7 +1763,11 @@ fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1828,7 +1882,11 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
         SwordStrike::SmalltalkRight,
         1,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1961,7 +2019,11 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
         SwordStrike::SmalltalkRight,
         1,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2059,7 +2121,11 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
         SwordStrike::SmalltalkRight,
         1,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2142,7 +2208,11 @@ fn lethal_sword_hit_kills_unconscious_npc_before_say_ouch_translation() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2211,7 +2281,11 @@ fn nonlethal_sword_hit_keeps_unconscious_npc_silent() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2279,7 +2353,11 @@ fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2292,7 +2370,7 @@ fn killing_seeking_enemy_clears_only_its_beggar_detectables() {
         &sim,
         &assets_with_sword_profile_effects(1, 50, 100, 0),
         victim,
-        (sequence, 0),
+        Some((sequence, 0)),
         true,
     );
 
@@ -2396,7 +2474,11 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2522,7 +2604,11 @@ fn surviving_push_does_not_run_npc_kill_cascade() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2592,7 +2678,11 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2766,7 +2856,11 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     );
     fall.antagonist = Some(attacker);
     damage.orders.push_back(fall);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2909,7 +3003,11 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
         1,
         0,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2980,14 +3078,14 @@ fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
         engine.resolve_element_priority(&mut damage);
-        engine.orders.sequence_manager.launch_element(damage)
+        engine.launch_element(&sim, &LevelAssets::new(), damage)
     };
     let first_damage = queue_damage(&mut engine, attacker_a);
     let second_damage = queue_damage(&mut engine, attacker_b);
 
     let mut unrelated = crate::sequence::SequenceElement::new(1, Command::WaitTimer, Some(victim));
     engine.resolve_element_priority(&mut unrelated);
-    let unrelated = engine.orders.sequence_manager.launch_element(unrelated);
+    let unrelated = engine.launch_element(&sim, &LevelAssets::new(), unrelated);
 
     let assets = assets_with_sword_profile(200, 30);
     let (_, draws) = crate::sim_rng::with_draw_trace(|| {
@@ -3089,7 +3187,7 @@ fn sword_damage_on_dying_pc_preserves_the_fresh_sprite_start() {
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     engine.resolve_element_priority(&mut damage);
-    let damage_sequence = engine.orders.sequence_manager.launch_element(damage);
+    let damage_sequence = engine.launch_element(&sim, &assets_with_sword_profile(200, 30), damage);
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets_with_sword_profile(200, 30));
@@ -3149,7 +3247,11 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3225,7 +3327,11 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3306,7 +3412,11 @@ fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(damage);
     sequence.append_element(successor);
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3413,7 +3523,7 @@ fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_transla
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
     engine.resolve_element_priority(&mut damage);
-    engine.orders.sequence_manager.launch_element(damage);
+    engine.launch_element(&sim, &assets, damage);
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -3482,7 +3592,8 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
     );
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(element);
-    let seq_id = engine.launch_sequence(sequence);
+    let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
 
     engine.dispatch_enter_swordfight(
         sim,
@@ -3540,19 +3651,29 @@ fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
         None,
     ));
 
-    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
-        1,
-        Command::SwordstrikeThrustA,
-        Some(owner),
-        Some(opponent),
-    ));
+    let postponed = engine.orders.sequence_manager.insert_element(
+        crate::sequence::SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustA,
+            Some(owner),
+            Some(opponent),
+        ),
+    );
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(postponed);
     let mut enter =
         crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
     enter.set_property(
         crate::sequence::Field::Opponent,
         crate::sequence::FieldValue::Element(opponent),
     );
-    let admission = engine.launch_element(enter);
+    let admission = engine.orders.sequence_manager.insert_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(admission);
     engine
         .orders
         .sequence_manager
@@ -3607,19 +3728,29 @@ fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
         },
         None,
     ));
-    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
-        1,
-        Command::SwordstrikeThrustB,
-        Some(owner),
-        Some(opponent),
-    ));
+    let postponed = engine.orders.sequence_manager.insert_element(
+        crate::sequence::SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustB,
+            Some(owner),
+            Some(opponent),
+        ),
+    );
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(postponed);
     let mut enter =
         crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
     enter.set_property(
         crate::sequence::Field::Opponent,
         crate::sequence::FieldValue::Element(opponent),
     );
-    let admission = engine.launch_element(enter);
+    let admission = engine.orders.sequence_manager.insert_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(admission);
     engine
         .orders
         .sequence_manager
@@ -3672,19 +3803,29 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
         },
         None,
     ));
-    let postponed = engine.launch_element(crate::sequence::SequenceElement::new_interaction(
-        1,
-        Command::SwordstrikeThrustA,
-        Some(owner),
-        Some(opponent),
-    ));
+    let postponed = engine.orders.sequence_manager.insert_element(
+        crate::sequence::SequenceElement::new_interaction(
+            1,
+            Command::SwordstrikeThrustA,
+            Some(owner),
+            Some(opponent),
+        ),
+    );
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(postponed);
     let mut enter =
         crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
     enter.set_property(
         crate::sequence::Field::Opponent,
         crate::sequence::FieldValue::Element(opponent),
     );
-    let admission = engine.launch_element(enter);
+    let admission = engine.orders.sequence_manager.insert_element(enter);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(admission);
     engine
         .orders
         .sequence_manager
@@ -3809,7 +3950,8 @@ fn enter_swordfight_instruct_preserves_live_sprite_destination() {
         Command::EnterSwordfight,
         Some(owner),
     ));
-    let seq_id = engine.launch_sequence(sequence);
+    let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.dispatch_enter_swordfight(
         &sim,
         &LevelAssets::default(),
@@ -3855,7 +3997,8 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
     );
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(element);
-    let seq_id = engine.launch_sequence(sequence);
+    let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
 
     let barrier = engine.dispatch_enter_swordfight(
         &sim,
@@ -3912,7 +4055,11 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     strike_element.priority = crate::sequence::SequencePriority::Preference;
     let mut strike = crate::sequence::Sequence::new();
     strike.append_element(strike_element);
-    let strike_id = engine.launch_sequence(strike);
+    let strike_id = engine.orders.sequence_manager.insert_sequence(strike);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(strike_id);
     let strike_order_id = engine.orders.allocate_order_id();
     let mut strike_order = crate::order::Order::new(
         crate::order::OrderType::StrikingStraightSword,
@@ -4344,7 +4491,11 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
         Command::Point,
         Some(opponent),
     ));
-    let selected_id = engine.launch_sequence(selected);
+    let selected_id = engine.orders.sequence_manager.insert_sequence(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(selected_id);
     let mut profiles = ProfileManager::new();
     profiles.hth_weapons.push(HtHWeaponProfile {
         distance: [30, 50, 60, 70],

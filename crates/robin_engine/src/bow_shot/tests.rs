@@ -162,7 +162,8 @@ fn launch_test_shoot_element(
 ) -> (SequenceManager, SequenceId, usize) {
     let mut sm = SequenceManager::new();
     let elem = build_shoot_bow_element(shooter, target);
-    let seq_id = sm.launch_element(elem);
+    let seq_id = sm.insert_element(elem);
+    sm.start_sequence_level(seq_id);
     // Transition the element to InProgress so `current_element_for_actor`
     // finds it — the engine does this as part of the hourglass dispatch,
     // which the tests skip.
@@ -273,7 +274,8 @@ fn todo_shot_retranslation_clears_only_its_own_execution_latch() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
     let mut sm = SequenceManager::new();
-    let seq_id = sm.launch_element(build_shoot_bow_element(owner, target_id));
+    let seq_id = sm.insert_element(build_shoot_bow_element(owner, target_id));
+    sm.start_sequence_level(seq_id);
     let elem_idx = 0;
     assert_eq!(
         sm.get_element(seq_id, elem_idx).unwrap().state,
@@ -397,10 +399,12 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
     let other = EntityId::Pc(crate::entity_id::PcId(1));
     let target = EntityId::Soldier(crate::entity_id::SoldierId(2));
     let mut sm = SequenceManager::new();
-    let first_seq = sm.launch_element(build_shoot_bow_element(first, target));
+    let first_seq = sm.insert_element(build_shoot_bow_element(first, target));
+    sm.start_sequence_level(first_seq);
     sm.get_element_mut(first_seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
     sm.rebuild_indices();
-    let other_seq = sm.launch_element(build_shoot_bow_element(other, target));
+    let other_seq = sm.insert_element(build_shoot_bow_element(other, target));
+    sm.start_sequence_level(other_seq);
     sm.get_element_mut(other_seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
     sm.rebuild_indices();
     let mut next_order_id = 1;
@@ -490,7 +494,8 @@ fn frozen_owner_bow_initialises_direction_without_advancing_sprite_or_order() {
         .unwrap()
         .action_state = ActionState::AimingWithBow;
     let mut sm = SequenceManager::new();
-    let seq = sm.launch_element(build_shoot_bow_element(shooter, target));
+    let seq = sm.insert_element(build_shoot_bow_element(shooter, target));
+    sm.start_sequence_level(seq);
     sm.get_element_mut(seq, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
     sm.rebuild_indices();
     let mut next_order_id = 1;
@@ -2933,7 +2938,8 @@ fn tick_active_pc_equip_start(script_driven: bool) -> BowTickEvents {
         0.0,
         order_id,
     ));
-    let sequence_id = sm.launch_element(element);
+    let sequence_id = sm.insert_element(element);
+    sm.start_sequence_level(sequence_id);
     sm.get_element_mut(sequence_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
     sm.rebuild_indices();
     entities

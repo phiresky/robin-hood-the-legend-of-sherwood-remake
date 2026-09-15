@@ -429,12 +429,16 @@ impl EngineInner {
     /// before the damage interrupts it.
     pub(crate) fn queue_sword_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
         self.queue_scaled_sword_damage(
+            sim,
+            assets,
             victim_id,
             attacker_id,
             sword_strike,
@@ -449,6 +453,8 @@ impl EngineInner {
     /// later at the sequence-manager boundary.
     pub(crate) fn queue_scaled_sword_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
@@ -492,7 +498,7 @@ impl EngineInner {
         // synchronous arbitration. The manager-tail InstructOwner action owns
         // arbitration, transition generation, and damage dispatch.
         self.resolve_element_priority(&mut elem);
-        let sequence_id = self.orders.sequence_manager.launch_element(elem);
+        let sequence_id = self.launch_element(sim, assets, elem);
         self.trace_reactive_sword_topology(
             "after_damage_registration",
             victim_id,
@@ -823,7 +829,7 @@ impl EngineInner {
                 sim,
                 assets,
                 victim_id,
-                damage_element,
+                Some(damage_element),
                 killer_is_pc,
             );
         }
@@ -1064,7 +1070,7 @@ impl EngineInner {
             .posture()
             == Posture::CarryingCorpse
         {
-            self.force_drop_carried_corpse_instant(victim_id);
+            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
         }
 
         // Life-point updates invoke death handling synchronously before
@@ -1088,7 +1094,7 @@ impl EngineInner {
                 sim,
                 assets,
                 victim_id,
-                damage_element,
+                Some(damage_element),
                 killer_is_pc,
             );
         }
@@ -1267,7 +1273,7 @@ impl EngineInner {
             if provoke_roll_succeeds(provoke_roll, attacker_ctx.fighting_ability)
                 && !attacker_is_selected_pc
             {
-                self.launch_provoke(atk_id);
+                self.launch_provoke(sim, assets, atk_id);
             }
         }
 
@@ -1692,7 +1698,12 @@ impl EngineInner {
     /// snapped to the carrier's feet, postures are reset, and the
     /// carried link is cleared so the next action can proceed on an
     /// un-carriered PC.
-    pub(crate) fn force_drop_carried_corpse_instant(&mut self, carrier_id: EntityId) {
+    pub(crate) fn force_drop_carried_corpse_instant(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        carrier_id: EntityId,
+    ) {
         let (
             carrier_pos,
             carrier_layer,
@@ -1802,7 +1813,7 @@ impl EngineInner {
             Some(carried_id),
         );
         wait_elem.priority = crate::sequence::SequencePriority::Wait;
-        self.launch_element(wait_elem);
+        self.launch_element(sim, assets, wait_elem);
     }
 
     /// Apply generic damage (falling, environmental, mobile collision).
@@ -1899,7 +1910,7 @@ impl EngineInner {
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
         if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(victim_id);
+            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
         }
 
         self.say_ouch(sim, assets, victim_id, None);
@@ -2048,7 +2059,7 @@ impl EngineInner {
                 sim,
                 assets,
                 victim_id,
-                damage_element,
+                Some(damage_element),
                 killer_is_pc,
             );
         }
@@ -2169,7 +2180,7 @@ impl EngineInner {
         // CarryingCorpse arm — forces an instant corpse drop and
         // falls through to the default damage path.
         if translation_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(victim_id);
+            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
         }
 
         // Arrow-damage / generic-damage translation always selects an authored
@@ -2449,7 +2460,7 @@ impl EngineInner {
         // path which dispatches the regular hit-fall animation
         // below).
         if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(victim_id);
+            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
         }
 
         // OnLadder / OnWall fall routing — these postures route
@@ -2958,7 +2969,7 @@ impl EngineInner {
             lethal_damage,
             0,
         );
-        let seq_id = self.launch_element(elem);
+        let seq_id = self.launch_element(sim, assets, elem);
         let elem_idx = 0;
         if !self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
             return;
@@ -2976,6 +2987,8 @@ impl EngineInner {
     /// victim's `EVENT_GET_ARROW` between registration and damage.
     pub(crate) fn queue_projectile_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         victim_id: EntityId,
         shooter_id: EntityId,
         command: crate::element::Command,
@@ -3001,7 +3014,7 @@ impl EngineInner {
             unreachable!("new_damage must create damage element data");
         };
         *projectile = projectile_id;
-        self.register_owned_element_deferred(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     /// Internal entry point for `handle_death` that accepts the active
@@ -3307,7 +3320,13 @@ impl EngineInner {
                 }
             });
 
-        self.apply_nonvisual_death_cascade(sim, assets, victim_id, damage_element, killer_is_pc);
+        self.apply_nonvisual_death_cascade(
+            sim,
+            assets,
+            victim_id,
+            Some(damage_element),
+            killer_is_pc,
+        );
 
         // Queue roll only after death processing has synchronously completed.
         self.try_queue_roll(assets, victim_id, damage_element);
@@ -3355,16 +3374,38 @@ impl EngineInner {
         }
     }
 
-    /// Apply the synchronous death-processing cascade without translating a
-    /// dying animation. Life-point updates reach this work before the caller
-    /// resumes damage translation; push strikes therefore use it before
-    /// push-damage translation authors their sole falling order.
+    /// Set NPC life to zero without a damage instruction or protection rolls.
+    pub(crate) fn kill_npc_directly(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+    ) {
+        let victim = self.expect_entity(victim_id, "direct NPC life update");
+        assert!(victim.is_npc(), "direct NPC life update requires an NPC");
+        let life = get_life_points(victim);
+        if life <= 0 {
+            return;
+        }
+        self.add_damage_number(victim_id, life as u16);
+        let (human, life) = self
+            .expect_entity_mut(victim_id, "direct NPC life update")
+            .human_and_life_points_mut()
+            .expect("NPC has human life state");
+        *life = if human.invulnerable { 100 } else { 0 };
+        if *life == 0 {
+            self.apply_nonvisual_death_cascade(sim, assets, victim_id, None, false);
+        }
+    }
+
+    /// Apply death processing before damage translation resumes.
+    /// A direct life update has no damage instruction to exempt from cleanup.
     pub(super) fn apply_nonvisual_death_cascade(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
-        damage_element: (crate::sequence::SequenceId, usize),
+        damage_element: Option<(crate::sequence::SequenceId, usize)>,
         killer_is_pc: bool,
     ) {
         let victim_soldier_camp = self
@@ -3374,25 +3415,27 @@ impl EngineInner {
         // The damage element is the authoritative life-point-update instigator
         // equivalent. Capture it at the fresh-death boundary, before sequence
         // cleanup can erase responsibility evidence.
-        let achievement_origin = self
-            .orders
-            .sequence_manager
-            .get_element(damage_element.0, damage_element.1)
-            .unwrap_or_else(|| {
+        let achievement_origin = damage_element.and_then(|damage_element| {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element(damage_element.0, damage_element.1)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "fresh death for entity {} has no damage element {:?}",
+                        victim_id.index(),
+                        damage_element
+                    )
+                });
+            let crate::sequence::SequenceElementData::Damage { origin, .. } = &element.data else {
                 panic!(
-                    "fresh death for entity {} has no damage element {:?}",
-                    victim_id.index(),
-                    damage_element
-                )
-            });
-        let crate::sequence::SequenceElementData::Damage { origin, .. } = &achievement_origin.data
-        else {
-            panic!(
-                "fresh death for entity {} references a non-damage element",
-                victim_id.index()
-            );
-        };
-        self.record_achievement_npc_death(victim_id, *origin);
+                    "fresh death for entity {} references a non-damage element",
+                    victim_id.index()
+                );
+            };
+            *origin
+        });
+        self.record_achievement_npc_death(victim_id, achievement_origin);
         // Throw away unrelated sequence work the victim owns. The active
         // damage sequence (which just had its dying order queued) and Todo
         // commands Original admits while dead remain in the manager FIFO.
@@ -3403,7 +3446,13 @@ impl EngineInner {
         // producing a "corpse walks a few more frames" visual.  We want
         // a hard interrupt instead, so the damage element's `DyingSword`
         // order becomes current without deleting a simultaneous pending hit.
-        self.kill_owner_sequences(sim, assets, &mut Vec::new(), victim_id, damage_element.0);
+        self.kill_owner_sequences(
+            sim,
+            assets,
+            &mut Vec::new(),
+            victim_id,
+            damage_element.map(|element| element.0),
+        );
 
         // Remove the dying soldier from every other NPC's
         // friend/missed-friend tracker so they don't keep looking for
@@ -3531,10 +3580,12 @@ impl EngineInner {
         // the old score scoping and only award bow XP at the projectile
         // call site.
         const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
-        let projectile_death = self
-            .orders
-            .sequence_manager
-            .get_element(damage_element.0, damage_element.1)
+        let projectile_death = damage_element
+            .and_then(|element| {
+                self.orders
+                    .sequence_manager
+                    .get_element(element.0, element.1)
+            })
             .map(|e| {
                 matches!(
                     e.command,
@@ -3546,7 +3597,7 @@ impl EngineInner {
         let victim = self.expect_entity(victim_id, "death cascade score victim");
         let bump_lacklandist_score =
             victim.is_soldier() && self.is_hostile_to_player_camp(victim.camp());
-        if bump_lacklandist_score && !projectile_death {
+        if bump_lacklandist_score && damage_element.is_some() && !projectile_death {
             self.add_campaign_value(
                 crate::campaign::CampaignValue::Score,
                 SCORE_SOLDIER_KILLED_DURING_FIGHT,

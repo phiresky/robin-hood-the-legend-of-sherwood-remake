@@ -54,7 +54,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
     strike
         .orders
         .push_back(Order::test_new(OrderType::StrikingRightSmalltalk, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(strike);
+    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, strike);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

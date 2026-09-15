@@ -29,6 +29,8 @@ impl EngineInner {
     /// `Command::Teleport` branch in `engine::tick`.
     pub(crate) fn manage_input_process_teleport(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         dest: MapPoint,
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
@@ -88,7 +90,7 @@ impl EngineInner {
                 speed_factor: 1.0,
                 post_seek_sequence: None,
             };
-            self.launch_element(elem);
+            self.launch_element(sim, assets, elem);
         }
     }
 

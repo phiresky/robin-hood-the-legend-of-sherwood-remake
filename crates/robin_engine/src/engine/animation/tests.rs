@@ -21,16 +21,16 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let wait_id = engine.launch_element(wait);
+    let wait_id = engine.orders.sequence_manager.insert_element(wait);
+    engine.orders.sequence_manager.start_sequence_level(wait_id);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), wait_id, 0);
     engine.publish_selected_order_as_installed(owner);
 
-    let movement = engine.launch_element(SequenceElement::new_movement(
-        1,
-        Command::Move,
-        Some(owner),
-        OrderType::WalkingUpright,
-    ));
+    let movement = engine.launch_element(
+        &sim,
+        &assets,
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright),
+    );
     engine
         .orders
         .sequence_manager
@@ -515,7 +515,11 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
     selected
         .orders
         .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.orders.sequence_manager.insert_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -764,7 +768,11 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
     let actor = engine.add_test_entity(entity);
     let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
     selected.orders.push_back(Order::test_new(action, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.orders.sequence_manager.insert_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
     let start = engine.tick_actor_animation_for(&sim, &assets, actor);
@@ -1570,7 +1578,11 @@ fn striking_down_execute_fixture() -> (
         SequenceElement::new_interaction(1, Command::SwordstrikeDown, Some(owner), Some(victim));
     let order = Order::test_new(action, 0.0, 0.0).with_antagonist(victim);
     selected.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.orders.sequence_manager.insert_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2103,7 +2115,8 @@ fn sequence_with_order(
     );
     elem.push_order(crate::order::Order::test_new(order_type, 0.0, 0.0));
     sequence.append_element(elem);
-    let seq_id = sequence_manager.launch_sequence(sequence);
+    let seq_id = sequence_manager.insert_sequence(sequence);
+    sequence_manager.start_sequence_level(seq_id);
     (sequence_manager, seq_id)
 }
 

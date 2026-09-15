@@ -213,11 +213,15 @@ impl EngineInner {
                     == crate::element::Posture::Lying
                 {
                     self.stop_ai_owner(sim, assets, owner);
-                    self.launch_element(crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::StandUp,
-                        Some(owner),
-                    ));
+                    self.launch_element(
+                        sim,
+                        assets,
+                        crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::StandUp,
+                            Some(owner),
+                        ),
+                    );
                 } else {
                     self.execute_ai_callback(sim, assets, owner, &Stimulus::new(EventDone));
                 }
@@ -425,7 +429,7 @@ impl EngineInner {
             AiState::Wondering,
             Substate::WonderingWatchingForMoreMoney,
         );
-        self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
+        self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::LeftRight);
     }
     fn money_interaction_live(
         &mut self,
@@ -442,7 +446,7 @@ impl EngineInner {
             Some(owner),
             Some(target),
         ));
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
     fn money_arrival_live(
         &mut self,

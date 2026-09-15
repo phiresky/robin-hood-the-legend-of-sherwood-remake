@@ -19,59 +19,7 @@ use super::*;
 use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
 use crate::element::{Command, Entity, EntityId};
-
-/// Transient ordered work owned by the sequence phase.
-///
-/// The context owns no simulation state and cannot reach `EngineInner`.
-/// Sequence-manager mutation is borrowed only at the two ordering barriers:
-/// initial update collection and the after-action live-FIFO continuation.
-/// Keeping those operations here makes immediate-front versus normal-tail
-/// registration explicit without inventing a deferred gameplay queue.
-struct SequencePhase {
-    actions: std::collections::VecDeque<crate::sequence::SequenceAction>,
-}
-
-impl SequencePhase {
-    fn begin(orders: &mut OrderRuntime) -> Self {
-        let _ = orders;
-        Self {
-            actions: Default::default(),
-        }
-    }
-
-    fn pop_action(&mut self) -> Option<crate::sequence::SequenceAction> {
-        self.actions.pop_front()
-    }
-
-    /// Pop the next manager action after folding in work registered by the
-    /// preceding callback. Some instruction paths finish with an early `continue`
-    /// (for example, PC hero speech terminates inside arbitration), so the
-    /// continuation cannot live only in the common post-action epilogue.
-    fn pop_action_after_registration(
-        &mut self,
-        orders: &mut OrderRuntime,
-    ) -> Option<crate::sequence::SequenceAction> {
-        self.splice_registered_actions(orders);
-        self.pop_action()
-            .or_else(|| orders.sequence_manager.pop_next_hourglass_action())
-    }
-
-    /// Continue the manager's live FIFO drain after an action callback.
-    ///
-    /// Original-game sequence processing loops while its registration
-    /// queue is non-empty. Therefore normal-priority elements registered by
-    /// an immediate predecessor belong to this same drain just like
-    /// immediate and Wait work; they must not wait for the next frame.
-    /// Parked successor registrations stay with the manager: the
-    /// action a registration produced must be dispatched before the loop
-    /// registers the following sibling, so the next splice picks them up.
-    fn splice_registered_actions(&mut self, orders: &mut OrderRuntime) {
-        let synchronous = orders.sequence_manager.take_settled_synchronous_actions();
-        for action in synchronous.into_iter().rev() {
-            self.actions.push_front(action);
-        }
-    }
-}
+use crate::messenger::{Message, MessageType, SimpleMessage};
 
 impl EngineInner {
     /// Apply the immediate actor-side effect authored by
@@ -297,9 +245,6 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn authorize_and_reserve_lift_wait(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -639,9 +584,6 @@ impl EngineInner {
                         );
                     }
                     self.sequence_bow_set_action_state_after_transition(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBow,
@@ -673,9 +615,6 @@ impl EngineInner {
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBowDown,
@@ -719,9 +658,6 @@ impl EngineInner {
                         );
                     }
                     self.sequence_bow_set_action_state_after_transition(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::Waiting,
@@ -741,9 +677,6 @@ impl EngineInner {
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBowUp,
@@ -763,9 +696,6 @@ impl EngineInner {
                         false,
                     );
                     self.sequence_bow_set_action_state_after_transition(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         ActionState::AimingWithBow,
@@ -789,9 +719,6 @@ impl EngineInner {
     }
     fn sequence_bow_set_action_state_after_transition(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         state: crate::element::ActionState,
@@ -810,9 +737,6 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_target_activation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         antagonist: Option<EntityId>,
@@ -1282,7 +1206,7 @@ impl EngineInner {
                             "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
                         ),
                     );
-                    self.sequence_wait_is_entity_vip(sim, assets, active_scripts, carrier)
+                    self.sequence_wait_is_entity_vip(assets, carrier)
                 }),
             )
         };
@@ -1605,13 +1529,7 @@ impl EngineInner {
         OwnerActionBarrier::Reach
     }
 
-    fn sequence_wait_is_entity_vip(
-        &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
-        entity: &Entity,
-    ) -> bool {
+    fn sequence_wait_is_entity_vip(&self, assets: &LevelAssets, entity: &Entity) -> bool {
         match entity {
             Entity::Soldier(soldier) => assets
                 .profile_manager
@@ -1803,9 +1721,6 @@ impl EngineInner {
                     .map(|element| element.posture_after_transition)
                     .unwrap_or_default();
                 if self.sequence_dispatch_attentive(
-                    sim,
-                    assets,
-                    active_scripts,
                     owner,
                     command,
                     posture_after_transition,
@@ -1829,9 +1744,6 @@ impl EngineInner {
 
     fn sequence_dispatch_attentive(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
         posture_after_transition: crate::element::Posture,
@@ -2113,13 +2025,8 @@ impl EngineInner {
     ) -> OwnerActionBarrier {
         match command {
             Command::TieCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(
-                    sim,
-                    assets,
-                    active_scripts,
-                    seq_id,
-                    elem_idx,
-                ) else {
+                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
@@ -2142,13 +2049,8 @@ impl EngineInner {
                 )
             }
             Command::Untie => {
-                let Some(target) = self.sequence_ability_interaction_target(
-                    sim,
-                    assets,
-                    active_scripts,
-                    seq_id,
-                    elem_idx,
-                ) else {
+                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
@@ -2171,13 +2073,8 @@ impl EngineInner {
                 )
             }
             Command::HealCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(
-                    sim,
-                    assets,
-                    active_scripts,
-                    seq_id,
-                    elem_idx,
-                ) else {
+                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
@@ -2244,13 +2141,8 @@ impl EngineInner {
                 )
             }
             Command::HitCmd | Command::StrangleCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(
-                    sim,
-                    assets,
-                    active_scripts,
-                    seq_id,
-                    elem_idx,
-                ) else {
+                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Reach;
                 };
@@ -2430,13 +2322,8 @@ impl EngineInner {
                         elem_idx,
                     );
                 }
-                let Some(target) = self.sequence_ability_interaction_target(
-                    sim,
-                    assets,
-                    active_scripts,
-                    seq_id,
-                    elem_idx,
-                ) else {
+                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 };
@@ -2476,9 +2363,6 @@ impl EngineInner {
 
     fn sequence_ability_interaction_target(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<EntityId> {
@@ -2846,17 +2730,11 @@ impl EngineInner {
             }
             Command::ReplaceAnim => {
                 let old = self.sequence_sprite_animation_property(
-                    sim,
-                    assets,
-                    active_scripts,
                     seq_id,
                     elem_idx,
                     crate::sequence::Field::OldAnimation,
                 );
                 let new = self.sequence_sprite_animation_property(
-                    sim,
-                    assets,
-                    active_scripts,
                     seq_id,
                     elem_idx,
                     crate::sequence::Field::NewAnimation,
@@ -2869,9 +2747,6 @@ impl EngineInner {
             }
             Command::RestoreAnim => {
                 let old = self.sequence_sprite_animation_property(
-                    sim,
-                    assets,
-                    active_scripts,
                     seq_id,
                     elem_idx,
                     crate::sequence::Field::OldAnimation,
@@ -2887,9 +2762,6 @@ impl EngineInner {
 
     fn sequence_sprite_animation_property(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         field: crate::sequence::Field,
@@ -2907,38 +2779,9 @@ impl EngineInner {
     }
 }
 
-fn synchronous_action_element_ref(
-    action: &crate::sequence::SequenceAction,
-) -> Option<(crate::sequence::SequenceId, usize)> {
-    use crate::sequence::SequenceAction;
-    match *action {
-        SequenceAction::InstructOwner {
-            sequence_id,
-            element_index,
-            ..
-        }
-        | SequenceAction::EngineCommand {
-            sequence_id,
-            element_index,
-        }
-        | SequenceAction::ExecuteImmediateOwner {
-            sequence_id,
-            element_index,
-            ..
-        }
-        | SequenceAction::ExecuteImmediateEngine {
-            sequence_id,
-            element_index,
-        } => Some((sequence_id, element_index)),
-    }
-}
-
 impl EngineInner {
     fn timer_immediate_entry(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> TimerEntry {
@@ -2961,8 +2804,8 @@ impl EngineInner {
     }
 }
 
-/// Map/dialog/popup commands emit presentation outputs and the messenger
-/// reset-input edge without borrowing host UI state.
+/// Map/dialog/popup commands emit presentation outputs and reset input
+/// without borrowing host UI state.
 
 impl EngineInner {
     fn dispatch_presentation_command(
@@ -2997,9 +2840,6 @@ impl EngineInner {
             Command::PlayDialog => {
                 if !self.control.fast_forward {
                     let id = self.sequence_presentation_integer_property(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         crate::sequence::Field::DialogId,
@@ -3009,14 +2849,11 @@ impl EngineInner {
                         .pending_dialogues
                         .push(id);
                 }
-                self.sequence_presentation_reset_input(sim, assets, active_scripts);
+                self.sequence_presentation_reset_input(sim, assets);
             }
             Command::DisplayPopupText => {
                 if !self.control.fast_forward {
                     let id = self.sequence_presentation_integer_property(
-                        sim,
-                        assets,
-                        active_scripts,
                         seq_id,
                         elem_idx,
                         crate::sequence::Field::PopupTextId,
@@ -3026,7 +2863,7 @@ impl EngineInner {
                         .pending_popup_texts
                         .push(id);
                 }
-                self.sequence_presentation_reset_input(sim, assets, active_scripts);
+                self.sequence_presentation_reset_input(sim, assets);
             }
             _ => unreachable!("non-presentation command passed to presentation context"),
         }
@@ -3035,9 +2872,6 @@ impl EngineInner {
 
     fn sequence_presentation_integer_property(
         &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         field: crate::sequence::Field,
@@ -3057,11 +2891,12 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        active_scripts: &mut Vec<super::script::ActiveScriptCall>,
     ) {
-        self.orders
-            .messenger
-            .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
+        self.forward_message(
+            sim,
+            assets,
+            Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
+        );
     }
 }
 
@@ -3089,8 +2924,7 @@ impl EngineInner {
     }
 }
 
-/// Character/action availability affects only PC metadata and the ordered
-/// messenger stream consumed after the simulation tick.
+/// Character availability updates PC metadata and selection synchronously.
 
 impl EngineInner {
     fn dispatch_availability_immediate(
@@ -3128,9 +2962,7 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableCharacter
                     };
-                    self.orders
-                        .messenger
-                        .send(Message::pc(message, Some(owner)));
+                    self.forward_message(sim, assets, Message::pc(message, Some(owner)));
                 }
             }
             Command::ActionAvailable => {
@@ -3156,11 +2988,11 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableAction
                     };
-                    self.orders.messenger.send(Message::pc_with_value(
-                        message,
-                        Some(owner),
-                        action_id,
-                    ));
+                    self.forward_message(
+                        sim,
+                        assets,
+                        Message::pc_with_value(message, Some(owner), action_id),
+                    );
                 }
             }
             _ => unreachable!("non-availability command passed to availability context"),
@@ -3222,10 +3054,11 @@ mod sequence_phase_context_tests {
             .expect("test soldier is an actor")
             .execution_frozen = true;
         let owner = engine.add_test_entity(soldier);
-        let sequence = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::LookRight, Some(owner)));
+        let sequence = engine.launch_element(
+            &sim,
+            &LevelAssets::default(),
+            SequenceElement::new(1, Command::LookRight, Some(owner)),
+        );
 
         engine.hourglass_phase_sequences(
             &sim,
@@ -3263,10 +3096,11 @@ mod sequence_phase_context_tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(unconscious_lying_soldier());
-        let sequence = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+        let sequence = engine.launch_element(
+            &sim,
+            &LevelAssets::default(),
+            SequenceElement::new(1, Command::Wait, Some(owner)),
+        );
         engine
             .orders
             .sequence_manager
@@ -3327,7 +3161,8 @@ mod sequence_phase_context_tests {
             0.0,
             0.0,
         ));
-        let seq_id = engine.orders.sequence_manager.launch_element(element);
+        let seq_id = engine.orders.sequence_manager.insert_element(element);
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         let barrier = engine.dispatch_bow_transition(
             &crate::sim_rng::test_context(),
@@ -3370,7 +3205,7 @@ mod sequence_phase_context_tests {
             let mut engine = EngineInner::new();
             let owner = engine.add_test_entity(object_interaction_soldier(13));
             let antagonist = engine.add_test_entity(interaction_object(object_type));
-            let seq_id = engine.orders.sequence_manager.launch_element(
+            let seq_id = engine.orders.sequence_manager.insert_element(
                 crate::sequence::SequenceElement::new_interaction(
                     1,
                     command,
@@ -3378,6 +3213,7 @@ mod sequence_phase_context_tests {
                     Some(antagonist),
                 ),
             );
+            engine.orders.sequence_manager.start_sequence_level(seq_id);
 
             engine.dispatch_object_interaction_command(
                 &crate::sim_rng::test_context(),
@@ -3424,7 +3260,7 @@ mod sequence_phase_context_tests {
             .set_direction_goal(7);
         let antagonist =
             engine.add_test_entity(interaction_object(crate::element::ObjectType::Coin));
-        let seq_id = engine.orders.sequence_manager.launch_element(
+        let seq_id = engine.orders.sequence_manager.insert_element(
             crate::sequence::SequenceElement::new_interaction(
                 1,
                 Command::Take,
@@ -3432,6 +3268,7 @@ mod sequence_phase_context_tests {
                 Some(antagonist),
             ),
         );
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
         engine.dispatch_object_interaction_command(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
@@ -3477,7 +3314,11 @@ mod sequence_phase_context_tests {
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
         wait.action_state_after_transition = ActionState::Bored;
-        let sequence = engine.orders.sequence_manager.launch_element(wait);
+        let sequence = engine.orders.sequence_manager.insert_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
             &crate::sim_rng::test_context(),
@@ -3517,7 +3358,11 @@ mod sequence_phase_context_tests {
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::Upright;
         wait.action_state_after_transition = ActionState::Bored;
-        let sequence = engine.orders.sequence_manager.launch_element(wait);
+        let sequence = engine.orders.sequence_manager.insert_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
             &crate::sim_rng::test_context(),
@@ -3571,7 +3416,11 @@ mod sequence_phase_context_tests {
         let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
         wait.posture_after_transition = Posture::DeadBack;
         wait.action_state_after_transition = ActionState::Waiting;
-        let sequence = engine.orders.sequence_manager.launch_element(wait);
+        let sequence = engine.orders.sequence_manager.insert_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
             &crate::sim_rng::test_context(),
@@ -3599,100 +3448,25 @@ mod sequence_phase_context_tests {
     }
 
     #[test]
-    fn synchronous_successor_is_spliced_before_older_hourglass_work() {
-        let older = crate::sequence::SequenceAction::EngineCommand {
-            sequence_id: crate::sequence::SequenceId(900),
-            element_index: 0,
-        };
-        let mut phase = SequencePhase {
-            actions: [older].into(),
-        };
-
-        let mut orders = OrderRuntime::new();
-        let mut sequence = crate::sequence::Sequence::new();
-        let mut immediate = crate::sequence::SequenceElement::new(1, Command::Wait, None);
-        immediate.priority = crate::sequence::SequencePriority::Wait;
-        sequence.append_element(immediate);
-        let synchronous_sequence = orders.sequence_manager.launch_sequence(sequence);
-
-        phase.splice_registered_actions(&mut orders);
-
-        assert!(matches!(
-            phase.pop_action(),
-            Some(crate::sequence::SequenceAction::EngineCommand {
-                sequence_id,
-                element_index: 0,
-            }) if sequence_id == synchronous_sequence
-        ));
-        assert!(matches!(
-            phase.pop_action(),
-            Some(crate::sequence::SequenceAction::EngineCommand {
-                sequence_id: crate::sequence::SequenceId(900),
-                element_index: 0,
-            })
-        ));
-        assert!(phase.pop_action().is_none());
-    }
-
-    #[test]
-    fn normal_successor_is_appended_after_older_hourglass_work() {
-        let older = crate::sequence::SequenceAction::EngineCommand {
-            sequence_id: crate::sequence::SequenceId(900),
-            element_index: 0,
-        };
-        let mut phase = SequencePhase {
-            actions: [older].into(),
-        };
-        let owner = EntityId::Pc(crate::entity_id::PcId(7));
-        let mut orders = OrderRuntime::new();
-        let movement = crate::sequence::SequenceElement::new_movement(
-            1,
-            Command::Move,
-            Some(owner),
-            crate::order::OrderType::WalkingUpright,
-        );
-        let sequence_id = orders.sequence_manager.launch_element(movement);
-
-        phase.splice_registered_actions(&mut orders);
-
-        assert!(matches!(
-            phase.pop_action(),
-            Some(crate::sequence::SequenceAction::EngineCommand {
-                sequence_id: crate::sequence::SequenceId(900),
-                element_index: 0,
-            })
-        ));
-        assert!(matches!(
-            phase.pop_action_after_registration(&mut orders),
-            Some(crate::sequence::SequenceAction::InstructOwner {
-                owner: action_owner,
-                sequence_id: action_sequence,
-                element_index: 0,
-            }) if action_owner == owner && action_sequence == sequence_id
-        ));
-        assert!(phase.pop_action_after_registration(&mut orders).is_none());
-    }
-
-    #[test]
     fn live_hourglass_keeps_later_actor_work_observable() {
-        let owner = EntityId::Soldier(crate::entity_id::SoldierId(7));
-        let mut orders = OrderRuntime::new();
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(object_interaction_soldier(0));
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
         let mut damage = crate::sequence::SequenceElement::new_generic(
             1,
             Command::ReceiveSwordDamage,
             Some(owner),
         );
         damage.priority = crate::sequence::SequencePriority::Injury;
-        let damage_sequence = orders.sequence_manager.launch_element(damage);
+        let damage_sequence = engine.launch_element(&sim, &assets, damage);
 
         let mut enter =
             crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        orders.sequence_manager.launch_element(enter);
-
-        let mut phase = SequencePhase::begin(&mut orders);
+        engine.launch_element(&sim, &assets, enter);
         assert!(matches!(
-            phase.pop_action_after_registration(&mut orders),
+            engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 sequence_id,
                 element_index: 0,
@@ -3700,47 +3474,30 @@ mod sequence_phase_context_tests {
             }) if sequence_id == damage_sequence
         ));
         assert!(
-            orders
+            engine
+                .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(owner, Command::EnterSwordfight)
         );
     }
 
     #[test]
-    fn availability_executor_preserves_command_message_order() {
-        use crate::messenger::{MessageType, PcMessage};
+    fn character_availability_updates_selection_before_returning() {
         use crate::sequence::{Field, FieldValue, SequenceElement};
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
         let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
+        engine.players.seats[0].selection = vec![owner];
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
-        engine.launch_element(character);
-        engine.drain_pending_immediate_actions_sync(&sim, &assets);
-        let mut action = SequenceElement::new_generic(1, Command::ActionAvailable, Some(owner));
-        action.set_property(Field::ActionId, FieldValue::Integer(12));
-        action.set_property(Field::ActionAvailable, FieldValue::Bool(true));
-        engine.launch_element(action);
-        engine.drain_pending_immediate_actions_sync(&sim, &assets);
-
-        let messages = engine.orders.messenger.drain();
-        assert!(matches!(
-            messages.as_slice(),
-            [
-                Message {
-                    msg_type: MessageType::Pc(PcMessage::DisableCharacter, Some(id)),
-                    ..
-                },
-                Message {
-                    msg_type: MessageType::Pc(PcMessage::EnableAction, Some(action_id)),
-                    value: 12,
-                    ..
-                }
-            ] if *id == owner && *action_id == owner
-        ));
+        engine.launch_element(&sim, &assets, character);
+        assert!(engine.players.seats[0].selection.is_empty());
+        let pc = engine.get_entity(owner).and_then(Entity::pc_data).unwrap();
+        assert!(!pc.playable);
+        assert!(pc.interface_hidden);
     }
 
     #[test]
@@ -3757,7 +3514,11 @@ mod sequence_phase_context_tests {
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(true));
-        let sequence = engine.orders.sequence_manager.launch_element(character);
+        let sequence = engine.orders.sequence_manager.insert_element(character);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
 
         engine.dispatch_availability_immediate(
             &crate::sim_rng::test_context(),
@@ -3797,12 +3558,13 @@ mod sequence_phase_context_tests {
             engine
                 .orders
                 .sequence_manager
-                .launch_element(SequenceElement::new_interaction(
+                .insert_element(SequenceElement::new_interaction(
                     1,
                     Command::RaiseShield,
                     Some(owner),
                     Some(target),
                 ));
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         let follow_up = engine.dispatch_shield_command(
             &crate::sim_rng::test_context(),
@@ -3842,11 +3604,15 @@ mod sequence_phase_context_tests {
         let instant_seq = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(
+            .insert_element(SequenceElement::new(
                 1,
                 Command::RaiseShieldInstantly,
                 Some(owner),
             ));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(instant_seq);
         engine.dispatch_shield_command(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3879,7 +3645,11 @@ mod sequence_phase_context_tests {
         let lower_seq = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+            .insert_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(lower_seq);
         engine
             .get_entity_mut(owner)
             .expect("shield owner exists")
@@ -3909,7 +3679,11 @@ mod sequence_phase_context_tests {
         let parry_seq = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::ParryShield, Some(owner)));
+            .insert_element(SequenceElement::new(1, Command::ParryShield, Some(owner)));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(parry_seq);
         engine.dispatch_shield_command(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3956,7 +3730,8 @@ mod sequence_phase_context_tests {
         let seq_id = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+            .insert_element(SequenceElement::new(1, Command::LowerShield, Some(owner)));
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
         let stand_up = Order::new(
             OrderType::StandingUp,
             0.0,
@@ -4026,7 +3801,8 @@ mod sequence_phase_context_tests {
             let seq_id = engine
                 .orders
                 .sequence_manager
-                .launch_element(SequenceElement::new(1, command, Some(owner)));
+                .insert_element(SequenceElement::new(1, command, Some(owner)));
+            engine.orders.sequence_manager.start_sequence_level(seq_id);
 
             engine.dispatch_recovery_command(
                 &crate::sim_rng::test_context(),
@@ -4072,7 +3848,8 @@ mod sequence_phase_context_tests {
         let seq_id = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::RaiseShield, Some(owner)));
+            .insert_element(SequenceElement::new(1, Command::RaiseShield, Some(owner)));
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         let lowering = Order::new(
             OrderType::TransitionLoweringSword,
@@ -4119,7 +3896,7 @@ mod sequence_phase_context_tests {
     }
 
     #[test]
-    fn shield_refresh_seek_is_registered_before_the_action_splice() {
+    fn shield_refresh_seek_joins_the_current_hourglass_drain() {
         let assets = LevelAssets::new();
         use crate::element::ActionState;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement};
@@ -4138,11 +3915,9 @@ mod sequence_phase_context_tests {
         );
         raise.set_property(Field::ShieldDangerPointLayer, FieldValue::Integer(3));
         raise.set_property(Field::ShieldProtected, FieldValue::Element(protected));
-        let raise_seq = engine.orders.sequence_manager.launch_element(raise);
-
-        let mut phase = SequencePhase::begin(&mut engine.orders);
+        let raise_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, raise);
         assert!(matches!(
-            phase.pop_action_after_registration(&mut engine.orders),
+            engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id,
@@ -4175,14 +3950,14 @@ mod sequence_phase_context_tests {
             }
             data => panic!("shield follow-up must be movement, got {data:?}"),
         }
-        let follow_up_seq = engine.launch_element(follow_up);
+        let follow_up_seq =
+            engine.launch_element(&crate::sim_rng::test_context(), &assets, follow_up);
 
         // The original game's manager tick is a live while-loop. A normal
         // Move/Seek registered from the current instruction callback therefore
         // joins this same drain rather than waiting for the next frame.
-        phase.splice_registered_actions(&mut engine.orders);
         assert!(matches!(
-            phase.pop_action_after_registration(&mut engine.orders),
+            engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
                 owner: action_owner,
                 sequence_id,
@@ -4190,8 +3965,10 @@ mod sequence_phase_context_tests {
             }) if action_owner == owner && sequence_id == follow_up_seq
         ));
         assert!(
-            phase
-                .pop_action_after_registration(&mut engine.orders)
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
                 .is_none()
         );
 

@@ -143,11 +143,15 @@ impl EngineInner {
                         .opponents
                         .is_empty()
                 {
-                    self.launch_element(crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::QuitSwordfight,
-                        Some(owner),
-                    ));
+                    self.launch_element(
+                        sim,
+                        assets,
+                        crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::QuitSwordfight,
+                            Some(owner),
+                        ),
+                    );
                 }
                 self.observation_ai_mut(owner).base.seek_position = position;
                 self.duty_set_state(

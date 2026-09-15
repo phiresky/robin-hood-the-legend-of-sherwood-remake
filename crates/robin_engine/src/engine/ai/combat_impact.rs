@@ -178,7 +178,7 @@ impl EngineInner {
                 z: danger.z,
             },
         );
-        self.launch_element(element);
+        self.launch_element(sim, assets, element);
         let entity = self.expect_entity_mut(owner, "incoming arrow shield pose");
         entity.set_posture(crate::element::Posture::Upright);
         entity
@@ -253,7 +253,7 @@ impl EngineInner {
             element.set_property(Field::Opponent, FieldValue::Integer(0));
             element.set_property(Field::JumplineDestination, FieldValue::Integer(0));
             element.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
-            self.launch_element(element);
+            self.launch_element(sim, assets, element);
             let target = self
                 .world
                 .entities

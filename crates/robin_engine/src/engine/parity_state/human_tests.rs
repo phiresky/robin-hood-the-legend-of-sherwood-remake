@@ -138,7 +138,7 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
             human.sword_sweep.initial_angle = -0.0;
             human.sword_sweep.current_angle = 23.5;
             human.sword_sweep.final_angle = f32::from_bits(0x7fc0_4321);
-            let sequence = inner.orders.sequence_manager.launch_element(
+            let sequence = inner.orders.sequence_manager.insert_element(
                 crate::sequence::SequenceElement::new_generic(
                     1,
                     crate::element::Command::WaitTimer,

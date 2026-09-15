@@ -128,7 +128,7 @@ pub(crate) struct ScriptDriverError {
     pub(super) spellforge: Option<crate::spellforge::SpellforgeGuestError>,
     /// True once the sequence element that actually failed has been marked
     /// Impossible. Ancestor actions must not be blamed for descendant errors.
-    pub(super) sequence_element_failed: bool,
+    pub(crate) sequence_element_failed: bool,
 }
 
 impl ScriptDriverError {
@@ -708,7 +708,6 @@ impl EngineInner {
                         ScriptDriverError::new("Spellforge native lost mission script")
                     })?
                 };
-                self.drain_script_registration_inline_actions(sim, assets, active)?;
                 let return_word = match outcome {
                     crate::interp::NativeCallOutcome::Return(value) => value,
                     crate::interp::NativeCallOutcome::Yield(request) => {
@@ -778,9 +777,6 @@ impl EngineInner {
                     },
                 )
                 .expect("mission script vanished while callback was suspended");
-            // Complete registration-time immediate elements before the VM
-            // returns or enters its next native operation.
-            self.drain_script_registration_inline_actions(sim, assets, active)?;
             match stop {
                 crate::interp::StopReason::ReturnedValue(value) => return Ok(value),
                 crate::interp::StopReason::Returned => return Ok(0),
@@ -846,15 +842,15 @@ impl EngineInner {
                     active,
                 )
             }
-            crate::interp::NativeOperation::SequenceAction(operation) => {
-                self.drive_detached_sequence_operation(sim, assets, operation, active)?;
+            crate::interp::NativeOperation::LaunchSequence(sequence_id) => {
+                self.start_sequence_inline(sim, assets, active, sequence_id)?;
                 Ok(0)
             }
             crate::interp::NativeOperation::EngineAction(action) => {
                 self.execute_synchronous_script_request(sim, assets, action, active)
             }
             crate::interp::NativeOperation::Command(command) => {
-                self.execute_native_command(sim, assets, command, active)
+                self.execute_native_command(sim, assets, command)
             }
         }
     }
@@ -879,6 +875,8 @@ impl EngineInner {
                     .forced_attentive = target;
                 if target {
                     self.set_soldier_attentive_mode_from(
+                        sim,
+                        assets,
                         owner,
                         true,
                         false,
@@ -1109,8 +1107,13 @@ impl EngineInner {
                     .actor_data_mut()
                     .expect("validated SetActorActionState human lost ActorData")
                     .action_state = state;
-                self.actor_wait(actor_id);
-                self.drain_script_synchronous_actions(sim, assets, active)?;
+                let mut wait = crate::sequence::SequenceElement::new(
+                    1,
+                    crate::element::Command::Wait,
+                    Some(actor_id),
+                );
+                wait.priority = crate::sequence::SequencePriority::Wait;
+                self.launch_element_inline(sim, assets, active, wait)?;
                 Ok(0)
             }
             crate::interp::SynchronousScriptRequest::StareActor { actor, target, .. } => {
@@ -1349,7 +1352,7 @@ impl EngineInner {
             .unwrap_or_else(|error| panic!("script lock failed: {error:?}"));
     }
 
-    fn execute_ai_script_lock_in_driver(
+    pub(in crate::engine) fn execute_ai_script_lock_in_driver(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1542,10 +1545,6 @@ impl EngineInner {
             crate::element::Entity::Pc(pc) if pc.pc.playable => {
                 pc.pc.playable = false;
                 disabled_pc = true;
-                self.orders.messenger.send(crate::messenger::Message::pc(
-                    crate::messenger::PcMessage::DisableCharacter,
-                    Some(actor),
-                ));
             }
             entity if entity.is_npc() => {
                 let ai = entity
@@ -1556,7 +1555,11 @@ impl EngineInner {
             _ => {}
         }
         if disabled_pc {
-            self.unselect_single_pc(actor);
+            self.forward_message(
+                sim,
+                assets,
+                Message::pc(crate::messenger::PcMessage::DisableCharacter, Some(actor)),
+            );
         }
         if lock_npc {
             self.execute_ai_script_lock(sim, assets, actor, false);
@@ -1593,8 +1596,15 @@ impl EngineInner {
                 .set_posture(posture);
         };
         let wait = |engine: &mut Self, active: &mut Vec<ActiveScriptCall>| {
-            engine.actor_wait(actor);
-            engine.drain_script_synchronous_actions(sim, assets, active)
+            let mut element = crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::Wait,
+                Some(actor),
+            );
+            element.priority = crate::sequence::SequencePriority::Wait;
+            engine
+                .launch_element_inline(sim, assets, active, element)
+                .map(|_| ())
         };
         let clear_concussion = |engine: &mut Self| {
             engine.apply_scripted_concussion(sim, assets, actor, 0, true);
@@ -1674,7 +1684,6 @@ impl EngineInner {
                     actor,
                     crate::sequence::SequencePriority::Injury,
                 );
-                self.drain_script_synchronous_actions(sim, assets, active)?;
                 set_posture(self, Posture::Lying);
                 self.apply_scripted_concussion(
                     sim,
@@ -1854,7 +1863,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         command: crate::natives::NativeCommand,
-        active_scripts: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
         match command {
             crate::natives::NativeCommand::Sound(cmd) => {
@@ -2100,7 +2108,6 @@ impl EngineInner {
                 self.apply_host_commands(sim, assets, std::iter::once(cmd));
             }
         }
-        self.drain_script_synchronous_actions(sim, assets, active_scripts)?;
         Ok(0)
     }
 
@@ -3331,13 +3338,20 @@ impl EngineInner {
             return true;
         }
 
+        let frame = self
+            .scripts
+            .mission
+            .as_ref()
+            .and_then(MissionScript::active_script_frame)
+            .unwrap_or_default()
+            .with_script_this(handle);
         let result = self.call_script_vm(
             sim,
             assets,
             ScriptVmKey::Actor(handle),
             "FilterAIEvent",
             &[source, code],
-            crate::natives::ScriptCallFrame::actor(handle),
+            frame,
         );
 
         match result {
@@ -3829,9 +3843,11 @@ impl EngineInner {
                     // constructor re-enters the game refresh before returning
                     // to the script VM.
                     self.refresh_arrows_for_presentation(sim);
-                    self.orders
-                        .messenger
-                        .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
+                    self.forward_message(
+                        sim,
+                        assets,
+                        Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
+                    );
                 }
                 EngineCommand::DisplayMap { show } => {
                     self.feedback
@@ -3845,9 +3861,11 @@ impl EngineInner {
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
                     self.feedback.pending_side_effects.pending_show_console = true;
-                    self.orders.messenger.send(Message::new(MessageType::Simple(
-                        SimpleMessage::DisplayConsole,
-                    )));
+                    self.forward_message(
+                        sim,
+                        assets,
+                        Message::new(MessageType::Simple(SimpleMessage::DisplayConsole)),
+                    );
                 }
                 EngineCommand::CustomizeMinimapDisplay {
                     actor_handle,
@@ -4011,16 +4029,20 @@ impl EngineInner {
                     if !self.control.fast_forward && self.control.begin_popup_scroll_display() {
                         self.refresh_arrows_for_presentation(sim);
                     }
-                    self.orders
-                        .messenger
-                        .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
+                    self.forward_message(
+                        sim,
+                        assets,
+                        Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
+                    );
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
                     self.feedback.pending_side_effects.pending_sherwood_report = true;
-                    self.orders
-                        .messenger
-                        .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
+                    self.forward_message(
+                        sim,
+                        assets,
+                        Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
+                    );
                 }
                 EngineCommand::FadeToBlack { speed } => {
                     // The original `FadeToBlack` runs `2 * speed`
@@ -4268,7 +4290,7 @@ impl EngineInner {
                         );
                         continue;
                     }
-                    self.actor_make_crouched(sim, eid);
+                    self.actor_make_crouched(sim, assets, eid);
                 }
                 EngineCommand::SetMobileActive {
                     mobile_index,
@@ -4481,13 +4503,6 @@ impl EngineInner {
         }
 
         if is_pc {
-            // Forward MSG_DISABLE_ALL_ACTIONS — counterpart to
-            // DisableAllActionsTemp.
-            self.orders.messenger.send(Message::pc(
-                crate::messenger::PcMessage::DisableAllActionsTemp,
-                None,
-            ));
-
             // When the entering actor is a PC,
             // (a) recursively enter its carried actor, and
             // (b) re-enable existing occupants who are dead/unconscious

@@ -37,6 +37,8 @@ impl EngineInner {
     /// as the seek continuation without changing its registration order.
     fn launch_or_seek_then(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         action_style: crate::order::OrderType,
@@ -45,7 +47,7 @@ impl EngineInner {
         command_seq: Sequence,
     ) {
         if dist <= action_distance {
-            self.launch_sequence(command_seq);
+            self.launch_sequence(sim, assets, command_seq);
             return;
         }
 
@@ -66,7 +68,7 @@ impl EngineInner {
 
         let mut seq = Sequence::new();
         seq.append_element(seek);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
     }
 
     pub(super) fn actor_action_distance(
@@ -132,13 +134,14 @@ impl EngineInner {
     pub(super) fn apply_interaction_with_seek(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
         running: bool,
     ) {
         self.apply_interaction_with_seek_and_recovery(
-            sim, actor, target, command, running, false, false,
+            sim, assets, actor, target, command, running, false, false,
         );
     }
 
@@ -149,6 +152,7 @@ impl EngineInner {
     pub(super) fn apply_recorded_interaction_with_seek(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -157,6 +161,7 @@ impl EngineInner {
     ) {
         self.apply_interaction_with_seek_and_recovery(
             sim,
+            assets,
             actor,
             target,
             command,
@@ -194,6 +199,7 @@ impl EngineInner {
     pub(super) fn apply_interaction_with_seek_and_recovery(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -215,7 +221,7 @@ impl EngineInner {
             // one final Execute tick before this interaction is instructed.
             let mut seq = Sequence::new();
             seq.append_element(elem);
-            self.launch_sequence(seq);
+            self.launch_sequence(sim, assets, seq);
             return;
         }
 
@@ -224,7 +230,7 @@ impl EngineInner {
         // `Seek(USE_POINT, tolerance=8) → [turn(L1) →
         // ClimbUpOnShoulders(L2)]`.  Route through a dedicated helper.
         if command == Command::ClimbUpOnShoulders {
-            self.apply_climb_on_shoulders_with_seek(actor, target, running);
+            self.apply_climb_on_shoulders_with_seek(sim, assets, actor, target, running);
             return;
         }
 
@@ -508,7 +514,7 @@ impl EngineInner {
 
             let mut seq = Sequence::new();
             seq.append_element(seek);
-            self.launch_sequence(seq);
+            self.launch_sequence(sim, assets, seq);
         } else {
             // Seek-based interaction builds and launches a sequence even
             // when no seek is necessary. Launching the owned element through
@@ -520,7 +526,7 @@ impl EngineInner {
             if append_posture_recovery {
                 self.append_posture_recovery(actor, &mut seq);
             }
-            self.launch_sequence(seq);
+            self.launch_sequence(sim, assets, seq);
         }
     }
 
@@ -531,6 +537,7 @@ impl EngineInner {
     pub(super) fn apply_target_interaction_route(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -639,6 +646,7 @@ impl EngineInner {
 
         self.launch_gate_movement_sequence(
             sim,
+            assets,
             crate::engine::movement::GateRouteRequest {
                 entity_id: actor,
                 source_sector: gate_source_sector,
@@ -671,6 +679,8 @@ impl EngineInner {
     /// by the recorded Turn and interaction elements.
     pub(super) fn replay_recorded_target_interaction(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -716,7 +726,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently
@@ -785,16 +795,18 @@ impl EngineInner {
     pub(super) fn apply_scroll_read_with_seek(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         running: bool,
     ) {
-        self.apply_scroll_read_with_seek_inner(sim, actor, target, running, false);
+        self.apply_scroll_read_with_seek_inner(sim, assets, actor, target, running, false);
     }
 
     pub(super) fn apply_scroll_read_with_seek_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         running: bool,
@@ -919,6 +931,8 @@ impl EngineInner {
         );
 
         self.launch_or_seek_then(
+            sim,
+            assets,
             actor,
             target,
             action_style,
@@ -934,6 +948,8 @@ impl EngineInner {
     /// tolerance.
     pub(super) fn apply_climb_on_shoulders_with_seek(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target: EntityId,
         running: bool,
@@ -991,6 +1007,8 @@ impl EngineInner {
         );
 
         self.launch_or_seek_then(
+            sim,
+            assets,
             actor,
             target,
             action_style,

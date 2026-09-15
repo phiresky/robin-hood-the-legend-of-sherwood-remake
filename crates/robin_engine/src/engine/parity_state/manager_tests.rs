@@ -901,7 +901,15 @@ fn populated_manager_schemas_match_original_encoders() {
         generic.set_property(field, value);
     }
     sequence.append_element(generic);
-    let sequence_id = inner.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = inner.orders.sequence_manager.insert_sequence(sequence);
+    inner
+        .start_sequence_inline(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence_id,
+        )
+        .expect("projection fixture registers its initial FIFO entries");
     let sequence = inner
         .orders
         .sequence_manager

@@ -200,22 +200,9 @@ pub enum ScriptAiStateNativeEffect {
 #[derive(Debug, Clone, PartialEq)]
 pub enum NativeOperation {
     ScriptCall(ScriptCallRequest),
-    SequenceAction(SynchronousSequenceOperation),
+    LaunchSequence(crate::sequence::SequenceId),
     EngineAction(SynchronousScriptRequest),
     Command(crate::natives::NativeCommand),
-}
-
-/// One immediately executed sequence action plus the remainder of the
-/// sequence that must stay invisible while that action re-enters script.
-///
-/// Original-game sequence launch is recursive: a child launched by an immediate
-/// element completes before the parent's next element is considered. Owning
-/// the detached tail here makes that ordering structural instead of relying
-/// on a shared FIFO.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SynchronousSequenceOperation {
-    pub action: crate::sequence::SequenceAction,
-    pub continuation: Vec<crate::sequence::PendingSyncEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

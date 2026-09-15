@@ -629,7 +629,7 @@ impl EngineInner {
             SweepTickPhase::Dormant
         };
         if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_selected_sweep_phase(assets, attacker_id, sweep_phase);
+            self.tick_selected_sweep_phase(sim, assets, attacker_id, sweep_phase);
         }
     }
 
@@ -695,6 +695,8 @@ impl EngineInner {
     /// an earlier-created defender just queued.
     pub(in crate::engine) fn tick_parry_counter_for_execute(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         result: &mut crate::engine::animation::ActorExecuteResult,
     ) {
@@ -721,11 +723,9 @@ impl EngineInner {
             } else {
                 let elem =
                     crate::sequence::SequenceElement::new(1, Command::StopParrySword, Some(owner));
-                // Sequence-element launch only registers actor-execution
-                // launches. The sequence-manager tick instructs them after
-                // all actor slots, in registration order alongside any
-                // later-created attacker's damage element.
-                self.register_owned_element_deferred(elem);
+                // Ordinary instructions retain their sequence FIFO order
+                // alongside later actors' damage instructions.
+                self.launch_element(sim, assets, elem);
             }
         }
     }
@@ -756,7 +756,12 @@ impl EngineInner {
         human.smalltalk_hint_opponent = Some(attacker_id);
     }
 
-    pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(&mut self, entity_id: I) -> bool {
+    pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: I,
+    ) -> bool {
         let entity_id = entity_id.into();
         let (hint, hint_opponent) = {
             let entity = self.expect_entity(entity_id, "smalltalk-hint evaluation owner");
@@ -800,7 +805,7 @@ impl EngineInner {
             Some(entity_id),
             Some(opponent_id),
         );
-        self.register_owned_element_deferred(elem);
+        self.launch_element(sim, assets, elem);
         true
     }
 
@@ -942,6 +947,7 @@ impl EngineInner {
 
         if hit {
             self.resolve_straight_melee_hit(
+                sim,
                 assets,
                 attacker_id,
                 target_id,
@@ -965,6 +971,7 @@ impl EngineInner {
 
     fn resolve_straight_melee_hit(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         victim_id: EntityId,
@@ -1007,6 +1014,8 @@ impl EngineInner {
         if in_range {
             if let Some(profile_idx) = profile_idx {
                 self.queue_scaled_sword_damage(
+                    sim,
+                    assets,
                     victim_id,
                     attacker_id,
                     strike,
@@ -1076,7 +1085,7 @@ impl EngineInner {
                     &assets.profile_manager,
                     &self.mission_domain.diplomacy,
                 ) {
-                    self.queue_enter_swordfight_after_strike(victim_id, actor_id);
+                    self.launch_enter_swordfight_after_strike(sim, assets, victim_id, actor_id);
                 }
                 self.expect_entity_mut(actor_id, "push completion attacker")
                     .human_data_mut()
@@ -1192,7 +1201,7 @@ impl EngineInner {
             };
             self.tick_straight_melee_for(sim, assets, actor_id, selected);
             let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id, selected);
-            self.tick_selected_sweep_phase(assets, actor_id, sweep_phase);
+            self.tick_selected_sweep_phase(sim, assets, actor_id, sweep_phase);
         }
     }
 
@@ -1466,6 +1475,8 @@ impl EngineInner {
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = hit.attacker_profile_idx {
                         self.queue_scaled_sword_damage(
+                            sim,
+                            assets,
                             *victim_id,
                             hit.attacker_id,
                             hit.strike,
@@ -1481,6 +1492,7 @@ impl EngineInner {
                 }
             } else {
                 self.resolve_straight_melee_hit(
+                    sim,
                     assets,
                     hit.attacker_id,
                     hit.victim_id,
@@ -1512,6 +1524,7 @@ impl EngineInner {
 
     pub(super) fn tick_selected_sweep_phase(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         phase: SweepTickPhase,
@@ -1522,7 +1535,7 @@ impl EngineInner {
         match phase {
             SweepTickPhase::Dormant | SweepTickPhase::Start => {}
             SweepTickPhase::Initialized => {
-                self.tick_sweep_for(assets, attacker_id, true);
+                self.tick_sweep_for(sim, assets, attacker_id, true);
             }
             SweepTickPhase::InProgress => {
                 // Circle sword-strike execution advances its retained angles only
@@ -1593,10 +1606,10 @@ impl EngineInner {
                     // gate only protects the tail angle advance.  Preserve
                     // the retained victim/angle geometry, but rebind the
                     // payload and direction to the replacement strike.
-                    self.tick_sweep_for_mode(assets, attacker_id, false, true);
+                    self.tick_sweep_for_mode(sim, assets, attacker_id, false, true);
                     return;
                 }
-                self.tick_sweep_for(assets, attacker_id, false);
+                self.tick_sweep_for(sim, assets, attacker_id, false);
             }
         }
     }
@@ -1794,15 +1807,17 @@ impl EngineInner {
     ///
     pub(crate) fn tick_sweep_for(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
-        self.tick_sweep_for_mode(assets, attacker_id, initialized_this_hourglass, false);
+        self.tick_sweep_for_mode(sim, assets, attacker_id, initialized_this_hourglass, false);
     }
 
     fn tick_sweep_for_mode(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
@@ -1945,6 +1960,8 @@ impl EngineInner {
             }
             if hit == Some(true) {
                 self.queue_scaled_sword_damage(
+                    sim,
+                    assets,
                     victim_id,
                     attacker_id,
                     strike,
@@ -1966,7 +1983,7 @@ impl EngineInner {
                     &self.mission_domain.diplomacy,
                 )
             {
-                self.queue_enter_swordfight_after_strike(victim_id, attacker_id);
+                self.launch_enter_swordfight_after_strike(sim, assets, victim_id, attacker_id);
             }
         }
         if circle && !effect_only_before_action_point {
@@ -1979,16 +1996,11 @@ impl EngineInner {
         }
     }
 
-    /// Queue the `EnterSwordfight` instruction emitted after a successful
-    /// sword hit.
-    ///
-    /// Original strike executors register this immediately after the
-    /// victim's `ReceiveSwordDamage` element. Both are then instructed in
-    /// sequence-manager FIFO order; entering synchronously here would let the
-    /// relationship/state reset run before the injury has interrupted the
-    /// victim's old action.
-    pub(in crate::engine) fn queue_enter_swordfight_after_strike(
+    /// Launch swordfight entry after the victim's damage instruction.
+    pub(in crate::engine) fn launch_enter_swordfight_after_strike(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
     ) {
@@ -2009,8 +2021,7 @@ impl EngineInner {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Bool(false),
         );
-        self.resolve_element_priority(&mut element);
-        self.orders.sequence_manager.launch_element(element);
+        self.launch_element(sim, assets, element);
     }
 
     // ─── Push flight tick ─────────────────────────────────────────
@@ -2599,7 +2610,7 @@ impl EngineInner {
         }
 
         for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
-            self.apply_domino_effect(flyer_id, hitter_id, inc_x, inc_y);
+            self.apply_domino_effect(sim, assets, flyer_id, hitter_id, inc_x, inc_y);
         }
 
         ladder_arrived
@@ -2630,6 +2641,8 @@ impl EngineInner {
     /// further domino cascades.
     pub(super) fn apply_domino_effect(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         flyer_id: EntityId,
         hitter_id: EntityId,
         inc_x: f32,
@@ -2733,7 +2746,7 @@ impl EngineInner {
                 0,             // damage stays 0
                 DOMINO_DAMAGE, // concussion
             );
-            self.launch_element(elem);
+            self.launch_element(sim, assets, elem);
             tracing::trace!(
                 ?flyer_id,
                 ?hitter_id,
@@ -3191,7 +3204,7 @@ impl EngineInner {
         strike_elem.priority = crate::sequence::SequencePriority::Preference;
         seq.append_element(strike_elem);
 
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
 
         if special_debug {
             self.trace_special_strike_state(current_frame, owner, "after_launch");
@@ -3308,14 +3321,7 @@ impl EngineInner {
         };
 
         if let Some(element) = recover {
-            self.launch_element(element);
-            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "concussion owner {} failed to launch recovery synchronously: {error:?}",
-                        owner.index()
-                    )
-                });
+            self.launch_element(sim, assets, element);
         }
 
         let owner_has_ai = self
@@ -3478,7 +3484,11 @@ mod tests {
         let assets = LevelAssets::new();
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         let order_id =
             engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
         engine.element_in_progress(
@@ -3601,7 +3611,11 @@ mod tests {
         let assets = LevelAssets::new();
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -4066,7 +4080,11 @@ mod tests {
         let victim = engine.add_test_entity(entity);
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),

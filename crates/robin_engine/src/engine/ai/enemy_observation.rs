@@ -641,7 +641,7 @@ impl EngineInner {
                 Some(owner),
                 Some(object),
             ));
-            self.launch_sequence(sequence);
+            self.launch_sequence(sim, assets, sequence);
 
             self.duty_set_state(
                 sim,

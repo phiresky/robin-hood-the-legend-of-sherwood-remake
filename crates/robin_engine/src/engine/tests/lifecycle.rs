@@ -183,7 +183,11 @@ fn corpse_exit_initialization_fixture(
             raising_id,
         ));
     }
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -255,11 +259,15 @@ fn install_owner_selected_test_melee_frames(
         engine
             .orders
             .sequence_manager
-            .launch_element(crate::sequence::SequenceElement::new(
+            .insert_element(crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::SwordstrikeThrustA,
                 Some(attacker),
             ));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let order_id = engine.orders.allocate_order_id();
     let mut order = crate::order::Order::new(order_type, 0.0, 0.0, order_id);
     order.antagonist = Some(target);

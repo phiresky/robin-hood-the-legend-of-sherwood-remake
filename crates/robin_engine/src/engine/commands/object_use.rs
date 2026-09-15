@@ -12,6 +12,8 @@ use crate::sequence::{
 impl EngineInner {
     pub(super) fn dispatch_drop_ale(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: &EntityId,
         target_pos: &MapPoint,
         running: &bool,
@@ -30,6 +32,8 @@ impl EngineInner {
             return;
         }
         self.apply_drop_ale_at(
+            sim,
+            assets,
             *actor,
             *target_pos,
             *running,
@@ -40,7 +44,14 @@ impl EngineInner {
         );
     }
 
-    pub(super) fn dispatch_drop_ammo(&mut self, pc_id: &EntityId, action_id: &u32, amount: &u32) {
+    pub(super) fn dispatch_drop_ammo(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        pc_id: &EntityId,
+        action_id: &u32,
+        amount: &u32,
+    ) {
         let mut elem = SequenceElement::new_generic(1, Command::DropAmmo, Some(*pc_id));
         elem.set_property(Field::ActionId, FieldValue::Integer(*action_id));
         elem.set_property(Field::Amount, FieldValue::Integer(*amount));
@@ -48,12 +59,13 @@ impl EngineInner {
         // actor instruction call.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
     }
 
     pub(super) fn dispatch_scroll_read(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: &EntityId,
         target: &EntityId,
         running: &bool,
@@ -96,11 +108,12 @@ impl EngineInner {
             self.stop_recording_macro();
             return;
         }
-        self.apply_scroll_read_with_seek(sim, *actor, *target, *running);
+        self.apply_scroll_read_with_seek(sim, assets, *actor, *target, *running);
     }
 
     pub(super) fn dispatch_self_ability(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor: &EntityId,
         command: &Command,
@@ -113,7 +126,7 @@ impl EngineInner {
             return;
         }
         if *command == Command::EnterCloak {
-            self.try_enter_reusable_cloak(assets, *actor);
+            self.try_enter_reusable_cloak(sim, assets, *actor);
             return;
         }
         let elem = SequenceElement::new(1, *command, Some(*actor));
@@ -124,7 +137,7 @@ impl EngineInner {
         // order before that final Execute tick.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
     }
 
     /// Is `target` an object-class entity whose click routes through
@@ -345,6 +358,8 @@ impl EngineInner {
     ///
     pub(super) fn apply_drop_ale_at(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
@@ -354,6 +369,8 @@ impl EngineInner {
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     ) {
         self.apply_drop_ale_at_with_recovery(
+            sim,
+            assets,
             actor,
             target_pos,
             running,
@@ -369,6 +386,8 @@ impl EngineInner {
     /// posture recovery in its post-seek sequence.
     pub(super) fn apply_drop_ale_at_with_recovery(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: EntityId,
         target_pos: crate::coordinates::MapPoint,
         running: bool,
@@ -474,7 +493,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(move_elem);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 }
 

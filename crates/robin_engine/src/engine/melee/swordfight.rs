@@ -542,11 +542,11 @@ impl EngineInner {
             // The original game launches the explicit command;
             // relationship teardown alone does not own the visible
             // lowering-sword transition.
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::QuitSwordfight,
-                Some(entity_id),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, Command::QuitSwordfight, Some(entity_id)),
+            );
 
             // The quit is announced to the owner immediately, in the same
             // call: an orphaned PC regains its temporarily disabled actions,
@@ -717,6 +717,7 @@ impl EngineInner {
     ///
     pub(crate) fn set_as_new_principal_opponent(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
         new_opponent_id: EntityId,
@@ -767,7 +768,7 @@ impl EngineInner {
                     crate::sequence::Field::JumplineDestination,
                     crate::sequence::FieldValue::Integer(0),
                 );
-                self.launch_element(elem);
+                self.launch_element(sim, assets, elem);
             }
         }
     }
@@ -1143,7 +1144,7 @@ impl EngineInner {
                 },
             );
             seq.append_element(elem);
-            self.launch_sequence(seq);
+            self.launch_sequence(sim, assets, seq);
         } else if !already_opponent {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,

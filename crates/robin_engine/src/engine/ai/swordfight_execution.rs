@@ -452,7 +452,7 @@ impl EngineInner {
             self.expect_entity(old_target, "swordfight target camp")
                 .camp(),
         ) {
-            self.execute_ai_end_swordfight(owner);
+            self.execute_ai_end_swordfight(sim, assets, owner);
 
             self.clear_live_combat_neighbours(owner);
             self.duty_set_state(
@@ -544,7 +544,7 @@ impl EngineInner {
         ai.pc_gone_away_in_this_direction = forecast.direction;
         ai.missed_pc = ai.base.primary_target;
         ai.pc_missed = true;
-        self.execute_ai_end_swordfight(owner);
+        self.execute_ai_end_swordfight(sim, assets, owner);
 
         self.finish_live_lost_enemy_pursuit(sim, assets, owner);
     }
@@ -755,7 +755,7 @@ impl EngineInner {
                     if let Some(target) = candidate.target {
                         let target = self
                             .expect_human_id_for_ai_handle(target.get(), "combat new principal");
-                        self.set_as_new_principal_opponent(assets, owner, target);
+                        self.set_as_new_principal_opponent(sim, assets, owner, target);
                     }
 
                     let frame = self.control.frame_counter;

@@ -110,7 +110,11 @@ fn give_flight(
         1,
         0,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let order_id = engine.push_new_order(
         sequence,
         0,
@@ -381,7 +385,7 @@ fn install_test_melee_order(
     past_action_done: bool,
 ) -> crate::engine::tick::MeleeOwnerSelection {
     let order_type = strike_to_animation(strike);
-    let sequence = engine.orders.sequence_manager.launch_element(
+    let sequence = engine.orders.sequence_manager.insert_element(
         crate::sequence::SequenceElement::new_interaction(
             1,
             strike.to_command(),
@@ -389,6 +393,10 @@ fn install_test_melee_order(
             Some(target),
         ),
     );
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let order_id = engine.orders.allocate_order_id();
     let mut order = crate::order::Order::new(order_type, 0.0, 0.0, order_id);
     order.antagonist = Some(target);
@@ -521,7 +529,8 @@ fn dispatch_crowded_cross_sector_swordfight(
     // off.
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(element);
-    let seq_id = engine.launch_sequence(sequence);
+    let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
 
     engine.dispatch_enter_swordfight(
         &sim,

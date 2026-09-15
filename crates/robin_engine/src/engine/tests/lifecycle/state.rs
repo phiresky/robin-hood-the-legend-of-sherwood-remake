@@ -318,7 +318,8 @@ fn instant_corpse_drop_leaves_the_goal_at_the_carrier_heading() {
         body_entity.element_data_mut().set_direction_instantly(7);
     }
 
-    engine.force_drop_carried_corpse_instant(carrier);
+    let assets = engine.test_runtime_assets();
+    engine.force_drop_carried_corpse_instant(&crate::sim_rng::test_context(), &assets, carrier);
 
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.posture(), Posture::Tied);
@@ -400,7 +401,11 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
         0.0,
         order_id,
     ));
-    let take_sequence = engine.orders.sequence_manager.launch_element(take);
+    let take_sequence = engine.orders.sequence_manager.insert_element(take);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(take_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -548,7 +553,11 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         old_goal.y,
         NonZeroU32::new(779).unwrap(),
     ));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -621,7 +630,11 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -671,7 +684,8 @@ fn active_ability_type_mismatch_is_not_selected_or_allowed_to_suppress_generic_e
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let seq_id = engine.orders.sequence_manager.launch_element(element);
+    let seq_id = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -916,7 +930,8 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
     let order = Order::test_new(OrderType::Eating, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1048,12 +1063,13 @@ fn translate_pay_without_facing_or_speech(
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
+        .insert_element(SequenceElement::new_interaction(
             1,
             Command::Pay,
             Some(pc),
             Some(beggar),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq);
     assert_eq!(
         crate::abilities::begin_pay(
             &mut engine.world.entities,
@@ -1552,7 +1568,8 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
     let mut element = SequenceElement::new(1, Command::EnterBeggar, Some(beggar));
     let order = Order::test_new(OrderType::SimulatingBeggar, 0.0, 0.0);
     element.orders.push_back(order);
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1724,8 +1741,11 @@ fn leave_listen_postpone_fixture() -> LeaveListenFixture {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.players.seats[0].selection.push(owner);
     engine.players.seats[0].selected_action = crate::profiles::Action::Listen;
-    let enter_seq =
-        engine.launch_element(SequenceElement::new(1, Command::EnterListen, Some(owner)));
+    let enter_seq = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::EnterListen, Some(owner)),
+    );
     let display = HostDisplayState::default();
     let dev = DevState::default();
     LeaveListenFixture {
@@ -1804,8 +1824,11 @@ fn launch_leave_listen_postponed_behind_enter(
         .current_order()
         .unwrap()
         .order_id;
-    let leave_seq =
-        engine.launch_element(SequenceElement::new(1, Command::LeaveListen, Some(owner)));
+    let leave_seq = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::LeaveListen, Some(owner)),
+    );
     // Sequence-element launch only registers the element on the manager's
     // to-go queue; the owner instruction boundary that arbitrates it against
     // the non-interruptable EnterListen runs at the next manager hourglass.
@@ -2194,7 +2217,7 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
         crate::element::Command::EnterHelpingClimb,
         Some(pc_id),
     );
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     // First hourglass selects the element and queues the transition
@@ -2395,7 +2418,11 @@ fn evaluate_opponents_maps_legacy_climb_like_original_release() {
     let movement = engine
         .orders
         .sequence_manager
-        .launch_element(legacy_movement);
+        .insert_element(legacy_movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement);
 
     engine.evaluate_opponents(&sim, &assets, owner);
 

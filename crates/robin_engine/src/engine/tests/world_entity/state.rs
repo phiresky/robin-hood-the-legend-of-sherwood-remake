@@ -408,7 +408,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
         AiState::Default,
         Substate::DefaultGotoPostTurn,
     );
-    engine.set_soldier_attentive_mode(owner, false, false);
+    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
 
     // This is the movement-condolation mode that exposed the bug. Face and
     // attentive-mode changes both launch inline, but their ordinary
@@ -457,7 +457,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
 
     // Repeating the already-requested target must observe will_be_attentive
     // and must not append a duplicate deferred Leave.
-    engine.set_soldier_attentive_mode(owner, false, false);
+    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
     assert_eq!(
         engine
             .orders
@@ -590,8 +590,8 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(owner, true, false);
-    engine.set_soldier_attentive_mode(owner, false, false);
+    engine.set_soldier_attentive_mode(&sim, &assets, owner, true, false);
+    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
     engine.duty_face_direction(&sim, &assets, owner, 14);
 
     let owned: Vec<_> = engine
@@ -622,7 +622,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
 }
 
 #[test]
-fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
+fn matured_mytalk_completion_precedes_following_console_command() {
     use crate::ai::{LogLineType, Remark};
 
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test();
@@ -635,15 +635,19 @@ fn matured_mytalk_completion_precedes_deferred_hades_replacement() {
     }]);
     engine.hourglass_phase_deferred_effects_start(&sim, &assets);
     engine.control.frame_counter = 103;
-    engine.orders.pending_hades_kills.push(soldier_id);
-
     engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.dispatch_sim_console_command(
+        &sim,
+        &assets,
+        &mut Some(soldier_id),
+        &crate::console::ConsoleCommand::Hades,
+    );
 
     let log = speech_log(&engine, soldier_id);
     let finished = log
         .iter()
         .position(|(kind, _)| *kind == LogLineType::SpeakFinished)
-        .expect("matured line completes before deferred HADES mutates the actor");
+        .expect("matured line completes before the following command mutates the actor");
     if let Some(death_speech) = log
         .iter()
         .position(|entry| *entry == (LogLineType::Speak, Remark::Dies as u16))
@@ -1574,8 +1578,8 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
 }
 
 #[test]
-fn messenger_selection_followup_retargets_recording_before_frame_returns() {
-    use crate::messenger::{Message, MessageType, PcMessage};
+fn selection_followup_retargets_recording_before_forwarding_returns() {
+    use crate::messenger::{Message, PcMessage};
 
     let mut engine = EngineInner::new();
     let first = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
@@ -1586,33 +1590,23 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     // particular, character selection's recursive macro-recording update must
     // run before message forwarding returns, so the recording target changes
     // in this frame rather than surviving as queued work for the next one.
-    engine
-        .orders
-        .messenger
-        .send(Message::pc(PcMessage::StartRecordingMacro, Some(first)));
-    engine
-        .orders
-        .messenger
-        .send(Message::pc(PcMessage::SelectCharacter, Some(second)));
-
-    let mut display = HostDisplayState::default();
-    let mut dev = DevState::default();
     let assets = engine.test_runtime_assets();
-    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+    let sim = crate::sim_rng::test_context();
+    engine.forward_message(
+        &sim,
+        &assets,
+        Message::pc(PcMessage::StartRecordingMacro, Some(first)),
+    );
+    engine.forward_message(
+        &sim,
+        &assets,
+        Message::pc(PcMessage::SelectCharacter, Some(second)),
+    );
 
     assert_eq!(engine.players.seats[0].selection, vec![second]);
     assert_eq!(
         engine.players.qa_recording_for,
         vec![second],
         "character selection followed by macro-recording update must complete in the originating frame"
-    );
-    assert!(
-        engine
-            .orders
-            .messenger
-            .drain()
-            .into_iter()
-            .all(|msg| msg.msg_type != MessageType::Pc(PcMessage::UpdateRecordingMacro, None)),
-        "the recursive recording update must not remain queued for the next frame"
     );
 }

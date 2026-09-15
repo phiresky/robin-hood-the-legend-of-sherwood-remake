@@ -549,12 +549,6 @@ fn recorded_timer_is_registered_before_thanx_returns() {
         SequenceState::Todo,
         "immediate execution registers Timer before launch, so it stays TODO until expiry terminates it"
     );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .has_pending_immediate_actions()
-    );
 }
 
 #[test]

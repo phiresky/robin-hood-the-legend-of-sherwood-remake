@@ -74,11 +74,12 @@ fn install_selected_melee(
     let seq_id = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .insert_element(SequenceElement::new(
             1,
             Command::SwordstrikeThrustA,
             Some(attacker),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(OrderType::StrikingStraightSword, 0.0, 0.0, order_id);
     order.antagonist = Some(victim);
@@ -107,11 +108,12 @@ fn install_selected_smalltalk(
     let seq_id = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .insert_element(SequenceElement::new(
             1,
             Command::SwordstrikeSmalltalkRight,
             Some(attacker),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(OrderType::StrikingRightSmalltalk, 0.0, 0.0, order_id);
     order.antagonist = Some(victim);
@@ -157,7 +159,11 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
     let interrupt = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(0, Command::PlayAnim, Some(attacker)));
+        .insert_element(SequenceElement::new(0, Command::PlayAnim, Some(attacker)));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(interrupt);
     let order_id = engine.orders.allocate_order_id();
     engine.orders.sequence_manager.push_order_on(
         interrupt,
@@ -454,11 +460,15 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
     let sequence = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .insert_element(SequenceElement::new(
             1,
             Command::SwordstrikeThrustD,
             Some(attacker),
         ));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(OrderType::StrikingLeftSword, 0.0, 0.0, order_id);
     order.antagonist = Some(higher_slot_earlier);
@@ -906,7 +916,11 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
             let replacement = engine
                 .orders
                 .sequence_manager
-                .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+                .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(replacement);
             let order_id = engine.orders.allocate_order_id();
             engine.orders.sequence_manager.push_order_on(
                 replacement,

@@ -5,6 +5,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -38,7 +39,7 @@ impl EngineInner {
             self.stop_actor_orders(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 crate::sequence::SequencePriority::Normal,
             );
@@ -50,7 +51,7 @@ impl EngineInner {
                 let entity = match self.get_entity(owner) {
                     Some(e) => e,
                     None => {
-                        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                         return;
                     }
                 };
@@ -321,11 +322,11 @@ impl EngineInner {
                 }
             }
         }
-        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         // `actor_wait` parks the actor in a low-priority
         // idle element after the teleport so the AI
         // re-enters its default loop instead of resuming
         // whatever command was running before.
-        self.actor_wait(owner);
+        self.actor_wait(sim, assets, owner);
     }
 }

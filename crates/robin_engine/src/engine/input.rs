@@ -2919,6 +2919,7 @@ impl EngineInner {
     /// state always pairs with the aim animation.
     pub(crate) fn perform_orientation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         mouse_map: crate::coordinates::MapPoint,
     ) {
@@ -2981,7 +2982,7 @@ impl EngineInner {
                         self.sight_obstacles(assets),
                     ),
                 };
-                self.turn_selected_pcs_in_bow_aim(assets, target_3d);
+                self.turn_selected_pcs_in_bow_aim(sim, assets, target_3d);
             }
             Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
                 let focus = match selected_action {
@@ -3036,16 +3037,18 @@ impl EngineInner {
     ///   already rejects it.
     fn turn_selected_pcs_in_bow_aim(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         target_3d: crate::coordinates::WorldPoint3D,
     ) {
         for pc_id in self.players.seats[0].selection.clone() {
-            self.turn_pc_in_bow_aim(assets, pc_id, target_3d, false);
+            self.turn_pc_in_bow_aim(sim, assets, pc_id, target_3d, false);
         }
     }
 
     fn turn_pc_in_bow_aim(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         target_3d: crate::coordinates::WorldPoint3D,
@@ -3120,7 +3123,7 @@ impl EngineInner {
         );
         if let Some(cmd) = command {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(pc_id));
-            self.launch_element(elem);
+            self.launch_element(sim, assets, elem);
         }
     }
 
@@ -3270,6 +3273,7 @@ impl EngineInner {
 
     pub(crate) fn perform_resolved_orientation(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         action: crate::profiles::Action,
@@ -3282,7 +3286,7 @@ impl EngineInner {
             // Original records this command only after the live orientation
             // gates succeed. Apply the recorded post-gate operation even if
             // Rust is still on the pre-nested-refresh animation this frame.
-            Action::Bow => self.turn_pc_in_bow_aim(assets, pc_id, target, true),
+            Action::Bow => self.turn_pc_in_bow_aim(sim, assets, pc_id, target, true),
             Action::Apple | Action::Stone | Action::Net | Action::WaspNest | Action::Purse => {
                 self.turn_pc_throw(
                     pc_id,

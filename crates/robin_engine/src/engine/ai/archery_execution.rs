@@ -361,17 +361,21 @@ impl EngineInner {
                         .entities
                         .expect_ai_controller_mut(owner, format_args!("beggar inspection timer"))
                         .launch_timer(time, frame);
-                    self.launch_sequence(sequence);
+                    self.launch_sequence(sim, assets, sequence);
                 }
             }
             (Substate::SeekingSeekpointIdentifyingBeggar1, StimulusType::EventTimer) => {
                 let beggar = self.live_beggar_to_examine(owner);
                 if matches!(beggar, EntityId::Civilian(_) | EntityId::Soldier(_)) {
-                    self.launch_element(crate::sequence::SequenceElement::new(
-                        1,
-                        crate::element::Command::BeggarShowFace,
-                        Some(beggar),
-                    ));
+                    self.launch_element(
+                        sim,
+                        assets,
+                        crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::BeggarShowFace,
+                            Some(beggar),
+                        ),
+                    );
                     let beggar = self.live_beggar_to_examine(owner);
                     self.execute_ai_speech(
                         sim,
@@ -403,11 +407,15 @@ impl EngineInner {
                     ai.list_them.clear();
                     ai.list_them.push(beggar.index());
                     if ai.is_archer() {
-                        self.launch_element(crate::sequence::SequenceElement::new(
-                            1,
-                            crate::element::Command::LeaveBeggar,
-                            Some(beggar),
-                        ));
+                        self.launch_element(
+                            sim,
+                            assets,
+                            crate::sequence::SequenceElement::new(
+                                1,
+                                crate::element::Command::LeaveBeggar,
+                                Some(beggar),
+                            ),
+                        );
                         self.duty_set_state(
                             sim,
                             assets,
@@ -426,7 +434,7 @@ impl EngineInner {
                             "false beggar shot target",
                         );
                         self.stop_ai_owner(sim, assets, owner);
-                        self.shoot_bow_at(assets, owner, target);
+                        self.shoot_bow_at(sim, assets, owner, target);
                     } else {
                         self.execute_ai_begin_swordfight(sim, assets, owner);
                     }
@@ -511,7 +519,7 @@ impl EngineInner {
                     let target =
                         self.expect_human_id_for_ai_handle(target.get(), "aimed shot target");
                     self.stop_ai_owner(sim, assets, owner);
-                    self.shoot_bow_at(assets, owner, target);
+                    self.shoot_bow_at(sim, assets, owner, target);
                 } else {
                     self.world
                         .entities

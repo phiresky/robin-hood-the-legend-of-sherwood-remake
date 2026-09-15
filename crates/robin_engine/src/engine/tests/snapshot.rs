@@ -66,7 +66,6 @@ fn engine_snapshot_fixture() -> EngineInner {
     engine.players.user_locked = true;
     engine.players.qa_recording_slot = 2;
     engine.control.fast_forward = true;
-    engine.orders.pending_reinforcements.push(None);
     engine.world.static_sight_obstacle_active = vec![true, false, true];
     engine.mission_domain.state.runtime_features = MissionRuntimeFeatures {
         active_elapsed_ticks: 87,
@@ -267,7 +266,6 @@ fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
         .background_transform
         .zoom_to_up = true;
     live.feedback.cutscene_camera.zoom_init_done = true;
-    live.send_simple_message(crate::messenger::SimpleMessage::LockAlt);
 
     let mut replay = native_round_trip(&live);
 
@@ -293,11 +291,6 @@ fn engine_camera_zoom_gate_ignores_host_display_during_rollback_tick() {
         &mut replay_dev,
     );
 
-    assert!(
-        !live.is_lock_alt(),
-        "active Engine zoom must gate messenger work"
-    );
-    assert!(!replay.is_lock_alt());
     assert_eq!(
         crate::replay::state_hash(&live),
         crate::replay::state_hash(&replay)

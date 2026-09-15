@@ -121,11 +121,13 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
         crate::coordinates::SpriteLocalPoint::ZERO,
         crate::coordinates::SpriteAnchor::ZERO,
     );
-    // Bypass EngineInner's synchronous launch wrapper to model an element
-    // already waiting in the sequence manager's FIFO at frame start.
+    // Ordinary instruction enters the manager FIFO and starts at its frame phase.
     let mut element = SequenceElement::new(1, Command::SitDown, Some(soldier_id));
     element.posture_after_transition = Posture::Upright;
-    let sequence_id = engine.orders.sequence_manager.launch_element(element);
+    let sequence_id = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+    };
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -280,7 +282,10 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
     let mut element = SequenceElement::new(1, Command::WhistleCmd, Some(carrier));
     element.orders.push_back(transition_order);
     element.orders.push_back(whistle_order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -395,7 +400,10 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
         0.0,
         order_id,
     ));
-    let take_sequence = engine.orders.sequence_manager.launch_element(take);
+    let take_sequence = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, take)
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -518,7 +526,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     selected
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -553,6 +561,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
 #[test]
 fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
+    let assets = LevelAssets::default();
     use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -565,7 +574,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     let order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
     let order_id = order.order_id;
     selected.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, selected);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -653,7 +662,8 @@ fn face_to_waits_for_manager_after_live_halt() {
         80.0,
         NonZeroU32::new(777).unwrap(),
     ));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -739,10 +749,14 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
             crate::coordinates::SpriteLocalPoint::ZERO,
             crate::coordinates::SpriteAnchor::ZERO,
         );
-        let sequence_id = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::EatCmd, Some(actor_id)));
+        let sequence_id = {
+            let launch_assets = engine.test_runtime_assets();
+            engine.launch_element(
+                &crate::sim_rng::test_context(),
+                &launch_assets,
+                SequenceElement::new(1, Command::EatCmd, Some(actor_id)),
+            )
+        };
         assert_eq!(
             crate::abilities::begin_eat(
                 &mut engine.world.entities,
@@ -819,10 +833,14 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         crate::coordinates::SpriteAnchor::ZERO,
     );
 
-    let sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::EatCmd, Some(owner)));
+    let sequence = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &launch_assets,
+            SequenceElement::new(1, Command::EatCmd, Some(owner)),
+        )
+    };
     assert_eq!(
         crate::abilities::begin_eat(
             &mut engine.world.entities,
@@ -935,14 +953,11 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
         .unwrap()
         .action_state = ActionState::Waiting;
 
-    let first = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_generic(
-            1,
-            Command::RaiseShieldInstantly,
-            Some(owner),
-        ));
+    let first = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
+    );
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let first_element = engine
@@ -967,14 +982,11 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
     // A second normal-priority instant raise is a real current-owner control:
     // from HOLDING_SHIELD Original generates LOWERING_SHIELD, interrupts the
     // first normal element, and installs the replacement's WAITING_SHIELD.
-    let redundant = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_generic(
-            1,
-            Command::RaiseShieldInstantly,
-            Some(owner),
-        ));
+    let redundant = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
+    );
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
@@ -1069,7 +1081,10 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         0.0,
         0.0,
     ));
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1132,94 +1147,6 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
             .unwrap()
             .receive_purse_phase,
         ReceivePursePhase::Transition
-    );
-}
-
-#[test]
-fn selected_beggar_entry_stop_leaves_transient_nonanimation_before_next_idle() {
-    use crate::element::{ActionState, Posture};
-    use crate::order::OrderType;
-    use crate::profiles::Action;
-    use crate::sequence::{SequenceId, SequenceState};
-    use crate::sprite::MotionState;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let pc = engine.add_test_entity(make_test_pc(Posture::SimulatingBeggar));
-    engine.players.seats[0].selection.push(pc);
-    engine.players.seats[0].selected_action = Action::Beggar;
-    {
-        let entity = engine.get_entity_mut(pc).unwrap();
-        entity.pc_data_mut().unwrap().current_action = Action::Beggar;
-        let actor = entity.actor_data_mut().unwrap();
-        actor.action_state = ActionState::Waiting;
-        actor.installed_order = None;
-        actor.continuation.motion_state = MotionState::Terminated;
-    }
-    let mut assets = assets_with_test_pc_profile();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-
-    // EnterBeggar DONE has already retired its transition before deferred
-    // Execute side effects are drained in Rust. Original still has that
-    // transition selected here: Wait is postponed behind it and the following
-    // selected-PC SelectAction(Beggar) Stop discards the Wait.
-    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, true));
-
-    assert_eq!(
-        engine.actor_order_type(pc),
-        Some(OrderType::NonanimationEnd)
-    );
-    assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
-        MotionState::Terminated
-    );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .current_element_for_actor(pc)
-            .is_none(),
-        "the callback Wait must not replace the finished entry transition in the same frame"
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(SequenceId(1), 0)
-            .expect("the stopped callback Wait retains its allocated identity")
-            .state,
-        SequenceState::Interrupted
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .has_live_element_for_actor_matching(pc, |command| command
-                == crate::element::Command::Wait),
-        "the interrupted callback Wait must not survive as live actor work"
-    );
-
-    // The actor update sees the null order on the following frame and creates
-    // the regular posture-derived Wait, which translates to beggar idle.
-    engine.ensure_wait_element(pc);
-    engine
-        .drain_script_registration_inline_actions(&sim, &assets, &mut Vec::new())
-        .unwrap();
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(pc)
-            .is_some_and(|(sequence, _, order)| {
-                sequence == SequenceId(2) && order.order_type == OrderType::SimulatingBeggar
-            }),
-        "the following actor frame must install the normal beggar idle"
     );
 }
 
@@ -1361,15 +1288,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .npc_data_mut()
         .unwrap()
         .eye_status = crate::element::EyeStatus::LookToTheLeft;
-    let seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
-            1,
-            Command::StrangleCmd,
-            Some(attacker),
-            Some(victim),
-        ));
+    let seq = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
+    );
     assert_eq!(
         crate::abilities::begin_strangle(
             &mut engine.world.entities,
@@ -1556,6 +1479,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 
 #[test]
 fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass() {
+    let assets = LevelAssets::default();
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -1572,7 +1496,10 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
     element
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1650,6 +1577,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
 
 #[test]
 fn unbound_ability_catalog_order_still_uses_generic_execute() {
+    let assets = LevelAssets::default();
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -1683,7 +1611,7 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
     element
         .orders
         .push_back(Order::test_new(OrderType::ThrowingApple, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, element);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1754,7 +1682,10 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         );
     }
     let element = SequenceElement::new(1, Command::EatCmd, Some(owner));
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = {
+        let launch_assets = engine.test_runtime_assets();
+        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
+    };
     assert_eq!(
         crate::abilities::begin_eat(
             &mut engine.world.entities,
@@ -2014,7 +1945,7 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
         crate::element::Command::EnterHelpingClimb,
         Some(pc_id),
     );
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
@@ -2134,14 +2065,11 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         .unwrap()
         .opponents = vec![owner].into();
 
-    let sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(
-            1,
-            Command::QuitSwordfight,
-            Some(owner),
-        ));
+    let sequence = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
+    );
     engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, sequence, 0);
     // The InstructOwner dispatcher publishes the translated current order
     // through the actor's installed-order mirror right after the

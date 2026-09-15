@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod suite {
-    use super::super::{
-        both_sword_ranges_contain_distance, perform_seek_exposes_motion_termination,
-        should_snap_arrival,
-    };
+    use super::super::{both_sword_ranges_contain_distance, should_snap_arrival};
     use crate::coordinates::MapPoint;
     use crate::element::{EntityId, PcId};
 
@@ -14,13 +11,6 @@ mod suite {
         assert!(!should_snap_arrival(true, true, 0.0, false));
         assert!(!should_snap_arrival(true, false, 1.0, false));
         assert!(!should_snap_arrival(true, false, 0.0, true));
-    }
-
-    #[test]
-    fn entity_seek_wait_hides_wrapped_motion_termination() {
-        assert!(!perform_seek_exposes_motion_termination(false, Some(true)));
-        assert!(perform_seek_exposes_motion_termination(true, Some(true)));
-        assert!(perform_seek_exposes_motion_termination(false, None));
     }
 
     #[test]

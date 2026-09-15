@@ -48,7 +48,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
 }
 
 #[test]
-fn detached_parent_tail_is_restored_when_child_dispatch_fails() {
+fn child_dispatch_failure_leaves_parent_successor_unexecuted() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     let failure_id = engine.add_test_entity(scripted_soldier("FailureReceiver"));
@@ -96,33 +96,19 @@ fn detached_parent_tail_is_restored_when_child_dispatch_fails() {
     }
     assert!(parent_send.is_some(), "successful ancestor is Terminated");
     assert!(child_send.is_some(), "only the actual child is Impossible");
-    let parent_unblip = parent_unblip.expect("detached parent Unblip tail");
+    assert!(parent_unblip.is_some(), "parent Unblip remains unexecuted");
     assert!(
         engine
             .get_entity(failure_id)
             .unwrap()
             .element_data()
             .blipped,
-        "parent tail was restored but not overtaken after the child error"
-    );
-    assert!(
-        matches!(
-            engine
-                .orders
-                .sequence_manager
-                .pop_pending_immediate_action(),
-            Some(SequenceAction::ExecuteImmediateOwner {
-                sequence_id,
-                element_index,
-                ..
-            }) if (sequence_id, element_index) == parent_unblip
-        ),
-        "the real native path restores the detached parent tail on error"
+        "parent successor must not execute after the child error"
     );
 }
 
 #[test]
-fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
+fn open_scroll_terminates_before_nested_child_failure() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
 
@@ -151,10 +137,15 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(open_scroll);
     sequence.append_element(SequenceElement::new(1, Command::Unblip, Some(reader_id)));
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
 
     let error = engine
-        .drain_script_synchronous_actions(&crate::sim_rng::test_context(), &assets, &mut Vec::new())
+        .start_sequence_inline(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+        )
         .expect_err("nested IsTaken SendMessage must fail on the missing reader VM");
     assert!(
         error.detail.contains("required VM is not bound"),
@@ -183,26 +174,12 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
         "only the nested SendMessage child is Impossible"
     );
     assert!(
-        matches!(
-            engine
-                .orders
-                .sequence_manager
-                .pop_pending_immediate_action(),
-            Some(SequenceAction::ExecuteImmediateOwner {
-                sequence_id: pending_sequence,
-                element_index: 1,
-                ..
-            }) if pending_sequence == sequence_id
-        ),
-        "the parent Unblip tail is restored after the child error"
-    );
-    assert!(
         engine
             .get_entity(reader_id)
             .expect("reader")
             .element_data()
             .blipped,
-        "the restored parent tail was not executed after the error"
+        "the parent successor was not executed after the error"
     );
 }
 
@@ -234,10 +211,15 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
     let mut sequence = crate::sequence::Sequence::new();
     sequence.append_element(open_scroll);
     sequence.append_element(SequenceElement::new(2, Command::Unblip, Some(reader_id)));
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
 
     let error = engine
-        .drain_script_synchronous_actions(&crate::sim_rng::test_context(), &assets, &mut Vec::new())
+        .start_sequence_inline(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut Vec::new(),
+            sequence_id,
+        )
         .expect_err("the malformed IsTaken VM must fail locally");
     assert!(
         error.detail.contains("stopped abnormally: RanOff"),
@@ -255,13 +237,6 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
         sequence.elements[1].state,
         SequenceState::Impossible,
         "sequence failure cancels the unstarted successor without dispatching it"
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .has_pending_immediate_actions(),
-        "a locally failed OpenScroll must not register its level-2 successor"
     );
     assert!(
         engine

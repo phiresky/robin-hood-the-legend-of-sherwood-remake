@@ -1327,15 +1327,6 @@ impl EngineInner {
             return fx;
         }
 
-        // Director work runs after the preceding simulation tick and can
-        // complete a CameraGoto/ZoomLevel sequence element there.  Original
-        // termination followed by readiness and launch executes immediate
-        // successors before the next actor update. Close that between-
-        // frame callback stack now: this preserves the post-update state
-        // boundary while ensuring LockUser/SendMessage/Timer successors run
-        // before any actor receives the next movement tick.
-        self.drain_pending_immediate_actions_sync(sim, assets);
-
         let code = self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed);
         self.refresh_achievement_progress(assets);
         self.advance_auto_quick_action_queues(sim, display, assets);
@@ -1593,7 +1584,6 @@ impl EngineInner {
         self.apply_pending_presentation_refresh(sim);
 
         self.run_post_initialize_if_needed(sim, assets);
-        self.drain_pending_immediate_actions_sync(sim, assets);
 
         let mut fx = self.feedback.drain_side_effects();
         fx.code = GameCode::LevelInProgress;
@@ -1677,15 +1667,6 @@ impl EngineInner {
         time_hourglass_phase(HourglassPhase::Sequences, || {
             self.hourglass_phase_sequences_authoritative(sim, assets)
         });
-
-        // Sequence-manager processing runs before the anonymous-timer
-        // scan. If a deferred command terminates and advances its sequence
-        // to an immediate Timer, the original game executes it re-entrantly, adds
-        // it to the timer-element list, and decrements it later in this same
-        // tick. Drain that immediate continuation here so Rust preserves the
-        // same launch-frame decrement. Waiting until DeferredEffectsEnd's
-        // final drain makes every such timer one frame late.
-        self.drain_pending_immediate_actions_sync(sim, assets);
 
         time_hourglass_phase(HourglassPhase::DeferredEffectsEnd, || {
             self.hourglass_phase_deferred_effects_end(sim, assets, was_swordfighting)
@@ -2322,7 +2303,6 @@ impl EngineInner {
                         sim,
                         assets,
                         entity_id,
-                        slot,
                         &mut before_actor,
                         &mut execute_owner_arm,
                         &mut after_slot,
@@ -2372,7 +2352,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        slot: usize,
         before_actor: &mut impl FnMut(&mut Self, EntityId),
         execute_owner_arm: &mut impl FnMut(
             &mut Self,
@@ -2391,16 +2370,7 @@ impl EngineInner {
             sim,
             assets,
             entity_id,
-            slot,
         };
-        // Detach work that predates this actor slot. Lazy Wait
-        // initialization and completion callbacks below may drain
-        // only work they synchronously create; they must not steal
-        // a global/later-owner continuation.
-        let preexisting_sequence_work = self
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions();
 
         // The actor update consumes one queued base
         // position update before it inspects the current
@@ -2413,17 +2383,6 @@ impl EngineInner {
 
         if self.action_change_frozen_without_order(ctx) {
             after_slot(self, entity_id, crate::order::OrderType::NonanimationEnd);
-            let leaked_slot_work = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            assert!(
-                leaked_slot_work.is_empty(),
-                "frozen actor {entity_id:?} leaked synchronous sequence work after its specialized update tail: {leaked_slot_work:?}"
-            );
-            self.orders
-                .sequence_manager
-                .restore_pending_synchronous_actions(preexisting_sequence_work);
             return;
         }
 
@@ -2446,7 +2405,7 @@ impl EngineInner {
         self.action_change_latch_completion_motion(ctx, entry, motion);
         let installed_tail_order_type = self.action_change_dispatch(ctx);
         after_slot(self, entity_id, installed_tail_order_type);
-        self.action_change_slot_tail(ctx, entry, preexisting_sequence_work);
+        self.action_change_slot_tail(ctx, entry);
     }
 
     /// Fuse the supported Actor → Human → PC/NPC update phases into one
@@ -2967,14 +2926,7 @@ impl EngineInner {
         if live_command == Some(crate::element::Command::WaitFreeLift)
             && let Some((seq_id, elem_idx)) = live_element
         {
-            let authorized = self.authorize_and_reserve_lift_wait(
-                sim,
-                assets,
-                &mut Vec::new(),
-                owner,
-                seq_id,
-                elem_idx,
-            );
+            let authorized = self.authorize_and_reserve_lift_wait(owner, seq_id, elem_idx);
             if authorized {
                 *motion = crate::sprite::MotionState::Terminated;
             }
@@ -3444,7 +3396,7 @@ impl EngineInner {
         }
         // The original game makes the carried actor wait, not the helper, before
         // releasing the final carrier/carried references.
-        self.actor_wait(dismount.carried_id);
+        self.actor_wait(sim, assets, dismount.carried_id);
     }
 }
 

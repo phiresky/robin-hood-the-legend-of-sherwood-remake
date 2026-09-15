@@ -3588,7 +3588,8 @@ mod tests {
         command: crate::element::Command,
         owner: EntityId,
     ) -> SequenceId {
-        let seq_id = manager.launch_element(SequenceElement::new(1, command, Some(owner)));
+        let seq_id = manager.insert_element(SequenceElement::new(1, command, Some(owner)));
+        manager.start_sequence_level(seq_id);
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();
@@ -4059,12 +4060,13 @@ mod tests {
             .set_direction_instantly(6);
 
         let mut manager = SequenceManager::new();
-        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+        let seq_id = manager.insert_element(SequenceElement::new_interaction(
             1,
             Command::Pay,
             Some(pc),
             Some(beggar),
         ));
+        manager.start_sequence_level(seq_id);
         let mut next_id = 1;
         assert_eq!(
             begin_pay(
@@ -4179,12 +4181,13 @@ mod tests {
         let owner = entities.id_at_legacy_slot(0).unwrap();
         let target = entities.id_at_legacy_slot(1).unwrap();
         let mut manager = SequenceManager::new();
-        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+        let seq_id = manager.insert_element(SequenceElement::new_interaction(
             1,
             Command::Untie,
             Some(owner),
             Some(target),
         ));
+        manager.start_sequence_level(seq_id);
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();
@@ -4276,12 +4279,13 @@ mod tests {
         let owner = entities.id_at_legacy_slot(0).unwrap();
         let target = entities.id_at_legacy_slot(1).unwrap();
         let mut manager = SequenceManager::new();
-        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+        let seq_id = manager.insert_element(SequenceElement::new_interaction(
             1,
             Command::Untie,
             Some(owner),
             Some(target),
         ));
+        manager.start_sequence_level(seq_id);
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();
@@ -5295,12 +5299,13 @@ mod tests {
         let helper_id = entities.id_at_legacy_slot(1).unwrap();
 
         let mut manager = SequenceManager::new();
-        let seq_id = manager.launch_element(SequenceElement::new_interaction(
+        let seq_id = manager.insert_element(SequenceElement::new_interaction(
             2,
             Command::ClimbUpOnShoulders,
             Some(climber_id),
             Some(helper_id),
         ));
+        manager.start_sequence_level(seq_id);
         manager.get_element_mut(seq_id, 0).unwrap().state =
             crate::sequence::SequenceState::InProgress;
         manager.rebuild_indices();

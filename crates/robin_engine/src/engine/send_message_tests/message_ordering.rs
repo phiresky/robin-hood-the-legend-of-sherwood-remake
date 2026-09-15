@@ -38,7 +38,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         Command::UnlockAi,
         Some(receiver),
     ));
-    let old_id = engine.launch_sequence(old_sequence);
+    let old_id = engine.launch_sequence(&sim, &assets, old_sequence);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
@@ -62,8 +62,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         FieldValue::Animation(OrderType::RaisingShield),
     );
     replacement.append_element(new_animation);
-    let replacement_id = engine.launch_sequence(replacement);
-    engine.drain_pending_immediate_actions_sync(&sim, &assets);
+    let replacement_id = engine.launch_sequence(&sim, &assets, replacement);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let manager = &engine.orders.sequence_manager;
@@ -117,15 +116,11 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let (mut engine, receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
 
-    let active_id = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_movement(
-            1,
-            Command::Move,
-            Some(receiver),
-            OrderType::RunningUpright,
-        ));
+    let active_id = engine.launch_element(
+        sim,
+        &assets,
+        SequenceElement::new_movement(1, Command::Move, Some(receiver), OrderType::RunningUpright),
+    );
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -268,10 +263,11 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
         Command::Unblip,
         Some(receiver),
     ));
-    engine.orders.sequence_manager.launch_sequence(sequence);
-
-    engine
-        .drain_pending_immediate_actions_sync(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.launch_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        sequence,
+    );
 
     assert_eq!(
         engine.scripts.globals.get(904),
@@ -328,7 +324,11 @@ fn target_activation_callback_precedes_later_engine_sibling() {
     let mut unfreeze = SequenceElement::new_generic(1, Command::FreezeAll, None);
     unfreeze.set_property(Field::Freeze, FieldValue::Bool(false));
     sequence.append_element(unfreeze);
-    engine.orders.sequence_manager.launch_sequence(sequence);
+    engine.launch_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        sequence,
+    );
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(
@@ -369,7 +369,11 @@ fn send_message_callback_precedes_later_move_translation() {
     let mut sequence = Sequence::new();
     sequence.append_element(send_message_element(1, Some(mover), 79));
     sequence.append_element(movement);
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.launch_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        sequence,
+    );
 
     let assets = engine.test_runtime_assets();
     engine.hourglass_phase_sequences(
@@ -397,7 +401,7 @@ fn send_message_callback_precedes_later_move_translation() {
 }
 
 #[test]
-fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
+fn ownerless_message_runs_wait_successor_before_next_launch() {
     let (mut engine, receiver, _) = engine_with_receiver();
     engine
         .get_entity_mut(receiver)
@@ -410,10 +414,22 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
     let mut wait = SequenceElement::new(2, Command::Wait, Some(receiver));
     wait.priority = crate::sequence::SequencePriority::Wait;
     message_then_wait.append_element(wait);
-    let sequence_id = engine
-        .orders
-        .sequence_manager
-        .launch_sequence(message_then_wait);
+    let sequence_id = engine.launch_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        message_then_wait,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .unwrap()
+            .state,
+        SequenceState::InProgress,
+        "WAIT successor completes inside the first launch",
+    );
+    assert!(engine.get_entity(receiver).unwrap().element_data().blipped);
 
     let mut older_sibling = Sequence::new();
     older_sibling.append_element(SequenceElement::new_generic(
@@ -421,13 +437,11 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
         Command::Unblip,
         Some(receiver),
     ));
-    engine
-        .orders
-        .sequence_manager
-        .launch_sequence(older_sibling);
-
-    engine
-        .drain_pending_immediate_actions_sync(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.launch_sequence(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        older_sibling,
+    );
 
     assert_eq!(
         engine
@@ -437,15 +451,7 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
             .expect("WAIT successor")
             .state,
         SequenceState::InProgress,
-        "Ready() must run the WAIT successor before returning to the detached sibling"
-    );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .next_pending_immediate_action()
-            .is_none(),
-        "the complete synchronous stream must be drained"
+        "Ready must run the WAIT successor before returning"
     );
     assert!(
         !engine
@@ -453,7 +459,7 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
             .expect("receiver")
             .element_data()
             .blipped,
-        "the older immediate sibling runs after the WAIT successor"
+        "the next immediate launch runs after the WAIT successor"
     );
 }
 
@@ -484,17 +490,10 @@ fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
         Some(&1),
         "the parent VM must observe the next-level Unblip successor"
     );
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .next_pending_immediate_action()
-            .is_none()
-    );
 }
 
 #[test]
-fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
+fn missing_send_message_receiver_reports_failure_after_successor_cleanup() {
     let (mut engine, _, _) = engine_with_receiver();
     let receiver = engine.add_test_entity(scripted_soldier(""));
     engine
@@ -510,10 +509,26 @@ fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
         Command::Unblip,
         Some(receiver),
     ));
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
-
-    engine
-        .drain_pending_immediate_actions_sync(&crate::sim_rng::test_context(), &LevelAssets::new());
+    let error = engine
+        .launch_sequence_inline(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            &mut Vec::new(),
+            sequence,
+        )
+        .expect_err("an unbound required receiver must report its error");
+    assert!(format!("{error:?}").contains("required VM is not bound"));
+    let sequence_id = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .find(|sequence| {
+            sequence.elements.first().is_some_and(|element| {
+                element.owner == Some(receiver) && element.command == Command::SendMessage
+            })
+        })
+        .expect("failed message retains its sequence for cleanup inspection")
+        .id;
 
     assert_eq!(
         engine
@@ -522,7 +537,8 @@ fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
             .get_element(sequence_id, 0)
             .expect("message element")
             .state,
-        SequenceState::Terminated
+        SequenceState::Impossible,
+        "the registration boundary marks the failed required receiver explicitly"
     );
     let successor_state = engine
         .orders
@@ -530,6 +546,11 @@ fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
         .get_element(sequence_id, 1)
         .expect("successor element")
         .state;
+    assert_eq!(
+        successor_state,
+        SequenceState::Impossible,
+        "the reported failure cascades through the already completed successor"
+    );
     assert!(
         !engine
             .get_entity(receiver)

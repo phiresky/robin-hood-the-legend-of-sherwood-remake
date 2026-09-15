@@ -80,7 +80,9 @@ impl Engine {
         &mut self,
         sequence: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        self.inner.orders.sequence_manager.launch_sequence(sequence)
+        let id = self.inner.orders.sequence_manager.insert_sequence(sequence);
+        self.inner.orders.sequence_manager.start_sequence_level(id);
+        id
     }
 
     #[cfg(feature = "test-helpers")]

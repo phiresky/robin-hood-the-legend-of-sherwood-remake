@@ -1299,7 +1299,7 @@ impl AlertExecution<'_> {
                 Command::GatherSoldiers,
                 Some(self.owner),
             ));
-            self.engine.launch_sequence(sequence);
+            self.engine.launch_sequence(self.sim, self.assets, sequence);
 
             self.engine.execute_ai_speech(
                 self.sim,
@@ -1513,7 +1513,7 @@ impl AlertExecution<'_> {
             FieldValue::Integer(point_direction as u32),
         );
         sequence.append_element(point);
-        self.engine.launch_sequence(sequence);
+        self.engine.launch_sequence(self.sim, self.assets, sequence);
 
         let frame = self.engine.control.frame_counter;
         self.enemy_mut()

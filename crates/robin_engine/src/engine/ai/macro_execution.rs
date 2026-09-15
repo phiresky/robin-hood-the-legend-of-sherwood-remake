@@ -617,8 +617,12 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_LOOK_LEFT is illegal for civilians", self.me);
                 }
-                self.engine
-                    .execute_ai_look_sidewards(self.owner, LookDirection::Left);
+                self.engine.execute_ai_look_sidewards(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    LookDirection::Left,
+                );
 
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.macro_started_in_this_frame = false;
@@ -629,8 +633,12 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_LOOK_RIGHT is illegal for civilians", self.me);
                 }
-                self.engine
-                    .execute_ai_look_sidewards(self.owner, LookDirection::Right);
+                self.engine.execute_ai_look_sidewards(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    LookDirection::Right,
+                );
 
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.macro_started_in_this_frame = false;
@@ -645,8 +653,12 @@ impl MacroExecution<'_> {
                 if !ctx.self_is_soldier {
                     tracing::warn!("NPC {}: CMD_BEND is illegal for civilians", self.me);
                 }
-                self.engine
-                    .execute_ai_look_sidewards(self.owner, LookDirection::Down);
+                self.engine.execute_ai_look_sidewards(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    LookDirection::Down,
+                );
                 self.launch_macro_timer(frames as u32, ctx.frame);
                 self.debug_macro_lifecycle(ctx, "timer_started", "bend");
                 self.macro_started_in_this_frame = false;

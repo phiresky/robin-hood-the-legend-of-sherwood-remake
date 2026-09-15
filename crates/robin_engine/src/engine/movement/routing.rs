@@ -491,6 +491,7 @@ impl EngineInner {
                 let route_assert_sector = route_identity_differs.then_some(source_sector);
                 return self.launch_gate_movement_sequence(
                     sim,
+                    assets,
                     crate::engine::movement::GateRouteRequest {
                         entity_id: entity_id,
                         source_sector: route_assert_sector,
@@ -584,7 +585,7 @@ impl EngineInner {
                     .map_or(1, |element| element.command_level.saturating_add(1));
                 sequence.append_element(tail);
             }
-            let sequence_id = self.launch_sequence(sequence);
+            let sequence_id = self.launch_sequence(sim, assets, sequence);
 
             tracing::trace!(
                 entity = ?entity_id,

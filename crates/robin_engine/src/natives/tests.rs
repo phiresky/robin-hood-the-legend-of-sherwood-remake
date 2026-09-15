@@ -442,7 +442,7 @@ impl HostFunctions for NativeTestHost {
 }
 
 #[test]
-fn nested_sequence_immediates_finish_before_parent_continuation() {
+fn finishing_recording_yields_the_complete_sequence() {
     let mut host = NativeTestHost::new();
     let mut soldier = native_test_soldier();
     soldier.element_data_mut().blipped = true;
@@ -479,20 +479,68 @@ fn nested_sequence_immediates_finish_before_parent_continuation() {
         &mut NativeStack::default(),
     );
     let NativeCallOutcome::Yield(crate::interp::NativeYield {
-        operation:
-            crate::interp::NativeOperation::SequenceAction(
-                crate::interp::SynchronousSequenceOperation { continuation, .. },
-            ),
+        operation: crate::interp::NativeOperation::LaunchSequence(sequence),
         ..
     }) = outer
     else {
-        panic!("outer Thanx must yield its recorded SendMessage action");
+        panic!("Thanx must yield the recorded sequence for inline execution");
     };
     assert!(host.entity_at_legacy_slot(0).element_data().blipped);
-    assert_eq!(continuation.len(), 1, "parent Unblip tail must be detached");
-    assert!(
-        !host.sequence_manager.has_pending_immediate_actions(),
-        "detached parent siblings must be invisible to a nested callback"
+    let sequence = host
+        .sequence_manager
+        .get_sequence(sequence)
+        .expect("recorded sequence inserted");
+    assert_eq!(sequence.elements.len(), 2);
+    assert_eq!(sequence.elements[0].command, Command::SendMessage);
+    assert_eq!(sequence.elements[1].command, Command::Unblip);
+}
+
+#[test]
+fn recording_leaves_future_wait_priority_for_live_instruction() {
+    use crate::sequence::{RecordingSession, SequenceElement, SequencePriority};
+
+    let mut host = NativeTestHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let owner = host.entities.get_legacy_slot(0).unwrap().0;
+    let mut recording = RecordingSession::new();
+    recording.add_element(SequenceElement::new(1, Command::LockUser, None));
+    recording.advance_level();
+    recording.add_element(SequenceElement::new(2, Command::Wait, Some(owner)));
+    let mut authored = SequenceElement::new(2, Command::Wait, Some(owner));
+    authored.priority = SequencePriority::Script;
+    recording.add_element(authored);
+    host.state.sequence_recorder = Some(recording);
+    let outcome = HostFunctions::call(
+        &mut host,
+        NativeFn::Thanx as u32,
+        &mut NativeStack::default(),
+    );
+    let NativeCallOutcome::Yield(NativeYield {
+        operation: NativeOperation::LaunchSequence(id),
+        ..
+    }) = outcome
+    else {
+        panic!("recording must enter engine sequence execution");
+    };
+
+    host.entity_at_legacy_slot_mut(0)
+        .human_data_mut()
+        .unwrap()
+        .unconscious = true;
+    let context = crate::element_priority::ActorPriorityContext::new(
+        host.entity_at_legacy_slot(0).kind(),
+        false,
+        true,
+    );
+    let sequence = host.sequence_manager.get_sequence(id).unwrap();
+    assert_eq!(sequence.elements[1].priority, SequencePriority::NotYetSet);
+    assert_eq!(
+        crate::element_priority::determine_priority(context, &sequence.elements[1]),
+        SequencePriority::Ko
+    );
+    assert_eq!(
+        crate::element_priority::determine_priority(context, &sequence.elements[2]),
+        SequencePriority::Script
     );
 }
 
@@ -522,7 +570,7 @@ fn send_message_native_launches_and_yields_inline() {
     assert!(matches!(
         stop,
         StopReason::Yield(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::SequenceAction(_),
+            operation: crate::interp::NativeOperation::LaunchSequence(_),
             resume: crate::interp::ResumePolicy::Fixed(0),
         })
     ));
@@ -534,7 +582,7 @@ fn send_message_native_launches_and_yields_inline() {
     assert!(matches!(
         stop,
         StopReason::Yield(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::SequenceAction(_),
+            operation: crate::interp::NativeOperation::LaunchSequence(_),
             resume: crate::interp::ResumePolicy::Fixed(0),
         })
     ));
@@ -606,25 +654,27 @@ fn sequence_recording_continues_after_json_and_native_state_snapshots() {
         assert_eq!(call(&mut restored, NativeFn::Then), 4);
         assert_eq!(call(&mut restored, NativeFn::Then), 4);
         record_timer(&mut restored);
-        assert!(matches!(
-            HostFunctions::call(
-                &mut restored,
-                NativeFn::Thanx as u32,
-                &mut NativeStack::default()
-            ),
-            NativeCallOutcome::Yield(crate::interp::NativeYield {
-                operation: crate::interp::NativeOperation::SequenceAction(_),
-                resume: crate::interp::ResumePolicy::Fixed(1),
-            })
-        ));
+        let NativeCallOutcome::Yield(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::LaunchSequence(sequence),
+            resume: crate::interp::ResumePolicy::Fixed(1),
+        }) = HostFunctions::call(
+            &mut restored,
+            NativeFn::Thanx as u32,
+            &mut NativeStack::default(),
+        )
+        else {
+            panic!("Thanx must hand the complete recording to the engine");
+        };
         assert_eq!(
             robin_util::state_hash::compute(&restored.state),
             robin_util::state_hash::compute(&ScriptState::default())
         );
-        let sequences: Vec<_> = restored.sequence_manager.sequences_iter().collect();
-        assert_eq!(sequences.len(), 1);
+        let sequence = restored
+            .sequence_manager
+            .get_sequence(sequence)
+            .expect("recorded sequence inserted");
         assert_eq!(
-            sequences[0]
+            sequence
                 .elements
                 .iter()
                 .map(|element| element.command_level)
@@ -2884,20 +2934,19 @@ fn thanx_launches_into_the_live_sequence_manager_before_returning() {
         0,
         "recording alone must not launch"
     );
-    assert!(matches!(
-        context.call(NativeFn::Thanx as u32, &mut NativeStack::default()),
-        NativeCallOutcome::Yield(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::SequenceAction(_),
-            resume: crate::interp::ResumePolicy::Fixed(1),
-        })
-    ));
+    let NativeCallOutcome::Yield(crate::interp::NativeYield {
+        operation: crate::interp::NativeOperation::LaunchSequence(sequence),
+        resume: crate::interp::ResumePolicy::Fixed(1),
+    }) = context.call(NativeFn::Thanx as u32, &mut NativeStack::default())
+    else {
+        panic!("Thanx must hand the complete recording to the engine");
+    };
     let sequence = context
         .sequence_manager
         .as_ref()
-        .expect("live sequence manager")
-        .sequences_iter()
-        .next()
-        .expect("Thanx launched the completed recording inline");
+        .expect("sequence manager")
+        .get_sequence(sequence)
+        .expect("recorded sequence inserted");
     assert_eq!(sequence.elements.len(), 1);
     assert_eq!(sequence.elements[0].command, Command::Timer);
     assert!(matches!(
@@ -3080,8 +3129,7 @@ fn set_actor_posture_ko_yields_one_canonical_engine_action() {
 
     let mut active = SequenceElement::new(1, Command::Move, Some(owner));
     active.priority = crate::sequence::SequencePriority::Normal;
-    let active_id = host.sequence_manager.launch_element(active);
-    host.sequence_manager.take_pending_synchronous_actions();
+    let active_id = host.sequence_manager.insert_element(active);
 
     let mut posture = NativeStack::default();
     posture.push_i32(actor);
@@ -3205,7 +3253,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0.0,
         std::num::NonZeroU32::new(1).unwrap(),
     ));
-    sequences.launch_element(element);
+    sequences.insert_element(element);
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;

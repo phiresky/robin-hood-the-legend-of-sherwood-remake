@@ -258,7 +258,7 @@ impl EngineInner {
             Substate::AttackingOverviewLookLeft,
         );
         self.stop_ai_owner(sim, assets, owner);
-        self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::Left);
+        self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::Left);
     }
 
     pub(in crate::engine) fn execute_ai_make_battle_predecisions(

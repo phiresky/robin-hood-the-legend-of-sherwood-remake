@@ -18,7 +18,11 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
         100.0,
         order_id,
     ));
-    let seq_id = engine.orders.sequence_manager.launch_element(movement);
+    let seq_id = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        movement,
+    );
     let stale = MovementOwnerSelection {
         seq_id,
         elem_idx: 0,

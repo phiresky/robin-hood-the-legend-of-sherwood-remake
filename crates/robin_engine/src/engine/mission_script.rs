@@ -596,6 +596,10 @@ impl MissionScript {
         self.call_stack.vm_depth()
     }
 
+    pub(in crate::engine) fn active_script_frame(&self) -> Option<crate::natives::ScriptCallFrame> {
+        self.call_stack.frames.last().map(|(frame, _)| *frame)
+    }
+
     pub(in crate::engine) fn pop_active_driver_frame(
         &mut self,
         expected: crate::natives::ScriptCallFrame,

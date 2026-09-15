@@ -97,6 +97,7 @@ impl EngineInner {
         self.prepare_tactical_player_combat_command(sim, assets, *actor);
         if *with_seek {
             self.apply_sword_strike_with_seek(
+                sim,
                 assets,
                 *actor,
                 *target,
@@ -114,7 +115,7 @@ impl EngineInner {
             // post-entity manager drain; it does not arbitrate
             // against and interrupt the actor's current order on the
             // input callback stack.
-            self.launch_sequence(sequence);
+            self.launch_sequence(sim, assets, sequence);
         }
     }
 
@@ -145,7 +146,7 @@ impl EngineInner {
                 let speak = SequenceElement::new(1, Command::SpeakVipsAreForRobin, Some(pc_id));
                 let mut sequence = Sequence::new();
                 sequence.append_element(speak);
-                self.launch_sequence(sequence);
+                self.launch_sequence(sim, assets, sequence);
                 return;
             }
         }
@@ -186,7 +187,7 @@ impl EngineInner {
                 } else {
                     target_id
                 };
-                self.apply_interaction_with_seek(sim, pc_id, launch_target, cmd, false);
+                self.apply_interaction_with_seek(sim, assets, pc_id, launch_target, cmd, false);
             }
             return;
         }
@@ -230,7 +231,14 @@ impl EngineInner {
             pc_id,
             target_id,
         ) {
-            self.apply_table_swordfight(pc_id, target_id, aggressor_line_idx, action_style);
+            self.apply_table_swordfight(
+                sim,
+                assets,
+                pc_id,
+                target_id,
+                aggressor_line_idx,
+                action_style,
+            );
             return;
         }
 
@@ -404,7 +412,7 @@ impl EngineInner {
                 // post-seek work exactly like the Original. Arrival speech
                 // and generic posture recovery belong to PC group moves, not
                 // soldier interaction.
-                self.launch_gate_movement_order(sim, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
+                self.launch_gate_movement_order(sim, assets, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
                         crate::position_interface::SectorHandle::new(adj_src_sector)
                             .unwrap_or_else(|| {
                                 panic!(
@@ -464,7 +472,7 @@ impl EngineInner {
                 let mut sequence = Sequence::new();
                 sequence.append_element(move_elem);
                 sequence.append_element(enter_elem);
-                self.launch_sequence(sequence);
+                self.launch_sequence(sim, assets, sequence);
                 return;
             }
         }
@@ -495,11 +503,13 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek_elem);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     pub(super) fn apply_table_swordfight(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         pc_id: EntityId,
         target_id: EntityId,
         aggressor_line_idx: u32,
@@ -584,11 +594,12 @@ impl EngineInner {
         let mut sequence = Sequence::new();
         sequence.append_element(move_elem);
         sequence.append_element(enter_elem);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     pub(super) fn apply_sword_strike_with_seek(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
         target_id: EntityId,
@@ -644,7 +655,7 @@ impl EngineInner {
         }
 
         if !same_sector {
-            self.launch_sequence(strike_sequence);
+            self.launch_sequence(sim, assets, strike_sequence);
             return;
         }
 
@@ -662,7 +673,7 @@ impl EngineInner {
                 ?strike_cmd,
                 "apply_sword_strike_with_seek: unsupported seek strike requested; launching direct strike"
             );
-            self.launch_sequence(strike_sequence);
+            self.launch_sequence(sim, assets, strike_sequence);
             return;
         }
 
@@ -698,6 +709,6 @@ impl EngineInner {
         // tail. It does not arbitrate it synchronously against an older
         // postponed chain: if that chain is released before the update reaches
         // this new seek, the older successor is instructed first.
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 }

@@ -204,6 +204,8 @@ impl EngineInner {
         };
         if let Some((target, fast)) = attentive {
             self.set_soldier_attentive_mode_from(
+                sim,
+                assets,
                 owner,
                 target,
                 fast,

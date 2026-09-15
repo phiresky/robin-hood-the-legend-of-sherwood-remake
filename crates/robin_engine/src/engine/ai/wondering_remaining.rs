@@ -43,7 +43,7 @@ impl EngineInner {
                     } else {
                         LookDirection::LeftRight
                     };
-                self.execute_ai_look_sidewards(owner, direction);
+                self.execute_ai_look_sidewards(sim, assets, owner, direction);
             }
             (WonderingLooking1Sidewards | WonderingLooking2Sidewards, EventDone) => {
                 let next = if substate == WonderingLooking1Sidewards {
@@ -314,12 +314,16 @@ impl EngineInner {
                     .expect("brawl victim required");
                 let body =
                     self.expect_human_id_for_ai_handle(body.get(), "brawl victim wake target");
-                self.launch_element(crate::sequence::SequenceElement::new_interaction(
-                    1,
-                    crate::element::Command::WakeUp,
-                    Some(owner),
-                    Some(body),
-                ));
+                self.launch_element(
+                    sim,
+                    assets,
+                    crate::sequence::SequenceElement::new_interaction(
+                        1,
+                        crate::element::Command::WakeUp,
+                        Some(owner),
+                        Some(body),
+                    ),
+                );
             }
             (WonderingAwakenBrawlVictim, EventDone) => {
                 self.execute_money_fight(sim, assets, owner, MoneyFightOperation::AwakeNextVictim)

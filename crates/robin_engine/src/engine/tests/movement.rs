@@ -47,13 +47,7 @@ fn tick_production_owner_coordinator(
     engine.tick_actor_owner_envelopes(sim, assets);
 }
 
-/// Run the movement phase and then the sequence-manager drain behind it.
-///
-/// A rider-charge hit does not damage its victim inside the rider's own
-/// Execute: that arm only registers a `ReceiveSwordDamage` element, and
-/// the manager update that follows the entity loop is what executes
-/// it. Tests that want to observe the damage of a charge frame therefore
-/// have to run both halves of the frame.
+/// Run movement and the following sequence phase to observe the completed frame.
 fn tick_movement_and_sequences(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
@@ -102,11 +96,15 @@ fn rejected_gate_routes_launch_nothing_and_consume_no_random_draws() {
             if retain_sequence_id {
                 assert!(
                     engine
-                        .launch_gate_movement_sequence(&sim, request)
+                        .launch_gate_movement_sequence(&sim, &LevelAssets::new(), request)
                         .is_none()
                 );
             } else {
-                engine.launch_gate_movement_order(&sim, request);
+                engine.launch_gate_movement_order(
+                    &sim,
+                    &crate::engine::LevelAssets::new(),
+                    request,
+                );
             }
         });
         assert!(draws.is_empty());
@@ -278,6 +276,7 @@ fn exact_building_source_draws_exit_wait(
         engine
             .launch_gate_movement_sequence(
                 sim,
+                &crate::engine::LevelAssets::new(),
                 building_exit_route_request(
                     owner,
                     Some(source_sector),
@@ -326,6 +325,7 @@ fn number_only_building_source_draws_exit_wait(
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
             sim,
+            &crate::engine::LevelAssets::new(),
             building_exit_route_request(
                 owner,
                 crate::position_interface::SectorHandle::new(64),
@@ -369,6 +369,7 @@ fn indirect_number_only_source_draws_exit_wait(
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
             sim,
+            &crate::engine::LevelAssets::new(),
             building_exit_route_request(
                 owner,
                 crate::position_interface::SectorHandle::new(274),
@@ -416,6 +417,7 @@ fn exact_ordinary_alias_keeps_building_side_draws(
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
             sim,
+            &crate::engine::LevelAssets::new(),
             building_exit_route_request(
                 owner,
                 Some(exact_ordinary_alias),
@@ -452,6 +454,7 @@ fn multi_gate_route_draws_only_for_real_building_exit(
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
             sim,
+            &crate::engine::LevelAssets::new(),
             building_exit_route_request(
                 owner,
                 Some(exact_building_alias),
@@ -524,6 +527,7 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
     let sequence_id = engine
         .launch_gate_movement_sequence(
             &crate::sim_rng::test_context(),
+            &crate::engine::LevelAssets::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
                 source_sector: SectorHandle::new(1),
@@ -699,7 +703,14 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
     };
     *stored_destination = destination;
     *flags = MoveFlags::STEP_BACK_IN_COMBAT;
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -822,7 +833,14 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     };
     *stored_destination = destination;
     *flags = MoveFlags::STEP_BACK_IN_COMBAT;
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -981,7 +999,14 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
         *flags = MoveFlags::empty();
     }
     movement.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    let sequence = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1130,6 +1155,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
+                &crate::engine::LevelAssets::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
                     source_sector: crate::position_interface::SectorHandle::new(22),
@@ -1264,6 +1290,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
+                &crate::engine::LevelAssets::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
                     source_sector: crate::position_interface::SectorHandle::new(22),
@@ -1383,8 +1410,14 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
             0.0,
             engine.orders.allocate_order_id(),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-        let _ = engine.orders.sequence_manager.hourglass();
+        let sequence_id = {
+            let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence_id);
+            sequence_id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1496,8 +1529,14 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
             0.0,
             engine.orders.allocate_order_id(),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
-        let _ = engine.orders.sequence_manager.hourglass();
+        let sequence_id = {
+            let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence_id);
+            sequence_id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1615,7 +1654,14 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     selected
         .orders
         .push_back(Order::test_new(OrderType::WaitingUprightBored, 0.0, 0.0));
-    let selected_id = engine.orders.sequence_manager.launch_element(selected);
+    let selected_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(selected);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1631,7 +1677,14 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
         Some(owner),
         OrderType::WalkingUpright,
     ));
-    let unrelated_id = engine.orders.sequence_manager.launch_sequence(unrelated);
+    let unrelated_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_sequence(unrelated);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.orders.pending_path_requests =
         PendingPathRequestQueue::restore_v48_waiting(vec![PendingPathRequest::test_request(
             owner,
@@ -1959,7 +2012,14 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
     background
         .orders
         .push_back(Order::test_new(OrderType::RiderCharging, 300.0, 100.0));
-    let movement_seq = engine.orders.sequence_manager.launch_element(background);
+    let movement_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(background);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2106,7 +2166,14 @@ fn install_rider_charge_fixture(
         *flags = MoveFlags::RIDER_CHARGE;
     }
     movement.orders.push_back(order);
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2237,7 +2304,14 @@ fn install_charge_victim_motion(
     movement
         .orders
         .push_back(Order::new(action, goal.x, goal.y, order_id));
-    let sequence = engine.orders.sequence_manager.launch_element(movement);
+    let sequence = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2290,10 +2364,17 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
 
     let foreign_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let nested_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    let foreign_seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::Wait, Some(foreign_owner)));
+    let foreign_seq = {
+        let sequence_id = engine
+            .orders
+            .sequence_manager
+            .insert_element(SequenceElement::new(1, Command::Wait, Some(foreign_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2314,10 +2395,17 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
         foreign_trace,
         vec![(foreign_owner, StimulusType::EventDone)]
     );
-    let nested_seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::Wait, Some(nested_owner)));
+    let nested_seq = {
+        let sequence_id = engine
+            .orders
+            .sequence_manager
+            .insert_element(SequenceElement::new(1, Command::Wait, Some(nested_owner)));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3539,7 +3627,14 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
     let order = Order::new(action, destination.x, destination.y, order_id);
     let mut movement = SequenceElement::new_movement(1, Command::Move, Some(mover_id), action);
     movement.orders.push_back(order);
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3660,7 +3755,14 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         position.y,
         order_id,
     ));
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3879,7 +3981,14 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             *tolerance = 15.0;
         }
 
-        let sequence_id = engine.orders.sequence_manager.launch_element(element);
+        let sequence_id = {
+            let sequence_id = engine.orders.sequence_manager.insert_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence_id);
+            sequence_id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -4101,7 +4210,14 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     *movement_destination = destination;
     *sector = SectorHandle::new(1);
 
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4234,7 +4350,14 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     *destination = final_goal;
     *sector = SectorHandle::new(1);
 
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

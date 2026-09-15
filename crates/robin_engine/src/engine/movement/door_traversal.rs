@@ -66,10 +66,14 @@ impl EngineInner {
     pub(crate) fn launch_gate_movement_order(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         request: GateRouteRequest,
     ) {
         let entity_id = request.entity_id;
-        if self.launch_gate_movement_sequence(sim, request).is_none() {
+        if self
+            .launch_gate_movement_sequence(sim, assets, request)
+            .is_none()
+        {
             tracing::warn!(entity = ?entity_id, "gate movement order could not be launched");
         }
     }
@@ -121,6 +125,7 @@ impl EngineInner {
     pub(crate) fn launch_gate_movement_sequence(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         mut request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
@@ -251,7 +256,7 @@ impl EngineInner {
             self.append_posture_recovery(entity_id, &mut seq);
         }
 
-        let seq_id = self.launch_sequence(seq);
+        let seq_id = self.launch_sequence(sim, assets, seq);
         tracing::trace!(
             entity = ?entity_id,
             ?seq_id,

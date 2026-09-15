@@ -96,7 +96,11 @@ mod suite {
             destination.x,
             destination.y,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -215,7 +219,11 @@ mod suite {
         if fast {
             *flags |= MoveFlags::FAST;
         }
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         let sim = crate::sim_rng::test_context();
         assert!(matches!(
             engine.try_dispatch_move_path(
@@ -387,7 +395,11 @@ mod suite {
         movement
             .orders
             .push_back(Order::test_new(OrderType::WalkingWithShield, 140.0, 100.0));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -479,7 +491,11 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(action, destination.x, destination.y, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -673,7 +689,11 @@ mod suite {
         if force {
             *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
         }
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1063,7 +1083,8 @@ mod suite {
             crate::sequence::Field::Direction,
             crate::sequence::FieldValue::Integer(9),
         );
-        let turn_sequence = engine.orders.sequence_manager.launch_element(turn);
+        let turn_sequence =
+            engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), turn);
         engine.postpone_element(&sim, &assets, &mut Vec::new(), turn_sequence, 0);
         engine
             .orders
@@ -1072,10 +1093,11 @@ mod suite {
             .unwrap()
             .cross_postponed = Some((turn_sequence, 0));
 
-        let unrelated_sequence = engine
-            .orders
-            .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+        let unrelated_sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            SequenceElement::new(1, Command::LookLeft, Some(owner)),
+        );
 
         let ((), cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
             assert!(engine.abort_orphaned_sword_movement(
@@ -1446,7 +1468,11 @@ mod suite {
         };
         *stored_destination = destination;
         *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         let sim = crate::sim_rng::test_context();
 
         assert!(matches!(

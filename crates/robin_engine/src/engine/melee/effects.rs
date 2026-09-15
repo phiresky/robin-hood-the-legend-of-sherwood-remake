@@ -609,9 +609,8 @@ impl EngineInner {
     /// `combat_anim` (the current damage element is already being
     /// dispatched, so we don't launch a second element for it).  The
     /// *partner* side gets a fresh `Command::Fall` sequence element
-    /// launched through `SequenceManager::launch_element`.  That
-    /// element is dispatched by `dispatch_fall` next tick and
-    /// terminates once its combat_anim is in place.
+    /// launched through the engine. Its ordinary instruction enters the
+    /// sequence FIFO and terminates once its combat_anim is in place.
     ///
     /// Posture-to-side mapping:
     /// - **OnShoulders** (victim is carried): victim plays
@@ -752,7 +751,7 @@ impl EngineInner {
                 crate::element::Command::Fall,
                 Some(partner_id),
             );
-            let partner_seq_id = self.launch_element(elem);
+            let partner_seq_id = self.launch_element(sim, assets, elem);
             // For the CarryingOnShoulders / HelpingToClimb branches
             // the partner (the *carried* body) also receives a roll
             // translation on its new Fall sequence element, so a body
@@ -852,7 +851,7 @@ impl EngineInner {
         // afterwards so the downstream ladder/wall + flight
         // selection sees the carrier's new Upright posture.
         let victim_posture = if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(victim_id);
+            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
             self.expect_entity(victim_id, "push effect victim after corpse drop")
                 .element_data()
                 .posture()

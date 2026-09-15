@@ -293,7 +293,11 @@ fn selected_door_position(engine: &mut EngineInner, owner: EntityId, point: MapP
     };
     *gate_id = Some(gate);
     *direction = 1;
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

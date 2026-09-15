@@ -10,6 +10,8 @@ use crate::ai_enemy::{PrimaryTargetFlags, archer};
 impl EngineInner {
     pub(in crate::engine) fn launch_ai_raise_shield(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         point: crate::coordinates::WorldPoint3D,
     ) {
@@ -26,7 +28,7 @@ impl EngineInner {
                 z: point.z,
             },
         );
-        self.launch_element(element);
+        self.launch_element(sim, assets, element);
     }
 
     pub(in crate::engine) fn execute_ai_shield_expected_event(
@@ -103,7 +105,7 @@ impl EngineInner {
             .expect_entity(target, "shield danger point")
             .element_data()
             .position();
-        self.launch_ai_raise_shield(owner, point);
+        self.launch_ai_raise_shield(sim, assets, owner, point);
     }
 
     fn shield_focus_primary(
@@ -208,11 +210,15 @@ impl EngineInner {
                     AiState::Attacking,
                     Substate::AttackingAdvancingWithShield,
                 );
-                self.launch_element(crate::sequence::SequenceElement::new(
-                    1,
-                    crate::element::Command::LowerShield,
-                    Some(owner),
-                ));
+                self.launch_element(
+                    sim,
+                    assets,
+                    crate::sequence::SequenceElement::new(
+                        1,
+                        crate::element::Command::LowerShield,
+                        Some(owner),
+                    ),
+                );
             } else {
                 self.shield_timer(owner, 10);
             }
@@ -694,7 +700,7 @@ impl EngineInner {
                 .expect_entity(target, "shield danger point")
                 .element_data()
                 .position();
-            self.launch_ai_raise_shield(owner, point);
+            self.launch_ai_raise_shield(sim, assets, owner, point);
 
             let ai = self
                 .world

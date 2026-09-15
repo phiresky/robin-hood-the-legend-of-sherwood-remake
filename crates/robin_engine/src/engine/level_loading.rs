@@ -1808,7 +1808,7 @@ impl EngineInner {
     /// (`BONUS_FourLeavedClover` / `"BONUS Trefle"`).
     ///
     /// Called at level load so the mid-tick scroll-reveal path
-    /// ([`Self::drain_pending_scroll_amulets`]) can hit the scriptor
+    /// ([`Self::reveal_scroll`]) can hit the scriptor
     /// cache through `&LevelAssets` instead of needing `&mut` to
     /// load on demand (which would break the
     /// "mutation-only-in-perform_hourglass" invariant).
@@ -1833,7 +1833,7 @@ impl EngineInner {
 
     /// Preload character sprites for every campaign description.
     ///
-    /// The reinforcement spawn ([`Self::drain_pending_reinforcements`])
+    /// The reinforcement spawn ([`Self::create_reinforcement`])
     /// picks a random non-instanced, non-VIP peasant from the current
     /// gang. That pool is known at level load, so we can eagerly load
     /// each candidate's `.rhs` into the scriptor cache and the mid-tick

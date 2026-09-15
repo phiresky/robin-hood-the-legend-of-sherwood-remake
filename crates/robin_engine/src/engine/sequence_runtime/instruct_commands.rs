@@ -282,7 +282,8 @@ impl EngineInner {
             // launches this SEEK synchronously. Route it
             // through the full owned-element instruction path
             // before the action-loop splice below.
-            self.launch_element(follow_up);
+            self.launch_element_inline(sim, assets, active_scripts, follow_up)
+                .unwrap_or_else(|error| panic!("shield follow-up launch failed: {error:?}"));
         }
         // Human command translation terminates a redundant
         // RAISE_SHIELD synchronously when the actor is
@@ -838,7 +839,8 @@ impl EngineInner {
                     crate::element::Command::LeaveHelpingClimb,
                     Some(helper_id),
                 );
-                self.launch_element(leave_elem);
+                self.launch_element_inline(sim, assets, active_scripts, leave_elem)
+                    .unwrap_or_else(|error| panic!("shoulder-climb exit launch failed: {error:?}"));
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
@@ -1503,7 +1505,7 @@ impl EngineInner {
             _ => None,
         };
         let (target_handle, pc_handle, method) =
-            self.dispatch_target_activation(sim, assets, active_scripts, owner, cmd, antagonist);
+            self.dispatch_target_activation(owner, cmd, antagonist);
         let key = crate::engine::ScriptVmKey::Target(target_handle);
         let is_instantiated = self
             .scripts

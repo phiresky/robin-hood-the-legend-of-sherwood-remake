@@ -345,11 +345,12 @@ fn condolation_reenters_think_before_dispatch_returns() {
     let soldier = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
-    let seq_id = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(soldier)));
     let assets = engine.test_runtime_assets();
+    let seq_id = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::LookLeft, Some(soldier)),
+    );
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -400,7 +401,7 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_seq = engine.orders.sequence_manager.launch_element(movement);
+    let movement_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -420,10 +421,11 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     // movement remains selected (for example, postponed parallel work).
     // Base actor condolence dispatch compares selected-element identity
     // before detaching the current movement.
-    let unrelated_seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(owner)));
+    let unrelated_seq = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::LookLeft, Some(owner)),
+    );
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -500,10 +502,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
         Some(owner),
         OrderType::WalkingUpright,
     );
-    let sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(assert_position);
+    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, assert_position);
     engine
         .orders
         .sequence_manager
@@ -547,7 +546,8 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
 
     let movement =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -581,7 +581,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     );
     let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
     wait.priority = SequencePriority::Wait;
-    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    let wait_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -631,7 +631,8 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
         goal.y,
         engine.orders.allocate_order_id(),
     ));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -656,7 +657,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
         owner,
         SequencePriority::Preference,
     );
-    engine.set_soldier_attentive_mode(owner, true, false);
+    engine.set_soldier_attentive_mode(&crate::sim_rng::test_context(), &assets, owner, true, false);
     // The attentive element is only registered here; drive the manager
     // update so its deferred instruction performs the POSTPONE_CURRENT.
     engine.hourglass_phase_sequences(
@@ -700,7 +701,8 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -716,7 +718,7 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     }
 
     let sibling = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
-    let sibling_sequence = engine.orders.sequence_manager.launch_element(sibling);
+    let sibling_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, sibling);
     // The player speech override terminates before delegating to actor instruction handling,
     // so it never replaces the selected movement pointer.
     engine.element_terminated(
@@ -750,7 +752,7 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
 
     let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
     leave_beggar.priority = SequencePriority::NonInterruptable;
-    let blocker = engine.orders.sequence_manager.launch_element(leave_beggar);
+    let blocker = engine.launch_element(&crate::sim_rng::test_context(), &assets, leave_beggar);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -772,7 +774,7 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
         Some(owner),
     ));
     sequence.append_element(SequenceElement::new(2, Command::EnterBeggar, Some(owner)));
-    let movement = engine.launch_sequence(sequence);
+    let movement = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
 
     assert!(engine.non_interruptable_guard(
         &crate::sim_rng::test_context(),
@@ -819,7 +821,7 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_seq = engine.orders.sequence_manager.launch_element(movement);
+    let movement_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -833,14 +835,11 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
         entity.position_iface_mut().set_map_goal(goal);
     }
 
-    let incoming_seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(
-            1,
-            Command::EnterAttentiveMode,
-            Some(owner),
-        ));
+    let incoming_seq = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
+    );
     engine
         .orders
         .sequence_manager
@@ -884,7 +883,7 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let outgoing =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let outgoing_seq = engine.orders.sequence_manager.launch_element(outgoing);
+    let outgoing_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, outgoing);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -895,7 +894,8 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
 
     let replacement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let replacement_seq = engine.orders.sequence_manager.launch_element(replacement);
+    let replacement_seq =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, replacement);
 
     engine.orders.sequence_manager.set_halt_pending(true);
     engine.element_interrupted(
@@ -935,11 +935,12 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     // Final-action detection explicitly skips Wait/AssertPosition successors,
     // so the LookLeft condolence still fires before Ready queues this.
     parent.append_element(SequenceElement::new(2, Command::Wait, Some(soldier)));
-    let parent_id = engine.orders.sequence_manager.launch_sequence(parent);
-
-    let initial = engine.orders.sequence_manager.hourglass();
-    assert_eq!(initial.len(), 1);
     let assets = engine.test_runtime_assets();
+    let parent_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, parent);
+
+    let initial = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
+        .collect::<Vec<_>>();
+    assert_eq!(initial.len(), 1);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -955,40 +956,39 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
         0,
     );
 
-    let commands: Vec<_> = engine
-        .orders
-        .sequence_manager
-        .hourglass()
-        .into_iter()
-        .map(|action| {
-            let (seq_id, elem_idx) = match action {
-                SequenceAction::InstructOwner {
-                    sequence_id,
-                    element_index,
-                    ..
-                }
-                | SequenceAction::EngineCommand {
-                    sequence_id,
-                    element_index,
-                }
-                | SequenceAction::ExecuteImmediateOwner {
-                    sequence_id,
-                    element_index,
-                    ..
-                }
-                | SequenceAction::ExecuteImmediateEngine {
-                    sequence_id,
-                    element_index,
-                } => (sequence_id, element_index),
-            };
-            engine
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .expect("queued action still has an element")
-                .command
-        })
-        .collect();
+    let commands: Vec<_> =
+        std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|action| {
+                let (seq_id, elem_idx) = match action {
+                    SequenceAction::InstructOwner {
+                        sequence_id,
+                        element_index,
+                        ..
+                    }
+                    | SequenceAction::EngineCommand {
+                        sequence_id,
+                        element_index,
+                    }
+                    | SequenceAction::ExecuteImmediateOwner {
+                        sequence_id,
+                        element_index,
+                        ..
+                    }
+                    | SequenceAction::ExecuteImmediateEngine {
+                        sequence_id,
+                        element_index,
+                    } => (sequence_id, element_index),
+                };
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .expect("queued action still has an element")
+                    .command
+            })
+            .collect();
 
     assert_eq!(
         commands,
@@ -1038,7 +1038,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
         Command::ReceiveWaspSting,
         Some(third),
     ));
-    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
+    let seq_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, seq);
 
     engine.element_interrupted(
         &crate::sim_rng::test_context(),
@@ -1092,8 +1092,9 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(12));
     sequence.append_element(timer);
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
-    let initial = engine.orders.sequence_manager.hourglass();
+    let sequence_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let initial = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
+        .collect::<Vec<_>>();
     assert_eq!(initial.len(), 3);
 
     // Suppress the AI EventDone callbacks just as Halt does; the regression is
@@ -1119,12 +1120,4 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     assert_eq!(engine.orders.timer_elements[0].remaining, 12);
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions()
-            .is_empty(),
-        "Ready's immediate successor must not escape the condolence boundary"
-    );
 }

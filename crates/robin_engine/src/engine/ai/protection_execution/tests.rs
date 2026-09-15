@@ -582,7 +582,11 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
     } else {
         unreachable!()
     }
-    let sequence = engine.orders.sequence_manager.launch_element(pass);
+    let sequence = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -826,7 +830,7 @@ fn phalanx_walks_the_complete_live_chain_and_observes_relinks() {
 
 #[test]
 fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
-    let (mut engine, _, ids) = fixture(&[(100.0, 100.0)]);
+    let (mut engine, assets, ids) = fixture(&[(100.0, 100.0)]);
     let owner = ids[0];
     let point = WorldPoint3D::new(100.0, 503.01535, 4.06752014);
     let element = engine
@@ -840,7 +844,7 @@ fn shield_sequence_keeps_stored_world_y_without_map_roundtrip() {
         point.y.to_bits()
     );
     let stored = element.position();
-    engine.launch_ai_raise_shield(owner, stored);
+    engine.launch_ai_raise_shield(&crate::sim_rng::test_context(), &assets, owner, stored);
     let element = engine
         .orders
         .sequence_manager
@@ -899,16 +903,13 @@ fn periodic_phalanx_fixture(
         .expect_enemy_ai_mut(neighbour, format_args!("periodic phalanx anchor"))
         .base
         .current_substate = Substate::AttackingPhalanx;
-    let selected = engine.orders.sequence_manager.launch_element(
+    let selected = engine.orders.sequence_manager.insert_element(
         crate::sequence::SequenceElement::new_generic(1, command, Some(owner)),
     );
-    // The fixture installs this order directly, so consume its registration
-    // before marking it current, as the manager does before instruction.
     engine
         .orders
         .sequence_manager
-        .pop_next_hourglass_action()
-        .unwrap();
+        .start_sequence_level(selected);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

@@ -503,7 +503,7 @@ impl EngineInner {
                 .expect_entity(target, "phalanx shield danger point")
                 .element_data()
                 .position();
-            self.launch_ai_raise_shield(owner, point);
+            self.launch_ai_raise_shield(sim, assets, owner, point);
 
             self.world
                 .entities

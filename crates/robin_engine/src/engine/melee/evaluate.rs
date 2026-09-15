@@ -898,6 +898,8 @@ impl EngineInner {
                 return false;
             }
             self.launch_swordfight_distance_move(
+                sim,
+                assets,
                 entity_id,
                 crate::coordinates::MapPoint {
                     x: dest.x,
@@ -1027,6 +1029,8 @@ impl EngineInner {
         }
 
         self.launch_swordfight_distance_move(
+            sim,
+            assets,
             entity_id,
             crate::coordinates::MapPoint {
                 x: destination.x,
@@ -1042,6 +1046,8 @@ impl EngineInner {
     /// adjustment.
     pub(super) fn launch_swordfight_distance_move(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         actor_id: EntityId,
         destination: crate::coordinates::MapPoint,
         layer: u16,
@@ -1066,7 +1072,7 @@ impl EngineInner {
             speed_factor: 1.0,
             post_seek_sequence: None,
         };
-        self.register_owned_element_deferred(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     /// Run the non-animation work in one human actor's WaitingSword Execute
@@ -1094,7 +1100,7 @@ impl EngineInner {
 
         // Smalltalk-hint evaluation precedes swordfight evaluation and suppresses the
         // latter whenever it launches a useful parry.
-        if self.evaluate_smalltalk_hint(entity_id) {
+        if self.evaluate_smalltalk_hint(sim, assets, entity_id) {
             return;
         }
         self.trace_waiting_sword_evaluate_entry(entity_id);
@@ -1186,11 +1192,11 @@ impl EngineInner {
         }
 
         if opponents.is_empty() {
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::QuitSwordfight,
-                Some(entity_id),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, Command::QuitSwordfight, Some(entity_id)),
+            );
             return;
         }
 
@@ -1325,11 +1331,15 @@ impl EngineInner {
             );
         }
         if tiredness >= TIREDNESS_WEAK_THRESHOLD {
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::SwordstrikeTired,
-                Some(entity_id),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(
+                    1,
+                    Command::SwordstrikeTired,
+                    Some(entity_id),
+                ),
+            );
             return;
         }
 
@@ -1509,7 +1519,7 @@ impl EngineInner {
             // member only from human action execution's terminated-motion branch. A
             // parry or injury can abort this Move before it reaches that arm,
             // in which case the preceding value must survive.
-            self.launch_evaluated_step_back(entity_id, destination, layer);
+            self.launch_evaluated_step_back(sim, assets, entity_id, destination, layer);
             return;
         }
 
@@ -1519,17 +1529,23 @@ impl EngineInner {
         } else {
             Command::SwordstrikeSmalltalkRight
         };
-        self.register_owned_element_deferred(crate::sequence::SequenceElement::new_interaction(
-            1,
-            command,
-            Some(entity_id),
-            Some(principal_id),
-        ));
+        self.launch_element(
+            sim,
+            assets,
+            crate::sequence::SequenceElement::new_interaction(
+                1,
+                command,
+                Some(entity_id),
+                Some(principal_id),
+            ),
+        );
         self.receive_smalltalk_hint(entity_id, principal_id, is_left);
     }
 
     pub(super) fn launch_evaluated_step_back(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         destination: crate::coordinates::MapPoint,
         layer: u16,
@@ -1554,7 +1570,7 @@ impl EngineInner {
             speed_factor: 1.0,
             post_seek_sequence: None,
         };
-        self.launch_element(element);
+        self.launch_element(sim, assets, element);
     }
     /// Build the strike
     /// selection context for a non-selected PC, query
@@ -1720,7 +1736,7 @@ impl EngineInner {
         let cmd = strike.to_command();
         let elem =
             crate::sequence::SequenceElement::new_interaction(1, cmd, Some(pc_id), Some(target_id));
-        self.launch_element(elem);
+        self.launch_element(sim, assets, elem);
         true
     }
 
@@ -2279,7 +2295,7 @@ impl EngineInner {
                         victim_id,
                         None,
                     );
-                    let parry_sequence = self.register_owned_element_deferred(parry_elem);
+                    let parry_sequence = self.launch_element(sim, assets, parry_elem);
                     self.trace_reactive_sword_topology(
                         "after_parry_registration",
                         victim_id,
@@ -2301,7 +2317,7 @@ impl EngineInner {
                         Some(target),
                     );
                     seq.append_element(strike_elem);
-                    self.launch_sequence(seq);
+                    self.launch_sequence(sim, assets, seq);
                     tracing::debug!(
                         ?victim_id,
                         ?attacker_id,
@@ -2897,7 +2913,7 @@ impl EngineInner {
         let parry_elem =
             crate::sequence::SequenceElement::new(1, Command::ParrySword, Some(victim_id));
         seq.append_element(parry_elem);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
 
         self.duty_set_state(
             sim,
@@ -2994,7 +3010,7 @@ impl EngineInner {
             target,
         );
         seq.append_element(strike_elem);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
 
         tracing::debug!(
             ?victim_id,

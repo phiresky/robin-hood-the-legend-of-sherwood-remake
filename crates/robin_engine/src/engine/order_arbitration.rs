@@ -214,17 +214,6 @@ impl EngineInner {
                     let swordfighting =
                         entity.human_data().is_some_and(|h| !h.opponents.is_empty());
                     if swordfighting {
-                        // Forward `MSG_STATURE_CHANGE_END` so the
-                        // stature-HUD latch (focus standing-up /
-                        // crouching-down) clears even though the command
-                        // is being rejected.  Without this the stature
-                        // arrow stays visually pressed until some other
-                        // actor's stature changes.
-                        self.orders.messenger.send(crate::messenger::Message::new(
-                            crate::messenger::MessageType::Simple(
-                                crate::messenger::SimpleMessage::StatureChangeEnd,
-                            ),
-                        ));
                         self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
                         return false;
                     }
@@ -1169,7 +1158,6 @@ impl EngineInner {
                 sim,
                 assets,
                 active_scripts,
-                owner,
                 root,
                 stop_priority,
                 &resolver,

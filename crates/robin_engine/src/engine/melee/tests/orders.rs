@@ -11,15 +11,13 @@ fn pc_and_civilian_provoke_translate_without_soldier_speech() {
         let mut engine = make_engine();
         let owner = engine.add_test_entity(actor);
         let assets = LevelAssets::new();
-        let sequence =
-            engine
-                .orders
-                .sequence_manager
-                .launch_element(crate::sequence::SequenceElement::new(
-                    1,
-                    Command::Provoke,
-                    Some(owner),
-                ));
+        let sequence = {
+            let id = engine.orders.sequence_manager.insert_element(
+                crate::sequence::SequenceElement::new(1, Command::Provoke, Some(owner)),
+            );
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
 
         engine.with_simulation_context(|engine, sim| {
             engine.dispatch_provoke(sim, &assets, owner, sequence, 0);
@@ -126,7 +124,11 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             OrderType::WalkingWithSword,
         );
         old_movement.priority = crate::sequence::SequencePriority::Normal;
-        let old_sequence = engine.launch_element(old_movement);
+        let old_sequence = {
+            let id = engine.orders.sequence_manager.insert_element(old_movement);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         let old_order =
             engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
         engine.element_in_progress(
@@ -159,7 +161,14 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             Some(attacker),
             Some(victim),
         );
-        let strike_sequence = engine.launch_element(strike_element);
+        let strike_sequence = {
+            let id = engine
+                .orders
+                .sequence_manager
+                .insert_element(strike_element);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         let strike_order = engine.push_new_order(
             strike_sequence,
             0,
@@ -501,7 +510,7 @@ fn saved_human_sweep_executes_once_for_the_live_strike_order() {
     assert_eq!(sweep.current_angle, 0.0);
     assert_eq!(sweep.final_angle, std::f32::consts::PI);
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -525,7 +534,7 @@ fn saved_human_sweep_executes_once_for_the_live_strike_order() {
             .count()
     };
     assert_eq!(damage_count(&engine), 1);
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         damage_count(&engine),
         1,
@@ -559,7 +568,11 @@ fn slope_translate_roll_order_keeps_its_source_authored_direction_recompute() {
             ));
     }
     let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveDamage, Some(victim));
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
 
     engine.try_queue_roll(&assets, victim, (sequence, 0));
 
@@ -657,7 +670,11 @@ fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
         damage.data =
             crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-        let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+        let sequence_id = {
+            let id = engine.orders.sequence_manager.insert_element(damage);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -747,7 +764,11 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
     engine.apply_knockout_side_effects(&sim, &assets, victim, true, false);
     let damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine
         .orders
         .sequence_manager

@@ -1119,7 +1119,11 @@ fn explicitly_queued_sword_strike_still_records_a_quick_action() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1175,7 +1179,11 @@ fn auto_launch_preserves_empty_manual_recording() {
     engine.players.seats[0].selection.push(pc_id);
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1299,7 +1307,11 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
 
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1430,7 +1442,11 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
     // happens to interrupt that card.
     let mut idle = SequenceElement::new(1, Command::Wait, Some(pc_id));
     idle.priority = crate::sequence::SequencePriority::Wait;
-    let idle_sequence = engine.orders.sequence_manager.launch_element(idle);
+    let idle_sequence = engine.orders.sequence_manager.insert_element(idle);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(idle_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1443,7 +1459,11 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
     // the movement itself has settled. A postponed card is dormant, not
     // executable actor work, and must not pin the automatic queue forever.
     let stale = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
-    let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
+    let stale_sequence = engine.orders.sequence_manager.insert_element(stale);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(stale_sequence);
     engine.postpone_element(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1537,7 +1557,11 @@ fn shift_queue_retains_more_than_three_pending_actions() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1593,7 +1617,11 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     configure_valid_bow_quick_action(&mut engine, &mut assets, pc_id, target);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1603,7 +1631,11 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     );
 
     let stale = SequenceElement::new(1, Command::LeaveListen, Some(pc_id));
-    let stale_sequence = engine.orders.sequence_manager.launch_element(stale);
+    let stale_sequence = engine.orders.sequence_manager.insert_element(stale);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(stale_sequence);
     engine.postpone_element(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1676,7 +1708,11 @@ fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
     let bow_target = spawn_pc_at(&mut engine, 900.0, 730.0);
 
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1728,7 +1764,11 @@ fn shift_pickup_uses_take_quick_action_phase() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 4)]);
     let target = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
-    let busy_sequence = engine.orders.sequence_manager.launch_element(busy);
+    let busy_sequence = engine.orders.sequence_manager.insert_element(busy);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(busy_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1787,7 +1827,14 @@ fn resolved_throw_orientation_targets_only_the_recorded_pc() {
     }
     let target = WorldPoint3D::new(435.0, 2329.0, 274.0);
 
-    engine.perform_resolved_orientation(&assets, pc_id, Action::Stone, MapPoint::ZERO, target);
+    engine.perform_resolved_orientation(
+        &crate::sim_rng::test_context(),
+        &assets,
+        pc_id,
+        Action::Stone,
+        MapPoint::ZERO,
+        target,
+    );
 
     let element = engine.get_entity(pc_id).unwrap().element_data();
     assert_eq!(
@@ -1814,6 +1861,7 @@ fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
     // nested Refresh then turns once toward east without selecting a new
     // animation row.
     engine.perform_resolved_orientation(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         Action::Purse,
@@ -1838,6 +1886,7 @@ fn late_popup_bow_orientation_preserves_the_old_direction_row() {
     entity.element_data_mut().sprite.force_sprite_row_raw(1665);
 
     engine.perform_resolved_orientation(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         Action::Bow,
@@ -2373,7 +2422,17 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
     let (mut engine, assets, pc_id, source, _) = setup_drop_ale_sector_identity_scene();
     let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
 
-    engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
+    engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
+        pc_id,
+        destination,
+        false,
+        false,
+        None,
+        None,
+        None,
+    );
     let (_, goal, layer) = drop_ale_seek_goal(&engine);
     assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
     assert_eq!(layer, 0);
@@ -2421,7 +2480,18 @@ fn drop_ale_duplicate_public_sector_keeps_cross_sector_identity() {
     let (mut engine, _, pc_id, source, alias) = setup_drop_ale_sector_identity_scene();
     let destination = crate::coordinates::MapPoint::new(180.0, 90.0);
 
-    engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
+    let assets = engine.test_runtime_assets();
+    engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
+        pc_id,
+        destination,
+        false,
+        false,
+        None,
+        None,
+        None,
+    );
 
     let (_, goal, layer) = drop_ale_seek_goal(&engine);
     let goal = goal.expect("DropAle target must resolve to a sector");
@@ -2465,7 +2535,18 @@ fn drop_ale_patch_goal_retains_exact_underlying_sector_identity() {
         0,
     );
 
-    engine.apply_drop_ale_at(pc_id, destination, false, false, None, None, None);
+    let assets = engine.test_runtime_assets();
+    engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
+        pc_id,
+        destination,
+        false,
+        false,
+        None,
+        None,
+        None,
+    );
 
     let (_, goal, layer) = drop_ale_seek_goal(&engine);
     let goal = goal.expect("DropAle patch target resolves through its underlying sector");
@@ -2984,7 +3065,11 @@ fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
         source_layer: 11,
         outcome: crate::gate::RecordedGateOutcome::Failure,
     });
-    let sequence_id = engine.orders.sequence_manager.launch_element(seek);
+    let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
 
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
@@ -3039,12 +3124,16 @@ fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_ret
     let sequence_id = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new_movement(
+        .insert_element(SequenceElement::new_movement(
             1,
             Command::Seek,
             Some(pc_id),
             crate::order::OrderType::WalkingUpright,
         ));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
 
     engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
@@ -3105,7 +3194,10 @@ fn resolved_replay_drop_ale_without_exact_index_keeps_legacy_number_only_goal() 
 #[should_panic(expected = "outside the FastFindGrid sector table")]
 fn resolved_replay_drop_ale_rejects_out_of_range_exact_index() {
     let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+    let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3123,7 +3215,10 @@ fn resolved_replay_drop_ale_rejects_disagreeing_exact_index() {
     std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level).sectors
         [usize::from(goal_index)]
     .sector_number = crate::sector::SectorNumber::new(1);
+    let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3138,7 +3233,10 @@ fn resolved_replay_drop_ale_rejects_disagreeing_exact_index() {
 #[should_panic(expected = "exact goal-sector identity requires a goal_override")]
 fn drop_ale_rejects_exact_index_without_goal_override() {
     let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
+    let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3153,7 +3251,10 @@ fn drop_ale_rejects_exact_index_without_goal_override() {
 #[should_panic(expected = "goal_override has invalid public sector")]
 fn resolved_replay_drop_ale_rejects_invalid_public_sector() {
     let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
+    let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &assets,
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3947,6 +4048,7 @@ fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
     let target_id = engine.add_test_entity(Entity::Civilian(target));
 
     engine.apply_sword_strike_with_seek(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         target_id,
@@ -4002,6 +4104,7 @@ fn composite_seek_retains_both_strikes_and_quality() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
     engine.apply_sword_strike_with_seek(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         target_id,
@@ -4063,6 +4166,7 @@ fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
     }));
 
     engine.apply_sword_strike_with_seek(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         target_id,
@@ -4240,7 +4344,11 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
 
     let mut injury = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(pc_id));
     injury.priority = SequencePriority::Injury;
-    let injury_seq = engine.orders.sequence_manager.launch_element(injury);
+    let injury_seq = engine.orders.sequence_manager.insert_element(injury);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(injury_seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4256,7 +4364,11 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
         Some(target_id),
     );
     old_strike.priority = SequencePriority::Preference;
-    let old_strike_seq = engine.orders.sequence_manager.launch_element(old_strike);
+    let old_strike_seq = engine.orders.sequence_manager.insert_element(old_strike);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(old_strike_seq);
     engine.engine_postpone(
         &crate::sim_rng::test_context(),
         &assets,
@@ -4268,6 +4380,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
     );
 
     engine.apply_sword_strike_with_seek(
+        &crate::sim_rng::test_context(),
         &assets,
         pc_id,
         target_id,
@@ -4887,6 +5000,8 @@ fn drop_ale_seek_tolerance_uses_sprite_action_distance() {
     );
 
     engine.apply_drop_ale_at(
+        &crate::sim_rng::test_context(),
+        &_assets,
         pc_id,
         crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
         false,
@@ -4930,7 +5045,14 @@ fn mapped_interaction_seek_tolerance_uses_uword_sprite_action_distance() {
     );
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-    engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::SearchCmd, false);
+    engine.apply_interaction_with_seek(
+        &crate::sim_rng::test_context(),
+        &_assets,
+        pc_id,
+        target_id,
+        Command::SearchCmd,
+        false,
+    );
 
     assert_eq!(first_seek_tolerance(&engine), 19.0);
 }
@@ -4969,7 +5091,14 @@ fn pc_in_coma_carry_keeps_fractional_action_distance_plus_ten() {
         .status
         .in_coma = true;
 
-    engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::TakeCorpse, false);
+    engine.apply_interaction_with_seek(
+        &sim,
+        &_assets,
+        pc_id,
+        target_id,
+        Command::TakeCorpse,
+        false,
+    );
 
     assert_eq!(first_seek_tolerance(&engine).to_bits(), 0x41f1_dcb0);
     let seek = engine
@@ -5016,7 +5145,14 @@ fn unconscious_pc_outside_coma_uses_human_take_corpse_distance() {
         target.human_data_mut().unwrap().unconscious = true;
     }
 
-    engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::TakeCorpse, false);
+    engine.apply_interaction_with_seek(
+        &sim,
+        &_assets,
+        pc_id,
+        target_id,
+        Command::TakeCorpse,
+        false,
+    );
 
     assert_eq!(first_seek_tolerance(&engine), 9.0);
 }
@@ -5409,7 +5545,14 @@ fn pay_seek_faces_the_beggar_action_point() {
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint { x: 90.0, y: 10.0 });
 
-    engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::Pay, false);
+    engine.apply_interaction_with_seek(
+        &crate::sim_rng::test_context(),
+        &_assets,
+        pc_id,
+        target_id,
+        Command::Pay,
+        false,
+    );
 
     assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
 
@@ -5447,7 +5590,11 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
         Some(pc_id),
         crate::order::OrderType::WalkingUpright,
     );
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -5456,7 +5603,7 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
         0,
     );
 
-    engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::Pay, true);
+    engine.apply_interaction_with_seek(&sim, &assets, pc_id, target_id, Command::Pay, true);
 
     assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
@@ -5510,7 +5657,7 @@ fn running_non_pay_does_not_stamp_friendly_target() {
     };
     ai.set_beggar_dont_talk_counter(2);
 
-    engine.apply_interaction_with_seek(&sim, pc_id, target_id, Command::SearchCmd, true);
+    engine.apply_interaction_with_seek(&sim, &_assets, pc_id, target_id, Command::SearchCmd, true);
 
     assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 2);
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
@@ -5532,7 +5679,14 @@ fn shoot_bow_interaction_launches_without_seek() {
     }
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-    engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::ShootBow, false);
+    engine.apply_interaction_with_seek(
+        &crate::sim_rng::test_context(),
+        &_assets,
+        pc_id,
+        target_id,
+        Command::ShootBow,
+        false,
+    );
 
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
     let sequence = engine
@@ -5556,7 +5710,14 @@ fn mapped_interaction_missing_sprite_action_distance_noops() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-    engine.apply_interaction_with_seek(sim, pc_id, target_id, Command::HitCmd, false);
+    engine.apply_interaction_with_seek(
+        &crate::sim_rng::test_context(),
+        &_assets,
+        pc_id,
+        target_id,
+        Command::HitCmd,
+        false,
+    );
 
     assert!(
         engine
@@ -5585,7 +5746,13 @@ fn climb_on_shoulders_seek_tolerance_matches_original_literal() {
     );
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-    engine.apply_climb_on_shoulders_with_seek(pc_id, target_id, false);
+    engine.apply_climb_on_shoulders_with_seek(
+        &crate::sim_rng::test_context(),
+        &_assets,
+        pc_id,
+        target_id,
+        false,
+    );
 
     assert!((first_seek_tolerance(&engine) - 8.0).abs() < 0.001);
 }
@@ -6100,7 +6267,11 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
 
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(pc_id));
     wait.priority = crate::sequence::SequencePriority::Wait;
-    let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+    let wait_sequence = engine.orders.sequence_manager.insert_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(wait_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

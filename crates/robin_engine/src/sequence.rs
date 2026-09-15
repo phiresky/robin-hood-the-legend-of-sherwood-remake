@@ -13,15 +13,13 @@
 //!   Elements at the same level run concurrently; when all finish, the next level starts.
 //! - [`SequenceElement`] carries a [`Command`][crate::element::Command], state machine,
 //!   priority, and a list of [`Order`]s (the sub-steps within one command).
-//! - The engine calls [`SequenceManager::hourglass`] each frame, which returns
-//!   [`SequenceAction`]s for the engine to dispatch to entities.
+//! - The engine removes and dispatches one live FIFO element at a time.
 //!
 //! ## Dispatch model
 //!
-//! We can't call into entities while the SequenceManager is borrowed,
-//! so `hourglass()` returns a `Vec<SequenceAction>` that the engine processes.
-//! The engine then calls back into the SequenceManager (e.g. [`SequenceManager::element_terminated`])
-//! to advance the state machine.
+//! Registration and advancement execute on the engine stack. Immediate and
+//! waiting-priority commands finish their callbacks before the next sibling
+//! registers; ordinary commands append to the manager's deferred FIFO.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -2689,55 +2687,6 @@ pub enum SequenceAction {
     },
 }
 
-/// One slot of the manager's synchronous-registration buffer.
-///
-/// The original game walks the elements of one command level **one at a time**,
-/// and each step
-/// either executes a waiting-priority element immediately or
-/// may run an immediate command **inline** during registration.
-/// Whatever that inline execution does therefore happens before the loop even
-/// looks at the next sibling — in particular actor stopping followed by
-/// stopping not-yet-launched sequence elements
-/// cannot see siblings that have not been registered yet.
-///
-/// Rust cannot execute those commands inside the manager, so a still-pending
-/// loop iteration is parked in the same ordered buffer as the action it must
-/// follow.  Draining the buffer resumes the loop at exactly the point the
-/// original-game evaluation would have returned to.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum PendingSyncEntry {
-    /// An action the engine must dispatch.
-    Action(SequenceAction),
-    /// A successor-registration iteration that has not run yet.
-    Register {
-        sequence_id: SequenceId,
-        element_index: usize,
-    },
-}
-
-impl PendingSyncEntry {
-    fn as_action(&self) -> Option<&SequenceAction> {
-        match self {
-            PendingSyncEntry::Action(action) => Some(action),
-            PendingSyncEntry::Register { .. } => None,
-        }
-    }
-
-    fn is_register(&self) -> bool {
-        matches!(self, PendingSyncEntry::Register { .. })
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════
 //  SequenceManager
 // ═══════════════════════════════════════════════════════════════════
@@ -2927,40 +2876,7 @@ pub struct SequenceManager {
     /// the deferred-dispatch queue.
     elements_to_go: VecDeque<(SequenceId, usize)>,
 
-    /// Ordered synchronous-dispatch buffer for WAIT-priority elements and
-    /// the [`SequenceElement::executed_immediately`] command groups
-    /// (Teleport, LockAi, UnlockAi, ReplaceAnim, RestoreAnim, Speak,
-    /// StartMobile, StopMobile, ActivateMobile, DeactivateMobile,
-    /// Unblip, LockUser, UnlockUser, CameraJumpTo, Timer,
-    /// ActionAvailable, CharacterAvailable, OpenScroll, SendMessage).
-    ///
-    /// `executed_immediately()` is a pure predicate, and
-    /// `register_element_to_go` plus `register_wait_element_to_go` queue
-    /// their `SequenceAction`s for engine-side dispatch onto this buffer.
-    /// Inside `hourglass`, the
-    /// buffer is drained alongside `elements_to_go` as a single ordered
-    /// stream of actions. The engine action loop calls
-    /// [`take_pending_synchronous_actions`](Self::take_pending_synchronous_actions)
-    /// after each callback so re-entrant WAIT successors run before older
-    /// siblings. External entry-point wrappers can continue to drain only
-    /// the immediate subset through
-    /// [`take_pending_immediate_actions`](Self::take_pending_immediate_actions).
-    ///
-    /// The buffer also carries not-yet-run
-    /// next-sequence-element iterations
-    /// ([`PendingSyncEntry::Register`]); see that type for why.
-    pending_synchronous_actions: VecDeque<PendingSyncEntry>,
-
-    /// Pending removal notifications. Populated whenever
-    /// a sequence element transitions to Terminated / Interrupted /
-    /// Impossible; drained by the engine after `hourglass` so
-    /// per-entity cleanup (wasp-victim reset, carrier cleanup, etc.)
-    /// fires in a single pass.
-
-    /// Per-engine sequence-id counter. Replaces the previous global
-    /// atomic so id allocation is part of the rollback snapshot —
-    /// otherwise live and replayed engines would advance the counter
-    /// at different rates and never reconcile.
+    /// Deterministic next sequence identity.
     next_sequence_id: u32,
     /// Per-engine sequence-element id counter. Same rationale as
     /// `next_sequence_id` — every element gets stamped at launch so
@@ -2989,7 +2905,6 @@ impl SequenceManager {
             actor_instructing: _,
             actor_translating: _,
             elements_to_go: _,
-            pending_synchronous_actions: _,
             next_sequence_id: _,
             next_element_id: _,
             halt_pending: _,
@@ -3002,7 +2917,6 @@ impl SequenceManager {
             actor_instructing: value.actor_instructing.clone(),
             actor_translating: value.actor_translating,
             elements_to_go: value.elements_to_go.clone(),
-            pending_synchronous_actions: value.pending_synchronous_actions.clone(),
             next_sequence_id: value.next_sequence_id,
             next_element_id: value.next_element_id,
             halt_pending: value.halt_pending,

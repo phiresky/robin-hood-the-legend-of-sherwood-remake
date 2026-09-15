@@ -62,7 +62,11 @@ fn prepared_order_retains_selected_front_and_literal_successor() {
         40.0,
         18.0,
     ));
-    let seq_id = engine.orders.sequence_manager.launch_element(movement);
+    let seq_id = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        movement,
+    );
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &crate::engine::LevelAssets::new(),

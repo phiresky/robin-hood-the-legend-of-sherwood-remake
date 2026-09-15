@@ -98,7 +98,11 @@ fn reversible_patch_target_keeps_clickable_visual_through_queued_spent_animation
             let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
             timer.set_property(Field::Timer, FieldValue::Integer(100));
             sequence.append_element(timer);
-            engine.orders.sequence_manager.launch_sequence(sequence);
+            engine.launch_sequence(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                sequence,
+            );
             engine.hourglass_phase_sequences(
                 &crate::sim_rng::test_context(),
                 &mut crate::engine::HostDisplayState::default(),

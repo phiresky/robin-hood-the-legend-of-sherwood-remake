@@ -148,15 +148,23 @@ fn replay_owned_point_seek_fixture() -> (
     engine.script_domains.interactables.doors = drop_ale_exit_doors();
     let owner = engine.add_test_entity(test_pc_at(100.0, 100.0, 133));
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
-    let sequence_id = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_movement(
-            1,
-            Command::Seek,
-            Some(owner),
-            OrderType::WalkingUpright,
-        ));
+    let sequence_id = {
+        let sequence_id =
+            engine
+                .orders
+                .sequence_manager
+                .insert_element(SequenceElement::new_movement(
+                    1,
+                    Command::Seek,
+                    Some(owner),
+                    OrderType::WalkingUpright,
+                ));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     (engine, owner, sequence_id, destination)
 }
 
@@ -469,7 +477,14 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
         100.0,
         order_id,
     ));
-    let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+    let sequence_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -828,7 +843,14 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
         *flags = MoveFlags::SEEK;
         *tolerance = 0.0;
     }
-    let seek_id = engine.orders.sequence_manager.launch_element(seek);
+    let seek_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -925,7 +947,14 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
         *flags = MoveFlags::SEEK;
         *tolerance = 10.0;
     }
-    let seek_id = engine.orders.sequence_manager.launch_element(seek);
+    let seek_id = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -998,6 +1027,7 @@ fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
     let sequence_id = engine
         .launch_gate_movement_sequence(
             &sim,
+            &crate::engine::LevelAssets::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
                 source_sector: crate::position_interface::SectorHandle::new(1),
@@ -1125,7 +1155,14 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         *element = Some(target);
         *tolerance = 10.0;
     }
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1158,7 +1195,14 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
         Some(target),
         OrderType::WalkingUpright,
     );
-    let pass_seq = engine.orders.sequence_manager.launch_element(pass);
+    let pass_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1247,7 +1291,14 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         *element = Some(target);
         *tolerance = element_tolerance;
     }
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1402,7 +1453,14 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
         80.0,
         10.0,
     ));
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1466,7 +1524,14 @@ fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
         80.0,
         10.0,
     ));
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1548,7 +1613,14 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
         90.0,
         0.0,
     ));
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager
@@ -1603,7 +1675,14 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
 
     let seek =
         SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
-    let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+    let seek_seq = {
+        let sequence_id = engine.orders.sequence_manager.insert_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
+        sequence_id
+    };
     engine
         .orders
         .sequence_manager

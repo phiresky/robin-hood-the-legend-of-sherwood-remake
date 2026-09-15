@@ -2947,6 +2947,8 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_look_sidewards(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         direction: crate::ai::LookDirection,
     ) {
@@ -2972,7 +2974,7 @@ impl EngineInner {
                 Some(owner),
             ));
         }
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]

@@ -356,8 +356,8 @@ impl SequenceManager {
 
     // ─── Launch ─────────────────────────────────────────────────
 
-    /// Launch a fully-built sequence. Returns its ID.
-    pub fn launch_sequence(&mut self, mut sequence: Sequence) -> SequenceId {
+    /// Assign stable identities and store a sequence before engine execution.
+    pub fn insert_sequence(&mut self, mut sequence: Sequence) -> SequenceId {
         assert!(!sequence.is_empty(), "cannot launch an empty sequence");
 
         // Stamp a deterministic per-engine id over whatever the
@@ -390,24 +390,18 @@ impl SequenceManager {
         );
         sequence.launch();
 
-        // Start the first batch of elements
-        let to_go = sequence.next_elements_go();
-
         self.sequences.insert(id, sequence);
         self.index_sequence_actor_refs(id);
-
-        // Register elements for dispatch, one loop iteration at a time.
-        self.register_level_elements_to_go(id, to_go);
 
         id
     }
 
-    /// Launch a single sequence element by wrapping it in a new sequence.
-    pub fn launch_element(&mut self, mut element: SequenceElement) -> SequenceId {
+    /// Store a single element as a sequence without registering its first level.
+    pub fn insert_element(&mut self, mut element: SequenceElement) -> SequenceId {
         element.command_level = 1;
         let mut seq = Sequence::new();
         seq.append_element(element);
-        self.launch_sequence(seq)
+        self.insert_sequence(seq)
     }
 
     /// Launch a one-shot generic sequence carrying a single pre-built
@@ -443,7 +437,13 @@ impl SequenceManager {
         // order queue BEFORE `Translate` pushes the command's own
         // order, so those transitions play first.
         let elem = SequenceElement::new_generic(1, command, Some(actor));
-        self.launch_element(elem)
+        let id = self.insert_element(elem);
+        self.sequences
+            .get_mut(&id)
+            .expect("inserted sequence")
+            .next_elements_go();
+        self.elements_to_go.push_back((id, 0));
+        id
     }
 
     /// Push an `Order` onto the given element.  Panics if the handle is
@@ -735,104 +735,5 @@ impl SequenceManager {
         let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
         let order = self.get_element(seq_id, elem_idx)?.current_order()?;
         Some((seq_id, elem_idx, order))
-    }
-}
-
-impl crate::engine::EngineInner {
-    /// Interrupt one freshly launched actor Wait before its synchronous
-    /// launch action reaches instruction handling.
-    ///
-    /// This is deliberately identity-based rather than an owner/command scan:
-    /// EnterBeggar's DONE callback creates one Wait, postpones it behind the
-    /// still-selected noninterruptible transition, then selected-PC
-    /// `SelectAction(Beggar)` immediately stops that exact postponed element.
-    /// Rust replays the callback after retiring the transition, so its split
-    /// representation must remove the queued instruction before it can select
-    /// the Wait. Preserve the launch (and therefore sequence/element ID
-    /// consumption) while touching no older queued work for the same owner.
-    pub(crate) fn interrupt_just_registered_wait_before_instruct(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        owner: EntityId,
-        sequence_id: SequenceId,
-    ) {
-        let element = self
-            .orders
-            .sequence_manager
-            .get_element(sequence_id, 0)
-            .unwrap_or_else(|| panic!("fresh Wait {sequence_id:?}/0 disappeared before Stop"));
-        assert_eq!(
-            element.owner,
-            Some(owner),
-            "fresh Wait {sequence_id:?}/0 changed owner before Stop"
-        );
-        assert_eq!(
-            element.command,
-            Command::Wait,
-            "selected beggar callback may discard only its fresh Wait"
-        );
-        assert_eq!(
-            element.priority,
-            SequencePriority::Wait,
-            "selected beggar callback Wait lost RHPRIORITY_WAIT"
-        );
-        assert_eq!(
-            element.state,
-            SequenceState::Todo,
-            "selected beggar callback Wait must be stopped before Instruct"
-        );
-        assert!(
-            element.orders.is_empty(),
-            "selected beggar callback Wait translated before its Stop"
-        );
-
-        let target = (sequence_id, 0);
-        let queued_actions = self
-            .orders
-            .sequence_manager
-            .pending_synchronous_actions
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry,
-                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
-                        owner: queued_owner,
-                        sequence_id: queued_sequence,
-                        element_index: 0,
-                    }) if *queued_owner == owner && *queued_sequence == sequence_id
-                )
-            })
-            .count();
-        assert_eq!(
-            queued_actions, 1,
-            "fresh Wait {sequence_id:?}/0 must have exactly one queued Go action"
-        );
-        self.orders
-            .sequence_manager
-            .pending_synchronous_actions
-            .retain(|entry| {
-                !matches!(
-                    entry,
-                    PendingSyncEntry::Action(SequenceAction::InstructOwner {
-                        owner: queued_owner,
-                        sequence_id: queued_sequence,
-                        element_index: 0,
-                    }) if *queued_owner == owner && *queued_sequence == sequence_id
-                )
-            });
-        assert!(
-            !self
-                .orders
-                .sequence_manager
-                .elements_to_go
-                .contains(&target),
-            "fresh RHPRIORITY_WAIT element unexpectedly entered the deferred manager FIFO"
-        );
-        assert!(
-            self.terminate_sequence(sim, assets, active_scripts, sequence_id),
-            "fresh Wait {sequence_id:?} disappeared before interruption"
-        );
     }
 }

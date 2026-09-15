@@ -56,16 +56,15 @@ fn launch_interaction_and_tick(
     let mut engine = EngineInner::new();
     let actor_id = engine.add_test_entity(actor);
     let antagonist_id = engine.add_test_entity(antagonist);
-    engine.launch_element(SequenceElement::new_interaction(
-        1,
-        command,
-        Some(actor_id),
-        Some(antagonist_id),
-    ));
+    let assets = engine.test_runtime_assets();
+    engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new_interaction(1, command, Some(actor_id), Some(antagonist_id)),
+    );
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
         engine

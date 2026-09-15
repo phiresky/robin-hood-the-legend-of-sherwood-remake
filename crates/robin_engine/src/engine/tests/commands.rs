@@ -138,21 +138,6 @@ fn mission_state_transitions() {
 }
 
 #[test]
-fn initialize_sends_stature_message() {
-    let mut assets = LevelAssets::new();
-    let mut engine = EngineInner::new();
-    assert_eq!(engine.orders.messenger.count(), 0);
-    engine.initialize(&mut assets);
-    // Should have sent a Stature message
-    let msg = engine
-        .orders
-        .messenger
-        .poll()
-        .expect("expected stature message");
-    assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::Stature));
-}
-
-#[test]
 fn mission_won_first_time_raises_mission_state_notice() {
     let mut display = HostDisplayState::default();
     // On the first post-win frame with no PC guarded, the engine
@@ -201,12 +186,6 @@ fn post_load_fixups_aborts_midzoom() {
             .zoom_to_up
     );
     assert!(!engine.feedback.cutscene_camera.zoom_init_done);
-    let msg = engine
-        .orders
-        .messenger
-        .poll()
-        .expect("expected zoom end message");
-    assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::ZoomUpEnd));
 }
 
 #[test]
@@ -657,7 +636,7 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
     let mut timer = SequenceElement::new_generic(3, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(5));
     sequence.append_element(timer);
-    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    let sequence_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -749,7 +728,7 @@ fn timer_started_by_sequence_dispatch_ticks_on_its_launch_frame() {
     let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(2));
     sequence.append_element(timer);
-    engine.orders.sequence_manager.launch_sequence(sequence);
+    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
 
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
@@ -1363,7 +1342,11 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         wait.action_state_after_transition = ActionState::WaitingSword;
         wait.orders
             .push_back(Order::new(waiting, 0.0, 0.0, order_id));
-        let wait_sequence = engine.orders.sequence_manager.launch_element(wait);
+        let wait_sequence = engine.orders.sequence_manager.insert_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(wait_sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

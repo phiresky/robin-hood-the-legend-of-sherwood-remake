@@ -1,74 +1,6 @@
 use super::*;
 
 impl EngineInner {
-    /// Detect the one manager-FIFO inversion produced when a completed player
-    /// movement publishes its posture-recovery tail beside a newly launched
-    /// cross-sector move.
-    ///
-    /// Original instructs the new route's first Move before the recovery
-    /// EquipBow takes ownership. The Move consequently queues a path request;
-    /// EquipBow then postpones MoveWaiting and path cancellation retains the
-    /// queue head for one invalid completion. Rust normally sees the recovery
-    /// first and postpones the still-untranslated Move, losing both path
-    /// events. Restrict the correction to a recovery order which has been
-    /// installed but never executed and to a Move immediately following the
-    /// route's leading AssertPosition.
-    pub(in crate::engine) fn fresh_recovery_blocker_after_route_assert(
-        &self,
-        owner: EntityId,
-        sequence_id: crate::sequence::SequenceId,
-        element_index: usize,
-    ) -> Option<(crate::sequence::SequenceId, usize)> {
-        use crate::element::Command;
-        use crate::sequence::{SequencePriority, SequenceState};
-
-        let incoming = self
-            .orders
-            .sequence_manager
-            .get_element(sequence_id, element_index)?;
-        if incoming.command != Command::Move || element_index == 0 {
-            return None;
-        }
-        let route_assert = self
-            .orders
-            .sequence_manager
-            .get_element(sequence_id, element_index - 1)?;
-        if route_assert.command != Command::AssertPosition
-            || route_assert.state != SequenceState::Terminated
-        {
-            return None;
-        }
-
-        let (blocker_sequence, blocker_index) = self.current_sequence_element_for_actor(owner)?;
-        let blocker = self
-            .orders
-            .sequence_manager
-            .get_element(blocker_sequence, blocker_index)?;
-        if blocker.command != Command::EquipBow
-            || blocker.priority != SequencePriority::PostponeEverythingButInjuries
-            || blocker_index == 0
-        {
-            return None;
-        }
-        let recovery_predecessor = self
-            .orders
-            .sequence_manager
-            .get_element(blocker_sequence, blocker_index - 1)?;
-        if recovery_predecessor.command != Command::SpeakHeroReachDestination
-            || recovery_predecessor.state != SequenceState::Terminated
-        {
-            return None;
-        }
-
-        let current_order_id = blocker.current_order()?.order_id;
-        let actor = self.get_entity(owner)?.actor_data()?;
-        (actor
-            .installed_order
-            .is_some_and(|order| order.order_id == current_order_id)
-            && actor.last_execute_order_id != Some(current_order_id))
-        .then_some((blocker_sequence, blocker_index))
-    }
-
     /// Retry the front of a PC's legacy shoot list through the same
     /// Actor-instruction admission stages used by the manager dispatcher.
     /// Returns the boolean result that shoot-list processing uses to decide
@@ -763,27 +695,9 @@ impl EngineInner {
                 .resume_postponed_climbs_for_helper(helper);
         }
 
-        // ── Sequence manager dispatch ────────────────────────────
-        // Process pending sequence elements in the manager's emitted order.
-        // Record actual accepted actor-instruction boundaries. Translation
-        // arms that skip bypass this list just as the original game returns
-        // before its IN_PROGRESS epilogue.
-        let mut accepted_instruct_owners = Vec::new();
-        let mut phase = SequencePhase::begin(&mut self.orders);
-
-        // Dispatch each action at its exact FIFO position. In particular,
-        // Move/Seek translation must not leap ahead of an earlier script
-        // callback in this same batch.
-        //
-        // Pop actions one at a time and drain any synchronous
-        // immediate-dispatch follow-ups produced by cascades inside
-        // each action (e.g. an `element_terminated` whose
-        // `signal_ready` re-registers the next element which happens
-        // to be Speak / Teleport / etc.).  Successors land at the
-        // front of the action queue, so they fire before the next
-        // non-immediate action in the batch rather than waiting for
-        // the next update.
-        while let Some(action) = phase.pop_action_after_registration(&mut self.orders) {
+        // Pop one live FIFO entry only after its predecessor and every
+        // synchronous successor callback have returned.
+        while let Some(action) = self.orders.sequence_manager.pop_next_hourglass_action() {
             // Translation selection never outlives the dispatch that
             // installed it; the arms below abandon the action early on many
             // rejection paths.
@@ -795,41 +709,11 @@ impl EngineInner {
             // element it registers all belong to this same manager drain.
             // Falling out of the whole loop instead would strand the
             // successor until the next frame and leave the actor orderless.
-            self.dispatch_sequence_phase_action(sim, assets, action, &mut accepted_instruct_owners);
+            self.dispatch_sequence_phase_action(sim, assets, action);
 
-            // State change sends the owner's removal notification and resumes at
-            // `Ready()` before returning to this action loop. Closing that
-            // boundary here lets an immediate next-level successor preempt
-            // older actions already detached into `SequencePhase`.
-
-            // Keep Rust's translation identity through its deferred
-            // removal-notification bookkeeping, then release it. This mirrors
-            // an actor pointer, not SequenceManager's launch list: pending-
-            // command queries must not interpret this selection as queued.
             self.orders.sequence_manager.set_translating_element(None);
-
-            // After-action live-FIFO continuation: re-entrant immediate/WAIT
-            // work goes to the front, while newly registered normal work is
-            // appended behind actions that were already waiting.
-            phase.splice_registered_actions(&mut self.orders);
         }
         self.orders.sequence_manager.set_translating_element(None);
-
-        for &owner in &accepted_instruct_owners {
-            // Actor instruction writes the in-progress motion state after
-            // an accepted element has survived translation and entered
-            // INPROGRESS. AI work in the preceding derived NPC tail only
-            // registers that element; the authoritative write therefore
-            // belongs here, after the sequence-manager tick has actually
-            // dispatched InstructOwner.
-            let actor = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("accepted InstructOwner lost its actor");
-            actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
-        }
 
         // The redundant-EnterSwordfight retention above is only a bridge
         // across a re-entrant actor-update lazy Wait. If that Wait is

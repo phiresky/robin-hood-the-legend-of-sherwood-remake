@@ -1,164 +1,6 @@
 use super::*;
 
 impl EngineInner {
-    /// Wrapper around the immediate-action helpers.
-    ///
-    /// Dispatches the immediate side effect synchronously rather
-    /// than queuing it.  Used both by `perform_hourglass_inner`'s
-    /// action loop and by
-    /// [`Self::drain_pending_immediate_actions_sync`] to fire
-    /// `pending_immediate_actions` queued by
-    /// `register_element_to_go` outside the hourglass dispatch
-    /// loop.
-    fn dispatch_immediate_action(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        action: crate::sequence::SequenceAction,
-    ) {
-        match action {
-            crate::sequence::SequenceAction::ExecuteImmediateOwner {
-                owner,
-                sequence_id,
-                element_index,
-            } => {
-                if let Some((handle, msg, arg1, arg2)) = self.dispatch_execute_immediate_owner(
-                    sim,
-                    assets,
-                    owner,
-                    sequence_id,
-                    element_index,
-                ) {
-                    self.dispatch_sequence_messages(sim, assets, &[(handle, msg, arg1, arg2)], &[]);
-                    self.element_terminated(
-                        sim,
-                        assets,
-                        &mut Vec::new(),
-                        sequence_id,
-                        element_index,
-                    );
-                }
-            }
-            crate::sequence::SequenceAction::ExecuteImmediateEngine {
-                sequence_id,
-                element_index,
-            } => {
-                if let Some((msg, arg1, arg2)) = self.dispatch_engine_or_execute_immediate(
-                    sim,
-                    assets,
-                    sequence_id,
-                    element_index,
-                ) {
-                    self.dispatch_sequence_messages(sim, assets, &[], &[(msg, arg1, arg2)]);
-                    self.element_terminated(
-                        sim,
-                        assets,
-                        &mut Vec::new(),
-                        sequence_id,
-                        element_index,
-                    );
-                }
-            }
-            other => panic!(
-                "dispatch_immediate_action called with non-immediate variant: {:?}",
-                other
-            ),
-        }
-    }
-    /// Synchronous drain of the complete sequence-registration stream.
-    ///
-    /// External entry points around the manager
-    /// (`launch_sequence`, `launch_element`, `element_terminated`,
-    /// `element_impossible`, `element_in_progress`,
-    /// `element_interrupted`, `terminate_sequence`, `stop_owner`,
-    /// `stop_pending_elements*`, `cancel_pending_move_commands`)
-    /// can register elements via `register_element_to_go`, which in
-    /// turn queues immediate `SequenceAction`s for the
-    /// immediate command groups. Engine-side wrappers
-    /// that have access to `&LevelAssets` call this helper after
-    /// invoking such an entry point. Despite the legacy method name, it
-    /// drains immediate commands and direct WAIT `Go()` successors as one
-    /// ordered, depth-first registration stream.
-    ///
-    /// `SendMessage` invokes `ProcessMessage` at the action's exact position
-    /// and terminates only after the callback returns, matching
-    /// immediate actor and engine command execution.
-    pub(crate) fn drain_pending_immediate_actions_sync(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        while let Some(action) = self.orders.sequence_manager.pop_pending_immediate_action() {
-            // Work that was already registered is the caller's continuation.
-            // Detach it so Ready() successors produced by this action drain
-            // depth-first before an older sibling.
-            let continuation = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            match action {
-                crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
-                | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
-                    self.dispatch_immediate_action(sim, assets, action);
-                }
-                crate::sequence::SequenceAction::InstructOwner { .. }
-                | crate::sequence::SequenceAction::EngineCommand { .. } => {
-                    self.dispatch_script_synchronous_action(sim, assets, action, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!("synchronous sequence successor dispatch failed: {error:?}")
-                        });
-                }
-            }
-
-            self.drain_pending_immediate_actions_sync(sim, assets);
-            self.orders
-                .sequence_manager
-                .restore_pending_synchronous_actions(continuation);
-        }
-    }
-
-    /// Drain only work that legacy sequence registration executes inline,
-    /// leaving ordinary sequence-element registration work queued for
-    /// the sequence-manager tick.
-    ///
-    /// Immediately executed commands and waiting-priority successors run on
-    /// the registration stack. Other priorities cannot start until the next
-    /// manager hourglass when registration occurs after its phase.
-    pub(crate) fn drain_registration_inline_actions_sync(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        while let Some(action) = self
-            .orders
-            .sequence_manager
-            .pop_pending_registration_inline_action()
-        {
-            let continuation = self
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
-            match action {
-                crate::sequence::SequenceAction::ExecuteImmediateOwner { .. }
-                | crate::sequence::SequenceAction::ExecuteImmediateEngine { .. } => {
-                    self.dispatch_immediate_action(sim, assets, action);
-                }
-                crate::sequence::SequenceAction::InstructOwner { .. }
-                | crate::sequence::SequenceAction::EngineCommand { .. } => {
-                    self.dispatch_script_synchronous_action(sim, assets, action, &mut Vec::new())
-                        .unwrap_or_else(|error| {
-                            panic!("inline WAIT successor dispatch failed: {error:?}")
-                        });
-                }
-            }
-
-            self.drain_registration_inline_actions_sync(sim, assets);
-            self.orders
-                .sequence_manager
-                .restore_pending_synchronous_actions(continuation);
-        }
-    }
-
     /// Extracted from the `ExecuteImmediateOwner` match arm in
     /// `perform_hourglass_inner`.  Dispatches the owner-immediate
     /// command group (Teleport, LockAi, UnlockAi, ReplaceAnim,
@@ -168,12 +10,15 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> Option<(i32, i32, i32, i32)> {
+    ) {
         let cmd = {
-            let e = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+            let Some(e) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
+                return;
+            };
             e.command
         };
         match cmd {
@@ -184,25 +29,18 @@ impl EngineInner {
                 self.dispatch_mobile_immediate(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     cmd,
                     seq_id,
                     elem_idx,
                 );
             }
-            Command::SendMessage => {
-                // Dispatch ProcessMessage to the owner's per-actor
-                // script.
-                let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
-                let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
-                return Some((handle, msg, arg1, arg2));
-            }
             Command::Unblip | Command::ReplaceAnim | Command::RestoreAnim => {
                 self.dispatch_sprite_immediate(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     cmd,
                     seq_id,
@@ -236,8 +74,8 @@ impl EngineInner {
                 };
                 let Some(speak_id) = speak_id else {
                     tracing::warn!(?owner, "Speak: missing SpeakId property — terminating");
-                    self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                    return None;
+                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    return;
                 };
                 let owner_is_pc = self.get_entity(owner).is_some_and(|e| e.is_pc());
                 if owner_is_pc {
@@ -273,9 +111,11 @@ impl EngineInner {
                         "Speak: invalid remark id or missing AI controller"
                     );
                 }
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
-            Command::Teleport => self.execute_teleport(sim, assets, owner, seq_id, elem_idx),
+            Command::Teleport => {
+                self.execute_teleport(sim, assets, active_scripts, owner, seq_id, elem_idx)
+            }
             Command::LockAi | Command::UnlockAi => {
                 if self
                     .get_entity(owner)
@@ -283,18 +123,24 @@ impl EngineInner {
                     .is_some()
                 {
                     if cmd == Command::LockAi {
-                        self.execute_ai_script_lock(sim, assets, owner, false);
+                        self.execute_ai_script_lock_in_driver(
+                            sim,
+                            assets,
+                            owner,
+                            false,
+                            active_scripts,
+                        )
+                        .unwrap_or_else(|error| panic!("script lock failed: {error:?}"));
                     } else {
                         self.execute_ai_script_unlock(sim, assets, owner);
                     }
                 }
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
             _ => {
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        None
     }
 
     /// Stage A — extracted from the combined
@@ -331,8 +177,7 @@ impl EngineInner {
                 self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
             Some(Command::Timer) => {
-                let timer =
-                    self.timer_immediate_entry(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                let timer = self.timer_immediate_entry(seq_id, elem_idx);
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Some(Command::CameraJumpTo) => {

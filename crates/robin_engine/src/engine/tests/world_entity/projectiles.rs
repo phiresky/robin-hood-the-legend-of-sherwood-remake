@@ -145,7 +145,7 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
         Some(opponent),
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
-    let shot_seq = engine.orders.sequence_manager.launch_element(shot);
+    let shot_seq = engine.launch_element(sim, &assets, shot);
     engine.queue_pc_shoot_bow(pc, crate::sequence::SequenceElementRef::new(shot_seq, 0));
     assert_eq!(
         engine
@@ -200,7 +200,7 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
         Some(opponent),
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
-    let shot_seq = engine.orders.sequence_manager.launch_element(shot);
+    let shot_seq = engine.launch_element(sim, &assets, shot);
     engine.postpone_element(sim, &assets, &mut Vec::new(), shot_seq, 0);
 
     let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
@@ -529,7 +529,11 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     };
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    assert!(engine.shoot_bow_at(&assets, shooter, target).is_some());
+    assert!(
+        engine
+            .shoot_bow_at(&crate::sim_rng::test_context(), &assets, shooter, target)
+            .is_some()
+    );
 }
 
 #[test]
@@ -614,7 +618,11 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     };
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
-    let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+    let sequence_id = engine.orders.sequence_manager.insert_element(pass_door);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -759,7 +767,11 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         };
         *gate_id = Some(DoorIndex::new(door_index).expect("valid door index"));
         *direction = 0;
-        let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+        let sequence_id = engine.orders.sequence_manager.insert_element(pass_door);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

@@ -502,7 +502,12 @@ impl OfficerRpc<'_> {
                     } else {
                         crate::ai::LookDirection::RightLeft
                     };
-                    self.engine.execute_ai_look_sidewards(self.owner, direction);
+                    self.engine.execute_ai_look_sidewards(
+                        self.sim,
+                        self.assets,
+                        self.owner,
+                        direction,
+                    );
                 }
                 self.ai_mut().base.sorrow_level = self
                     .ai()
@@ -804,6 +809,8 @@ impl OfficerRpc<'_> {
                     } else {
                         self.state(SeekingCharlyWatching);
                         self.engine.execute_ai_look_sidewards(
+                            self.sim,
+                            self.assets,
                             self.owner,
                             crate::ai::LookDirection::LeftRight,
                         );

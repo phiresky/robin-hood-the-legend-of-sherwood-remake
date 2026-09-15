@@ -1368,11 +1368,15 @@ impl Engine {
                 }
             }
             ExternalAction::SimpleMessage { message } => {
-                self.inner.send_simple_message(message);
+                let sim = self.inner.control.simulation_context();
+                self.inner.send_simple_message(&sim, assets, message);
                 ExternalActionResult::SimpleMessage
             }
             ExternalAction::EzekielInstakill { target } => {
-                ExternalActionResult::EzekielInstakill(self.inner.try_ezekiel_instakill(target))
+                let sim = self.inner.control.simulation_context();
+                ExternalActionResult::EzekielInstakill(
+                    self.inner.try_ezekiel_instakill(&sim, assets, target),
+                )
             }
             ExternalAction::ReplaceCampaign { campaign } => {
                 self.inner.replace_campaign(campaign);
