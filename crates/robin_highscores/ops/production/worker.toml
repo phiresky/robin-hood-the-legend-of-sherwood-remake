@@ -1,4 +1,8 @@
-# Example verifier-worker configuration. Production uses ops/production/worker.toml.
+# Production verifier-worker configuration (installed as
+# ~/.config/robin-highscores/worker.toml). The verifier is launched through the
+# `authority` symlink, which names the verifier release built at the commit of
+# the live web runtime; switching that symlink and restarting the worker is the
+# whole verifier upgrade.
 server_config = "/home/robinhood/.config/robin-highscores/server.toml"
 worker_id = "worker-01"
 poll_interval_ms = 500
@@ -9,7 +13,6 @@ max_verifier_attempts = 3
 [verifier_launcher]
 bwrap_program = "/usr/bin/bwrap"
 prlimit_program = "/usr/bin/prlimit"
-# Static musl verifier of the verifier release named by the `authority` symlink.
 verifier_program = "/home/robinhood/.local/opt/robin-highscores/authority/bin/robin-replay-verifier"
 wall_timeout_seconds = 120
 cpu_limit_seconds = 120
@@ -30,7 +33,8 @@ max_mission_id_bytes = 128
 max_metadata_records = 4096
 max_entries_per_frame = 1024
 
-# Raw Demo and Full trees are never bundled; install them read-only by hand.
+# Licensed raw game trees, installed read-only by the operator and bound
+# read-only into every verifier sandbox at /run/robin-content.
 [content.demo]
 root = "/home/robinhood/.local/share/robin-highscores/raw-content/demo"
 resource_locale_root = "1033"

@@ -12,8 +12,10 @@
 #   * a migration ran   -> `current` is restored but services stay stopped,
 #     because the previous binaries reject the newer schema; restore the
 #     printed snapshot first.
-# The `authority` release (verifier + ranked content, referenced by absolute
-# paths in worker.toml) is never modified or pruned.
+# The `authority` symlink names the verifier release (bin/robin-replay-verifier,
+# built at the live web runtime commit; worker.toml launches it through the
+# symlink). This script never modifies or prunes it, and refuses a service
+# release whose commit directory is the verifier release.
 set -euo pipefail
 
 root="${ROBIN_HIGHSCORES_ROOT:-$HOME/.local/opt/robin-highscores}"
@@ -30,8 +32,9 @@ die() {
 
 [[ $# -eq 1 ]] || die "usage: deploy.sh <release tarball>"
 tarball=$(realpath "$1")
-[[ -L "$root/authority" && -d "$root/authority/" ]] || die "$root/authority must be a symlink to the authority release"
+[[ -L "$root/authority" && -d "$root/authority/" ]] || die "$root/authority must be a symlink to the verifier release"
 authority=$(realpath "$root/authority")
+[[ -x "$authority/bin/robin-replay-verifier" ]] || die "verifier release $authority has no executable bin/robin-replay-verifier"
 previous=""
 if [[ -L "$root/current" ]]; then
     previous=$(realpath "$root/current")
@@ -59,7 +62,7 @@ done
 target="$releases/$commit"
 if [[ -e "$target" ]]; then
     resolved=$(realpath "$target")
-    [[ "$resolved" != "$authority" ]] || die "$commit is the authority release; refusing to replace it"
+    [[ "$resolved" != "$authority" ]] || die "$commit is the verifier release named by authority; refusing to replace it"
     [[ "$resolved" != "$previous" ]] || die "$commit is already current"
     rm -rf "$target"
 fi
