@@ -13,7 +13,7 @@ const DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v3\0');
 
 test('uses the current Rust join-ticket and network schemas', () => {
     assert.equal(browserJoinTicketConstants.schema, 3);
-    assert.equal(browserJoinTicketConstants.netProtocolVersion, 51);
+    assert.equal(browserJoinTicketConstants.netProtocolVersion, 52);
 });
 
 function base64Url(bytes: Uint8Array): string {
@@ -68,7 +68,7 @@ test('accepts any canonical signed HTTPS relay and exact ticket', async () => {
 });
 
 test('rejects signed invitations from older network protocols', async () => {
-    for (const net_protocol of [41, 42, 43, 44, 45, 46, 47, 48, 49, 50]) {
+    for (const net_protocol of [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]) {
         const { code } = await signedTicket({ net_protocol });
         await assert.rejects(verifyBrowserJoinTicket(code, NOW), new RegExp(`unsupported network protocol ${net_protocol}`));
     }
