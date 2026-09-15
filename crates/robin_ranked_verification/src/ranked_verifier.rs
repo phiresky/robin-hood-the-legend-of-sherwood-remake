@@ -326,6 +326,61 @@ mod tests {
 
     #[test]
     #[ignore = "requires operator-mounted full retail data"]
+    fn real_full_ranked_startup_matches_native_frame_zero() {
+        let root = operator_datadir("fullgame_gog");
+        let files = confined_official_files(&root, "2047").unwrap();
+        let profiles = load_official_profiles(&files).unwrap();
+        let config = fixture_policy().expected_config();
+        let campaign = campaign_for_mission(&profiles, "H01_Lin_VL", config);
+        let mut reference = load_raw_mission_inputs(
+            &campaign,
+            &profiles,
+            &robin_engine::engine::GlobalOptions::default(),
+            config,
+            files,
+        )
+        .unwrap();
+        let mut native = robin_engine::engine::Engine::new(robin_engine::engine::EngineArgs {
+            campaign: campaign.clone(),
+            level: robin_engine::engine::LevelLoadArgs {
+                assets: &mut reference.assets,
+                level_directory: &reference.level_directory,
+                progress: &mut |_| {},
+                loaded: reference.loaded,
+                bg_pixel_dims: reference.bg_pixel_dims,
+            },
+            ground_mark_sprite: reference.ground_mark_sprite,
+            titbit_row_frame_counts: reference.titbit_row_frame_counts,
+            rng_seed: TEST_SEED,
+            original_rng_replay: None,
+            sim_config: config,
+        })
+        .unwrap();
+        let unprepared_hash = robin_engine::replay::state_hash(&native);
+        native
+            .register_mission_peasant_names(&reference.assets, &mut std::array::from_fn(|_| None))
+            .unwrap();
+        native
+            .connect_initial_seat(
+                &reference.assets,
+                robin_engine::player_command::PlayerId::HOST,
+                String::new(),
+            )
+            .unwrap();
+        let expected = robin_engine::replay::state_hash(&native);
+        assert_ne!(expected, unprepared_hash);
+
+        let (approved, _) = prepare(&root, "2047", &campaign, "H01_Lin_VL")
+            .unwrap()
+            .into_engine_and_assets();
+        let (ranked, _, _, _) = approved.into_parts();
+        assert_eq!(robin_engine::replay::state_hash(&ranked), expected);
+        assert_eq!(ranked.frame_counter(), 0);
+        assert_eq!(ranked.rng_seed(), native.rng_seed());
+    }
+
+    #[test]
+    #[ignore = "requires operator-mounted full retail data"]
     fn real_full_hq_campaign_validates_against_clean_sherwood_metadata() {
         let root = operator_datadir("fullgame_linux");
         let locale = "2047";
