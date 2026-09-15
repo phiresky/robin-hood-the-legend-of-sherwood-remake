@@ -521,10 +521,6 @@ fn replay_admission_limits(
     );
     limits.max_campaign_bytes = lower(configured.max_campaign_bytes, compiled.max_campaign_bytes);
     limits.max_frames = lower(u64::from(configured.max_frames), compiled.max_frames);
-    limits.max_metadata_records = lower(
-        u64::from(configured.max_metadata_records),
-        compiled.max_metadata_records,
-    );
     limits.max_entries_per_frame = lower(
         u64::from(configured.max_entries_per_frame),
         compiled.max_entries_per_frame,
@@ -811,7 +807,6 @@ mod tests {
             max_frames: u32::MAX,
             max_version_bytes: u32::MAX,
             max_mission_id_bytes: u32::MAX,
-            max_metadata_records: u32::MAX,
             max_entries_per_frame: u32::MAX,
         };
         let limits = replay_admission_limits(&huge);

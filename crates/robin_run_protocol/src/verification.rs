@@ -24,7 +24,6 @@ pub struct VerificationLimitsV1 {
     pub max_frames: u32,
     pub max_version_bytes: u32,
     pub max_mission_id_bytes: u32,
-    pub max_metadata_records: u32,
     pub max_entries_per_frame: u32,
 }
 
@@ -47,10 +46,6 @@ impl Validate for VerificationLimitsV1 {
             (
                 "limits.max_mission_id_bytes",
                 u64::from(self.max_mission_id_bytes),
-            ),
-            (
-                "limits.max_metadata_records",
-                u64::from(self.max_metadata_records),
             ),
             (
                 "limits.max_entries_per_frame",

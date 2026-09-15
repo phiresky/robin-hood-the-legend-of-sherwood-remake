@@ -27,7 +27,6 @@ max_campaign_bytes = 67108864
 max_frames = 2000000
 max_version_bytes = 256
 max_mission_id_bytes = 128
-max_metadata_records = 4096
 max_entries_per_frame = 1024
 
 # Raw Demo and Full trees are never bundled; install them read-only by hand.

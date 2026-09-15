@@ -72,7 +72,6 @@ pub struct ReplayAdmissionLimits {
     /// Opaque bitcode campaign snapshot in the replay header.
     pub max_campaign_bytes: usize,
     pub max_frames: usize,
-    pub max_metadata_records: usize,
     /// Direct fact/action/command/control entries in one frame.
     pub max_entries_per_frame: usize,
     /// Direct entries over the complete replay.
@@ -118,7 +117,6 @@ pub const DEFAULT_REPLAY_ADMISSION_LIMITS: ReplayAdmissionLimits = ReplayAdmissi
     max_mission_id_bytes: 256,
     max_campaign_bytes: 8 * 1024 * 1024,
     max_frames: 500_000,
-    max_metadata_records: 500_000,
     max_entries_per_frame: 4_096,
     max_total_frame_entries: 1_000_000,
     max_typed_collection_entries: 65_536,
@@ -149,7 +147,6 @@ pub const LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS: ReplayAdmissionLimits = ReplayAd
     max_mission_id_bytes: 256,
     max_campaign_bytes: 8 * 1024 * 1024,
     max_frames: 500_000,
-    max_metadata_records: 500_000,
     max_entries_per_frame: 4_096,
     max_total_frame_entries: 1_000_000,
     max_typed_collection_entries: 18 * 1024 * 1024,
@@ -185,7 +182,6 @@ pub enum ReplayLimitKind {
     CampaignBytes,
     DeclaredFrames,
     FrameRecords,
-    MetadataRecords,
     FrameEntries,
     TotalFrameEntries,
     TypedCollectionEntries,
@@ -403,7 +399,6 @@ fn decode_compact_inner(
             max_mission_id_bytes: usize::MAX,
             max_campaign_bytes: usize::MAX,
             max_frames: usize::MAX,
-            max_metadata_records: usize::MAX,
             max_entries_per_frame: usize::MAX,
             max_total_frame_entries: usize::MAX,
             max_typed_collection_entries: usize::MAX,
@@ -710,19 +705,6 @@ fn validate_file_for_admission(
         load.serialize(&mut budget).map_err(FormatError::from)?;
     }
 
-    let metadata_records = file
-        .hashes
-        .len()
-        .checked_add(file.save_markers.len())
-        .and_then(|count| count.checked_add(file.load_backs.len()))
-        .ok_or(FormatError::CountOverflow {
-            kind: ReplayLimitKind::MetadataRecords,
-        })?;
-    check_limit(
-        ReplayLimitKind::MetadataRecords,
-        metadata_records,
-        limits.max_metadata_records,
-    )?;
     validate_metadata_frames(
         file.hashes.keys().copied(),
         ReplayMetadataKind::StateHash,
@@ -1987,17 +1969,25 @@ mod tests {
             decode_compact_bounded(&encode_file(&declared), &limits).unwrap_err(),
             ReplayLimitKind::DeclaredFrames,
         );
+    }
 
-        let mut metadata = sample_file();
-        metadata.hashes.insert(0, 42);
-        let limits = ReplayAdmissionLimits {
-            max_metadata_records: 0,
-            ..Default::default()
-        };
-        assert_limit(
-            decode_compact_bounded(&encode_file(&metadata), &limits).unwrap_err(),
-            ReplayLimitKind::MetadataRecords,
-        );
+    #[test]
+    fn per_frame_hashes_can_exceed_the_former_metadata_count_limit() {
+        let mut file = sample_file();
+        let frame = file.frames[&0].clone();
+        file.header.total_frames = 4500;
+        file.frames = (0..4500)
+            .map(|index| {
+                let mut frame = frame.clone();
+                frame.timeline_before = index;
+                frame.timeline_after = index + 1;
+                (index, frame)
+            })
+            .collect();
+        file.hashes = (0..4500).map(|index| (index, 42)).collect();
+        let (_, decoded) =
+            decode_compact_bounded(&encode_file(&file), &ReplayAdmissionLimits::default()).unwrap();
+        assert_eq!(ReplayFile::from(&decoded).hashes.len(), 4500);
     }
 
     #[test]
