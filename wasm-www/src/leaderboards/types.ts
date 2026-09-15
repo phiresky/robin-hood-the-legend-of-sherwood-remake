@@ -182,31 +182,71 @@ export type RunDetail = {
 
 export type PlayerProfile = { readonly username: string; readonly publicKey: string; readonly publicKeyFingerprint: string };
 
-export type UsernameChallenge = { readonly id: string; readonly nonce: string; readonly expiresAtUnixMs: number };
-
-export type UsernameUpdateEnvelope = {
-    readonly schema_version: 1;
-    readonly username_challenge_id: string;
-    readonly username_challenge_nonce: string;
-    readonly public_key: string;
-    readonly username: string;
+/**
+ * robin_run_protocol::signed_request::SignedRequestV2. The player signs
+ * `domain || canonical_json(request)`; `signed_at_unix_ms` bounds replay.
+ */
+export type SignedRequest<T> = {
+    readonly schema_version: 2;
+    readonly request: T;
+    readonly algorithm: 'ed25519';
     readonly signature: string;
 };
+
+/** robin_run_protocol::UsernameUpdateV2 */
+export type UsernameUpdateClaim = {
+    readonly schema_version: 2;
+    readonly public_key: string;
+    readonly signed_at_unix_ms: number;
+    readonly username: string;
+};
+
+export type SignedUsernameUpdate = SignedRequest<UsernameUpdateClaim>;
 
 export type DeletionTarget =
     | { readonly kind: 'run'; readonly run_id: string }
     | { readonly kind: 'submission'; readonly submission_id: string };
 
-export type DeletionChallenge = {
-    readonly schema_version: 1;
-    readonly deletion_challenge_id: string;
-    readonly deletion_challenge_nonce: string;
-    readonly expires_at_unix_ms: number;
+/** robin_run_protocol::DeletionRequestV2 */
+export type DeletionRequestClaim = {
+    readonly schema_version: 2;
     readonly public_key: string;
+    readonly signed_at_unix_ms: number;
     readonly target: DeletionTarget;
 };
 
-export type DeletionRequestEnvelope = { readonly schema_version: 1; readonly challenge: DeletionChallenge; readonly signature: string };
+export type SignedDeletionRequest = SignedRequest<DeletionRequestClaim>;
+
+/** robin_run_protocol::SubmissionOwnerStatusRequestV2 */
+export type SubmissionOwnerStatusClaim = {
+    readonly schema_version: 2;
+    readonly public_key: string;
+    readonly signed_at_unix_ms: number;
+    readonly submission_id: string;
+};
+
+export type SignedSubmissionOwnerStatusRequest = SignedRequest<SubmissionOwnerStatusClaim>;
+
+export type VerificationRejectionCode =
+    | 'malformed_replay' | 'resource_limit' | 'unsupported_schema' | 'content_not_allowed'
+    | 'config_mismatch' | 'starting_state_mismatch' | 'command_not_allowed' | 'timeline_invalid'
+    | 'state_hash_mismatch' | 'terminal_invalid' | 'result_invariant_mismatch'
+    | 'input_provenance_ineligible' | 'simulation_budget_exceeded';
+
+/** robin_run_protocol::SubmissionLifecycleV1 */
+export type SubmissionLifecycle =
+    | { readonly state: 'queued' | 'verifying' | 'retry_pending' }
+    | { readonly state: 'accepted'; readonly runId: string }
+    | { readonly state: 'rejected'; readonly code: VerificationRejectionCode; readonly safeMessage: string }
+    | { readonly state: 'failed'; readonly code: 'verification_infrastructure'; readonly safeMessage: string };
+
+/** robin_run_protocol::SubmissionOwnerStatusResponseV2, bound to the request it answers. */
+export type SubmissionOwnerStatus = {
+    readonly submissionId: string;
+    readonly publicKey: string;
+    readonly requestSha256: string;
+    readonly lifecycle: SubmissionLifecycle;
+};
 
 export type DeletionReceipt = {
     readonly requestId: string;

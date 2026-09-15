@@ -9,6 +9,7 @@ type SignerOperation =
     | 'status'
     | 'public_key'
     | 'sign_username_update'
+    | 'sign_submission_owner_status'
     | 'sign_deletion_request';
 
 type SignerRequest = {
@@ -39,10 +40,16 @@ type PendingRequest = {
     readonly timer: number;
 };
 
+/**
+ * Each sign operation takes one claim JSON (`UsernameUpdateV2`,
+ * `SubmissionOwnerStatusRequestV2`, `DeletionRequestV2`) and resolves to the
+ * `SignedRequestV2` document JSON over that exact claim.
+ */
 export type LeaderboardSigningBridge = {
     readonly publicKey: () => Promise<string>;
-    readonly signUsernameUpdate: (unsignedEnvelopeJson: string) => Promise<string>;
-    readonly signDeletionRequest: (unsignedEnvelopeJson: string) => Promise<string>;
+    readonly signUsernameUpdate: (claimJson: string) => Promise<string>;
+    readonly signSubmissionOwnerStatus: (claimJson: string) => Promise<string>;
+    readonly signDeletionRequest: (claimJson: string) => Promise<string>;
 };
 
 export type LeaderboardSigningConnection = {
@@ -93,6 +100,13 @@ function bridgeFor(transport: SignerTransport): LeaderboardSigningBridge {
         signUsernameUpdate: async payloadJson => {
             const result = parseSignedDocumentResult(await transport.request(
                 'sign_username_update',
+                payloadJson,
+            ));
+            return result.documentJson;
+        },
+        signSubmissionOwnerStatus: async payloadJson => {
+            const result = parseSignedDocumentResult(await transport.request(
+                'sign_submission_owner_status',
                 payloadJson,
             ));
             return result.documentJson;
