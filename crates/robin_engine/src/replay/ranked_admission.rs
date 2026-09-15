@@ -107,8 +107,8 @@ impl ReplayData {
         !self.load_backs.is_empty()
     }
 
-    /// Ranked recordings carry one pre-frame hash at frame zero and every
-    /// lockstep hash interval thereafter, with no off-cadence extras.
+    /// Ranked recordings must include frame zero and every lockstep hash
+    /// interval thereafter. Additional in-range checkpoints are permitted.
     pub fn validate_ranked_hash_coverage(&self) -> Result<(), String> {
         let interval = crate::multiplayer::STATE_HASH_INTERVAL as usize;
         for ordinal in (0..self.header.total_frames).step_by(interval) {
@@ -118,12 +118,7 @@ impl ReplayData {
                 ));
             }
         }
-        if self.hashes.keys().any(|ordinal| {
-            *ordinal >= self.header.total_frames
-                || !ordinal.is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
-        }) {
-            return Err("ranked replay contains an out-of-cadence state hash".to_owned());
-        }
+        self.validate_metadata_ordinals("hash", self.hashes.keys().copied())?;
         Ok(())
     }
 
