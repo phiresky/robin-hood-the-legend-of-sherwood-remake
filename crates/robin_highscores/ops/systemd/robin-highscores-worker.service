@@ -45,6 +45,9 @@ RestrictAddressFamilies=AF_UNIX AF_NETLINK
 # through ProtectHome=read-only and bound read-only into each sandbox.
 ReadWritePaths=%h/.local/share/robin-highscores/database
 ReadWritePaths=%h/.local/share/robin-highscores/replays
+# Bubblewrap disables further user namespaces inside its new user namespace
+# by writing max_user_namespaces. Host sysctl writes still require privileges.
+ReadWritePaths=/proc/sys/user
 InaccessiblePaths=%h/.local/share/robin-highscores/api-secrets
 InaccessiblePaths=%h/.local/share/robin-highscores/backups
 

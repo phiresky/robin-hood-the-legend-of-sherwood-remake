@@ -880,6 +880,55 @@ mod tests {
     }
 
     #[test]
+    fn ranked_hash_coverage_accepts_extra_hashes_but_requires_periodic_checkpoints() {
+        let file = ReplayFile {
+            header: ReplayHeader {
+                mission_id: "coverage".to_owned(),
+                mission_assets: test_mission_assets("coverage"),
+                rng_seed: 17,
+                sim_config: crate::engine::SimConfig::default(),
+                spellforge_package: None,
+                version: REPLAY_SCHEMA_VERSION,
+                total_frames: 51,
+                rankability: ReplayRankability::rankable(),
+                campaign: bitcode::encode(&crate::campaign::Campaign::default()),
+            },
+            frames: (0..51)
+                .map(|ordinal| {
+                    (
+                        ordinal,
+                        ReplayFrame {
+                            timeline_before: ordinal,
+                            timeline_after: ordinal + 1,
+                            input: SimulationFrameInput::default(),
+                            host_controls: Vec::new(),
+                        },
+                    )
+                })
+                .collect(),
+            hashes: (0..51).map(|ordinal| (ordinal, 7)).collect(),
+            save_markers: BTreeMap::new(),
+            load_backs: BTreeMap::new(),
+        };
+        let mut replay = ReplayData::try_from(file).unwrap();
+        replay.validate_ranked_hash_coverage().unwrap();
+        replay
+            .replace_state_hashes(
+                (0..51)
+                    .filter(|ordinal| *ordinal != 25)
+                    .map(|ordinal| (ordinal, 7))
+                    .collect(),
+            )
+            .unwrap();
+        assert!(
+            replay
+                .validate_ranked_hash_coverage()
+                .unwrap_err()
+                .contains("missing state hash at ordinal 25")
+        );
+    }
+
+    #[test]
     fn raw_replay_validation_and_header_edits_are_transactional() {
         let file = ReplayFile {
             header: ReplayHeader {

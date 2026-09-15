@@ -14,6 +14,7 @@ pub(crate) struct Recording {
     recorder: ReplayRecorder,
     archive: Option<MissionArchive>,
     timeline: u32,
+    sealed: bool,
     captured: std::collections::BTreeMap<ReplaySaveIdentity, (u32, u32)>,
 }
 
@@ -48,6 +49,7 @@ impl From<ReplayRecorder> for SharedReplayRecorder {
             recorder,
             archive: None,
             timeline: 0,
+            sealed: false,
             captured: Default::default(),
         })))
     }
@@ -59,6 +61,7 @@ impl SharedReplayRecorder {
             recorder,
             archive: Some(archive),
             timeline: 0,
+            sealed: false,
             captured: Default::default(),
         })))
     }
@@ -72,8 +75,12 @@ impl SharedReplayRecorder {
     pub(crate) fn captured_frame(&self, identity: ReplaySaveIdentity) -> Option<(u32, u32)> {
         lock(&self.0).captured.get(&identity).copied()
     }
-    pub(crate) fn into_recording_header(self) -> ReplayHeader {
-        lock(&self.0).recorder.recording_header().clone()
+    pub(crate) fn seal(self) -> ReplayHeader {
+        let mut recording = lock(&self.0);
+        // Save capture retains a shared owner after the gameplay lifecycle ends.
+        // Seal that owner too, while retaining its archive for a later restore.
+        recording.sealed = true;
+        recording.recorder.recording_header().clone()
     }
 
     /// A save is an actual host event: record its boundary without advancing
@@ -83,7 +90,7 @@ impl SharedReplayRecorder {
         save: &GameSaveFile,
     ) -> Result<Option<SaveReplayLink>> {
         let mut recording = lock(&self.0);
-        if recording.archive.is_none() {
+        if recording.sealed || recording.archive.is_none() {
             return Ok(None);
         }
         ensure!(
@@ -187,6 +194,7 @@ impl SharedReplayRecorder {
         mirror.flush()?;
         let writer = crate::game_session::replay_init::continuation_writer(primary, mirror);
         recording.recorder = ReplayRecorder::continue_recording(writer, root, ordinal)?;
+        recording.sealed = false;
         recording.timeline = timeline;
         recording.captured.clear();
         Ok(ReplayRestoreBoundary {
@@ -269,6 +277,9 @@ impl SharedReplayRecorder {
         hash: Option<u64>,
     ) -> bool {
         let mut recording = lock(&self.0);
+        if recording.sealed {
+            return false;
+        }
         let written = recording
             .recorder
             .write_frame(ordinal, before, after, input, controls, hash);

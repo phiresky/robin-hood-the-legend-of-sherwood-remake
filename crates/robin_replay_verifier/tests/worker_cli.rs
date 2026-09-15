@@ -91,7 +91,6 @@ fn limits() -> VerificationLimitsV1 {
         max_frames: 10_000,
         max_version_bytes: 128,
         max_mission_id_bytes: 256,
-        max_metadata_records: 1024,
         max_entries_per_frame: 1024,
     }
 }

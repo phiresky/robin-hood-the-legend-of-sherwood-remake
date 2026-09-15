@@ -1927,11 +1927,12 @@ mod tests {
                 &robin_engine::campaign::Campaign::default(),
             )
             .unwrap();
+            let recorder = crate::replay_recording::SharedReplayRecorder::from(recorder);
             let mut timeline = TimelineRuntime::new(
                 ReplayAndRollback {
                     recording_control: Arc::new(crate::replay_service::ReplayService::default())
                         .recording(),
-                    recorder: Some(recorder.into()),
+                    recorder: Some(recorder.clone()),
                     player: None,
                     rollback_checker: None,
                     rewind_buffer: RewindBuffer::new(),
@@ -1961,6 +1962,7 @@ mod tests {
             timeline.finish_recording(&mut terminal);
             assert!(timeline.replay_mut().seal_terminal_recording(&terminal));
             assert!(!timeline.replay().is_recording());
+            assert!(!recorder.write_frame(1, 1, 1, Default::default(), Vec::new(), None));
 
             // Narrative UI continues for more outer frames, but sealing makes
             // it impossible for a modal dismissal (or any other host input)

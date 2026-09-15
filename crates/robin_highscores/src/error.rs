@@ -165,6 +165,14 @@ impl IntoResponse for ApiError {
                 None,
             ),
         };
+        if status == StatusCode::BAD_REQUEST {
+            tracing::warn!(
+                status = status.as_u16(),
+                error_code = code,
+                reason = %message.chars().take(1024).collect::<String>(),
+                "API request rejected"
+            );
+        }
         let mut response = (
             status,
             Json(ErrorBody {

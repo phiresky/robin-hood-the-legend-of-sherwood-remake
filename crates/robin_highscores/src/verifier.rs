@@ -62,8 +62,7 @@ pub enum ProcessError {
 }
 
 impl ProcessError {
-    /// Stable classification for logs. Verifier-authored result text and host
-    /// filesystem details remain in private failure storage.
+    /// Stable classification alongside the bounded operator diagnostics.
     pub const fn safe_log_code(&self) -> &'static str {
         match self {
             Self::Configuration(_) => "verifier_configuration",
@@ -260,6 +259,9 @@ fn validate_content_root(path: &Path) -> Result<(), ProcessError> {
 
 fn launch(config: &VerifierLauncherConfig, paths: &SandboxPaths) -> Result<(), ProcessError> {
     use std::os::unix::process::CommandExt as _;
+    // An anonymous file cannot block the child on a full pipe. The child
+    // file-size limit bounds disk usage; only a small prefix is read into logs.
+    let mut stderr = tempfile::tempfile()?;
     let mut command = std::process::Command::new(&config.prlimit_program);
     command
         .env_clear()
@@ -269,10 +271,18 @@ fn launch(config: &VerifierLauncherConfig, paths: &SandboxPaths) -> Result<(), P
         .process_group(0)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(stderr.try_clone()?);
     let mut child = command.spawn()?;
     let status = wait_for_process_group(&mut child, config.wall_timeout())?;
-    status_result(status)
+    status_result(status).map_err(|error| match read_stderr_diagnostic(&mut stderr) {
+        Ok(detail) if !detail.is_empty() => {
+            ProcessError::Exit(format!("{status}; stderr: {detail}"))
+        }
+        Ok(_) => error,
+        Err(read_error) => {
+            ProcessError::Exit(format!("{status}; stderr capture failed: {read_error}"))
+        }
+    })
 }
 
 /// `prlimit` options, followed by `--`; the caller appends the bwrap program.
@@ -423,6 +433,21 @@ fn wait_for_process_group(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn read_stderr_diagnostic(stderr: &mut File) -> std::io::Result<String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    const MAX_STDERR_BYTES: u64 = 8192;
+    stderr.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    stderr.take(MAX_STDERR_BYTES + 1).read_to_end(&mut bytes)?;
+    let truncated = bytes.len() > MAX_STDERR_BYTES as usize;
+    bytes.truncate(MAX_STDERR_BYTES as usize);
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        text.push_str(" [stderr truncated]");
+    }
+    Ok(text)
 }
 
 fn status_result(status: ExitStatus) -> Result<(), ProcessError> {
@@ -681,6 +706,16 @@ mod tests {
     }
 
     #[test]
+    fn stderr_diagnostic_is_bounded_and_tolerates_non_utf8() {
+        use std::io::Write as _;
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&[0xff; 16_384]).unwrap();
+        let detail = read_stderr_diagnostic(&mut file).unwrap();
+        assert_eq!(detail.chars().count(), 8192 + " [stderr truncated]".len());
+        assert!(detail.ends_with(" [stderr truncated]"));
+    }
+
+    #[test]
     fn wall_timeout_kills_and_reaps_the_fresh_process_group() {
         use std::os::unix::process::CommandExt as _;
         let mut command = std::process::Command::new("/usr/bin/sleep");
@@ -714,6 +749,7 @@ mod tests {
         let replay = tokio::fs::File::open(&replay_path).await.unwrap();
         let error = launcher.run(b"{}", replay, 6, &content).await.unwrap_err();
         assert!(matches!(error, ProcessError::Exit(_)), "{error}");
+        assert!(error.to_string().contains("stderr:"), "{error}");
 
         let replay = tokio::fs::File::open(&replay_path).await.unwrap();
         assert!(matches!(
