@@ -1092,12 +1092,8 @@ impl EngineInner {
             let entity_target_seek = active_move_flags.contains(MoveFlags::SEEK)
                 && ft.target_id.is_some()
                 && perform_seek_calls_per_execute(order_action) > 0;
-            let fallback_motion = movement_execute_visible_motion(
-                order_action,
-                motion_state,
-                false,
-                entity_target_seek,
-            );
+            let fallback_motion =
+                movement_execute_visible_motion(motion_state, false, entity_target_seek);
             tracing::trace!(
                 entity = ?entity_id,
                 frame = self.control.frame_counter,
@@ -1451,12 +1447,7 @@ impl EngineInner {
                             break 'transition motion;
                         }
                     }
-                    movement_execute_visible_motion(
-                        selected_order.order_action,
-                        raw_motion_state,
-                        false,
-                        entity_target_seek,
-                    )
+                    movement_execute_visible_motion(raw_motion_state, false, entity_target_seek)
                 }
             } else if !stationary_motion_waits(speed, tolerance_arrival, dist) {
                 ('ordinary: {

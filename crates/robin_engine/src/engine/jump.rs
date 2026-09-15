@@ -1265,15 +1265,17 @@ impl EngineInner {
             // Retiring an order republishes the actor's order pointer within
             // the same slot, so it already names the following animation
             // before the frame ends. The step itself still begins next frame.
-            self.world
+            let actor = self
+                .world
                 .entities
                 .get_mut(entity_id)
                 .and_then(crate::element::Entity::actor_data_mut)
-                .expect("jump step owner disappeared before its next order was published")
-                .installed_order = Some(crate::element::InstalledActorOrder {
+                .expect("jump step owner disappeared before its next order was published");
+            actor.installed_order = Some(crate::element::InstalledActorOrder {
                 order_id,
                 order_type: anim,
             });
+            actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
         }
         if is_landing_pc {
             let force_crouched = landing_sector
@@ -1292,12 +1294,6 @@ impl EngineInner {
         }
         if let Some((sequence_id, element_index)) = jump_completion {
             self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
-            // Do not project `IN_PROGRESS` merely because the jump element
-            // terminated. The original game advances only when proceeding
-            // returns a real next order. The common actor completion latch
-            // below this owner boundary observes `installed_order`: it keeps
-            // an exhausted landing TERMINATED and promotes only a successor
-            // actually installed by the synchronous condolence callback.
         }
         landing_finalize
     }

@@ -728,47 +728,33 @@ mod suite {
         use crate::sprite::MotionState;
 
         assert_eq!(
-            movement_execute_visible_motion(
-                OrderType::RunningWithSword,
-                MotionState::Start,
-                false,
-                true,
-            ),
+            movement_execute_visible_motion(MotionState::Start, false, true,),
             MotionState::InProgress,
             "entity-target seeking returns in progress around the sprite's start"
         );
         assert_eq!(
             movement_execute_state_effect(
                 OrderType::RunningWithSword,
-                movement_execute_visible_motion(
-                    OrderType::RunningWithSword,
-                    MotionState::Start,
-                    false,
-                    true,
-                ),
+                movement_execute_visible_motion(MotionState::Start, false, true,),
             ),
             None,
             "the Human Execute switch must retain WaitingSword"
         );
         assert_eq!(
-            movement_execute_visible_motion(
-                OrderType::RunningWithSword,
-                MotionState::Start,
-                false,
-                false,
-            ),
+            movement_execute_visible_motion(MotionState::Start, false, false,),
             MotionState::Start,
             "point and ordinary movement expose the sprite's START"
         );
         assert_eq!(
-            movement_execute_visible_motion(
+            movement_execute_state_effect(
                 OrderType::RunningUpright,
-                MotionState::Start,
-                false,
-                true,
+                movement_execute_visible_motion(MotionState::Start, false, true),
             ),
-            MotionState::Start,
-            "running upright sets MovingFast after seeking unconditionally"
+            Some((
+                crate::element::Posture::Upright,
+                crate::element::ActionState::MovingFast
+            )),
+            "running sets MovingFast independently of the seek result"
         );
     }
 
@@ -999,12 +985,7 @@ mod suite {
         use crate::element::ActionState;
         use crate::sprite::MotionState;
 
-        let visible = movement_execute_visible_motion(
-            OrderType::TransitionRunningUprightWalkingUpright,
-            MotionState::Done,
-            false,
-            true,
-        );
+        let visible = movement_execute_visible_motion(MotionState::Done, false, true);
         assert_eq!(visible, MotionState::InProgress);
         assert_eq!(
             movement_execute_state_effect(
@@ -1015,22 +996,12 @@ mod suite {
             "raw sprite DONE must not change a live entity seek from MovingFast to Moving"
         );
         assert_eq!(
-            movement_execute_visible_motion(
-                OrderType::TransitionRunningUprightWalkingUpright,
-                MotionState::Terminated,
-                false,
-                true,
-            ),
+            movement_execute_visible_motion(MotionState::Terminated, false, true,),
             MotionState::Terminated,
             "the Execute switch must observe the seek wrapper's terminal result"
         );
         assert_eq!(
-            movement_execute_visible_motion(
-                OrderType::TransitionRunningUprightWalkingUpright,
-                MotionState::Done,
-                false,
-                false,
-            ),
+            movement_execute_visible_motion(MotionState::Done, false, false,),
             MotionState::Done,
             "ordinary and point movement expose the sprite's DONE result"
         );
@@ -1053,8 +1024,7 @@ mod suite {
             MotionState::InProgress,
             MotionState::Done,
         ] {
-            let visible =
-                movement_execute_visible_motion(OrderType::WalkingWithCorpse, motion, true, false);
+            let visible = movement_execute_visible_motion(motion, true, false);
             assert_eq!(
                 visible,
                 MotionState::Terminated,
@@ -1064,12 +1034,7 @@ mod suite {
         assert_eq!(
             movement_execute_state_effect(
                 OrderType::WalkingWithCorpse,
-                movement_execute_visible_motion(
-                    OrderType::WalkingWithCorpse,
-                    MotionState::InProgress,
-                    true,
-                    false,
-                ),
+                movement_execute_visible_motion(MotionState::InProgress, true, false,),
             ),
             Some((Posture::CarryingCorpse, ActionState::Waiting)),
             "the corpse carrier settles back to Waiting on the waypoint it reaches"
@@ -1077,12 +1042,7 @@ mod suite {
         assert_eq!(
             movement_execute_state_effect(
                 OrderType::WalkingWithCorpse,
-                movement_execute_visible_motion(
-                    OrderType::WalkingWithCorpse,
-                    MotionState::InProgress,
-                    false,
-                    false,
-                ),
+                movement_execute_visible_motion(MotionState::InProgress, false, false,),
             ),
             None,
             "a walk that has not reached its waypoint owns no state effect"

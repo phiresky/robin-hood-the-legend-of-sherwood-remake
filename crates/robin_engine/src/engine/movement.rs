@@ -871,7 +871,6 @@ fn both_sword_ranges_contain_distance(
 /// continued (`IN_PROGRESS`) or finished its action frame (`DONE`) still
 /// reaches the Execute arm as a termination.
 fn movement_execute_visible_motion(
-    order: OrderType,
     motion: MotionState,
     reaches_goal_this_step: bool,
     entity_target_seek: bool,
@@ -879,10 +878,7 @@ fn movement_execute_visible_motion(
     if reaches_goal_this_step {
         return MotionState::Terminated;
     }
-    if entity_target_seek
-        && !matches!(motion, MotionState::Terminated)
-        && !matches!(order, OrderType::RunningUpright)
-    {
+    if entity_target_seek && !matches!(motion, MotionState::Terminated) {
         return MotionState::InProgress;
     }
     motion
