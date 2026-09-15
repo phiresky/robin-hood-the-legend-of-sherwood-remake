@@ -169,33 +169,6 @@ fn replay_owned_point_seek_fixture() -> (
 }
 
 #[test]
-fn seek_requests_keep_simulation_and_assets_as_explicit_borrows() {
-    type PointDispatch = fn(
-        &mut crate::engine::EngineInner,
-        &crate::sim_rng::SimulationContext,
-        &LevelAssets,
-        PointSeekRequest,
-    ) -> bool;
-    type EntityDispatch = fn(
-        &mut crate::engine::EngineInner,
-        &crate::sim_rng::SimulationContext,
-        &LevelAssets,
-        EntitySeekRequest,
-        f32,
-    ) -> bool;
-    type EntityRefresh = fn(
-        &mut crate::engine::EngineInner,
-        &crate::sim_rng::SimulationContext,
-        &LevelAssets,
-        EntitySeekRequest,
-        MapPoint,
-    );
-    let _: PointDispatch = crate::engine::EngineInner::try_dispatch_cross_sector_point_seek;
-    let _: EntityDispatch = crate::engine::EngineInner::try_dispatch_cross_sector_entity_seek;
-    let _: EntityRefresh = crate::engine::EngineInner::apply_seek_refresh;
-}
-
-#[test]
 fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
     let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
     let request = |sector| PointSeekRequest {
@@ -222,6 +195,7 @@ fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
     assert!(!engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         request(133),
     ));
     assert_eq!(
@@ -238,6 +212,7 @@ fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         request(22),
     ));
 }
@@ -250,6 +225,7 @@ fn original_replay_point_seek_rejects_missing_recorded_outcome() {
     engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner,
             sequence_id,
@@ -273,6 +249,7 @@ fn live_point_seek_without_recorded_outcome_uses_gate_graph() {
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner,
             sequence_id,
@@ -868,6 +845,7 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
     assert!(engine.try_dispatch_cross_sector_entity_seek(
         &sim,
         &LevelAssets::new(),
+        &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
             sequence_id: seek_id,
@@ -972,6 +950,7 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
     assert!(engine.try_dispatch_cross_sector_entity_seek(
         &sim,
         &LevelAssets::new(),
+        &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
             sequence_id: seek_id,
@@ -1028,6 +1007,7 @@ fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
         .launch_gate_movement_sequence(
             &sim,
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
                 source_sector: crate::position_interface::SectorHandle::new(1),
@@ -1226,6 +1206,7 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
     engine.apply_seek_refresh(
         sim,
         &assets,
+        &mut Vec::new(),
         crate::engine::refresh_seek::EntitySeekRequest {
             owner,
             sequence_id: seek_seq,
@@ -1709,6 +1690,7 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
     engine.relaunch_seek_replacement(
         &crate::sim_rng::test_context(),
         &assets,
+        &mut Vec::new(),
         owner,
         seek_seq,
         0,

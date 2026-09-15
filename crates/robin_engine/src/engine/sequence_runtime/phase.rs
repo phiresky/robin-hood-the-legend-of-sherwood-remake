@@ -1,177 +1,13 @@
 use super::*;
 
 impl EngineInner {
-    /// Retry the front of a PC's legacy shoot list through the same
-    /// Actor-instruction admission stages used by the manager dispatcher.
-    /// Returns the boolean result that shoot-list processing uses to decide
-    /// whether to remove the retained pointer.
-    pub(in crate::engine) fn instruct_held_shoot_bow(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        element_ref: crate::sequence::SequenceElementRef,
-    ) -> bool {
-        use crate::sequence::SequenceState;
-
-        let seq_id = element_ref.sequence_id;
-        let elem_idx = element_ref.element_index;
-        let Some(element) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            panic!("shoot-list element {seq_id:?}/{elem_idx} disappeared");
-        };
-        assert_eq!(element.owner, Some(owner));
-        assert_eq!(element.command, Command::ShootBow);
-        self.stamp_element_transition_state(owner, seq_id, elem_idx);
-        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
-            return false;
-        }
-        if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-
-            return false;
-        }
-        // Actor instruction checks the element state again after transition
-        // generation. A retained element that became Terminated, Impossible,
-        // or Interrupted must be rejected before priority arbitration or
-        // translation. Shoot-list processing consequently keeps the reference
-        // and the actor continues its already-started bow Wait
-        // order instead of restarting that order on this frame.
-        if self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .is_some_and(|element| {
-                matches!(
-                    element.state,
-                    SequenceState::Terminated
-                        | SequenceState::Impossible
-                        | SequenceState::Interrupted
-                )
-            })
-        {
-            return false;
-        }
-        // Shoot-list processing re-enters ordinary actor instruction handling
-        // body. Priority resolution therefore runs after transition generation
-        // and its terminal-state guard, before priority arbitration. The
-        // retained element deliberately kept NotYetSet while it was waiting
-        // in mShootList; do not let that sentinel become the live shot's
-        // interruption priority once it is finally admitted.
-        let resolved_priority = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .filter(|element| element.priority == crate::sequence::SequencePriority::NotYetSet)
-            .map(|element| {
-                let resolver = Self::priority_resolver(&self.world.entities);
-                resolver(element)
-            });
-        if let Some(priority) = resolved_priority
-            && let Some(element) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-        {
-            element.priority = priority;
-        }
-        if !self.arbitrate_held_shoot_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
-            // Priority arbitration's POSTPONE_NEW outcome has handled this instruction:
-            // Original returns true even though translation does not run yet.
-            // Shoot-list processing must consequently remove the retained
-            // pointer; the sequence manager owns the postponed element from
-            // here and will re-register it when its blocker finishes.
-            return self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| element.state == SequenceState::Postponed);
-        }
-
-        self.orders
-            .sequence_manager
-            .begin_instruct_callback(owner, seq_id, elem_idx);
-
-        let still_selected = self
-            .orders
-            .sequence_manager
-            .end_instruct_callback(owner, seq_id, elem_idx);
-        if !still_selected {
-            return false;
-        }
-
-        let target = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| match &element.data {
-                crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
-                _ => None,
-            });
-        let Some(target) = target else {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return true;
-        };
-        let ammo_count = self.get_bow_ammo_count(owner);
-        if ammo_count == 0 {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return true;
-        }
-
-        let (bow_target, shoot_mode) = self.can_shoot_with_bow_at(assets, owner, target);
-        if bow_target != super::input::BowTarget::Valid {
-            let has_transition_orders = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| !element.orders.is_empty());
-            if has_transition_orders {
-                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            } else {
-                // Actor instruction handling writes IN_PROGRESS before publishing the
-                // translated current order. An accepted shot whose body and
-                // transition are both empty therefore retains that one-frame
-                // motion edge even though the null order immediately
-                // terminates and detaches the element.
-                self.world
-                    .entities
-                    .get_mut(owner)
-                    .and_then(Entity::actor_data_mut)
-                    .expect("accepted empty held ShootBow lost its actor")
-                    .continuation
-                    .motion_state = crate::sprite::MotionState::InProgress;
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            }
-            return true;
-        }
-
-        match bow_shot::begin_bow_shot(
-            &mut self.world.entities,
-            &mut self.orders.sequence_manager,
-            owner,
-            target,
-            seq_id,
-            elem_idx,
-            false,
-            ammo_count,
-            Some(shoot_mode),
-            &mut self.orders.next_order_id,
-        ) {
-            BeginShotResult::Started => {
-                self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx)
-            }
-            BeginShotResult::Impossible => {
-                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx)
-            }
-        }
-        true
-    }
-
     /// Translate one Move/Seek at the exact sequence-processing
     /// FIFO position where its `Go()` action was emitted.
     pub(in crate::engine) fn dispatch_ordered_move_seek_instruct(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
@@ -221,7 +57,7 @@ impl EngineInner {
                 element_index,
                 "Move/Seek action has invalid sequence-element data"
             );
-            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
+            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         };
 
@@ -249,8 +85,8 @@ impl EngineInner {
             {
                 actor.post_seek_sequence = Some(post_seek);
             }
-            self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
-            self.start_post_seek_sequence(sim, assets, owner, None);
+            self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
+            self.start_post_seek_sequence(sim, assets, active_scripts, owner, None);
             return OwnerActionBarrier::Skip;
         }
 
@@ -260,7 +96,7 @@ impl EngineInner {
         // precede seek-refresh/cross-sector lowering: that lowering can consume
         // the wrapper without ever reaching ordinary path dispatch.
         if !self.extract_move_instruction_owner(owner) {
-            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
+            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         }
 
@@ -285,7 +121,7 @@ impl EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.element_impossible(sim, assets, &mut Vec::new(), sequence_id, element_index);
+            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
             return OwnerActionBarrier::Skip;
         }
 
@@ -343,6 +179,7 @@ impl EngineInner {
                     if self.try_handle_same_sector_actor_seek_wait(
                         sim,
                         assets,
+                        active_scripts,
                         crate::engine::refresh_seek::EntitySeekRequest {
                             owner,
                             sequence_id,
@@ -390,7 +227,7 @@ impl EngineInner {
                             self.element_in_progress(
                                 sim,
                                 assets,
-                                &mut Vec::new(),
+                                active_scripts,
                                 sequence_id,
                                 element_index,
                             );
@@ -399,7 +236,7 @@ impl EngineInner {
                             self.element_terminated(
                                 sim,
                                 assets,
-                                &mut Vec::new(),
+                                active_scripts,
                                 sequence_id,
                                 element_index,
                             );
@@ -434,6 +271,7 @@ impl EngineInner {
                     if self.try_dispatch_cross_sector_entity_seek(
                         sim,
                         assets,
+                        active_scripts,
                         crate::engine::refresh_seek::EntitySeekRequest {
                             owner,
                             sequence_id,
@@ -452,7 +290,7 @@ impl EngineInner {
                         self.element_impossible(
                             sim,
                             assets,
-                            &mut Vec::new(),
+                            active_scripts,
                             sequence_id,
                             element_index,
                         );
@@ -530,7 +368,7 @@ impl EngineInner {
                     None,
                     "building interior move",
                 );
-                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
+                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
                 return OwnerActionBarrier::Skip;
             }
 
@@ -542,6 +380,7 @@ impl EngineInner {
                 self.start_post_seek_sequence(
                     sim,
                     assets,
+                    active_scripts,
                     owner,
                     Some((sequence_id, element_index)),
                 );
@@ -559,7 +398,7 @@ impl EngineInner {
                     order_id,
                 ),
             );
-            self.element_in_progress(sim, assets, &mut Vec::new(), sequence_id, element_index);
+            self.element_in_progress(sim, assets, active_scripts, sequence_id, element_index);
             return OwnerActionBarrier::Reach;
         }
 
@@ -579,6 +418,7 @@ impl EngineInner {
             && self.try_dispatch_cross_sector_point_seek(
                 sim,
                 assets,
+                active_scripts,
                 crate::engine::refresh_seek::PointSeekRequest {
                     owner,
                     sequence_id,
@@ -625,6 +465,7 @@ impl EngineInner {
             self.relaunch_seek_replacement(
                 sim,
                 assets,
+                active_scripts,
                 owner,
                 sequence_id,
                 element_index,
@@ -636,7 +477,7 @@ impl EngineInner {
         self.dispatch_prepared_move_instruction(
             sim,
             assets,
-            &mut Vec::new(),
+            active_scripts,
             owner,
             sequence_id,
             element_index,

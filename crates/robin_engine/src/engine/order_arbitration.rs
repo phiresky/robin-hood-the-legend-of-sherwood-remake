@@ -6,40 +6,6 @@ use super::state::{OrderRuntime, WorldState};
 use super::*;
 
 impl EngineInner {
-    /// Arbitrate a new sequence-element dispatch against the actor's
-    /// currently-executing element.
-    ///
-    /// Called synchronously from [`Self::launch_element_for_owner`] (the
-    /// default launch path for owned elements) so arbitration fires
-    /// inline with the launch.  Also called idempotently from the
-    /// hourglass pre-pass as a safety net for any owned element that
-    /// might slip through an un-refactored code path.
-    /// The four outcomes:
-    ///
-    /// - [`PriorityDecision::Abandon`]: the new element becomes
-    ///   `Impossible`.  Caller skips the dispatch entirely.
-    /// - [`PriorityDecision::Postpone`]: the new element waits behind
-    ///   the current one (state → `Postponed`, linked via
-    ///   `cross_postponed`).  Caller skips the dispatch.
-    /// - [`PriorityDecision::PostponeCurrent`]: the current element
-    ///   gets postponed behind the new one, and the new one proceeds.
-    /// - [`PriorityDecision::InterruptCurrent`]: the current element is
-    ///   marked `Interrupted` (cascades via `set_element_state`), and
-    ///   the new one proceeds.
-    ///
-    /// Returns `true` if the caller should proceed to dispatch the new
-    /// element; `false` if it was abandoned or postponed.
-    pub(crate) fn arbitrate_instruct(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        new_seq: crate::sequence::SequenceId,
-        new_idx: usize,
-    ) -> bool {
-        self.arbitrate_instruct_mode(sim, assets, active_scripts, new_seq, new_idx, false)
-    }
-
     /// Apply the human actor's specialized admission guard. It runs before
     /// base actor instruction, so a rejected
     /// command must not stamp transition state or allocate transition orders.
@@ -81,28 +47,16 @@ impl EngineInner {
         !allowed
     }
 
-    /// Run actor-instruction arbitration while preserving original-game
-    /// re-admission of a terminated pointer retained by Human's shoot list.
-    /// The ordinary manager path must continue rejecting terminal elements.
-    pub(in crate::engine) fn arbitrate_held_shoot_instruct(
+    /// Compare the incoming instruction with the selected element and finish
+    /// any replacement callbacks before translation. Returns whether the
+    /// incoming element remains accepted after those callbacks.
+    pub(crate) fn arbitrate_instruct(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         new_seq: crate::sequence::SequenceId,
         new_idx: usize,
-    ) -> bool {
-        self.arbitrate_instruct_mode(sim, assets, active_scripts, new_seq, new_idx, true)
-    }
-
-    pub(super) fn arbitrate_instruct_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        new_seq: crate::sequence::SequenceId,
-        new_idx: usize,
-        allow_terminated_shoot: bool,
     ) -> bool {
         use crate::sequence::{PriorityDecision, SequenceState};
 
@@ -131,12 +85,6 @@ impl EngineInner {
             // Re-registering postponed work preserves its state until Go
             // instructs the owner. It must pass the same admission as new work.
             SequenceState::Todo | SequenceState::Postponed => {}
-            SequenceState::Terminated if allow_terminated_shoot => {
-                // The actor instruction's terminal-state check is an
-                // assert only. Retail saves can retain such a pointer in
-                // the human actor's shoot list, and the shipped game proceeds without
-                // rewriting its state before transition/arbitration.
-            }
             SequenceState::InProgress => {
                 // Element is already the actor's current (e.g.
                 // `launch_single_order_sequence_stamped` promoted it
@@ -189,13 +137,6 @@ impl EngineInner {
         // BEGGAR_SHOW_FACE / WAIT when the civilian is a beggar.
         if self.beggar_rejects_command(owner, new_command) {
             self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
-            return false;
-        }
-
-        // Some direct callers enter arbitration without the ordinary
-        // base-Actor admission wrapper. Preserve the PC derived-class early
-        // return for those paths as well.
-        if self.pc_instruct_early_completion(sim, assets, owner, new_seq, new_idx) {
             return false;
         }
 
@@ -340,8 +281,7 @@ impl EngineInner {
                 );
                 self.orders
                     .sequence_manager
-                    .end_instruct_callback(owner, new_seq, new_idx);
-                true
+                    .end_instruct_callback(owner, new_seq, new_idx)
             }
             PriorityDecision::InterruptCurrent => {
                 assert!(

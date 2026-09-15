@@ -4750,6 +4750,7 @@ impl EngineInner {
         self.apply_seek_refresh(
             sim,
             assets,
+            &mut Vec::new(),
             crate::engine::refresh_seek::EntitySeekRequest {
                 owner,
                 sequence_id: seq_id,
@@ -5485,8 +5486,13 @@ impl EngineInner {
                     active_move_flags.contains(crate::sequence::MoveFlags::STEP_BACK_IN_COMBAT);
             }
             refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
-            deferred.post_seek_reentrant_order_advance =
-                self.start_post_seek_sequence(sim, assets, eid, Some((move_seq_id, move_elem_idx)));
+            deferred.post_seek_reentrant_order_advance = self.start_post_seek_sequence(
+                sim,
+                assets,
+                &mut Vec::new(),
+                eid,
+                Some((move_seq_id, move_elem_idx)),
+            );
             return std::ops::ControlFlow::Break(());
         }
 

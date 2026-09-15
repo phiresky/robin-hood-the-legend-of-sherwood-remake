@@ -776,16 +776,18 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
     sequence.append_element(SequenceElement::new(2, Command::EnterBeggar, Some(owner)));
     let movement = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
 
-    assert!(engine.non_interruptable_guard(
+    assert!(engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         owner,
         movement,
         0
     ));
-    assert!(engine.non_interruptable_guard(
+    assert!(engine.instruct_owner(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         owner,
         movement,
         1

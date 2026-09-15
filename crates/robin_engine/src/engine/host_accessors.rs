@@ -155,7 +155,14 @@ impl EngineInner {
         else {
             return;
         };
-        let accepted = self.instruct_held_shoot_bow(sim, assets, owner, element_ref);
+        let accepted = self.instruct_owner(
+            sim,
+            assets,
+            &mut Vec::new(),
+            owner,
+            element_ref.sequence_id,
+            element_ref.element_index,
+        );
         if accepted {
             let human = self
                 .world

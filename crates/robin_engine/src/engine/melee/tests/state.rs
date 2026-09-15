@@ -31,7 +31,10 @@ fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal()
         0,
     ));
     let sequence = engine.orders.sequence_manager.insert_sequence(damage);
-    engine.orders.sequence_manager.start_sequence_level(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine
         .orders
         .sequence_manager

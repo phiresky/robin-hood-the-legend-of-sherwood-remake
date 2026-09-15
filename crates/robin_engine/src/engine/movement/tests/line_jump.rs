@@ -1328,6 +1328,7 @@ mod suite {
         let _ = engine.dispatch_ordered_move_seek_instruct(
             &crate::sim_rng::test_context(),
             &extraction_test_assets(),
+            &mut Vec::new(),
             owner,
             sequence,
             0,

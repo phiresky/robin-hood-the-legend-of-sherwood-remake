@@ -412,7 +412,7 @@ impl EngineInner {
                 // post-seek work exactly like the Original. Arrival speech
                 // and generic posture recovery belong to PC group moves, not
                 // soldier interaction.
-                self.launch_gate_movement_order(sim, assets, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
+                self.launch_gate_movement_order(sim, assets, &mut Vec::new(), crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
                         crate::position_interface::SectorHandle::new(adj_src_sector)
                             .unwrap_or_else(|| {
                                 panic!(

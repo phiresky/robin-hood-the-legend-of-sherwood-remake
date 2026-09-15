@@ -99,8 +99,13 @@ mod suite {
             0,
         );
 
-        let reentrant =
-            engine.start_post_seek_sequence(&sim, &assets, owner, Some((movement_sequence, 0)));
+        let reentrant = engine.start_post_seek_sequence(
+            &sim,
+            &assets,
+            &mut Vec::new(),
+            owner,
+            Some((movement_sequence, 0)),
+        );
         assert!(reentrant);
         engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
 

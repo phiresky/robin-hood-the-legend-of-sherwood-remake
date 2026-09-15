@@ -492,6 +492,7 @@ impl EngineInner {
                 return self.launch_gate_movement_sequence(
                     sim,
                     assets,
+                    &mut Vec::new(),
                     crate::engine::movement::GateRouteRequest {
                         entity_id: entity_id,
                         source_sector: route_assert_sector,
@@ -922,6 +923,7 @@ impl EngineInner {
                     let launched = self.start_post_seek_sequence(
                         sim,
                         assets,
+                        &mut Vec::new(),
                         owner,
                         Some((selected.seq_id, selected.elem_idx)),
                     );

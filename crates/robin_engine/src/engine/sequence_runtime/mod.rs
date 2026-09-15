@@ -7,6 +7,8 @@
 
 mod immediate;
 mod instruct_commands;
+#[cfg(test)]
+mod instruction_tests;
 mod owner_dispatch;
 mod owner_preflight;
 use owner_preflight::PreparedOwnerInstruction;

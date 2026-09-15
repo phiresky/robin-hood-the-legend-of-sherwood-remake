@@ -68,7 +68,7 @@ fn generate_transition(
 ) -> bool {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
-    engine.generate_transition(&sim, &assets, owner, seq, idx)
+    engine.generate_transition(&sim, &assets, &mut Vec::new(), owner, seq, idx)
 }
 
 #[test]
@@ -80,11 +80,11 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
         Ok(false)
     );
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx + 1),
+        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx + 1),
         Err(TransitionError::MissingElement {
             seq_id,
             elem_idx: elem_idx + 1
@@ -97,7 +97,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
         .unwrap()
         .owner = None;
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
         Err(TransitionError::OwnerMismatch {
             expected: owner,
             actual: None
@@ -105,7 +105,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
     );
     engine.remove_entity(owner);
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, owner, seq_id, elem_idx),
+        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
         Err(TransitionError::MissingOwner(owner))
     );
 }
@@ -333,7 +333,7 @@ fn sword_exit_transition_synchronously_quits_the_fight() {
     }
     let sim = crate::sim_rng::test_context();
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, owner, seq, idx),
+        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq, idx),
         Ok(true)
     );
 
@@ -472,6 +472,7 @@ fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
         &mut engine,
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
+        &mut Vec::new(),
         seq,
         idx,
         owner,

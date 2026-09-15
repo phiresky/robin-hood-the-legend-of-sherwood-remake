@@ -1528,6 +1528,7 @@ impl EngineInner {
                     self.launch_gate_movement_order(
                         sim,
                         assets,
+                        &mut Vec::new(),
                         crate::engine::movement::GateRouteRequest {
                             entity_id: pc_id,
                             source_sector: Some(source_sector),

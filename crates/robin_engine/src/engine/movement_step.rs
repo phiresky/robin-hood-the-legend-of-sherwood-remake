@@ -2713,6 +2713,7 @@ impl MovementStepCtx<'_> {
                 deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
                     self.sim,
                     self.assets,
+                    &mut Vec::new(),
                     eid,
                     Some((move_seq_id, move_elem_idx)),
                 );
@@ -2845,6 +2846,7 @@ impl MovementStepCtx<'_> {
             deferred.post_seek_reentrant_order_advance = self.engine.start_post_seek_sequence(
                 self.sim,
                 self.assets,
+                &mut Vec::new(),
                 eid,
                 Some((move_seq_id, move_elem_idx)),
             );

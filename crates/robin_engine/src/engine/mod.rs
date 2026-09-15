@@ -2112,11 +2112,15 @@ impl EngineInner {
                 elem.priority = resolver(elem);
             }
         }
+        if self.pc_instruct_early_completion(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+        {
+            return (seq_id, false);
+        }
         self.stamp_element_transition_state(owner, seq_id, elem_idx);
 
         // NonInterruptable guard — see `launch_element_for_owner` for
         // details.
-        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
+        if self.non_interruptable_guard(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx) {
             return (seq_id, false);
         }
 
@@ -2125,7 +2129,9 @@ impl EngineInner {
         // element Impossible and skip both arbitration and the
         // InProgress promotion below. Skipped only by synthetic lowering
         // paths that have already chosen their exact transition order.
-        if with_transitions && !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
+        if with_transitions
+            && !self.generate_transition(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+        {
             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return (seq_id, false);
         }
@@ -2321,18 +2327,13 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         new_seq: crate::sequence::SequenceId,
         new_idx: usize,
     ) -> bool {
         use crate::element::Command;
         use crate::sequence::SequencePriority;
-
-        // Player-character instruction owns these early-return commands before
-        // it delegates to the base Actor method containing this guard.
-        if self.pc_instruct_early_completion(sim, assets, owner, new_seq, new_idx) {
-            return true;
-        }
 
         let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
             return false;
@@ -2372,14 +2373,14 @@ impl EngineInner {
             // The move will be invalid after this newly-instructed door
             // pass executes. Once Execute has run, the lifecycle flag is
             // cleared and later moves are postponed normally.
-            self.element_impossible(sim, assets, &mut Vec::new(), new_seq, new_idx);
+            self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
         } else {
             // `new.Postpone(current)` — current is the blocker, new is
             // the waiter.
             self.engine_postpone(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 cur_seq,
                 cur_idx,
                 new_seq,
@@ -2463,6 +2464,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -2484,7 +2486,7 @@ impl EngineInner {
                 .and_then(Entity::human_data)
                 .is_some_and(|human| !human.opponents.is_empty())
             {
-                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return true;
             }
             // Posture commands stop nonmovement work before transition
@@ -2500,7 +2502,7 @@ impl EngineInner {
                 self.stop_actor_orders(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     crate::sequence::SequencePriority::Preference,
                 );
@@ -2516,7 +2518,7 @@ impl EngineInner {
             }
             _ => return false,
         };
-        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         self.hero_speaking(assets, owner, expression);
         true
     }
@@ -2692,6 +2694,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seek_element: Option<(crate::sequence::SequenceId, usize)>,
     ) -> bool {
@@ -2716,11 +2719,8 @@ impl EngineInner {
             return false;
         };
 
-        // Termination synchronously calls the selected actor's
-        // removal notification in Original, which clears the old movement goal
-        // before post-seek sequence launch starts the interaction. Rust
-        // defers that callback to avoid a re-entrant borrow, so perform this
-        // selected-seek cleanup at the same handoff boundary.
+        // Clear the completed movement's goal before termination callbacks
+        // and the post-seek interaction can observe the handoff.
         if seek_element.is_some() {
             self.get_entity_mut(owner)
                 .unwrap_or_else(|| panic!("post-seek owner {owner:?} disappeared"))
@@ -2734,23 +2734,20 @@ impl EngineInner {
             self.stop_actor_orders(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 target_id,
                 crate::sequence::SequencePriority::Normal,
             );
         }
         if let Some((seq_id, elem_idx)) = seek_element {
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
 
-        // The original game's transition to terminated closes condolence dispatch and then
-        // readiness synchronously before post-seek sequence launch calls
-        // launching the sequence. Ready can register the parent's
-        // next command level on the manager FIFO; the post-seek sequence must
-        // be registered after that successor. Rust defers condolence cards to
-        // avoid re-entrant borrows, so explicitly close this owner's terminal
-        // stack before launching the post-seek tail.
-        self.launch_sequence(sim, assets, post_seek.into_sequence());
+        // Termination callbacks can register the parent's next command level.
+        // Register the post-seek sequence after that successor while retaining
+        // the live script context throughout the synchronous callbacks.
+        self.launch_sequence_inline(sim, assets, active_scripts, post_seek.into_sequence())
+            .unwrap_or_else(|error| panic!("post-seek sequence launch failed: {error:?}"));
         true
     }
 

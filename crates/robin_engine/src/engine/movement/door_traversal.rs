@@ -67,11 +67,12 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         request: GateRouteRequest,
     ) {
         let entity_id = request.entity_id;
         if self
-            .launch_gate_movement_sequence(sim, assets, request)
+            .launch_gate_movement_sequence(sim, assets, active_scripts, request)
             .is_none()
         {
             tracing::warn!(entity = ?entity_id, "gate movement order could not be launched");
@@ -126,6 +127,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         mut request: GateRouteRequest,
     ) -> Option<crate::sequence::SequenceId> {
         use crate::element::Command;
@@ -256,7 +258,9 @@ impl EngineInner {
             self.append_posture_recovery(entity_id, &mut seq);
         }
 
-        let seq_id = self.launch_sequence(sim, assets, seq);
+        let seq_id = self
+            .launch_sequence_inline(sim, assets, active_scripts, seq)
+            .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"));
         tracing::trace!(
             entity = ?entity_id,
             ?seq_id,

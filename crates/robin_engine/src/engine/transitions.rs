@@ -914,6 +914,7 @@ fn make_action_transition_actor(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -984,7 +985,7 @@ fn make_action_transition_actor(
                     if command == Command::RaiseShield {
                         // The command is refused because the shield is
                         // already up with no auto-lower path.
-                        engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                        engine.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                         return false;
                     }
                     push_anim_order(engine, seq_id, elem_idx, OrderType::LoweringShield);
@@ -1043,6 +1044,7 @@ fn make_action_transition_human(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1164,7 +1166,16 @@ fn make_action_transition_human(
             }
             true
         }
-        _ => make_action_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
+        _ => make_action_transition_actor(
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
+        ),
     }
 }
 
@@ -1172,6 +1183,7 @@ fn make_action_transition_soldier(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1215,7 +1227,7 @@ fn make_action_transition_soldier(
                 OrderType::TransitionWaitingAlertedWaitingUpright,
             );
         } else {
-            engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            engine.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -1249,13 +1261,23 @@ fn make_action_transition_soldier(
         return true;
     }
 
-    make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(
+        engine,
+        sim,
+        assets,
+        active_scripts,
+        seq_id,
+        elem_idx,
+        owner,
+        flags,
+    )
 }
 
 fn make_action_transition_pc(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1270,13 +1292,23 @@ fn make_action_transition_pc(
             return false;
         }
     }
-    make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(
+        engine,
+        sim,
+        assets,
+        active_scripts,
+        seq_id,
+        elem_idx,
+        owner,
+        flags,
+    )
 }
 
 fn dispatch_make_action_transition(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1284,16 +1316,46 @@ fn dispatch_make_action_transition(
 ) -> bool {
     let kind = transition_owner(engine, owner).kind();
     match kind {
-        ElementKind::ActorPc => {
-            make_action_transition_pc(engine, sim, assets, seq_id, elem_idx, owner, flags)
-        }
-        ElementKind::ActorSoldier => {
-            make_action_transition_soldier(engine, sim, assets, seq_id, elem_idx, owner, flags)
-        }
-        ElementKind::ActorCivilian => {
-            make_action_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
-        }
-        _ => make_action_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
+        ElementKind::ActorPc => make_action_transition_pc(
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
+        ),
+        ElementKind::ActorSoldier => make_action_transition_soldier(
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
+        ),
+        ElementKind::ActorCivilian => make_action_transition_human(
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
+        ),
+        _ => make_action_transition_actor(
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
+        ),
     }
 }
 
@@ -1945,6 +2007,7 @@ fn make_final_action_transition_soldier(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1974,7 +2037,7 @@ fn make_final_action_transition_soldier(
                 OrderType::TransitionWaitingUprightWaitingAlerted,
             );
         } else {
-            engine.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            engine.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -2031,6 +2094,7 @@ fn dispatch_make_final_action_transition(
     engine: &mut EngineInner,
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
+    active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -2039,7 +2103,14 @@ fn dispatch_make_final_action_transition(
     let kind = transition_owner(engine, owner).kind();
     match kind {
         ElementKind::ActorSoldier => make_final_action_transition_soldier(
-            engine, sim, assets, seq_id, elem_idx, owner, flags,
+            engine,
+            sim,
+            assets,
+            active_scripts,
+            seq_id,
+            elem_idx,
+            owner,
+            flags,
         ),
         ElementKind::ActorPc | ElementKind::ActorCivilian => {
             make_final_action_transition_human(engine, sim, assets, seq_id, elem_idx, flags)
@@ -2063,11 +2134,12 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: SequenceId,
         elem_idx: usize,
     ) -> bool {
-        match self.try_generate_transition(sim, assets, owner, seq_id, elem_idx) {
+        match self.try_generate_transition(sim, assets, active_scripts, owner, seq_id, elem_idx) {
             Ok(allowed) => allowed,
             Err(error) => {
                 tracing::error!(?owner, ?seq_id, elem_idx, %error, "invalid transition target");
@@ -2080,6 +2152,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -2122,7 +2195,14 @@ impl EngineInner {
 
         if !target.stage(self, |engine| {
             dispatch_make_action_transition(
-                engine, sim, assets, seq_id, elem_idx, owner, exit_flags,
+                engine,
+                sim,
+                assets,
+                active_scripts,
+                seq_id,
+                elem_idx,
+                owner,
+                exit_flags,
             )
         })? {
             return Ok(false);
@@ -2147,6 +2227,7 @@ impl EngineInner {
                 engine,
                 sim,
                 assets,
+                active_scripts,
                 seq_id,
                 elem_idx,
                 owner,

@@ -1126,6 +1126,7 @@ impl EngineInner {
             self.launch_gate_movement_sequence(
                 sim,
                 assets,
+                &mut Vec::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: approach_owner,
                     source_sector: (!source_and_line_are_same_sector).then_some(*src_sector),
@@ -1692,6 +1693,7 @@ impl EngineInner {
                 self.launch_gate_movement_order(
                     sim,
                     assets,
+                    &mut Vec::new(),
                     crate::engine::movement::GateRouteRequest {
                         entity_id: *pc_id,
                         source_sector: Some(path_src_sector),

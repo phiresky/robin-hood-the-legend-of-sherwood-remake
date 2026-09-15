@@ -3074,6 +3074,7 @@ fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &assets,
+        &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner: pc_id,
             sequence_id,
@@ -3138,6 +3139,7 @@ fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_ret
     engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &assets,
+        &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner: pc_id,
             sequence_id,

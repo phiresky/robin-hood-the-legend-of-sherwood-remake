@@ -1,105 +1,127 @@
 use super::*;
 
 impl EngineInner {
+    /// Instruct an actor at the caller's scheduling boundary. The result
+    /// tells retained callers whether the instruction was handled, including
+    /// postponement and completion during translation.
+    pub(in crate::engine) fn instruct_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> bool {
+        let prepared =
+            self.prepare_owner_instruction(sim, assets, active_scripts, owner, seq_id, elem_idx);
+        let PreparedOwnerInstruction {
+            owner,
+            cmd,
+            trace_path_owner,
+            satisfied_enter_swordfight_order,
+        } = match prepared {
+            Ok(prepared) => prepared,
+            Err(handled) => return handled,
+        };
+        // The element must still exist; each command translator
+        // re-borrows it for data access.
+        if self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_none()
+        {
+            return true;
+        }
+        if self.translate_instructed_command(
+            sim,
+            assets,
+            active_scripts,
+            owner,
+            cmd,
+            seq_id,
+            elem_idx,
+            satisfied_enter_swordfight_order,
+        ) == OwnerActionBarrier::Skip
+        {
+            self.orders
+                .sequence_manager
+                .clear_translating_element_if_selected(owner, seq_id, elem_idx);
+            return true;
+        }
+        // A nested instruction can replace this actor's selection while the
+        // command is translated. Its order and motion state belong to that
+        // replacement when control returns here.
+        if self
+            .current_sequence_element_for_actor(owner)
+            .is_some_and(|selected| selected != (seq_id, elem_idx))
+        {
+            return true;
+        }
+        if self
+            .world
+            .entities
+            .get(owner)
+            .is_some_and(|entity| entity.actor_data().is_some())
+        {
+            self.publish_instructed_order_as_installed(owner, seq_id, elem_idx);
+        }
+        if trace_path_owner {
+            self.trace_path_owner_lifecycle(
+                "after_instruct_translation",
+                owner,
+                Some((seq_id, elem_idx)),
+            );
+        }
+        // Empty-order translators publish their own acceptance edge before
+        // terminating. Only live translated orders reach this motion write.
+        if self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| element.state == crate::sequence::SequenceState::InProgress)
+            && self
+                .world
+                .entities
+                .get(owner)
+                .is_some_and(|entity| entity.actor_data().is_some())
+        {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("accepted instruction lost its actor")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
+        }
+        self.orders
+            .sequence_manager
+            .clear_translating_element_if_selected(owner, seq_id, elem_idx);
+        true
+    }
+
     pub(in crate::engine) fn dispatch_sequence_phase_action(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
     ) {
-        'action: {
+        {
             match action {
                 crate::sequence::SequenceAction::InstructOwner {
                     owner,
-                    sequence_id: seq_id,
-                    element_index: elem_idx,
+                    sequence_id,
+                    element_index,
                 } => {
-                    let Some(PreparedOwnerInstruction {
-                        owner,
-                        cmd,
-                        trace_path_owner,
-                        satisfied_enter_swordfight_order,
-                    }) = self.prepare_owner_instruction(sim, assets, owner, seq_id, elem_idx)
-                    else {
-                        break 'action;
-                    };
-                    // The element must still exist; each command translator
-                    // re-borrows it for data access.
-                    if self
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .is_none()
-                    {
-                        break 'action;
-                    }
-                    // Do not run a generic human validity check here.
-                    // Original-game human instruction handling delegates directly to
-                    // base actor handling after its dead/unconscious and repeated
-                    // PC bow-shot guards. Commands that require live
-                    // revalidation do so in their specific Execute
-                    // initialization arm; WakeUp, for example, deliberately
-                    // has no position-validity check during instruction.
-                    if self.translate_instructed_command(
+                    self.instruct_owner(
                         sim,
                         assets,
+                        &mut Vec::new(),
                         owner,
-                        cmd,
-                        seq_id,
-                        elem_idx,
-                        satisfied_enter_swordfight_order,
-                    ) == OwnerActionBarrier::Skip
-                    {
-                        break 'action;
-                    }
-                    // Accepted actor instruction handling publishes the translated
-                    // current order through the actor-order field. Keep this write at the
-                    // dispatch boundary rather than inferring it later from
-                    // whichever element happens to be selected.
-                    if self
-                        .world
-                        .entities
-                        .get(owner)
-                        .is_some_and(|entity| entity.actor_data().is_some())
-                    {
-                        self.publish_instructed_order_as_installed(owner, seq_id, elem_idx);
-                    }
-                    if trace_path_owner {
-                        self.trace_path_owner_lifecycle(
-                            "after_instruct_translation",
-                            owner,
-                            Some((seq_id, elem_idx)),
-                        );
-                    }
-                    // The original game returns immediately when translation completed the
-                    // element re-entrantly and changed the selected sequence element;
-                    // that path deliberately does not overwrite the
-                    // actor's preceding motion latch with IN_PROGRESS.
-                    // Only an element that survived translation and was
-                    // promoted to INPROGRESS reaches the common write
-                    // below. Command-specific empty-order paths publish
-                    // their required edge at the dispatch site above.
-                    if self
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .is_some_and(|element| {
-                            element.state == crate::sequence::SequenceState::InProgress
-                        })
-                        && self
-                            .world
-                            .entities
-                            .get(owner)
-                            .is_some_and(|entity| entity.actor_data().is_some())
-                    {
-                        self.world
-                            .entities
-                            .get_mut(owner)
-                            .and_then(Entity::actor_data_mut)
-                            .expect("accepted instruction lost its actor")
-                            .continuation
-                            .motion_state = crate::sprite::MotionState::InProgress;
-                    }
+                        sequence_id,
+                        element_index,
+                    );
                 }
                 crate::sequence::SequenceAction::ExecuteImmediateOwner {
                     owner,
@@ -148,6 +170,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         cmd: Command,
         seq_id: crate::sequence::SequenceId,
@@ -155,15 +178,20 @@ impl EngineInner {
         satisfied_enter_swordfight_order: Option<crate::element::InstalledActorOrder>,
     ) -> OwnerActionBarrier {
         match cmd {
-            Command::Move | Command::Seek => {
-                self.dispatch_ordered_move_seek_instruct(sim, assets, owner, seq_id, elem_idx)
-            }
+            Command::Move | Command::Seek => self.dispatch_ordered_move_seek_instruct(
+                sim,
+                assets,
+                active_scripts,
+                owner,
+                seq_id,
+                elem_idx,
+            ),
             Command::ShootBow | Command::ShootBowOnce => {
-                self.instruct_shoot_bow(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx, cmd)
+                self.instruct_shoot_bow(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
             }
             Command::PassDoor => {
                 let barrier =
-                    self.instruct_pass_door(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx);
+                    self.instruct_pass_door(sim, assets, active_scripts, owner, seq_id, elem_idx);
                 if barrier == crate::engine::door_pass::PassDoorLaunchBarrier::SkipSplice {
                     return OwnerActionBarrier::Skip;
                 }
@@ -172,7 +200,7 @@ impl EngineInner {
             // ── CHANGE_POSITION ────────────────────────
             // Instant teleport to a new position.
             Command::ChangePosition => {
-                self.instruct_change_position(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_change_position(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             // ── ASSERT_POSITION ────────────────────────
             // Check actor is at expected position/sector.
@@ -180,7 +208,7 @@ impl EngineInner {
                 let barrier = self.dispatch_position_assertion(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     seq_id,
                     elem_idx,
@@ -199,7 +227,7 @@ impl EngineInner {
                 self.dispatch_wait_command(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     Command::WaitFreeLift,
                     seq_id,
@@ -219,7 +247,7 @@ impl EngineInner {
             | Command::SwordstrikeThrustI => self.instruct_swordstrike_thrust_a(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -230,21 +258,21 @@ impl EngineInner {
                 .instruct_enter_swordfight(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     seq_id,
                     elem_idx,
                     satisfied_enter_swordfight_order,
                 ),
             Command::QuitSwordfight => {
-                self.dispatch_quit_swordfight(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.dispatch_quit_swordfight(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             // ── Parry commands ──────────────────────
             Command::ParrySword => self.dispatch_parry_sword(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 false,
                 seq_id,
@@ -253,14 +281,14 @@ impl EngineInner {
             Command::ParrySwordLow => self.dispatch_parry_sword(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 true,
                 seq_id,
                 elem_idx,
             ),
             Command::StopParrySword => {
-                self.dispatch_stop_parry(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.dispatch_stop_parry(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             // ── Damage reception commands ───────────
@@ -271,7 +299,7 @@ impl EngineInner {
             | Command::ReceiveHitDamage
             | Command::ReceiveMobileDamage
             | Command::ReceiveNet => {
-                self.dispatch_receive_damage(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.dispatch_receive_damage(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             // ── Shoulder-fall sub-sequence ──────────
@@ -298,7 +326,7 @@ impl EngineInner {
                 let barrier = self.dispatch_npc_attention_command(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     cmd,
                     seq_id,
@@ -314,7 +342,7 @@ impl EngineInner {
             | Command::LeaveAttentiveModeOfficer => self.instruct_attentive_mode(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -339,7 +367,7 @@ impl EngineInner {
             | Command::LeaveTree => self.instruct_stealth_posture(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -353,7 +381,7 @@ impl EngineInner {
             | Command::ParryShield => self.instruct_raise_shield(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -374,7 +402,7 @@ impl EngineInner {
             | Command::LowerBow => self.dispatch_bow_transition(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -394,22 +422,17 @@ impl EngineInner {
             // 3. Push the HIDING_BEHIND_SHIELD non-animation
             //    order with the shield holder as antagonist.
             Command::HideBehindShield => {
-                self.instruct_hide_behind_shield(sim, assets, &mut Vec::new(), seq_id, elem_idx)
+                self.instruct_hide_behind_shield(sim, assets, active_scripts, seq_id, elem_idx)
             }
 
             // ── Other sword-related commands ────────
-            Command::SwordstrikeDown => self.instruct_swordstrike_down(
-                sim,
-                assets,
-                &mut Vec::new(),
-                owner,
-                seq_id,
-                elem_idx,
-            ),
+            Command::SwordstrikeDown => {
+                self.instruct_swordstrike_down(sim, assets, active_scripts, owner, seq_id, elem_idx)
+            }
             Command::GetKilledAtBottom => self.instruct_get_killed_at_bottom(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -417,7 +440,7 @@ impl EngineInner {
             Command::SwordstrikeTired => self.instruct_swordstrike_tired(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -433,7 +456,7 @@ impl EngineInner {
                 self.dispatch_smalltalk_command(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     cmd,
                     seq_id,
@@ -460,16 +483,22 @@ impl EngineInner {
             | Command::Knee => self.dispatch_recovery_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
                 elem_idx,
             ),
 
-            _ => {
-                self.translate_instructed_ability_command(sim, assets, owner, cmd, seq_id, elem_idx)
-            }
+            _ => self.translate_instructed_ability_command(
+                sim,
+                assets,
+                active_scripts,
+                owner,
+                cmd,
+                seq_id,
+                elem_idx,
+            ),
         }
     }
 
@@ -480,6 +509,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         cmd: Command,
         seq_id: crate::sequence::SequenceId,
@@ -488,13 +518,13 @@ impl EngineInner {
         match cmd {
             // ── Ability commands ─────────────────────
             Command::TakeCorpse => {
-                self.instruct_take_corpse(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_take_corpse(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             Command::DropCorpse => {
-                self.instruct_drop_corpse(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_drop_corpse(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             Command::HitCmd | Command::StrangleCmd => {
-                self.instruct_hit_cmd(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx, cmd)
+                self.instruct_hit_cmd(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
             }
             Command::TieCmd
             | Command::Untie
@@ -509,12 +539,12 @@ impl EngineInner {
             | Command::ThrowWaspNest
             | Command::ThrowApple
             | Command::ThrowStone => {
-                self.instruct_tie_cmd(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx, cmd)
+                self.instruct_tie_cmd(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
             }
             Command::ClimbDownFromShoulders => self.instruct_climb_down_from_shoulders(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -522,20 +552,18 @@ impl EngineInner {
             Command::ClimbUpOnShoulders => self.instruct_climb_up_on_shoulders(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
             ),
-            Command::Pay => {
-                self.instruct_pay(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
-            }
+            Command::Pay => self.instruct_pay(sim, assets, active_scripts, owner, seq_id, elem_idx),
             Command::DropAmmo => {
-                self.instruct_drop_ammo(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_drop_ammo(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             // ── Drop ale bottle ───────────────────────
             Command::DropAle => {
-                self.instruct_drop_ale(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_drop_ale(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
             // ── Turn ───────────────────────────────
             // Rotate the actor to face the `CameraPoint`
@@ -550,7 +578,7 @@ impl EngineInner {
             Command::Turn | Command::TurnFast => self.dispatch_turn_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -563,7 +591,7 @@ impl EngineInner {
             Command::TurnElement => self.dispatch_turn_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -579,7 +607,7 @@ impl EngineInner {
             Command::Freeze => self.dispatch_turn_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -598,7 +626,7 @@ impl EngineInner {
             Command::Point | Command::GatherSoldiers => self.dispatch_turn_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -623,7 +651,7 @@ impl EngineInner {
             Command::Wait | Command::WaitTimer => self.dispatch_wait_command(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 cmd,
                 seq_id,
@@ -646,7 +674,7 @@ impl EngineInner {
             // already been queued ahead of the command's own
             // animation.
             Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
-                self.dispatch_npc_state_command(sim, assets, &mut Vec::new(), cmd, seq_id, elem_idx)
+                self.dispatch_npc_state_command(sim, assets, active_scripts, cmd, seq_id, elem_idx)
             }
             // ── Menace / Sleep transitions ─────────
             // Each pushes a fixed sequence of transition
@@ -661,7 +689,7 @@ impl EngineInner {
             | Command::StopSleep
             | Command::LowerBowLeanOut
             | Command::RaiseBowLeanOut => {
-                self.dispatch_npc_state_command(sim, assets, &mut Vec::new(), cmd, seq_id, elem_idx)
+                self.dispatch_npc_state_command(sim, assets, active_scripts, cmd, seq_id, elem_idx)
             }
             // ── DrinkAle / Take ────────────────────
             // DrinkAle / Take push a single interaction
@@ -678,7 +706,7 @@ impl EngineInner {
                 self.dispatch_object_interaction_command(
                     sim,
                     assets,
-                    &mut Vec::new(),
+                    active_scripts,
                     owner,
                     cmd,
                     seq_id,
@@ -699,12 +727,12 @@ impl EngineInner {
             // read from the `Field::Door` property set
             // by `launch_gate_movement_sequence`.
             Command::UnlockDoor => {
-                self.instruct_unlock_door(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_unlock_door(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             // ── Jump ────────────────────────────────
             Command::JumpCmd => {
-                self.instruct_jump(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_jump(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             Command::ActivateApple
@@ -718,7 +746,7 @@ impl EngineInner {
             | Command::ActivateSword => self.instruct_activate_target(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -729,7 +757,7 @@ impl EngineInner {
             | Command::PlayAnimLoop
             | Command::PlayAnimFreeze
             | Command::PlayAnimFrozen => {
-                self.instruct_play_anim(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx, cmd)
+                self.instruct_play_anim(sim, assets, active_scripts, owner, seq_id, elem_idx, cmd)
             }
 
             Command::HitTarget
@@ -739,7 +767,7 @@ impl EngineInner {
             | Command::SearchCmd => self.instruct_target_interaction(
                 sim,
                 assets,
-                &mut Vec::new(),
+                active_scripts,
                 owner,
                 seq_id,
                 elem_idx,
@@ -747,7 +775,7 @@ impl EngineInner {
             ),
 
             Command::Generic => {
-                self.instruct_generic(sim, assets, &mut Vec::new(), owner, seq_id, elem_idx)
+                self.instruct_generic(sim, assets, active_scripts, owner, seq_id, elem_idx)
             }
 
             _ => {
@@ -769,7 +797,7 @@ impl EngineInner {
                     "InstructOwner: no dispatch for command; terminating element"
                 );
                 self.orders.sequence_manager.set_translating_element(None);
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                 OwnerActionBarrier::Reach
             }
         }

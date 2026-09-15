@@ -96,13 +96,19 @@ fn rejected_gate_routes_launch_nothing_and_consume_no_random_draws() {
             if retain_sequence_id {
                 assert!(
                     engine
-                        .launch_gate_movement_sequence(&sim, &LevelAssets::new(), request)
+                        .launch_gate_movement_sequence(
+                            &sim,
+                            &LevelAssets::new(),
+                            &mut Vec::new(),
+                            request
+                        )
                         .is_none()
                 );
             } else {
                 engine.launch_gate_movement_order(
                     &sim,
                     &crate::engine::LevelAssets::new(),
+                    &mut Vec::new(),
                     request,
                 );
             }
@@ -277,6 +283,7 @@ fn exact_building_source_draws_exit_wait(
             .launch_gate_movement_sequence(
                 sim,
                 &crate::engine::LevelAssets::new(),
+                &mut Vec::new(),
                 building_exit_route_request(
                     owner,
                     Some(source_sector),
@@ -326,6 +333,7 @@ fn number_only_building_source_draws_exit_wait(
         engine.launch_gate_movement_sequence(
             sim,
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             building_exit_route_request(
                 owner,
                 crate::position_interface::SectorHandle::new(64),
@@ -370,6 +378,7 @@ fn indirect_number_only_source_draws_exit_wait(
         engine.launch_gate_movement_sequence(
             sim,
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             building_exit_route_request(
                 owner,
                 crate::position_interface::SectorHandle::new(274),
@@ -418,6 +427,7 @@ fn exact_ordinary_alias_keeps_building_side_draws(
         engine.launch_gate_movement_sequence(
             sim,
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             building_exit_route_request(
                 owner,
                 Some(exact_ordinary_alias),
@@ -455,6 +465,7 @@ fn multi_gate_route_draws_only_for_real_building_exit(
         engine.launch_gate_movement_sequence(
             sim,
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             building_exit_route_request(
                 owner,
                 Some(exact_building_alias),
@@ -528,6 +539,7 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
         .launch_gate_movement_sequence(
             &crate::sim_rng::test_context(),
             &crate::engine::LevelAssets::new(),
+            &mut Vec::new(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
                 source_sector: SectorHandle::new(1),
@@ -1156,6 +1168,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 &crate::engine::LevelAssets::new(),
+                &mut Vec::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
                     source_sector: crate::position_interface::SectorHandle::new(22),
@@ -1291,6 +1304,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 &crate::engine::LevelAssets::new(),
+                &mut Vec::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
                     source_sector: crate::position_interface::SectorHandle::new(22),

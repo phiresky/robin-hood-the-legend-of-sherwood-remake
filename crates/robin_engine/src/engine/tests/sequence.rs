@@ -2328,6 +2328,7 @@ fn post_seek_handoff_clears_selected_movement_goal() {
     assert!(engine.start_post_seek_sequence(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some((seek_sequence, 0)),
     ));
@@ -2395,6 +2396,7 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
     assert!(engine.start_post_seek_sequence(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
+        &mut Vec::new(),
         owner,
         Some((parent_id, 0)),
     ));
