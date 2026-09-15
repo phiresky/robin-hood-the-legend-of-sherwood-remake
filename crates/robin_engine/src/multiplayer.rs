@@ -13,7 +13,6 @@
 
 use crate::engine::Engine;
 use crate::player_command::{DialogResult, ModalKind, PlayerCommand, PlayerId, PlayerInput};
-use robin_run_types::{LeaderboardCoSignInstanceV1, LeaderboardCoSignRequestV1, Validate};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -36,11 +35,6 @@ pub type FrameCursor = Arc<AtomicU32>;
 /// this boundary receives byte-identical authoritative state.
 pub type InitialSnapshot = Arc<Mutex<Option<(u32, Vec<u8>)>>>;
 
-/// Shared bounded inbox for verified/locally armed leaderboard authorization
-/// events. A capability-restricted mission-end port may retain this queue
-/// without retaining or mutably borrowing the full multiplayer channel owner.
-pub type LeaderboardAuthorizationInbox = Arc<Mutex<std::collections::VecDeque<NetEvent>>>;
-
 /// Make a new [`FrameCursor`] starting at frame 0.
 pub fn new_frame_cursor() -> FrameCursor {
     Arc::new(AtomicU32::new(0))
@@ -60,9 +54,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// tactical queue formations to the authoritative version-34 state. Version
 /// 36 adds shared-vision fog state and its host-owned runtime command.
 /// Protocol 37 carries save/replay state with the mandatory mission-asset
-/// descriptor introduced by save 70 / replay 28. Protocol 38 adds the typed,
-/// targeted leaderboard co-sign and official-ranked-session authorization
-/// messages to that complete current-main wire contract.
+/// descriptor introduced by save 70 / replay 28. Protocol 38 added the
+/// (since removed) leaderboard co-sign and ranked-session messages.
 /// Protocol 40 adds reversible background-patch configuration and activation
 /// targets to the engine snapshots exchanged by peers.
 /// Protocol 42 replaces four pending AI detectable queues with an ordered FIFO
@@ -88,7 +81,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// state (save 86 / replay 45).
 /// Protocol 54 carries actor execution without duplicated movement, shot, and
 /// ability trackers (save 87 / replay 46).
-pub const NET_PROTOCOL_VERSION: u32 = 54;
+/// Protocol 55 removes the ranked multiplayer session, named-seat attestation
+/// and leaderboard co-sign messages.
+pub const NET_PROTOCOL_VERSION: u32 = 55;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -306,195 +301,6 @@ pub struct ModalInstanceId {
     pub occurrence: u64,
 }
 
-/// Fixed response to a purpose-bound leaderboard co-sign request.
-///
-/// The response deliberately carries no nickname, seat, arbitrary message, or
-/// client-claimed sender. The server recovers the exact request (including its
-/// run digest) from pending authenticated transport state and stamps the
-/// [`PlayerId`] on the resulting [`NetEvent::LeaderboardCoSignResponse`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct LeaderboardCoSignResponse {
-    pub instance: LeaderboardCoSignInstanceV1,
-    pub signer_public_key: [u8; 32],
-    #[serde(with = "serde_big_array::BigArray")]
-    pub signature: [u8; 64],
-}
-
-/// Largest canonical ranked-session document admitted inside a multiplayer
-/// control frame. The outer bitcode frame remains independently bounded by
-/// the transport. Keeping the document bound here prevents a caller from
-/// bypassing that transport check through a local [`NetOutbound`] channel.
-pub const MAX_RANKED_WIRE_DOCUMENT_BYTES: usize = 64 * 1024;
-
-fn validate_ranked_wire_document_bytes(bytes: &[u8]) -> Result<(), &'static str> {
-    if bytes.is_empty() {
-        return Err("ranked wire document is empty");
-    }
-    if bytes.len() > MAX_RANKED_WIRE_DOCUMENT_BYTES {
-        return Err("ranked wire document exceeds its decoded size limit");
-    }
-    Ok(())
-}
-
-macro_rules! ranked_wire_document {
-    ($name:ident, $description:literal) => {
-        #[doc = $description]
-        #[derive(
-            Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
-        )]
-        pub struct $name(Vec<u8>);
-
-        impl $name {
-            /// Wrap bytes produced by
-            /// `leaderboard_ranked_session::encode_ranked_wire_document`.
-            pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
-                let document = Self(bytes);
-                document.validate()?;
-                Ok(document)
-            }
-
-            pub fn as_bytes(&self) -> &[u8] {
-                &self.0
-            }
-
-            pub fn into_bytes(self) -> Vec<u8> {
-                self.0
-            }
-
-            fn validate(&self) -> Result<(), &'static str> {
-                validate_ranked_wire_document_bytes(&self.0)
-            }
-        }
-    };
-}
-
-ranked_wire_document!(
-    RankedSessionConfigDocument,
-    "Canonical JSON for one locally prepared `RankedSessionConfigV1`. This is local trust state and is never sent on the wire."
-);
-ranked_wire_document!(
-    RankedSessionGenesisDocument,
-    "Canonical JSON for one signed `ReplaySessionGenesisV1`."
-);
-ranked_wire_document!(
-    RankedJoinClaimDocument,
-    "Canonical JSON for the exact host-issued `NamedSeatJoinClaimV1`."
-);
-ranked_wire_document!(
-    RankedJoinAttestationDocument,
-    "Canonical JSON for one signed `NamedSeatJoinAttestationV1`."
-);
-ranked_wire_document!(
-    RankedParticipantRosterDocument,
-    "Canonical JSON for the complete monotonic `Vec<ParticipantClaimV1>` admitted by the host."
-);
-ranked_wire_document!(
-    RankedCoSignContextDocument,
-    "Canonical JSON for one closed `RankedCoSignContextV1` continuation or submission context."
-);
-ranked_wire_document!(
-    RankedSubmissionAcceptedDocument,
-    "Canonical JSON for one validated `SubmissionAcceptedV1` queue acknowledgement."
-);
-ranked_wire_document!(
-    RankedOfficialSessionSetupDocument,
-    "Canonical JSON for one `OfficialRankedSessionWireSetupV1`; trusted time is intentionally local and absent."
-);
-ranked_wire_document!(
-    RankedContinuationReceiptSelectionRequestDocument,
-    "Canonical JSON for one exact `CampaignContinuationReceiptSelectionRequestV1`."
-);
-ranked_wire_document!(
-    RankedContinuationReceiptSelectionDocument,
-    "Canonical JSON for one controller-selected `CampaignContinuationReceiptSelectionV1`."
-);
-ranked_wire_document!(
-    RankedContinuationPreflightClaimDocument,
-    "Canonical JSON for one exact `CampaignContinuationPreflightRequestClaimV1` controller authorization request."
-);
-ranked_wire_document!(
-    RankedContinuationPreflightSignatureDocument,
-    "Canonical JSON for one controller `ParticipantSignatureV1` over the exact continuation-preflight claim."
-);
-
-/// Exact server-issued ranked admission challenge. The client must validate
-/// both documents against its authenticated host and locally prepared session
-/// before signing the embedded named-seat claim.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct RankedJoinChallenge {
-    pub session_genesis: RankedSessionGenesisDocument,
-    pub join_claim: RankedJoinClaimDocument,
-}
-
-impl RankedJoinChallenge {
-    fn validate(&self) -> Result<(), &'static str> {
-        self.session_genesis.validate()?;
-        self.join_claim.validate()
-    }
-}
-
-/// Closed reason a client cannot provide the requested ranked admission
-/// attestation. This deliberately contains no free-form signing or authority
-/// material. Gameplay may continue after the host downgrades the session.
-#[derive(
-    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
-)]
-pub enum RankedJoinUnavailableReason {
-    DurableIdentityUnavailable,
-    LocalRankedSessionUnavailable,
-    LocalRankedSessionMismatch,
-    AttestationSigningFailed,
-}
-
-/// Client answer to one ranked admission challenge.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub enum RankedJoinResponse {
-    Attestation(RankedJoinAttestationDocument),
-    Unavailable(RankedJoinUnavailableReason),
-}
-
-impl RankedJoinResponse {
-    fn validate(&self) -> Result<(), &'static str> {
-        match self {
-            Self::Attestation(document) => document.validate(),
-            Self::Unavailable(_) => Ok(()),
-        }
-    }
-}
-
-/// Server acknowledgement that the exact signed join was admitted. Sending
-/// an attestation is not sufficient for a client to consider itself ranked;
-/// it must receive this acknowledgement first.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct RankedJoinAccepted {
-    pub session_genesis: RankedSessionGenesisDocument,
-    pub join_attestation: RankedJoinAttestationDocument,
-    pub participant_roster: RankedParticipantRosterDocument,
-}
-
-impl RankedJoinAccepted {
-    fn validate(&self) -> Result<(), &'static str> {
-        self.session_genesis.validate()?;
-        self.join_attestation.validate()?;
-        self.participant_roster.validate()
-    }
-}
-
-/// Closed, non-personal reason the multiplayer session irreversibly left the
-/// verified ranking lane. The host broadcasts one of these events and every
-/// participant continues in browse-only mode.
-#[derive(
-    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
-)]
-pub enum RankedBrowseOnlyReason {
-    HostRankedSessionUnavailable,
-    PeerIdentityUnavailable,
-    PeerRankedSessionMismatch,
-    PeerAttestationRejected,
-    RankedTransportInterrupted,
-    RankedProtocolViolation,
-}
-
 /// Client request retained for host presentation. Requests are advisory and
 /// never resolve a modal without a later [`NetMsg::ModalDecision`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -538,7 +344,6 @@ pub const MAX_JOIN_CODE_BYTES: usize = 16 * 1024;
 pub const MAX_NOTE_BYTES: usize = 4 * 1024;
 pub const MAX_REJECT_REASON_BYTES: usize = 1024;
 pub const MAX_SNAPSHOT_FRAME_BYTES: usize = 128 * 1024 * 1024;
-pub const MAX_LEADERBOARD_COSIGN_INBOX_EVENTS: usize = 64;
 
 pub fn validate_display_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty()
@@ -663,9 +468,6 @@ pub enum NetMsg {
         protocol_version: u32,
         nickname: String,
         browser_auth: Option<BrowserPeerAuth>,
-        /// Durable first-start leaderboard identity. Native transport keys are
-        /// intentionally ephemeral and must not be treated as this identity.
-        ranked_public_key: Option<[u8; 32]>,
     },
     /// Server → client: handshake response.  Tells the client which
     /// seat it owns and gives it the mission seed it must use to
@@ -750,51 +552,6 @@ pub enum NetMsg {
     /// Server → clients: every connected peer retained the same bytes; all
     /// participants may now leave the mission and re-handshake.
     CommitSnapshotTransition { id: SnapshotTransitionId },
-    /// Server -> one client: exact ranked genesis and named-seat claim. The
-    /// client transport must keep this staged until its locally prepared
-    /// ranked configuration matches the signed genesis.
-    RankedJoinChallenge(RankedJoinChallenge),
-    /// Client -> server: either the exact signed challenge or a closed reason
-    /// that ranked admission is unavailable. The authenticated stream supplies
-    /// the sender seat and transport endpoint.
-    RankedJoinResponse(RankedJoinResponse),
-    /// Server -> one client: acknowledgement that the exact attestation was
-    /// admitted. A client is not ranked merely because it sent a response.
-    RankedJoinAccepted(RankedJoinAccepted),
-    /// Server -> all already accepted clients after a fresh admission. Claims
-    /// are complete and monotonic; reconnects retain the existing roster.
-    RankedParticipantRoster(RankedParticipantRosterDocument),
-    /// Server -> all clients: the session irreversibly left the verified lane.
-    /// Gameplay continues and leaderboard browsing remains available.
-    RankedBrowseOnly { reason: RankedBrowseOnlyReason },
-    /// Server -> one client: a closed continuation/submission co-sign context.
-    /// The client must stage it until an independently reconstructed local
-    /// context is byte-for-byte identical.
-    RankedCoSignContext(RankedCoSignContextDocument),
-    /// Server -> the exact campaign-controller client after the leaderboard
-    /// service accepted its submission into the verification queue. The
-    /// document is typed and validated before entering or leaving the
-    /// capability-restricted authorization port.
-    RankedSubmissionAccepted(RankedSubmissionAcceptedDocument),
-    /// Host -> all clients after authority admission and before ranked join.
-    RankedOfficialSessionSetup(RankedOfficialSessionSetupDocument),
-    /// Host -> authenticated clients before ranked genesis. Only the immutable
-    /// controller with an exact local active receipt responds.
-    RankedContinuationReceiptSelectionRequest(RankedContinuationReceiptSelectionRequestDocument),
-    /// Controller -> host. Authenticated stream supplies the responder seat.
-    RankedContinuationReceiptSelection(RankedContinuationReceiptSelectionDocument),
-    /// Host -> immutable campaign controller before ranked genesis exists.
-    RankedContinuationPreflightClaim(RankedContinuationPreflightClaimDocument),
-    /// Controller -> host. The authenticated stream supplies the sender seat;
-    /// the typed signature remains bound to the exact staged claim.
-    RankedContinuationPreflightSignature(RankedContinuationPreflightSignatureDocument),
-    /// Server -> one specifically selected client. The request is the exact
-    /// closed, purpose-bound payload reconstructed by the leaderboard server;
-    /// it is never a generic signing request.
-    LeaderboardCoSignRequest(LeaderboardCoSignRequestV1),
-    /// Client -> server. The authenticated stream supplies the sender seat;
-    /// this payload must not contain or claim one.
-    LeaderboardCoSignResponse(LeaderboardCoSignResponse),
 }
 
 /// Typed payload of [`NetEvent::Fatal`].
@@ -894,53 +651,6 @@ pub enum NetEvent {
     CommitSnapshotTransition {
         id: SnapshotTransitionId,
     },
-    /// A locally armed ranked admission challenge arrived from the
-    /// authenticated host. Platform glue emits this only after the signed
-    /// genesis matches the independently prepared local ranked configuration.
-    RankedJoinChallenge(RankedJoinChallenge),
-    /// Host-side event stamped with the authenticated sender seat.
-    RankedJoinResponse {
-        from: PlayerId,
-        response: RankedJoinResponse,
-    },
-    /// The host admitted this client's exact signed named-seat challenge.
-    RankedJoinAccepted(RankedJoinAccepted),
-    /// Complete monotonic participant roster after another fresh admission.
-    RankedParticipantRoster(RankedParticipantRosterDocument),
-    /// Irreversible verified-lane downgrade. This event is intentionally
-    /// separate from fatal multiplayer compatibility or transport failures.
-    RankedBrowseOnly {
-        reason: RankedBrowseOnlyReason,
-    },
-    /// An exact locally armed continuation/submission co-sign context arrived.
-    RankedCoSignContext(RankedCoSignContextDocument),
-    /// Queue acknowledgement delivered only to the authenticated campaign
-    /// controller selected by the host's retained ranked participant roster.
-    RankedSubmissionAccepted(RankedSubmissionAcceptedDocument),
-    RankedOfficialSessionSetup(RankedOfficialSessionSetupDocument),
-    RankedContinuationReceiptSelectionRequest(RankedContinuationReceiptSelectionRequestDocument),
-    RankedContinuationReceiptSelection {
-        from: PlayerId,
-        selection: RankedContinuationReceiptSelectionDocument,
-    },
-    RankedContinuationPreflightClaim(RankedContinuationPreflightClaimDocument),
-    RankedContinuationPreflightSignature {
-        from: PlayerId,
-        signature: RankedContinuationPreflightSignatureDocument,
-    },
-    /// A locally armed request arrived from the authenticated host. The client
-    /// transport emits this only after exact equality with the request derived
-    /// independently from its validated offer/transcript.
-    LeaderboardCoSignRequest(LeaderboardCoSignRequestV1),
-    /// A verified purpose-bound proof from an authenticated multiplayer seat.
-    ///
-    /// This is transport evidence, not by itself a claim that the proof is
-    /// admissible for a submission: the consumer must still bind `from` and
-    /// `signer_public_key` to the validated participant/controller roster.
-    LeaderboardCoSignResponse {
-        from: PlayerId,
-        response: LeaderboardCoSignResponse,
-    },
 }
 
 /// What the game loop pushes into the outgoing channel.
@@ -988,72 +698,6 @@ pub enum NetOutbound {
     SnapshotTransitionReady {
         id: SnapshotTransitionId,
     },
-    /// Host-only, targeted ranked admission challenge.
-    RankedJoinChallenge {
-        to: PlayerId,
-        challenge: RankedJoinChallenge,
-    },
-    /// Client-local trust gate. The expected canonical ranked configuration is
-    /// never serialized; it only releases a matching staged challenge.
-    ArmRankedJoin {
-        expected_ranked_session: RankedSessionConfigDocument,
-    },
-    /// Client-only answer to the exact delivered challenge.
-    RankedJoinResponse(RankedJoinResponse),
-    /// Host-only, targeted acknowledgement of an admitted attestation.
-    RankedJoinAccepted {
-        to: PlayerId,
-        accepted: RankedJoinAccepted,
-    },
-    /// Host-only broadcast of the complete roster after a fresh admission.
-    RankedParticipantRoster {
-        roster: RankedParticipantRosterDocument,
-    },
-    /// Host-only broadcast of an irreversible browse-only downgrade.
-    RankedBrowseOnly {
-        reason: RankedBrowseOnlyReason,
-    },
-    /// Host-only, targeted publication of a closed continuation/submission
-    /// context.
-    RankedCoSignContext {
-        to: PlayerId,
-        context: RankedCoSignContextDocument,
-    },
-    /// Host-only, targeted publication of a validated leaderboard queue
-    /// acknowledgement to the exact admitted campaign controller.
-    RankedSubmissionAccepted {
-        to: PlayerId,
-        accepted: RankedSubmissionAcceptedDocument,
-    },
-    /// Host-only broadcast of an authority-admitted setup without trusted
-    /// time; clients apply their own pre-frame time before installation.
-    RankedOfficialSessionSetup(RankedOfficialSessionSetupDocument),
-    /// Host-only broadcast requesting an exact local active campaign receipt.
-    RankedContinuationReceiptSelectionRequest(RankedContinuationReceiptSelectionRequestDocument),
-    /// Client-only controller response to the exact selection request.
-    RankedContinuationReceiptSelection(RankedContinuationReceiptSelectionDocument),
-    /// Host-only request to the exact immutable campaign-controller seat.
-    RankedContinuationPreflightClaim {
-        to: PlayerId,
-        claim: RankedContinuationPreflightClaimDocument,
-    },
-    /// Client-only response to a locally validated and staged preflight claim.
-    RankedContinuationPreflightSignature(RankedContinuationPreflightSignatureDocument),
-    /// Host-only, targeted publication. Requests for different participants
-    /// may share the same protocol instance; authenticated `to` is transport
-    /// routing state and never part of the signed request.
-    LeaderboardCoSignRequest {
-        to: PlayerId,
-        request: LeaderboardCoSignRequestV1,
-    },
-    /// Client-local trust gate. This is consumed by the client transport and
-    /// never serialized. An inbound host request is presented only when it is
-    /// exactly equal to this independently derived request.
-    ArmLeaderboardCoSignRequest {
-        request: LeaderboardCoSignRequestV1,
-    },
-    /// Client-only response to the exact delivered request instance.
-    LeaderboardCoSignResponse(LeaderboardCoSignResponse),
 }
 
 /// Channel pair + frame cursor held by the [`crate::engine_manager::EngineManager`].
@@ -1069,7 +713,6 @@ pub struct NetChannels {
     /// immediately after `Welcome`.
     pub initial_snapshot: InitialSnapshot,
     modal_sync: Mutex<ModalSyncState>,
-    leaderboard_cosign_inbox: LeaderboardAuthorizationInbox,
     next_transition_sequence: AtomicU64,
     command_worker_closed: AtomicBool,
 }
@@ -1098,7 +741,6 @@ impl NetChannels {
                 frame_cursor: Arc::clone(&cursor),
                 initial_snapshot: Arc::clone(&snapshot),
                 modal_sync: Mutex::new(ModalSyncState::default()),
-                leaderboard_cosign_inbox: Arc::new(Mutex::new(std::collections::VecDeque::new())),
                 next_transition_sequence: AtomicU64::new(0),
                 command_worker_closed: AtomicBool::new(false),
             },
@@ -1355,57 +997,6 @@ impl NetChannels {
         self.try_recv_transport_event()
     }
 
-    /// Clone the bounded authorization inbox for a capability-restricted
-    /// mission-end port. This does not expose the raw transport receiver.
-    pub fn leaderboard_authorization_inbox(&self) -> LeaderboardAuthorizationInbox {
-        Arc::clone(&self.leaderboard_cosign_inbox)
-    }
-
-    /// Route a verified/armed co-sign event out of the simulation drain and
-    /// into the mission-end controller's dedicated non-blocking inbox.
-    pub fn defer_leaderboard_cosign_event(&self, event: NetEvent) -> Result<(), String> {
-        if !matches!(
-            event,
-            NetEvent::RankedCoSignContext(_)
-                | NetEvent::RankedSubmissionAccepted(_)
-                | NetEvent::RankedOfficialSessionSetup(_)
-                | NetEvent::RankedContinuationReceiptSelectionRequest(_)
-                | NetEvent::RankedContinuationReceiptSelection { .. }
-                | NetEvent::RankedContinuationPreflightClaim(_)
-                | NetEvent::RankedContinuationPreflightSignature { .. }
-                | NetEvent::LeaderboardCoSignRequest(_)
-                | NetEvent::LeaderboardCoSignResponse { .. }
-        ) {
-            return Err(
-                "attempted to route a non-leaderboard event into the co-sign inbox".to_string(),
-            );
-        }
-        let mut inbox = self
-            .leaderboard_cosign_inbox
-            .lock()
-            .map_err(|_| "multiplayer leaderboard co-sign inbox lock is poisoned".to_string())?;
-        if inbox.len() >= MAX_LEADERBOARD_COSIGN_INBOX_EVENTS {
-            return Err(format!(
-                "multiplayer leaderboard co-sign inbox exceeds its {}-event limit",
-                MAX_LEADERBOARD_COSIGN_INBOX_EVENTS
-            ));
-        }
-        inbox.push_back(event);
-        Ok(())
-    }
-
-    /// Poll the mission-end co-sign inbox. Unlike the modal helper, this does
-    /// not read the raw transport receiver: the main simulation drain owns
-    /// that receiver and explicitly routes only the four closed authorization
-    /// event variants accepted by [`Self::defer_leaderboard_cosign_event`].
-    pub fn try_recv_leaderboard_cosign_event(&self) -> Result<Option<NetEvent>, String> {
-        Ok(self
-            .leaderboard_cosign_inbox
-            .lock()
-            .map_err(|_| "multiplayer leaderboard co-sign inbox lock is poisoned".to_string())?
-            .pop_front())
-    }
-
     pub fn record_visible_modal_request(&self, request: VisibleModalRequest) -> Result<(), String> {
         self.modal_sync
             .lock()
@@ -1585,55 +1176,6 @@ impl NetChannels {
             .send(NetOutbound::SnapshotTransitionReady { id })
             .map_err(|_| "multiplayer snapshot transition channel is closed".to_string())
     }
-
-    /// Arm one exact locally reconstructed leaderboard request before allowing
-    /// the authenticated host's matching request to reach presentation code.
-    pub fn arm_leaderboard_cosign_request(
-        &self,
-        request: LeaderboardCoSignRequestV1,
-    ) -> Result<(), String> {
-        request
-            .validate()
-            .map_err(|error| format!("invalid leaderboard co-sign request: {error}"))?;
-        self.outgoing
-            .send(NetOutbound::ArmLeaderboardCoSignRequest { request })
-            .map_err(|_| "multiplayer leaderboard co-sign channel is closed".to_string())
-    }
-
-    /// Ask one authenticated guest seat to sign an exact purpose-bound
-    /// leaderboard request. Host/controller signatures for seat zero remain a
-    /// local signing operation and never make a network round trip.
-    pub fn request_leaderboard_cosign(
-        &self,
-        to: PlayerId,
-        request: LeaderboardCoSignRequestV1,
-    ) -> Result<(), String> {
-        if to == PlayerId::HOST {
-            return Err("leaderboard co-sign requests to the host must be signed locally".into());
-        }
-        request
-            .validate()
-            .map_err(|error| format!("invalid leaderboard co-sign request: {error}"))?;
-        self.outgoing
-            .send(NetOutbound::LeaderboardCoSignRequest { to, request })
-            .map_err(|_| "multiplayer leaderboard co-sign channel is closed".to_string())
-    }
-
-    pub fn respond_leaderboard_cosign(
-        &self,
-        response: LeaderboardCoSignResponse,
-    ) -> Result<(), String> {
-        if response.signer_public_key == [0; 32] || response.signature == [0; 64] {
-            return Err("leaderboard co-sign response contains zero key material".into());
-        }
-        response
-            .instance
-            .validate()
-            .map_err(|error| format!("invalid leaderboard co-sign response: {error}"))?;
-        self.outgoing
-            .send(NetOutbound::LeaderboardCoSignResponse(response))
-            .map_err(|_| "multiplayer leaderboard co-sign channel is closed".to_string())
-    }
 }
 
 /// Encode a [`NetMsg`] as a binary iroh-stream payload.
@@ -1648,7 +1190,6 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
         NetMsg::Hello {
             nickname,
             browser_auth,
-            ranked_public_key,
             ..
         } => {
             validate_display_name(nickname)
@@ -1659,9 +1200,6 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
                     || auth.signature.len() != 64)
             {
                 return Err("invalid bounded browser seat authentication".to_string());
-            }
-            if ranked_public_key.is_some_and(|public_key| public_key == [0; 32]) {
-                return Err("invalid zero ranked public key".to_string());
             }
         }
         NetMsg::Welcome {
@@ -1714,51 +1252,6 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
                 );
             }
         }
-        NetMsg::RankedJoinChallenge(challenge) => challenge
-            .validate()
-            .map_err(|error| format!("invalid ranked join challenge: {error}"))?,
-        NetMsg::RankedJoinResponse(response) => response
-            .validate()
-            .map_err(|error| format!("invalid ranked join response: {error}"))?,
-        NetMsg::RankedJoinAccepted(accepted) => accepted
-            .validate()
-            .map_err(|error| format!("invalid ranked join acknowledgement: {error}"))?,
-        NetMsg::RankedParticipantRoster(roster) => roster
-            .validate()
-            .map_err(|error| format!("invalid ranked participant roster: {error}"))?,
-        NetMsg::RankedCoSignContext(context) => context
-            .validate()
-            .map_err(|error| format!("invalid ranked co-sign context: {error}"))?,
-        NetMsg::RankedSubmissionAccepted(accepted) => accepted
-            .validate()
-            .map_err(|error| format!("invalid ranked submission acknowledgement: {error}"))?,
-        NetMsg::RankedOfficialSessionSetup(setup) => setup
-            .validate()
-            .map_err(|error| format!("invalid official ranked session setup: {error}"))?,
-        NetMsg::RankedContinuationReceiptSelectionRequest(request) => request
-            .validate()
-            .map_err(|error| format!("invalid continuation receipt selection request: {error}"))?,
-        NetMsg::RankedContinuationReceiptSelection(selection) => selection
-            .validate()
-            .map_err(|error| format!("invalid continuation receipt selection: {error}"))?,
-        NetMsg::RankedContinuationPreflightClaim(claim) => claim
-            .validate()
-            .map_err(|error| format!("invalid ranked continuation preflight claim: {error}"))?,
-        NetMsg::RankedContinuationPreflightSignature(signature) => signature
-            .validate()
-            .map_err(|error| format!("invalid ranked continuation preflight signature: {error}"))?,
-        NetMsg::LeaderboardCoSignRequest(request) => request
-            .validate()
-            .map_err(|error| format!("invalid leaderboard co-sign request: {error}"))?,
-        NetMsg::LeaderboardCoSignResponse(response) => {
-            response
-                .instance
-                .validate()
-                .map_err(|error| format!("invalid leaderboard co-sign response: {error}"))?;
-            if response.signer_public_key == [0; 32] || response.signature == [0; 64] {
-                return Err("leaderboard co-sign response contains zero key material".into());
-            }
-        }
         _ => {}
     }
     Ok(message)
@@ -1779,7 +1272,7 @@ mod tests {
             opened_frame: 123,
             occurrence: 9,
         };
-        let cases: [(NetMsg, &[u8]); 6] = [
+        let cases: [(NetMsg, &[u8]); 5] = [
             (
                 NetMsg::ContentRequest(ContentRequest {
                     full_mod_sha256: [0xab; 32],
@@ -1837,12 +1330,6 @@ mod tests {
                     0x11, 0x09, 0x07, 0x00, 0x00, 0x00, 0x00, 0x04, 0x7b, 0x06, 0x09, 0x02, 0x01,
                     0x04, 0x05,
                 ],
-            ),
-            (
-                NetMsg::RankedBrowseOnly {
-                    reason: RankedBrowseOnlyReason::PeerAttestationRejected,
-                },
-                &[0x1a, 0x03],
             ),
         ];
         for (message, golden) in &cases {
@@ -1940,22 +1427,6 @@ mod tests {
 
     use super::*;
 
-    fn leaderboard_request(
-        purpose: robin_run_types::LeaderboardCoSignPurposeV1,
-        byte: u8,
-    ) -> LeaderboardCoSignRequestV1 {
-        LeaderboardCoSignRequestV1 {
-            instance: LeaderboardCoSignInstanceV1 {
-                purpose,
-                replay_session_id: robin_run_types::Digest32::from_bytes([byte; 32]),
-                submission_offer_sha256: robin_run_types::Digest32::from_bytes(
-                    [byte.wrapping_add(1); 32],
-                ),
-            },
-            run_digest: robin_run_types::Digest32::from_bytes([byte.wrapping_add(2); 32]),
-        }
-    }
-
     #[test]
     fn netmsg_roundtrips() {
         let msg = NetMsg::BroadcastInput {
@@ -1989,7 +1460,6 @@ mod tests {
             protocol_version: NET_PROTOCOL_VERSION,
             nickname: "alice".into(),
             browser_auth: None,
-            ranked_public_key: Some([8; 32]),
         };
         let welcome = NetMsg::Welcome {
             your_seat: PlayerId(2),
@@ -2008,7 +1478,6 @@ mod tests {
                     protocol_version,
                     nickname,
                     browser_auth,
-                    ranked_public_key,
                 },
                 NetMsg::Welcome {
                     your_seat,
@@ -2023,7 +1492,6 @@ mod tests {
                 assert_eq!(protocol_version, NET_PROTOCOL_VERSION);
                 assert_eq!(nickname, "alice");
                 assert!(browser_auth.is_none());
-                assert_eq!(ranked_public_key, Some([8; 32]));
                 assert_eq!(your_seat, PlayerId(2));
                 assert_eq!(session_id, MultiplayerSessionId([7; 32]));
                 assert_eq!(mission_id, "Dem_Lei_MP");
@@ -2313,141 +1781,6 @@ mod tests {
     }
 
     #[test]
-    fn leaderboard_cosign_wire_roundtrips_exact_typed_request_and_response() {
-        let request = leaderboard_request(
-            robin_run_types::LeaderboardCoSignPurposeV1::CampaignContinuation,
-            7,
-        );
-        let response = LeaderboardCoSignResponse {
-            instance: request.instance,
-            signer_public_key: [10; 32],
-            signature: [11; 64],
-        };
-
-        assert!(matches!(
-            decode_msg(&encode_msg(&NetMsg::LeaderboardCoSignRequest(request))).unwrap(),
-            NetMsg::LeaderboardCoSignRequest(decoded) if decoded == request
-        ));
-        assert!(matches!(
-            decode_msg(&encode_msg(&NetMsg::LeaderboardCoSignResponse(response.clone()))).unwrap(),
-            NetMsg::LeaderboardCoSignResponse(decoded) if decoded == response
-        ));
-    }
-
-    #[test]
-    fn leaderboard_cosign_decode_rejects_zero_digest_key_and_signature() {
-        let mut request =
-            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 4);
-        request.run_digest = robin_run_types::Digest32::default();
-        assert!(
-            decode_msg(&encode_msg(&NetMsg::LeaderboardCoSignRequest(request)))
-                .unwrap_err()
-                .contains("run_digest")
-        );
-
-        let valid = leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 5);
-        for response in [
-            LeaderboardCoSignResponse {
-                instance: valid.instance,
-                signer_public_key: [0; 32],
-                signature: [9; 64],
-            },
-            LeaderboardCoSignResponse {
-                instance: valid.instance,
-                signer_public_key: [9; 32],
-                signature: [0; 64],
-            },
-        ] {
-            assert!(
-                decode_msg(&encode_msg(&NetMsg::LeaderboardCoSignResponse(response)))
-                    .unwrap_err()
-                    .contains("zero key material")
-            );
-        }
-    }
-
-    #[test]
-    fn leaderboard_cosign_channel_api_keeps_target_and_local_arm_out_of_wire_payload() {
-        let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
-        let continuation = leaderboard_request(
-            robin_run_types::LeaderboardCoSignPurposeV1::CampaignContinuation,
-            12,
-        );
-        channels
-            .request_leaderboard_cosign(PlayerId(2), continuation)
-            .unwrap();
-        assert!(matches!(
-            outgoing.recv().unwrap(),
-            NetOutbound::LeaderboardCoSignRequest { to: PlayerId(2), request }
-                if request == continuation
-        ));
-        assert!(
-            channels
-                .request_leaderboard_cosign(PlayerId::HOST, continuation)
-                .unwrap_err()
-                .contains("signed locally")
-        );
-
-        let submission =
-            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 13);
-        channels.arm_leaderboard_cosign_request(submission).unwrap();
-        assert!(matches!(
-            outgoing.recv().unwrap(),
-            NetOutbound::ArmLeaderboardCoSignRequest { request } if request == submission
-        ));
-
-        let response = LeaderboardCoSignResponse {
-            instance: submission.instance,
-            signer_public_key: [15; 32],
-            signature: [16; 64],
-        };
-        channels
-            .respond_leaderboard_cosign(response.clone())
-            .unwrap();
-        assert!(matches!(
-            outgoing.recv().unwrap(),
-            NetOutbound::LeaderboardCoSignResponse(decoded) if decoded == response
-        ));
-    }
-
-    #[test]
-    fn leaderboard_cosign_inbox_is_dedicated_ordered_and_fail_closed_at_bound() {
-        let (channels, _incoming, _outgoing, _cursor, _snapshot) = NetChannels::new();
-        let request =
-            leaderboard_request(robin_run_types::LeaderboardCoSignPurposeV1::Submission, 20);
-        assert!(
-            channels
-                .defer_leaderboard_cosign_event(NetEvent::Note("not authorization".into()))
-                .unwrap_err()
-                .contains("non-leaderboard")
-        );
-
-        for _ in 0..MAX_LEADERBOARD_COSIGN_INBOX_EVENTS {
-            channels
-                .defer_leaderboard_cosign_event(NetEvent::LeaderboardCoSignRequest(request))
-                .unwrap();
-        }
-        assert!(
-            channels
-                .defer_leaderboard_cosign_event(NetEvent::LeaderboardCoSignRequest(request))
-                .unwrap_err()
-                .contains("event limit")
-        );
-        for _ in 0..MAX_LEADERBOARD_COSIGN_INBOX_EVENTS {
-            assert!(matches!(
-                channels.try_recv_leaderboard_cosign_event().unwrap(),
-                Some(NetEvent::LeaderboardCoSignRequest(decoded)) if decoded == request
-            ));
-        }
-        assert!(
-            channels
-                .try_recv_leaderboard_cosign_event()
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
     fn host_transition_api_queues_exact_save_and_campaign_bytes() {
         let (channels, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
         let session_id = MultiplayerSessionId([11; 32]);
@@ -2496,7 +1829,6 @@ mod tests {
                 protocol_version: NET_PROTOCOL_VERSION,
                 nickname: nickname.to_string(),
                 browser_auth: None,
-                ranked_public_key: None,
             });
             assert!(decode_msg(&encoded).is_err());
         }

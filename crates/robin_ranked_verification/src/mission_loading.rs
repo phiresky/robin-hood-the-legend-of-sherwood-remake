@@ -18,7 +18,6 @@ use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets, SimConfi
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::SbFileSystem;
 use robin_engine::sprite_variant::SpriteVariant;
-use robin_run_protocol::SpeechTimingAuthorityV1;
 
 use crate::ranked_verifier::RankedVerifierLoadError;
 
@@ -35,7 +34,6 @@ pub(crate) fn load_raw_mission_inputs(
     campaign: &Campaign,
     profiles: &ProfileManager,
     options: &robin_engine::engine::GlobalOptions,
-    speech_timing: &SpeechTimingAuthorityV1,
     sim_config: SimConfig,
     files: Arc<SbFileSystem>,
 ) -> Result<RawMissionInputs, RankedVerifierLoadError> {
@@ -168,7 +166,7 @@ pub(crate) fn load_raw_mission_inputs(
         .filter(|source| source.ambience_filter & ambiance_mask != 0)
         .map(|source| source.id as u32)
         .collect();
-    populate_ranked_sound_duration_tables(&mut assets, profiles, speech_timing, files)
+    populate_ranked_sound_duration_tables(&mut assets, profiles)
         .map_err(RankedVerifierLoadError::SoundTiming)?;
 
     initialize_sprite_variants_for_ambiance(
@@ -343,15 +341,7 @@ fn required_mission_exclamation_ids(
 fn populate_ranked_sound_duration_tables(
     assets: &mut LevelAssets,
     profiles: &ProfileManager,
-    speech_timing: &SpeechTimingAuthorityV1,
-    _files: Arc<SbFileSystem>,
 ) -> Result<(), String> {
-    if *speech_timing != SpeechTimingAuthorityV1::CoreAudioDurationsV1 {
-        return Err(
-            "this engine requires core audio durations; regenerate the ranked content projection"
-                .into(),
-        );
-    }
     // The confined verifier mount contains retail data only. Bind the exact
     // same core timing file to the verifier build; never reopen a user cache,
     // derive local voice lengths, or add an ambient filesystem search root.

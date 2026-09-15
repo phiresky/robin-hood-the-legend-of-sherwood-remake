@@ -184,8 +184,8 @@ Production uses only Cloudflare Static Assets and the VPS:
 
 - `https://robinhood.phiresky.xyz/` serves the game and leaderboard site.
 - The more-specific `/wasm/*` route serves engine artifacts from the
-  runtime-assets Worker. `/datadirs/*` is a separately authorized and manually
-  deployed immutable Demo corpus on `robinhood-datadir-assets`; its bytes never
+  runtime-assets Worker. `/datadirs/*` is a separately deployed immutable
+  Demo corpus on `robinhood-datadir-assets`; its bytes never
   enter normal runtime, site, publication, or VPS bundles.
 - The `/api` prefix, including query strings, is a no-script Cloudflare route
   which continues to the Rust service on the VPS.
@@ -194,8 +194,7 @@ Production uses only Cloudflare Static Assets and the VPS:
 
 There is no GitHub-hosted production site, engine/data origin, or fallback.
 The runtime Worker stores only wasm builds under `/wasm/`, indexed by the same
-12-character git hash that Rust embeds in `ROBIN_GIT_HASH`. Its external
-datadir deployment receipt is metadata, not game bytes:
+12-character git hash that Rust embeds in `ROBIN_GIT_HASH`:
 
     /wasm/<short-hash>/robin.js
     /wasm/<short-hash>/robin.js.gz
@@ -204,10 +203,8 @@ datadir deployment receipt is metadata, not game bytes:
     /wasm/<short-hash>/robin_bg.wasm.gz
     /wasm/<short-hash>/manifest.json
     /wasm/latest.json
-    /wasm/datadir-deployment.json
 
-The dedicated datadir Worker stores only the separately authorized Demo
-closures. Its objects are served `immutable`, so every native datadir format
+The dedicated datadir Worker stores only the Demo closures. Its objects are served `immutable`, so every native datadir format
 is a separate generation directory, and so is any rebuild that changes bytes.
 The current generation (format 18, AVIF web images) is:
 
@@ -242,16 +239,17 @@ falls back to the ordinary files for old browsers and local development. With
 replay schema during bounded admission; the recorded commit is provenance.
 An explicit `?replay=<hash>` still selects an archived runtime.
 
-Ranked runs select an approved verifier by **replay schema and network protocol
-version**, without requiring the recording client's Git commit or save-format
-version to match. Build manifests still identify exact deployed verifier/viewer
-artifacts. The server binds the signed replay schema and session network
-protocol to the offer's verifier build manifest. Signed replay bytes retain
-their original source prefix, and the server still verifies the approved
-content, rules, session, and simulated state hashes. Bump the replay/network
+Ranked replays are accepted by **replay schema and network protocol version**,
+without requiring the recording client's Git commit or save-format version to
+match. The server re-simulates each uploaded replay against raw game content,
+checks its recorded state hashes and scores it. Bump the replay/network
 compatibility versions when engine changes make existing recordings
 incompatible; matching schema numbers alone cannot repair a simulation
-divergence.
+divergence. A leaderboard run page links to `/?run=<run id>`: the shell fetches
+the run and its replay from `/api/v1/runs/<run id>` and boots
+`/wasm/<recorded engine version>/`, the hash in the replay's `rhrec-<hash>-`
+prefix, with the Demo generation that build's manifest pins. Full-edition runs
+are download-only for now.
 
 The game data is not rebuilt by CI because the source game
 data cannot be stored in this repository. Build the production web artifact
@@ -371,7 +369,11 @@ deployed upload set (`~/.local/share/robin_hood/deployment-staging/live`), and
 deploys through `wasm-www/scripts/deploy-cloudflare.sh`. It rebuilds the Demo
 datadir only when the live datadir's format header differs from
 `SHIPPING_DATADIR_VERSION` (or with `--rebuild-datadir`); a format bump must
-already have moved `DEMO_ROOT` to a new generation directory. Credentials come
+already have moved `DEMO_ROOT` to a new generation directory. Every staging
+directory records its Demo object in `datadir-release.json` (`url`, `sha256`,
+`byte_length`, `native_content_sha256`): a rebuild writes it from the assembled
+corpus, a reuse copies it from the prior stage, and runtime staging copies it
+into `manifest.json` `multiplayerContent.demo`. Credentials come
 from the main checkout's `.env`, tools from
 `~/.local/share/robin_hood/deployment-toolchain` (static `avifenc`/`avifdec`
 from `scripts/install_pinned_avif_tools.sh` — libavif 1.4.2 on libaom 3.15.0,
@@ -466,7 +468,6 @@ On my machine, several pre-laid-out datadirs live under `datadirs/` for developm
     crates/robin_ranked_verification/ approved-content and campaign validation
     crates/robin_replay_verifier/ authenticated replay worker
     crates/robin_highscores/   leaderboard API, worker, storage and administration
-    crates/robin_manifest_tool/ release/content manifest tooling and sealed official content projection
     crates/robin_parity/       original-game trace conversion and comparison
     crates/robin_util/         shared helpers
     crates/robin_state_hash_derive/ — derive macro for rollback state hashing

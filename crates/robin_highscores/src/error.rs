@@ -141,6 +141,9 @@ impl From<crate::db::DbError> for ApiError {
             crate::db::DbError::SubmissionConflict => Self::Conflict(
                 "submission challenge was already used for different immutable content".to_owned(),
             ),
+            crate::db::DbError::DuplicateReplay => Self::Conflict(
+                "this replay was already submitted and is pending or verified".to_owned(),
+            ),
             // Database invariants are downstream of HTTP validation and may
             // contain verifier-derived or operator-private detail. They are
             // never suitable client diagnostics.
@@ -174,29 +177,6 @@ impl From<crate::replay_store::StoreError> for ApiError {
             }
             crate::replay_store::StoreError::Io(_) => {
                 tracing::error!(error_code = error.safe_log_code(), "replay storage failed");
-                Self::Internal
-            }
-        }
-    }
-}
-
-impl From<crate::campaign_store::CampaignStoreError> for ApiError {
-    fn from(error: crate::campaign_store::CampaignStoreError) -> Self {
-        match error {
-            crate::campaign_store::CampaignStoreError::Empty
-            | crate::campaign_store::CampaignStoreError::LengthMismatch { .. }
-            | crate::campaign_store::CampaignStoreError::DigestMismatch
-            | crate::campaign_store::CampaignStoreError::Upload(_) => {
-                Self::BadRequest(error.to_string())
-            }
-            crate::campaign_store::CampaignStoreError::TooLarge { .. } => {
-                Self::PayloadTooLarge(error.to_string())
-            }
-            crate::campaign_store::CampaignStoreError::Io(_) => {
-                tracing::error!(
-                    error_code = error.safe_log_code(),
-                    "campaign storage failed"
-                );
                 Self::Internal
             }
         }

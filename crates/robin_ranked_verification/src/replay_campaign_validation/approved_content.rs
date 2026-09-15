@@ -3,8 +3,8 @@
 use super::*;
 
 /// Exact public sector identity accepted for a persisted Sherwood production
-/// point. The pair must come from the manifest-approved mounted Sherwood map,
-/// not from submitted replay state.
+/// point. The pair must come from the official Sherwood map, not from
+/// submitted replay state.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct ReplayCampaignProductionPointTopology {
     pub map_layer: u16,
@@ -217,23 +217,8 @@ pub fn derive_replay_campaign_approved_content_metadata(
     })
 }
 
-/// Resolver supplied by the verifier worker's manifest-validated, read-only
-/// mounted content catalog.
-///
-/// This trait is a data adapter, not an attestation boundary: a public Rust
-/// implementation is forgeable. The disposable worker, pinned content
-/// manifest, and read-only mount establish trust. API/supervisor processes
-/// must not implement this from submitter-controlled metadata.
-pub trait ReplayCampaignApprovedContentResolver {
-    fn approved_content_identity(&self) -> ReplayCampaignApprovedContentIdentity;
-
-    fn sherwood_campaign_metadata(&self) -> Option<&ReplayCampaignApprovedContentMetadata>;
-}
-
 #[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum ReplayCampaignContentValidationError {
-    #[error("approved mounted content identity has an all-zero {field} digest")]
-    InvalidApprovedContentIdentity { field: String },
     #[error("approved mounted content has no Sherwood campaign metadata")]
     MissingSherwoodMetadata,
     #[error(
@@ -375,44 +360,35 @@ pub enum ReplayCampaignContentValidationError {
     },
 }
 
-/// Validate every deferred identity against concrete approved mounted content
-/// and mint the opaque process-local admission token.
 const MAX_APPROVED_CONTAINMENT_WORK: usize = 16_000_000;
 
-pub fn validate_replay_campaign_approved_content<R>(
+/// Validate every deferred identity against Sherwood metadata derived from the
+/// official raw content and mint the opaque process-local admission token.
+/// `sherwood` may be `None` only when the campaign carries no deferred
+/// references.
+pub fn validate_replay_campaign_approved_content(
     validated: ValidatedReplayCampaign,
-    resolver: &R,
-) -> Result<ApprovedReplayCampaignContent, ReplayCampaignContentValidationError>
-where
-    R: ReplayCampaignApprovedContentResolver + ?Sized,
-{
+    sherwood: Option<&ReplayCampaignApprovedContentMetadata>,
+) -> Result<ApprovedReplayCampaignContent, ReplayCampaignContentValidationError> {
     validate_replay_campaign_approved_content_with_work_limit(
         validated,
-        resolver,
+        sherwood,
         MAX_APPROVED_CONTAINMENT_WORK,
     )
 }
 
-pub(super) fn validate_replay_campaign_approved_content_with_work_limit<R>(
+pub(super) fn validate_replay_campaign_approved_content_with_work_limit(
     validated: ValidatedReplayCampaign,
-    resolver: &R,
+    sherwood: Option<&ReplayCampaignApprovedContentMetadata>,
     max_containment_work: usize,
-) -> Result<ApprovedReplayCampaignContent, ReplayCampaignContentValidationError>
-where
-    R: ReplayCampaignApprovedContentResolver + ?Sized,
-{
-    let approved_identity = resolver.approved_content_identity();
-    validate_approved_content_identity(approved_identity)?;
+) -> Result<ApprovedReplayCampaignContent, ReplayCampaignContentValidationError> {
     if validated.deferred_content_checks.is_empty() {
         return Ok(ApprovedReplayCampaignContent {
             validated,
-            approved_identity,
             _seal: ApprovedReplayCampaignContentSeal,
         });
     }
-    let metadata = resolver
-        .sherwood_campaign_metadata()
-        .ok_or(ReplayCampaignContentValidationError::MissingSherwoodMetadata)?;
+    let metadata = sherwood.ok_or(ReplayCampaignContentValidationError::MissingSherwoodMetadata)?;
 
     const MAX_APPROVED_RECORDS: usize = 1_000_000;
     const MAX_APPROVED_POLYGON_POINTS: usize = 4_000_000;
@@ -627,29 +603,8 @@ where
 
     Ok(ApprovedReplayCampaignContent {
         validated,
-        approved_identity,
         _seal: ApprovedReplayCampaignContentSeal,
     })
-}
-
-fn validate_approved_content_identity(
-    identity: ReplayCampaignApprovedContentIdentity,
-) -> Result<(), ReplayCampaignContentValidationError> {
-    if identity.build_manifest_sha256 == [0; 32] {
-        return Err(
-            ReplayCampaignContentValidationError::InvalidApprovedContentIdentity {
-                field: "build_manifest_sha256".to_owned(),
-            },
-        );
-    }
-    if identity.content_manifest_sha256 == [0; 32] {
-        return Err(
-            ReplayCampaignContentValidationError::InvalidApprovedContentIdentity {
-                field: "content_manifest_sha256".to_owned(),
-            },
-        );
-    }
-    Ok(())
 }
 
 fn charge_approved_containment_work(

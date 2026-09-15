@@ -15,10 +15,6 @@ use robin_assets::shipping_datadir::SHIPPING_DATADIR_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
 use robin_engine::sbfile::SbFileError;
 use robin_run_protocol::Digest32;
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-use robin_run_protocol::{
-    OfficialBuiltInOverlayKindV2, OfficialBuiltInOverlaySourceManifestV2, Validate as _,
-};
 use robin_util::asset_fs::{AssetBytes, AssetVfs, Bundle};
 use serde::{Deserialize, Serialize};
 
@@ -67,58 +63,6 @@ pub const EXPECTED_CORE_OVERLAY_PATHS: &[&str] = &[
     "Data/Interface/UI/allied_stance_defensive.png",
     "Data/Interface/UI/allied_stance_hold.png",
 ];
-
-/// Re-hash the exact private core-overlay root admitted by official
-/// projection. Its physical regular-file inventory must equal both the typed
-/// manifest and the runtime's built-in inventory; symlinks and extra nodes
-/// fail closed.
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub fn validate_official_projection_source(
-    root: &Path,
-    manifest: &OfficialBuiltInOverlaySourceManifestV2,
-) -> Result<()> {
-    manifest.validate()?;
-    if manifest.kind != OfficialBuiltInOverlayKindV2::CoreDatadirV1 {
-        return Err(anyhow!(
-            "official projection requires the core datadir V1 overlay"
-        ));
-    }
-    require_directory(root, "core overlay root")?;
-    let declared = manifest
-        .files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect::<BTreeSet<_>>();
-    let expected = EXPECTED_CORE_OVERLAY_PATHS
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if declared != expected {
-        return Err(anyhow!(
-            "official core overlay manifest is not the built-in inventory"
-        ));
-    }
-
-    let physical = collect_native_files(root, root)?;
-    if physical != declared.iter().map(|path| (*path).to_owned()).collect() {
-        return Err(anyhow!(
-            "core overlay physical root differs from its canonical manifest"
-        ));
-    }
-    for file in &manifest.files {
-        let bytes = std::fs::read(root.join(&file.path))
-            .with_context(|| format!("read core overlay asset {}", file.path))?;
-        if bytes.len() as u64 != file.byte_length
-            || robin_run_protocol::Digest32::digest_bytes(&bytes) != file.sha256
-        {
-            return Err(anyhow!(
-                "core overlay asset {} differs from its canonical manifest",
-                file.path
-            ));
-        }
-    }
-    Ok(())
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -182,7 +126,7 @@ fn read_validated_assets(
 }
 
 /// Validate the canonical loose core-overlay directory used by packaged
-/// desktop builds and official source projection.
+/// desktop builds.
 ///
 /// Unlike an archive-backed platform, native startup can inspect the physical
 /// tree. It therefore additionally requires `Data/` to contain exactly the

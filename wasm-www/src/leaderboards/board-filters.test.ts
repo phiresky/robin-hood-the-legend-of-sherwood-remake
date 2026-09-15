@@ -1,81 +1,73 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compatibleRulesets, normalizeFilters } from './board-filters.js';
-import { routeFromUrl } from './state.js';
-import type { BoardMetadata, Competition } from './types.js';
+import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters } from './board-filters.js';
+import { boardDocument, metadataDocument } from './model-fixtures.js';
+import { parseBoardMetadata } from './public-response.js';
+import type { BoardFilters } from './state.js';
+import { validateBoardView } from './view-model.js';
+import type { BoardPage } from './types.js';
 
-const digest = (n: string) => n.repeat(64);
-const route = routeFromUrl('https://robinhood.phiresky.xyz/leaderboards/');
-if (route.kind !== 'leaderboard') throw new Error('fixture route must select a leaderboard');
-const defaults = route.filters;
-const metadata: BoardMetadata = {
-    missions: [{ id: 'm01', label: 'Mission', contentManifestSha256: digest('a') }], fullCampaign: null, competitions: [],
-    rulesets: [{ id: digest('b'), label: 'Standard', rulesConfigSha256: digest('c'), presetId: 'standard', presetName: 'Standard',
-        difficultyId: 'normal', difficultyName: 'Normal', content: { kind: 'mission', contentManifestSha256: digest('a') },
-        categories: ['individual_level'], metrics: ['original_score'], supportsFullCampaign: false }],
-};
+const empty: BoardFilters = { boardId: null, missionId: null, metric: null, maxConcurrentPlayers: null, cursor: null };
 
-test('controls and normalization share subject, metric and content compatibility', () => {
-    const standard = metadata.rulesets[0]!;
-    const full = { ...standard, id: digest('f'), content: { kind: 'full_campaign' as const, campaignContentManifestSha256: digest('a') }, supportsFullCampaign: true };
-    const candidates: BoardMetadata = { ...metadata, fullCampaign: { label: 'Full campaign', description: '' }, rulesets: [
-        standard,
-        { ...standard, id: digest('d'), content: { kind: 'mission', contentManifestSha256: digest('d') } },
-        { ...standard, id: digest('e'), categories: ['campaign'], metrics: ['fastest_success'] },
-        full,
-        { ...full, id: digest('9'), supportsFullCampaign: false },
-    ] };
-    const mission = metadata.missions[0]!;
-    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'original_score', mission).map(item => item.id), [standard.id]);
-    assert.deepEqual(compatibleRulesets(candidates, 'campaign', 'fastest_success', mission).map(item => item.id), [digest('e')]);
-    assert.deepEqual(compatibleRulesets(candidates, 'full_campaign', 'original_score', null).map(item => item.id), [full.id]);
-    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'fastest_success', mission), []);
-    assert.deepEqual(compatibleRulesets(candidates, 'individual_level', 'original_score', undefined), []);
-    for (const subject of ['individual_level', 'campaign', 'full_campaign'] as const) {
-        for (const metric of ['original_score', 'fastest_success'] as const) {
-            for (const ruleset of compatibleRulesets(candidates, subject, metric, mission)) {
-                const normalized = normalizeFilters({ ...defaults, subject, metric, missionId: mission.id,
-                    presetId: ruleset.presetId, difficultyId: ruleset.difficultyId, rulesetId: ruleset.id }, candidates);
-                assert.equal(normalized.rulesetId, ruleset.id);
-            }
-        }
-    }
+function metadata(extraBoards: readonly Record<string, unknown>[] = []) {
+    const document = metadataDocument();
+    const boards = [...(document.boards as Record<string, unknown>[]), ...extraBoards]
+        .sort((left, right) => String(left.board_id) < String(right.board_id) ? -1 : 1);
+    return parseBoardMetadata({ ...document, boards });
+}
+
+test('defaults select the first published board, mission and metric, or the remembered board', () => {
+    const selected = normalizeFilters(empty, metadata());
+    assert.equal(selected.boardId, 'demo-standard-normal');
+    assert.equal(selected.missionId, 'Dem_Lei_MP');
+    assert.equal(selected.metric, 'original_score');
+    assert.equal(normalizeFilters(empty, metadata(), 'full-any-config').boardId, 'full-any-config');
+    assert.equal(normalizeFilters(empty, metadata(), 'retired-board').boardId, 'demo-standard-normal');
+    assert.equal(normalizeFilters({ ...empty, boardId: 'demo-standard-normal' }, metadata(), 'full-any-config').boardId, 'demo-standard-normal');
 });
 
-test('board normalization derives exact published content/configuration instead of trusting URL identity fields', () => {
-    const selected = normalizeFilters({ ...defaults, presetId: 'standard', contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);
-    assert.equal(selected.missionId, 'm01'); assert.equal(selected.presetId, 'standard');
-    assert.equal(selected.rulesetId, digest('b')); assert.equal(selected.contentIdentitySha256, digest('a'));
-    assert.equal(selected.rulesConfigSha256, digest('c'));
+test('unpublished boards, missions and metrics fail clearly', () => {
+    assert.throws(() => normalizeFilters({ ...empty, boardId: 'missing' }, metadata()), /board is not published/u);
+    assert.throws(() => normalizeFilters({ ...empty, missionId: 'M01' }, metadata()), /mission is not part of this board/u);
+    assert.throws(() => normalizeFilters({ ...empty, boardId: 'full-any-config', metric: 'fastest_success' }, metadata()), /does not rank the selected metric/u);
+    assert.throws(() => normalizeFilters(empty, parseBoardMetadata({ ...metadataDocument(), boards: [] })), /no ranked boards/u);
 });
 
-test('unpublished mission, preset, difficulty, ruleset and full-campaign choices fail clearly', () => {
-    for (const field of ['missionId', 'presetId', 'difficultyId', 'rulesetId'] as const) {
-        assert.throws(() => normalizeFilters({ ...defaults, [field]: 'missing' }, metadata), /selected|published/u);
-    }
-    assert.throws(() => normalizeFilters({ ...defaults, subject: 'full_campaign' }, metadata), /not provisioned/u);
-    assert.throws(() => normalizeFilters(defaults, { ...metadata, rulesets: [] }), /No published ruleset/u);
+test('edition, preset and difficulty facets select boards and keep compatible choices', () => {
+    const hard = boardDocument({ board_id: 'demo-standard-hard', display_name: 'Demo / Standard / Hard', difficulty_id: 'hard', difficulty_name: 'Hard',
+        simulation_policy: { kind: 'fixed', policy: { version: 1, preset: 'standard', difficulty: 'hard' } } });
+    const original = boardDocument({ board_id: 'demo-original-easy', display_name: 'Demo / Original / Easy', preset_id: 'original', preset_name: 'Original',
+        difficulty_id: 'easy', difficulty_name: 'Easy', simulation_policy: { kind: 'fixed', policy: { version: 1, preset: 'original_parity', difficulty: 'easy' } } });
+    const all = metadata([hard, original]);
+    const normal = normalizeFilters({ ...empty, boardId: 'demo-standard-normal' }, all).board;
+    const facets = boardFacets(all, normal);
+    assert.deepEqual(facets.editions.map(item => item.id), ['demo', 'full']);
+    assert.deepEqual(facets.presets.map(item => item.id), ['original', 'standard']);
+    // Facets keep the canonical board_id order of the metadata.
+    assert.deepEqual(facets.difficulties.map(item => item.id), ['hard', 'normal']);
+    assert.deepEqual(facets.variants.map(item => item.boardId), ['demo-standard-normal']);
+
+    assert.equal(boardForFacet(all, normal, { difficultyId: 'hard' }).boardId, 'demo-standard-hard');
+    assert.equal(boardForFacet(all, normal, { presetId: 'original' }).boardId, 'demo-original-easy');
+    const full = boardForFacet(all, normal, { edition: 'full' });
+    assert.equal(full.boardId, 'full-any-config');
+    assert.throws(() => boardForFacet(all, normal, { presetId: 'missing' }), /No board is published/u);
+
+    const current = { ...empty, boardId: normal.boardId, missionId: 'Dem_Lin_MP', metric: 'fastest_success' as const, maxConcurrentPlayers: 2, cursor: 'c' };
+    assert.deepEqual(filtersForBoard(all.boards.find(board => board.boardId === 'demo-standard-hard')!, current),
+        { boardId: 'demo-standard-hard', missionId: 'Dem_Lin_MP', metric: 'fastest_success', maxConcurrentPlayers: 2, cursor: null });
+    assert.deepEqual(filtersForBoard(full, current),
+        { boardId: 'full-any-config', missionId: null, metric: null, maxConcurrentPlayers: 2, cursor: null });
 });
 
-test('published competition fixes subject, ruleset and player count and rejects substituted content/configuration', () => {
-    const competition: Competition = {
-        id: 'challenge', version: 1, manifestSha256: digest('f'), label: 'Challenge', description: '',
-        subject: { kind: 'mission', missionId: 'm01', category: 'individual_level' }, metric: 'original_score',
-        rulesetId: digest('b'), rulesConfigSha256: digest('c'), content: { kind: 'mission', contentManifestSha256: digest('a') },
-        seedPolicy: { kind: 'open' }, participantComposition: { kind: 'multiplayer', maxConcurrentPlayers: 3 },
-        startsAtUnixMs: 1, endsAtUnixMs: 2, state: 'active',
+test('a leaderboard page must answer the exact requested board query', () => {
+    const filters = normalizeFilters({ ...empty, maxConcurrentPlayers: 1 }, metadata());
+    const page: BoardPage = {
+        filter: { boardId: filters.boardId, missionId: filters.missionId, metric: filters.metric, maxConcurrentPlayers: 1, playerPublicKey: null },
+        entries: [], acceptedSequenceWatermark: 0, previousCursor: null, nextCursorDocument: null, nextCursor: null,
     };
-    const input = { ...defaults, subject: 'campaign' as const, missionId: 'ignored', competitionManifestSha256: digest('f'), maxConcurrentPlayers: 9 };
-    const selected = normalizeFilters(input, { ...metadata, competitions: [competition] });
-    assert.equal(selected.subject, 'individual_level'); assert.equal(selected.missionId, 'm01'); assert.equal(selected.maxConcurrentPlayers, 3);
-    assert.throws(() => normalizeFilters(input, { ...metadata, competitions: [{ ...competition, rulesConfigSha256: digest('d') }] }), /does not match/u);
-});
-
- test('boards default to all rulesets while deriving the published mission identity', () => {
-    const selected = normalizeFilters({ ...defaults, contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);
-    assert.equal(selected.missionId, 'm01');
-    assert.equal(selected.contentIdentitySha256, digest('a'));
-    assert.equal(selected.presetId, null);
-    assert.equal(selected.rulesetId, null);
-    assert.equal(selected.rulesConfigSha256, null);
+    validateBoardView(page, filters);
+    for (const change of [{ boardId: 'other' }, { missionId: 'Dem_Lin_MP' }, { metric: 'fastest_success' as const }, { maxConcurrentPlayers: null }, { playerPublicKey: '1'.repeat(64) }]) {
+        assert.throws(() => validateBoardView({ ...page, filter: { ...page.filter, ...change } }, filters), /different filters/u);
+    }
 });

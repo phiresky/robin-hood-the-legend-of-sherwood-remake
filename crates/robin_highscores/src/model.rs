@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub const API_SCHEMA_VERSION: u32 = 1;
-pub const MAX_PARTICIPANT_SEATS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,49 +58,21 @@ impl SubmissionStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ParticipantClaim {
-    pub seat: u16,
-    pub participant_instance_id: [u8; 32],
-    pub public_key: [u8; 32],
-    pub public_disclosure: String,
-}
-
+/// Server-side projection of one authenticated `SignedSubmissionV2`, derived
+/// once from the signed document and persisted by upload finalization.
 #[derive(Debug, Clone)]
 pub(crate) struct NewSubmission {
     pub id: String,
     pub upload_challenge_id: String,
-    pub offer_json: String,
     pub envelope_json: String,
-    pub signatures_json: String,
-    pub public_metadata_json: String,
+    pub uploader_public_key: [u8; 32],
+    pub public_disclosure: &'static str,
+    pub board_id: String,
+    pub mission_id: String,
     pub replay_sha256: [u8; 32],
     pub replay_bytes: u64,
-    pub build_manifest_id: [u8; 32],
-    pub content_manifest_id: [u8; 32],
-    pub campaign_content_manifest_id: Option<[u8; 32]>,
-    pub config_id: [u8; 32],
-    pub ruleset_id: [u8; 32],
-    pub mission_id: String,
-    pub scope_kind: String,
-    pub starting_campaign_sha256: [u8; 32],
-    pub starting_campaign_bytes: u64,
-    pub canonical_campaign_state_json: String,
-    pub controller_public_key: [u8; 32],
-    pub starting_state_json: String,
-    pub campaign_chain_id: Option<String>,
-    pub predecessor_run_id: Option<String>,
-    pub competition_manifest_id: Option<[u8; 32]>,
+    pub replay_schema_version: u32,
     pub requested_metrics_json: String,
-    pub participant_claims_json: String,
-    pub max_concurrent_players: u16,
-    pub participant_instance_count: u16,
-    pub session_genesis_sha256: [u8; 32],
-    pub session_genesis_host_public_key: [u8; 32],
-    pub replay_session_id: [u8; 32],
-    pub session_genesis_host_nonce: [u8; 32],
-    pub participants: Vec<ParticipantClaim>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,17 +149,20 @@ mod lifecycle_tests {
             SubmissionState::from_columns("rejected", None, Some("malformed_replay".into()))
                 .is_ok()
         );
+        assert!(SubmissionState::from_columns("failed", None, None).is_ok());
     }
 }
 
+/// One leased verification job. Everything else the worker needs comes from
+/// the configured board.
 #[derive(Debug, Clone)]
 pub struct WorkerJob {
     pub submission_id: String,
+    pub board_id: String,
+    pub mission_id: String,
     pub replay_sha256: [u8; 32],
     pub replay_bytes: u64,
-    pub starting_campaign_sha256: [u8; 32],
-    pub starting_campaign_bytes: u64,
-    pub envelope_json: String,
+    pub replay_schema_version: u32,
     pub attempts: u32,
 }
 

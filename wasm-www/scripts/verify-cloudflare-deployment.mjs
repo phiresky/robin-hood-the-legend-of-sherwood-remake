@@ -251,9 +251,8 @@ export function validateRuntimeHeaders(text) {
     requireExactHeader(routeBlock(text, '/*'), 'Cross-Origin-Resource-Policy', SAME_ORIGIN_RESOURCE, 'runtime resources');
     requireCacheRules(text, 'runtime', /^\/wasm\/\*\s*$/mu);
     if (!/^\/wasm\/latest\.json\s*$/mu.test(text)
-        || !/^\/wasm\/datadir-deployment\.json\s*$/mu.test(text)
         || /^\/datadirs\/\*\s*$/mu.test(text)) {
-        throw new Error('runtime headers must revalidate its mutable pointers and must not govern datadirs');
+        throw new Error('runtime headers must revalidate its mutable pointer and must not govern datadirs');
     }
 }
 

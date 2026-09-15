@@ -572,8 +572,6 @@ mod tests {
         assert!(!launch.multiplayer.continue_session);
         assert!(!launch.config.browser_join_redeemed);
         assert!(launch.config.global_options.preparation_files().is_err());
-        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-        assert!(launch.config.simulation_content_export.is_none());
     }
 
     #[test]

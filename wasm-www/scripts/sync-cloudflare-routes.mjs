@@ -211,8 +211,8 @@ export async function reconcilePublicRoutes({
 
 async function main() {
     const [mode, extra] = process.argv.slice(2);
-    if (!['--prepare-api', '--prove-runtime', '--prove-datadir', '--apply', '--check'].includes(mode) || extra !== undefined) {
-        throw new Error('usage: node scripts/sync-cloudflare-routes.mjs --prepare-api|--prove-runtime|--prove-datadir|--apply|--check');
+    if (!['--prepare-api', '--prove-runtime', '--apply', '--check'].includes(mode) || extra !== undefined) {
+        throw new Error('usage: node scripts/sync-cloudflare-routes.mjs --prepare-api|--prove-runtime|--apply|--check');
     }
     const snapshot = await loadDeploymentSnapshot();
     validateDeploymentSnapshot(snapshot);
@@ -221,14 +221,6 @@ async function main() {
             accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
             apiToken: process.env.CLOUDFLARE_API_TOKEN,
             versionId: process.env.ROBINHOOD_RUNTIME_VERSION_ID,
-        });
-        return;
-    }
-    if (mode === '--prove-datadir') {
-        await proveDatadirWorkerVersion({
-            accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-            apiToken: process.env.CLOUDFLARE_API_TOKEN,
-            versionId: process.env.ROBINHOOD_DATADIR_VERSION_ID,
         });
         return;
     }

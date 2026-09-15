@@ -25,7 +25,7 @@ pub(crate) fn persist_link(
     accepted: &SubmissionAcceptedV1,
     receipt: &crate::leaderboard_receipt_watcher::QueuedSubmissionReceiptWatch,
 ) -> Result<(), String> {
-    let session = input.replay_session_transcript.replay_session_id;
+    let session = input.replay_session_id;
     let api_base = preferences
         .effective_api_base_url()
         .map_err(|e| e.to_string())?
@@ -251,7 +251,12 @@ mod native {
             }
             robin_util::sync::lock(&self.entries[path].info).clone()
         }
-        pub(crate) fn submit(&mut self, path: &Path, expected: Identity) -> Result<(), String> {
+        pub(crate) fn submit(
+            &mut self,
+            path: &Path,
+            expected: Identity,
+            edition: robin_run_protocol::OfficialContentEditionV1,
+        ) -> Result<(), String> {
             let entry = self
                 .entries
                 .get_mut(path)
@@ -264,7 +269,7 @@ mod native {
             entry.retry_submission = true;
             entry.task = Some(
                 PollTask::spawn_background("archive-submit", move || async move {
-                    submit(&owned, expected, &progress)
+                    submit(&owned, expected, edition, &progress)
                 })
                 .map_err(|e| e.to_string())?,
             );
@@ -409,6 +414,7 @@ mod native {
     fn submit(
         path: &Path,
         expected: Identity,
+        edition: robin_run_protocol::OfficialContentEditionV1,
         progress: &std::sync::Mutex<ReplaySubmissionInfo>,
     ) -> Completion {
         let replay = recording(path)?;
@@ -419,31 +425,27 @@ mod native {
         if let Some(link) = load_link(replay.submission_id(), &preferences)? {
             return submitted(link, &preferences);
         }
-        let (input, bytes) = pollster::block_on(
+        let (bundle, bytes) = pollster::block_on(
             crate::game_session::leaderboard_runtime::prepare_recorded_submission(
                 &replay,
                 &preferences,
+                edition,
             ),
         )?;
+        let session = bundle
+            .eligible_submission
+            .as_ref()
+            .ok_or("Prepared replay has no submission")?
+            .replay_session_id;
         let api = super::super::service::LeaderboardApi::from_preferences(&preferences)
-            .map_err(|e| e.to_string())?;
-        let boards = crate::game_session::leaderboard_runtime::authorized_boards(&input, None)
             .map_err(|e| e.to_string())?;
         preferences.show_mission_end_boards = false;
         preferences.always_submit_eligible_runs = false;
-        let bundle = MissionEndRunBundle {
-            outcome: MissionEndOutcome::from_replay(&replay),
-            multiplayer: input.offer_request.max_concurrent_players > 1,
-            boards,
-            eligible_submission: Some(input.clone()),
-            submission_unavailable_reason: None,
-        };
         let mut controller = MissionEndLeaderboardController::new(
             bundle,
+            bytes,
             preferences.clone(),
             Box::new(HttpMissionEndLeaderboardBackend::new(api)),
-            Box::new(LocalMissionEndSubmissionAuthorizer),
-            Box::new(RecordedReplayExporter(bytes)),
         )
         .map_err(|e| e.to_string())?;
         controller.enable_history_tracking();
@@ -477,11 +479,8 @@ mod native {
                             }
                         }
                     }
-                    let link = load_link(
-                        input.replay_session_transcript.replay_session_id,
-                        &preferences,
-                    )?
-                    .ok_or("Uploaded replay lost its durable submission link")?;
+                    let link = load_link(session, &preferences)?
+                        .ok_or("Uploaded replay lost its durable submission link")?;
                     return submitted(link, &preferences);
                 }
                 MissionSubmissionState::Failed(error)

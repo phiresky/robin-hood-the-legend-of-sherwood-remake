@@ -3,13 +3,13 @@
 use super::SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1;
 use crate::CanonicalDocument as _;
 use crate::{
-    CampaignChainReceiptV1, ChallengeNonce32, Digest32, OpaqueId, PublicKey32, Signature64,
-    SignatureAlgorithmV1, Validate, ValidationError, VerificationRejectionCodeV1,
+    ChallengeNonce32, Digest32, OpaqueId, PublicKey32, Signature64, SignatureAlgorithmV1, Validate,
+    ValidationError, VerificationRejectionCodeV1,
 };
 use serde::{Deserialize, Serialize};
 
-/// Minimal shareable progress. Detailed failures and campaign receipts remain
-/// available only through the authenticated owner-status endpoint.
+/// Minimal shareable progress. Detailed failures remain available only through
+/// the authenticated owner-status endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicSubmissionStatusV1 {
@@ -159,7 +159,6 @@ pub enum SubmissionLifecycleV1 {
     RetryPending,
     Accepted {
         run_id: OpaqueId,
-        campaign_chain_receipt: Option<CampaignChainReceiptV1>,
     },
     Rejected {
         code: VerificationRejectionCodeV1,
@@ -177,21 +176,13 @@ pub enum SubmissionLifecycleV1 {
 impl Validate for SubmissionLifecycleV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         match self {
-            Self::Accepted {
-                campaign_chain_receipt,
-                ..
-            } => {
-                if let Some(receipt) = campaign_chain_receipt {
-                    receipt.validate()?;
-                }
-            }
             Self::Rejected { safe_message, .. } => {
                 crate::validation::text("submission.safe_message", safe_message, 500)?;
             }
             Self::Failed { safe_message, .. } => {
                 crate::validation::text("submission.failure_safe_message", safe_message, 500)?;
             }
-            Self::Queued | Self::Verifying | Self::RetryPending => {}
+            Self::Accepted { .. } | Self::Queued | Self::Verifying | Self::RetryPending => {}
         }
         Ok(())
     }
@@ -251,19 +242,7 @@ impl Validate for SubmissionOwnerStatusResponseV1 {
                 field: "submission_owner_status_response.owner_binding",
             });
         }
-        self.state.validate()?;
-        if let SubmissionLifecycleV1::Accepted {
-            run_id,
-            campaign_chain_receipt: Some(receipt),
-        } = &self.state
-            && (receipt.predecessor_run_id != *run_id
-                || receipt.campaign_controller_public_key != self.controller_public_key)
-        {
-            return Err(ValidationError::ClaimMismatch {
-                field: "submission_owner_status_response.campaign_chain_receipt",
-            });
-        }
-        Ok(())
+        self.state.validate()
     }
 }
 

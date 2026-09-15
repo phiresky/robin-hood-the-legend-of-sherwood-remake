@@ -1,619 +1,245 @@
-# Highscores, replay verification, and deployment
+# Highscores service, replay verification, and deployment
 
-This is the reference for the ranked service, browser frontend, ranked
-authority authoring, VPS operations, Cloudflare deployment, and recovery.
-Commands use repository-root paths unless a working directory is stated.
-Source constants and checked-in typed validators own schema versions and
-artifact contracts.
+This is the operator reference for the ranked leaderboard: what the service
+does, the HTTP contract, how replays are verified, how to ship a verifier,
+how boards are configured, and the routine VPS procedures. Commands use
+repository-root paths unless stated otherwise.
 
 - [Service and API](#service-and-api)
-- [Browser frontend and origin ownership](#browser-frontend-and-origin-ownership)
-- [Multiplayer signatures](#multiplayer-signatures)
-- [Contained replay verification](#contained-replay-verification)
-- [Ranked authority authoring](#ranked-authority-authoring)
+- [Sandboxed verification](#sandboxed-verification)
+- [Verifier releases](#verifier-releases)
+- [Boards](#boards)
 - [Operations](#operations)
-- [Development and validation](#development-and-validation)
+- [Development and tests](#development-and-validation)
 
 ## Service and API
 
-The API accepts complete runs and publishes only results reproduced by the
-allowlisted verifier using exact official content, rules, build, and starting
-campaign. **Server replay-verified** means the command stream reproduces the
-result; it does not prove a human or an unmodified client generated it.
+The server receives a replay, the verifier resimulates it with our pinned
+verifier build against raw game content, checks the recorded state hashes and
+outcome, and scores it. **Server replay-verified** means the recorded command
+stream reproduces the result; it does not prove that a human or an unmodified
+client produced it.
 
-`robin-highscores-server` authenticates and bounds uploads, manages SQLite and
-content-addressed replay/campaign objects, and serves boards.
-`robin-highscores-worker` leases jobs and starts a fresh
-`robin-replay-verifier` through digest-pinned `bwrap` and `prlimit`. All run as
-the existing unprivileged `robinhood` account, with distinct systemd filesystem
-restrictions. There is no broker, second service UID, or root worker.
+- `robin-highscores-server` authenticates and bounds uploads, keeps SQLite and
+  the content-addressed replay store, and serves boards.
+- `robin-highscores-worker` leases queued submissions and runs a fresh
+  `robin-replay-verifier` per job through `prlimit` and `bwrap`.
+- `robin-highscores-admin` migrates, snapshots, bootstraps the cursor key and
+  moderates.
 
-A durable Ed25519 public key is the player identity; usernames are owner-signed
-display metadata. Browser private keys remain non-extractable in the isolated
-signer origin. All authenticated multiplayer participants must co-sign; a host
-cannot impersonate guests.
+All run as the unprivileged `robinhood` account under its systemd user
+manager. A durable Ed25519 public key is the player identity; usernames are
+owner-signed display metadata and must be registered before uploading.
 
-Exactly one replay representation enters production:
-`application/x-robin-rhrec+compact`, containing the current canonical bitcode
-`ReplayFile` in its zstd/base64url envelope. Uploaded bytes become the verifier
-input, retained object, and public download unchanged. JSONL is only a local
-recorder/developer format. There is no public/private replay pair, alternate
-media type, or historical-schema fallback. Both Demo and Full require the
-complete exact starting campaign. Archive/Spellforge content is playable but
-is not official Demo/Full ranked authority.
+Exactly one replay representation is ranked:
+`application/x-robin-rhrec+compact`. Uploaded bytes are the verifier input,
+the retained object and the public download, unchanged. The replay embeds its
+starting campaign; there is no separate campaign upload.
 
 ### HTTP contract
 
-All API routes use `/api/v1`. Replay submission is multipart with exactly three
-fields: UTF-8 JSON `submission`, the exact canonical replay, and the
-exact starting campaign. The replay is read into a configured hard-bounded
-buffer for a linear lexical scan before reservation; the campaign remains
-streamed. Both are subject to one absolute upload deadline. Missing, duplicate,
-swapped, truncated, media-type-mismatched, or digest/length-mismatched roles
-fail closed.
-The API treats the replay body as semantically opaque hostile
-bytes: it performs only an allocation-free scan of the already bounded ASCII
-envelope (`rhrec-`, the signed build's 12 lowercase hex characters, one
-separator, and unpadded base64url text). It never base64-decodes, decompresses,
-bitcode-decodes, or re-encodes the body. Only the resource-contained verifier
-performs compressed framing, canonical bitcode, and current-header/schema
-admission. Until that verifier returns a valid request-bound result, the
-quarantined artifact has no public raw-digest or submission-ID download route.
-After authenticating the first JSON field, the API reads and lexically checks
-the replay field. A non-compact alternate format therefore creates no replay
-object, queue row, upload reservation, or consumed challenge. The API then
-atomically reserves the exact signed offer/envelope and consumes its one-use
-challenge. Immediately before that transaction it rechecks both stores
-and capacity using the signed exact replay/campaign lengths.
-The remaining bounded upload slots reserve their configured maxima;
-shared filesystems aggregate replay, campaign, multipart framing, SQLite WAL,
-and one verifier-output allowance instead of counting the same free bytes
-twice. SQLite enforces one cross-process ingestion lease. A
-concurrent exact request receives `upload_in_progress` plus `Retry-After`; a
-partial request releases that lease for an exact retry, and a crashed request
-is recovered after lease expiry. Once both content-addressed artifacts are
-durable, one transaction registers them, creates exactly one verifier job, and
-commits the reservation. A completed retry returns the original lifecycle
-without ingesting its artifact body again, while an uploaded-but-uncommitted
-retry verifies the durable files and resumes the same canonical submission ID.
-Noncommitted reservations have a bounded `upload_reservation_ttl_seconds`
-window; expiry removes their otherwise-consumed challenge.
-When admission is red, a fresh or artifact-writing retry consumes no challenge
-and creates no reservation. Completed and active exact retries still return
-their stable lifecycle or retry response, and an uploaded crash-recovery retry
-may finish without ingesting bytes again.
-The response is `202 Accepted`. Submission lifecycle is not public: an owner
-first obtains a one-use challenge and then signs a private-status request for
-that exact submission. Diagnostics, private participant instances, transcript,
-campaign-chain locators, and request/result bindings remain private.
-
-Replay downloads re-hash the content-addressed file before serving it.
-Owner-signed deletion tombstones a run immediately; physical deletion happens
-only after retention and when the digest has no live references. Abuse reports
-create bounded moderation events and never hide or verify content
-automatically.
-
-Both normal API work and replay uploads have independent concurrency caps and
-absolute request deadlines. Keep these bounds aligned with the process-level
-memory/connection limits; raising the compiled safety ceilings is not an
-alternative to capacity planning.
-
-In the canonical proxy chain, the VPS firewall admits HTTPS only from
-Cloudflare edges, nginx replaces `X-Forwarded-For` with Cloudflare's exact
-`CF-Connecting-IP`, and the API trusts only nginx's loopback CIDR. A trusted
-proxy request with no single canonical forwarded IP fails closed; forwarding
-headers from every untrusted peer are ignored. nginx serves only `/api` paths
-and returns 404 for other VPS-origin routes. `/healthz` and `/readyz` are
-loopback/operator probes, not static-site routes.
-
-Player boards accept the optional canonical `player_public_key` filter. The
-typed `/api/v1/players/{public_key}/runs` resource returns snapshot-paginated
-history and per-board personal bests. Cursor authentication binds the exact
-key, query, visibility revision, and acceptance watermark.
-
-Operator moderation routes are absent unless a private bearer-token file is
-configured. The same list/review/action/audit functions are available through
-`robin-highscores-admin`; every state transition is append-only audited.
-`/healthz` is a non-database process-liveness check. `/readyz` is read-only:
-it checks SQLite and storage/capacity admission. It does not create probe
-objects; writable probes run at startup and on mutating admission paths.
-Offer issuance uses the same gate plus replay/campaign store readiness. The verifier worker
-rechecks capacity before every queue lease and again against the exact
-authenticated final-campaign length before writing its object; it idles without
-leasing while red. Garbage collection, backup, administrative repair, and
-reservation recovery are deliberately outside this gate so they can restore
-readiness. Authenticated operator status and Prometheus
-text metrics live under `/api/v1/operator/operational-status` and
-`/api/v1/operator/metrics`.
-
-Immutable public BuildManifestV2, mission and campaign content, rules-config,
-ruleset-manifest, competition, and policy JSON is served by digest under
-`/api/v1/builds`, `/api/v1/content-manifests`,
-`/api/v1/campaign-content-manifests`, `/api/v1/rules-configs`,
-`/api/v1/ruleset-manifests`, `/api/v1/competitions`, and `/api/v1/policies`.
-The separately cross-bound `/api/v1/published-rulesets/{digest}` response
-carries mutable Active or Quarantined status with `Cache-Control: no-store`;
-clients must preflight both documents. Full-campaign session proof and replay
-routes are nested under `/api/v1/runs/{run_id}/sessions/{ordinal}`;
-headquarters sessions are never exposed as standalone leaderboard runs. Run
-and session campaign artifacts use the nested
-`campaigns/{starting|final}` routes. Player profiles and histories are served
-under `/api/v1/players/{public_key}` and `/api/v1/players/{public_key}/runs`.
-
-Ranked simulation is authorized before frame zero. Hosts request a typed,
-host-signed fresh-start grant at `/api/v1/fresh-run-preflight-grants`. A
-campaign continuation instead uses
-`/api/v1/campaign-continuation-preflight-grants`, whose request is signed by
-both the next host and the immutable campaign controller and binds the exact
-active predecessor result digest, starting campaign artifact, intended
-durable roster, session identity, and ranked input tuple. The authority-signed
-grant is embedded in session genesis. Missing, expired, substituted, or
-wrong-authority grants are browse-only and cannot be repaired after the run.
-
-
-### Database and object lifecycle
-
-SQLx/SQLite migrations are explicit. Serving processes require the exact
-current checksum-valid migration chain; do not edit `PRAGMA user_version`.
-`ops/deploy.sh` applies append-only forward migrations with
-`robin-highscores-admin migrate`; `ops/rollback.sh` refuses a target whose
-supported schema differs from the live database. Pre-release dual-replay
-databases are not upgrade inputs.
-
-Artifacts are SHA-256-addressed regular files outside SQLite. Reconciliation
-recovers interrupted inventory operations; retention-aware GC deletes only
-unreferenced objects whose durable lifecycle permits it. Monitor WAL, object
-stores, backups, inode availability and free space. The configured 1 GiB
-readiness reserve does not account for space used by local backups.
-
-## Browser frontend and origin ownership
-
-The static leaderboard opens applicable boards automatically after a mission;
-only eligible won runs may submit. Upload requires per-run consent unless the
-player explicitly enables the default-off Always Submit Won Runs preference.
-Board browsing, offers, signing, export and upload are frame-polled, so the
-mission-end UI does not pause multiplayer. Failed or interrupted runs may
-browse but cannot submit a successful score.
-
-### Routes and static roots
-
-The ordered authority is `wasm-www/deploy/public-routes.json`:
-
-| Request | Owner | Source build root |
-| --- | --- | --- |
-| `robinhood.phiresky.xyz/api*` (including query strings) | VPS; null Worker script | none |
-| `robinhood.phiresky.xyz/.well-known/acme-challenge/*` | nginx HTTP-01; null Worker script | none |
-| `robinhood.phiresky.xyz/wasm/*` | `robinhood-runtime-assets` | `wasm-www/runtime-dist` |
-| `robinhood.phiresky.xyz/datadirs/*` | separate `robinhood-datadir-assets` authority | `wasm-www/datadir-dist` |
-| Remaining public-host requests | `robinhood-public-site` | `wasm-www/dist` |
-| `identity.robinhood.phiresky.xyz/*` | `robinhood-identity-signer` | `wasm-www/signer-dist` |
-
-There is no GitHub Pages, public binary mirror, Caddy-generated site, alternate
-production API, or static fallback for API failures. nginx listens for the
-Cloudflare-only API origin, forwards to `127.0.0.1:8787`, and returns 404 for
-unowned origin paths. Exact `/healthz` and `/readyz` locations support controlled
-origin probes. Its 130 MiB request ceiling must remain aligned with the compiled
-multipart ceiling. The firewall must enforce the same reviewed Cloudflare edge
-allowlist as nginx. Production CORS is disabled.
-
-### Static closures
-
-The public-site closure contains the landing page, leaderboard shell, viewer
-shell, JS/CSS assets, public build/rules/policy/competition documents, and Demo
-semantic content objects. The runtime closure contains the browser engine and
-approved wasm-only runtime corpus below `/wasm`. Demo bytes are separately
-authorized and manually deployed below `/datadirs`; they never enter the runtime
-or site closures or a VPS release. The signer closure is a
-separate, minimal page and bridge.
-
-The wasm-bindgen engine JavaScript is also a closed module graph. Runtime
-staging keeps the public browser identity client, removes the private identity
-vault, and writes an exact sorted manifest entry for every retained imported
-module with its relative path, byte length, and SHA-256. Verification derives
-the graph again from `robin.js`; undeclared, orphaned, missing, substituted,
-tampered, dynamic, or vault modules fail the release.
-
-Full licensed content, Full semantic component documents, private projection
-receipts, source-tree manifests, exporter/verifier executables, operator
-configuration, campaign-state templates, and signing secrets are forbidden in
-all four static roots.
-
-Static inventories are digest-bound by `BuildManifestV2` and
-`OfficialViewerBuildReportV2`. The `verify:public`, `verify:signer`,
-`verify:runtime`, and `verify:datadir` scripts re-inventory the physical build
-roots; a producer report cannot hide an extra file.
-
-### Identity signer
-
-Browser identities use a durable non-extractable WebCrypto Ed25519 key in the
-separate signer origin's IndexedDB. The public site communicates with the signer
-only through the typed `postMessage` contract, with exact origin, request id,
-operation, key identity, challenge, and payload checks. The key owner can
-change the display username by signing the API's short-lived username
-challenge.
-
-The signer does not expose raw key material, accept caller-selected origins,
-perform arbitrary signatures, proxy API requests, or store replay/content
-bytes. Native identity and browser identity use the same public protocol types;
-they do not require a legacy re-key flow.
-
-### Replay viewing
-
-The viewer resolves immutable manifests by digest before downloading engine or
-content assets. It checks the selected run's public proof, exact build, content,
-rules configuration, replay digest and byte length. Demo content loads from the separately deployed
-`/datadirs` authority named by the runtime. A Full replay may be listed and downloaded publicly,
-but local playback requires the viewer to obtain a matching user-owned Full
-installation; the service never publishes licensed Full bytes.
-
-Playback is read-only and sandboxed from submission state. It does not mutate
-the player's campaign, reuse a ranked offer, or silently submit anything. A
-playback divergence is shown as a viewer failure and does not change the
-server's immutable verification result.
-
-### Caching and headers
-
-Hashed JS/WASM/content objects and digest-addressed immutable manifests may use
-long immutable caching. HTML entry points, mutable published-ruleset status,
-leaderboard pages, player metadata, and API responses must not receive an
-immutable cache policy. API responses are controlled by the VPS; the static
-Worker must not cache them.
-
-Headers are staged from:
-
-- `wasm-www/deploy/public-headers.txt`;
-- `wasm-www/deploy/runtime-headers.txt`;
-- `wasm-www/deploy/datadir-headers.txt`;
-- `wasm-www/deploy/signer-headers.txt`.
-
-The public Content Security Policy admits only the exact same-origin API,
-approved relay endpoints used by the browser game, and the isolated signer
-frame/origin. Do not widen it for a development shortcut.
-
-## Multiplayer signatures
-
-Leaderboard submission signatures use one closed, fixed-size Ed25519 payload.
-The native identity adapter, isolated browser signer, multiplayer transport, and
-high-score server all use `LeaderboardCoSignRequestV1::signing_bytes`; none may
-re-serialize the request or expose a raw signing operation.
-
-### Fixed payload
-
-The byte layout is:
-
-1. `robinhood/leaderboards/1/co-sign-payload\0`
-2. one purpose byte (`1` campaign continuation, `2` final submission)
-3. the 32-byte ranked replay-session ID
-4. SHA-256 of the complete validated `SubmissionOfferV1`
-5. the 32-byte purpose-specific run digest
-
-The offer digest binds the server's one-use upload challenge ID and nonce as
-well as the signed session genesis. An instance is always reconstructed from
-the authoritative offer as
-`{purpose, replay_session_id, submission_offer_sha256}`. A client-provided
-sequence or arbitrary instance is never accepted.
-
-The purpose-specific run digests are intentionally separate:
-
-- campaign continuation hashes the validated canonical
-  `CampaignContinuationAuthorizationClaimV1` under
-  `robinhood/leaderboards/1/campaign-continuation\0`; its helper also checks the
-  claim against the continuation offer, predecessor, controller participant,
-  session genesis, replay artifact, and starting campaign;
-- final submission hashes the complete validated canonical
-  `SubmissionEnvelopeV1` under `robinhood/leaderboards/1/submission\0`. This
-  includes the exact replay artifact, starting campaign, participant transcript,
-  authoritative offer, and the already completed controller authorization.
-
-Consequently the two signing phases are ordered. If a continuation is present,
-the immutable campaign controller signs it first. The resulting authorization
-is inserted into the envelope, then every authenticated participant signs the
-final submission request. Named and anonymous presentation does not alter this
-requirement.
-
-### Multiplayer and server checks
-
-The host sends only the derived typed request. Each client transport accepts it
-only when it exactly matches the request armed by the local mission-end flow and
-the message belongs to the current authenticated Feature 39 connection. The
-response echoes the exact instance; the host rejects wrong-purpose, stale,
-cross-session, duplicate, and unexpected-key responses before collecting a
-signature.
-
-At upload, the server loads the stored authoritative offer, requires exact
-offer equality, reconstructs the continuation and final requests with the same
-protocol helpers, and verifies every Ed25519 signature over their fixed bytes.
-The database consumes the upload challenge and signed replay-session genesis,
-so replaying an otherwise valid signature cannot admit a second run.
-
-`ParticipantSignatureV1` remains schema V1: its existing public key and
-signature fields are sufficient because the server reconstructs all signed
-bytes from the submitted envelope and stored offer. Changing the fixed layout,
-purpose tags, digest domains, or instance derivation requires a new signing
-contract version.
-
-## Contained replay verification
-
-### Content mounts
-
-Official Demo and Full installations are separate typed content identities.
-The operator supplies the selected raw edition as a read-only
-mount plus its exact V2 source inventory and eight-component semantic bundle;
-retail bytes are never included in the server image or repository. The
-verifier re-inventories the mount without following symlinks, locally prepares
-the selected subject, and requires its projection to match the exact bundle
-before constructing ranked simulation. It receives normalized job semantics,
-not the public viewer catalog or private projection-authority document.
-
-A missing or mismatched official mount is a typed infrastructure failure, not a
-gameplay rejection attributed to the replay. There is no fallback to another
-install, Demo, overlay, zip, mod, or custom mission.
-
-Mounts must be immutable for the entire worker lifetime. Read-only bind mounts
-or read-only image layers close the check/use race between manifest validation
-and asset loading.
-
-### Required outer sandbox
-
-In-process replay bounds are defense in depth, not an OS sandbox. Production
-must run every job in a new rootless bubblewrap sandbox owned by the fixed
-unprivileged `robinhood` account. The worker invokes `bwrap` and `prlimit`
-directly as a structured argument vector, never through a shell, broker,
-`systemd-run`, `sudo`, or polkit. The sandbox must have all of the following:
-
-- fresh user, PID, IPC, UTS, cgroup, and network namespaces;
-- a read-only, minimal executable view containing only the exact verifier and
-  its required runtime files;
-- the one selected Demo or Full raw-content root mounted read-only; the
-  verifier re-inventories it against the exact source-tree manifest per job;
-- four sealed read-only descriptors: request, exact canonical replay,
-  normalized job configuration, and starting campaign;
-- two precreated isolated writable descriptors: result and final campaign;
-- no inherited listener, API, database, replay-store, secret-store, proxy, or
-  other host descriptor;
-- an empty home and environment, private temporary storage, no network
-  interfaces, no host device access, and no writable host path;
-- exact CPU-time, address-space, process-count, open-file, file-size, and
-  zero-core limits applied by `prlimit`; and
-- an independent worker-side wall timeout followed by complete process-tree
-  termination and reaping.
-
-The final worker configuration has exactly one mandatory
-`[verifier_launcher]` table. Its fields are `bwrap_program`, `bwrap_sha256`,
-`prlimit_program`, `prlimit_sha256`, `verifier_program`, `verifier_sha256`,
-`wall_timeout_seconds`, `cpu_limit_seconds`,
-`address_space_limit_bytes`, `process_limit`, `open_files_limit`,
-`file_size_limit_bytes`, and `max_request_bytes`. Program paths are normalized
-absolute paths; the verifier path names the binary inside the `authority`
-release (`releases/<commit>/bin/robin-replay-verifier`). All limits are
-positive values authored by `author-configs`.
-
-Before every job the worker re-hashes all three programs, verifies every input
-descriptor is the expected sealed regular object, checks the request size
-before parsing, and constructs the fixed namespace/mount/limit argument list.
-Missing user-namespace support, executable drift, an incomplete namespace or
-mount closure, an unsealed input, or inability to apply a limit is an
-infrastructure failure. There is no fallback launch mode.
-
-The compact replay decoder still enforces its exact compressed,
-decompressed, collection, and zstd-window limits inside the sandbox. An
-address-space limit alone does not cap a decoder's history-window choice, and
-a decompressed-byte limit alone does not cap all process allocation; both
-layers are required.
-
-### Admission order
-
-The worker performs cheap, bounded checks before expensive ones:
-
-1. Parse the small job document with a fixed byte limit and reject unknown
-   fields or versions.
-2. Authenticate every participant's signature over the canonical shared
-   submission, including its exact artifact refs and separately co-signed
-   lifecycle transcript. Named or anonymous public disclosure does not change
-   this set.
-3. Stream both supplied artifacts to EOF before decoding either, recompute byte
-   counts and SHA-256 values, and distinguish retryable short/I/O failures from
-   exact authenticated identity mismatches.
-4. Resolve build, content, ruleset, difficulty, and starting-state identifiers
-   exclusively through operator allowlists.
-5. Validate the complete read-only content manifest.
-6. Decode canonical compact bitcode with compressed size, base64, zstd window,
-   decompressed-size, metadata, campaign, frame, and per-frame entry limits.
-   Reject compact streaming-JSONL payloads by requiring deterministic bitcode
-   re-encoding to reproduce the exact uploaded bytes. Validate dense indices
-   and save/load references before engine construction.
-7. Require the current replay schema's single-source ranked provenance and
-   apply the command-policy scan.
-8. Compare the entire canonical initial campaign blob with the individual
-   template or exact server-issued predecessor blob, retain its exact
-   `(edition, kind, rules_config_sha256)` authority, and require the embedded
-   outer/nested restart `SimConfig` to equal the authenticated complete rules
-   config. This includes nested restart/history state; field-wise partial
-   comparisons are forbidden.
-9. Run the renderer/audio/network-free engine with scripts enabled. Check each
-   recorded state hash at its exact boundary and require the replay to end at a
-   complete terminal success rather than merely exhausting input.
-10. Derive all metrics and the final campaign from the single replay execution
-   using checked arithmetic, then commit the two bound outputs.
-
-Both output files begin empty. The final campaign remains empty for every
-rejection and infrastructure failure and is accepted only beside a genuine
-typed `Verified` result which binds its exact bytes. Exit status zero
-means a typed verified-or-rejected result was written; any other status is an
-infrastructure failure.
-
-### Campaign chain
-
-Individual-level boards accept only a server-installed canonical initial
-campaign blob bound to its exact rules config. Full campaign genesis uses its
-own exact-config canonical blob. Every continuation
-must name the exact SHA-256 of the previous verifier-produced final blob and
-the worker compares the new replay's complete initial campaign bytes with that
-stored predecessor. Sherwood/HQ is a normal verified campaign session in this
-chain; skipping it or reconstructing only inventory is invalid.
-
-Campaign state affects substantially more than carried items: mission
-availability/status, ARES and other script-visible values, roster and mission
-team, character health/skills/capacities/ammunition, ransom/score/blazons,
-relics, Sherwood production/occupants, prior achievements and immutable
-attempts, generated names, selection/restart metadata, and mission-construction
-RNG/config checkpoints. Exact whole-state chaining avoids omissions and makes
-nested snapshot/history equivocation impossible.
-
-Full Campaign completion is the Full edition's canonical 100% progression
-trigger at `H12_Not_MP`. The optional later `SherwoodOutro` session does not
-replace that predicate. Demo and rulesets without a Full Campaign board encode
-completion as `NotOffered`.
-
-
-The verifier production dependency closure excludes `robin_rs`, windowing,
-rendering, audio/video and networking. A typed rejection is a job result;
-crashes, limits, signals, timeouts or malformed/missing results are infrastructure
-failures, retried only up to `max_verifier_attempts`, then exposed as
-`verification_infrastructure`. Private diagnostics never become public proof.
-
-## Ranked authority authoring
-
-Ranked results are pinned to one verifier binary and one set of ranked
-documents: `BuildManifestV2.verifier.sha256`, the rules configs, published
-rulesets, competitions, campaign templates, official content bundles, and the
-private verifier-job catalog. Together they form the **authority release**,
-`~/.local/opt/robin-highscores/releases/<LIVE_COMMIT>`, which the `authority`
-symlink names. The worker refuses to start if its configured verifier differs
-from the pinned digest.
-
-Author a new authority release only when a new build is deliberately
-published: a new verifier, changed ranked content, new rules or rulesets, or
-new competitions. **Routine service deploys never replace the verifier or the
-`authority` release**: `ops/build-release.sh` without `--with-verifier` ships
-only server, worker and admin, and `ops/deploy.sh` refuses to replace or prune
-the authority target. All authoring commands write local files only; outputs
-must be absent paths, and missing, extra, noncanonical or changed inputs fail.
-
-### Tools and grant keys
-
-```sh
-cargo build -p robin_manifest_tool --bin robin-highscores-manifestctl
-target/debug/robin-highscores-manifestctl probe-sandbox
-cargo build -p robin_rs --example export_simulation_content \
-  --no-default-features --features projection-export \
-  --target x86_64-unknown-linux-musl --release
-```
-
-`projection-export` is absent from game, browser, Android, verifier and default
-builds. On MUSL the build script supplies an empty `libdl.a` because MUSL
-implements `dlopen` in libc. The projection authority hashes the resulting
-exporter, so never rebuild it after authoring that authority. Inspection helpers:
-`manifestctl hash FILE`, `validate-document --kind KIND FILE` and
-`canonicalize --kind KIND IN OUT`.
-
-The published rulesets and competitions pin the public halves of two Ed25519
-grant keys, so on a fresh host create the secrets first. Each command reads only
-its own path from the `--config` TOML and never prints secret bytes:
-
-```sh
-robin-highscores-admin --config bootstrap.toml initialize-cursor-key
-robin-highscores-admin --config bootstrap.toml initialize-competition-run-grant-key
-robin-highscores-admin --config bootstrap.toml initialize-run-preflight-grant-key
-```
-
-The last two print the public keys. The printable 32..128-byte
-`moderation-bearer.token` has no initializer; create it by hand (mode `0400`).
-All four live in `~/.local/share/robin-highscores/api-secrets/`.
-
-### Build, content, rules and campaigns
-
-1. Build and author the verifier and build documents. The `BuildDraftV2`
-   names the verifier, browser inventories, and the typed tool authorities in
-   `.github/tool-authorities/` (wasm-bindgen CLI, Node, pnpm; installed via
-   `scripts/install_pinned_wasm_bindgen.sh`):
-
-   ```sh
-   crates/robin_highscores/ops/build-release.sh --with-verifier /absolute/out
-   manifestctl author-build-v2 build-draft.json build-manifest-v2.json
-   manifestctl author-projection-authority-v2 projection-draft.json projection-authority-v2.json
-   manifestctl author-viewer-build-report-v2 build-manifest-v2.json viewer-build-report-v2.json
-   ```
-
-2. Produce the official Demo/Full projections. The `OfficialProjectionPlanV3`
-   names the build, the wasm-bindgen/Binaryen/WABT authorities, projection
-   authority, exporter, rules config, execution policy, core overlay and the
-   Demo/Full loose and shipping source roots. Four sandboxed lanes run under
-   `bwrap`/`prlimit`; loose and shipping results must be byte-identical:
-
-   ```sh
-   manifestctl author-official-content-v3 official-projections-v3.json /absolute/official-content
-   ```
-
-3. Generate rules and policies, the campaign-template matrix, and the
-   published rulesets and competitions. The matrix plan is
-   `{"official_content_authority", "rules_configs": [sorted paths], "schema_version": 1}`;
-   the admission plan names the build, official content, policy inputs, both
-   grant public keys and an explicit `competitions` array:
-
-   ```sh
-   cargo run -p robin_manifest_tool --example author_release_policy_inputs -- /absolute/policy-inputs
-   manifestctl author-campaign-template-matrix-v1 matrix-plan.json /absolute/campaign-templates
-   manifestctl validate-campaign-template-matrix-v1 matrix-plan.json /absolute/campaign-templates
-   cargo run -p robin_manifest_tool --example author_release_admission_inputs -- \
-     author release-admission-plan-v1.json /absolute/release-admission
-   cargo run -p robin_manifest_tool --example author_release_admission_inputs -- \
-     validate release-admission-plan-v1.json /absolute/release-admission
-   ```
-
-### Server/worker configs and verifier catalog
-
-`scripts/release/author_leaderboard_release.py author-configs` derives the
-admission-profile matrix from the manifest registry and authors the verifier
-catalog through `manifestctl author-verifier-catalog-v1` and
-`validate-verifier-catalog-v1`:
-
-```sh
-scripts/release/author_leaderboard_release.py author-configs \
-  --source-commit "$AUTHORITY_COMMIT" \
-  --plan /absolute/config-plan.json \
-  --output /absolute/absent/config-authoring
-```
-
-`--source-commit` is the full 40-hex authority commit and must equal the
-`BuildManifestV2` `source_commit`. The plan is JSON with exactly these keys:
-`schema_version` (`3`), `manifest_directory`, `verifier_bundle_root`,
-`manifest_tool` (a plain path to the executable), `bwrap_sha256`,
-`prlimit_sha256`, `competition_run_grant_public_key`,
-`run_preflight_grant_public_key`, `campaign_states` (the complete
-rules-config-by-edition matrix of `{artifact, edition, kind,
-rules_config_sha256, source}`), and `source_tree_manifests` (`{demo, full}`
-paths named by their SHA-256). The output contains:
+All routes live under `/api/v1`.
+
+| Route | Purpose |
+| --- | --- |
+| `GET leaderboard-metadata` | `LeaderboardMetadataV2`: boards from `server.toml` and the engine tick duration |
+| `GET leaderboards` | flat `LeaderboardQueryV2` query → `LeaderboardPageV2` (authenticated cursors) |
+| `GET runs/{id}`, `GET runs/{id}/replay` | `RunDetailV2`; exact compact replay bytes |
+| `GET players/{key}`, `GET players/{key}/runs` | profile; `PlayerRunHistoryPageV2` with personal bests |
+| `POST upload-challenges` | `UploadChallengeRequestV2` → one-use, expiring `UploadChallengeV1` bound to the key |
+| `POST submissions` | multipart `submission` + `replay` → `202 SubmissionAcceptedV1` |
+| `GET submissions/{id}/public-status` | minimal progress |
+| `POST submission-owner-status-challenges`, `POST submissions/{id}/private-status` | owner-signed lifecycle, including rejection code |
+| `POST username-challenges`, `PUT players/{key}/username` | signed rename |
+| `POST deletion-challenges`, `POST deletion-requests` | owner-signed tombstone of a submission or run |
+| `POST reports` | abuse report (per IP, key and target quotas) |
+| `POST diagnostics`, `operator/*` | crash reports; bearer-token operator routes (absent without a token) |
+| `/healthz`, `/readyz` | liveness; SQLite plus storage-capacity readiness |
+
+`POST submissions` takes exactly two multipart fields in this order:
+
+1. `submission`: `application/json` `SignedSubmissionV2`, decoded strictly
+   (duplicate keys and unknown fields rejected), validated, and signature
+   verified against `uploader_public_key` over
+   `robinhood/leaderboards/2/submission\0` + the canonical submission.
+2. `replay`: the compact replay with media type
+   `application/x-robin-rhrec+compact`.
+
+Before anything is reserved the API checks: the board exists, the mission is
+on the board, the requested metrics are offered by the board, the challenge is
+unexpired, the uploader has a registered username, the replay length and
+SHA-256 equal the signed artifact, and the replay passes the allocation-free
+lexical compact-transport scan (the API never base64/zstd/bitcode-decodes
+hostile bytes). A red storage/capacity check consumes nothing.
+
+One SQLite transaction then consumes the challenge (which must exist, be
+unconsumed and have been issued to the uploader with the signed nonce and
+expiry) and acquires an upload lease. A replay that is pending or was ever
+accepted cannot be uploaded again by anyone; rejected and infrastructure-failed
+replays may be retried. An exact retry of the same signed upload is idempotent:
+it resumes the lease, reuses a durably stored replay, or returns the existing
+lifecycle. Concurrent exact retries get `upload_in_progress` with
+`Retry-After`. After the replay is stored, one transaction registers the
+object, queues exactly one job and commits the reservation.
+
+Replay downloads re-hash the stored object. Owner deletion tombstones
+immediately; physical deletion waits for retention and for the digest to have
+no live reference. Run detail, replays and history only show accepted runs of
+boards that are currently configured.
+
+nginx admits only Cloudflare, replaces `X-Forwarded-For` with
+`CF-Connecting-IP`, and the API trusts only its loopback peer; a trusted peer
+without exactly one canonical forwarded address fails closed.
+
+### Database and objects
+
+Migrations are explicit (`robin-highscores-admin migrate`, run by
+`ops/deploy.sh`); serving processes require the exact checksum-valid chain.
+Migration `0006` replaced all submission/run tables for protocol V2 and dropped
+competitions, campaign chains, full-campaign aggregates, session geneses,
+participant co-signing and campaign objects. Replays are SHA-256-addressed
+files outside SQLite; startup and hourly maintenance reconcile the tree and
+garbage-collect unreferenced objects after `orphan_replay_retention_hours`.
+Rejected and failed submissions are tombstoned after
+`rejected_replay_retention_hours`.
+
+## Sandboxed verification
+
+The worker leases one job, builds a `VerifierJobV2` from the board (edition,
+mission, simulation policy, `allow_state_load`), the submission's replay
+artifact, the edition's `resource_locale_root` and `[limits]`, writes the exact
+job bytes and the stored replay into a private `0700` staging directory, and
+runs:
 
 ```text
-config/{server.toml,worker.toml,api.env,worker.env}
-private/verifier/operator-config/<catalog-sha256>
-authoring/verifier-catalog-plan-v1.json
-authoring-evidence.json
+prlimit --core=0 --fsize=N --as=N --cpu=N --nofile=N --nproc=N -- \
+  bwrap --unshare-all --unshare-user --disable-userns --assert-userns-disabled \
+    --die-with-parent --new-session --cap-drop ALL --clearenv \
+    --setenv PATH /run --setenv HOME /home/verifier --setenv TMPDIR /tmp \
+    --setenv LANG C --setenv LC_ALL C --hostname robin-verifier \
+    --size 16777216 --tmpfs / --proc /proc --dev /dev \
+    --size 16777216 --tmpfs /run --size 16777216 --tmpfs /tmp --dir /var \
+    --size 16777216 --tmpfs /var/tmp --size 16777216 --tmpfs /home \
+    --dir /home/verifier --chmod 0700 /home/verifier --dir /run/robin-input \
+    --ro-bind <verifier_program> /run/robin-verifier \
+    --ro-bind <staging>/job.json /run/robin-input/job.json \
+    --ro-bind <staging>/replay.rhrec /run/robin-input/replay.rhrec \
+    --ro-bind <content.<edition>.root> /run/robin-content \
+    --bind <staging>/result.json /run/robin-result.json \
+    --remount-ro / --chdir /run -- \
+  /run/robin-verifier --job /run/robin-input/job.json \
+    --replay /run/robin-input/replay.rhrec --content-root /run/robin-content \
+    --result /run/robin-result.json
 ```
 
-The rendered configs use fixed production paths. The server reads
-`releases/<commit>/config/manifests` and
-`releases/<commit>/private/campaign-states/<sha256>`. The worker reads
-`~/.config/robin-highscores/server.toml`,
-`releases/<commit>/private/verifier/operator-config/<sha256>`,
-`releases/<commit>/private/source-tree-manifests-v2/<sha256>.json`, and
-`releases/<commit>/bin/robin-replay-verifier`. Catalog entries point at
-`releases/<commit>/private/verifier-bundles/...` and the fixed
-`~/.local/share/robin-highscores/raw-content/{demo,full}` roots.
+The sandbox has fresh namespaces, no network, an empty environment and root,
+the raw content tree read-only, and only the pre-created result file writable.
+The worker kills the whole process group after `wall_timeout_seconds`.
 
-### Install an authority release
+Exit status zero means the result must be a strictly decoded, valid
+`VerifierOutputV2` whose `job_sha256` equals the SHA-256 of the exact job
+bytes and whose `replay_sha256` equals the stored replay. `Verified` publishes
+the run (metrics, achievements, verifier-derived player counts, the uploader
+named or anonymous per the signed disclosure); `Rejected` records the code
+and detail; everything else — non-zero exit, timeout, missing or invalid
+result, `FailedInfrastructure` — is retried up to `max_verifier_attempts` and
+then marked `failed`, never as a rejection. A job queued under an older replay
+schema is rejected as `unsupported_schema`.
 
-Copy the authored trees into `~/.local/opt/robin-highscores/releases/<commit>/`
-at exactly those paths: `bin/robin-replay-verifier`, `config/manifests/`, and
-`private/{campaign-states,source-tree-manifests-v2,verifier-bundles,verifier/operator-config}/`.
-Copy the regular files (not symlinks) from `config/` to
-`~/.config/robin-highscores/`. Then point
-`ln -sfn releases/<commit> ~/.local/opt/robin-highscores/authority` and run
-`ops/deploy.sh` with a service tarball, which migrates and restarts the
-services. `deploy.sh` refuses a tarball whose commit directory is the authority
-release, so run the services from a tarball built at a different commit.
-Keep the previous authority directory until no rollback needs it.
+The verifier itself checks, in order:
+
+1. bounded compact decode with canonical re-encoding; Spellforge/archive
+   content is rejected;
+2. the replay schema and network protocol equal the verifier's compiled
+   versions;
+3. the board simulation policy admits the replay `SimConfig` (a fixed preset
+   exactly, or any validated configuration for `any_config` boards);
+4. the embedded starting campaign is an official fresh mission start built
+   from the raw content's profiles, plus structural campaign validation;
+5. command and input-provenance admission (automation, console, cheats and
+   disallowed state loads are ineligible);
+6. resimulation from raw content checking every recorded state hash, ending in
+   a terminal success;
+7. metrics and the compiled achievement catalog.
+
+## Verifier releases
+
+The `authority` symlink in `~/.local/opt/robin-highscores/` names the verifier
+release: a directory with `bin/robin-replay-verifier` and `SOURCE_COMMIT`.
+Recorded replays must resimulate identically, so build the verifier at the
+commit of the **live web runtime**:
+
+```sh
+git worktree add .worktrees/verifier-build <live-web-commit>
+.worktrees/verifier-build/crates/robin_highscores/ops/build-release.sh --with-verifier /absolute/out
+# -> /absolute/out/robin-replay-verifier-<commit>.tar.zst (static musl)
+```
+
+On the VPS:
+
+```sh
+cd ~/.local/opt/robin-highscores/releases
+tar -xf ~/releases-incoming/robin-replay-verifier-<commit>.tar.zst
+mv robin-replay-verifier-<commit> <commit>
+(cd <commit> && sha256sum -c SHA256SUMS)
+ln -sfn releases/<commit> ~/.local/opt/robin-highscores/authority.new
+mv -T ~/.local/opt/robin-highscores/authority.new ~/.local/opt/robin-highscores/authority
+systemctl --user restart robin-highscores-worker.service
+```
+
+`worker.toml` launches `~/.local/opt/robin-highscores/authority/bin/robin-replay-verifier`,
+so the symlink switch plus worker restart is the whole upgrade. Keep the
+previous verifier directory until nothing needs to roll back to it (switch the
+symlink back). `ops/deploy.sh` never prunes the authority target and refuses a
+service release built at the same commit (the directories would collide).
+
+## Boards
+
+Boards are `[[boards]]` entries in `server.toml`, shaped exactly like
+`BoardV2` and validated at startup (protocol validation, unique IDs, viewer
+requirement matching the edition, fixed-policy labels matching the preset):
+
+```toml
+[[boards]]
+board_id = "full-standard-normal"
+display_name = "Full / Standard / Normal"
+edition = "full"                       # demo | full
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "medium" } }
+# or: simulation_policy = { kind = "any_config" }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"   # bundled_demo for demo
+missions = [{ mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" }]
+```
+
+`crates/robin_highscores/ops/production/server.toml` is the complete
+production configuration: Standard and Original × Easy/Normal/Hard plus an
+`any_config` board for each edition; Full boards list the 38 field missions.
+`ops/production/worker.toml` is the matching worker configuration. Removing a
+board hides its runs; queued jobs for it fail after the retry policy.
+
+### Raw content
+
+The licensed Demo and Full trees are installed by hand, read-only, at
+`~/.local/share/robin-highscores/raw-content/{demo,full}` and configured in
+`worker.toml`:
+
+```toml
+[content.demo]
+root = "/home/robinhood/.local/share/robin-highscores/raw-content/demo"
+resource_locale_root = "1033"
+
+[content.full]
+root = "/home/robinhood/.local/share/robin-highscores/raw-content/full"
+resource_locale_root = "2047"
+```
+
+Keep the trees immutable while the worker runs; they are never copied into a
+release or the repository.
 
 ## Operations
 
@@ -621,81 +247,50 @@ Keep the previous authority directory until no rollback needs it.
 
 ```text
 ~/.local/opt/robin-highscores/
-  releases/<LIVE_COMMIT>/   authority release (verifier, ranked content); never pruned
+  releases/<web-commit>/    verifier release: bin/robin-replay-verifier, SOURCE_COMMIT
   releases/<commit>/        service releases: bin/, ops/, SOURCE_COMMIT, SHA256SUMS
-  current -> releases/<commit>
-  authority -> releases/<LIVE_COMMIT>
+  current   -> releases/<commit>
+  authority -> releases/<web-commit>
 ~/.config/robin-highscores/{server.toml,worker.toml,api.env,worker.env}
 ~/.config/systemd/user/     units copied from ops/systemd/
 ~/.local/share/robin-highscores/
-  database/ replays/ campaign-states/ api-secrets/ raw-content/{demo,full}/ backups/
+  database/ replays/ api-secrets/ raw-content/{demo,full}/ backups/
 ```
 
-Everything runs as the unprivileged `robinhood` user in its lingering user
-manager (`loginctl enable-linger robinhood`). `ops/systemd/` has
-`robin-highscores-api.service`, `robin-highscores-worker.service`,
-`robin-highscores.target`, `robin-highscores-backup.service` and
-`robin-highscores-backup.timer`. The nginx origin in
-`crates/robin_highscores/deploy/` is a one-time root install:
-`nginx-robinhood-api.locations.conf` and `nginx-robinhood-cloudflare-only.conf`
-go in `/etc/nginx/snippets/` as `robinhood-api.locations.conf` and
-`robinhood-cloudflare-only.conf`, and `nginx-robinhood-api.vhost.conf` becomes
-`/etc/nginx/sites-available/robinhood.phiresky.xyz`. Before the first
-certificate exists, use the HTTP-only `nginx-robinhood-api.challenge.conf`
-vhost, then run `certbot certonly --webroot --webroot-path /var/lib/letsencrypt`.
-Keep the Cloudflare ranges and the firewall allowlist in sync. Licensed Demo
-and Full trees are installed by hand, read-only, under `raw-content/`.
+`ops/systemd/` has `robin-highscores-api.service`,
+`robin-highscores-worker.service`, `robin-highscores.target`,
+`robin-highscores-backup.service` and `robin-highscores-backup.timer`
+(lingering user manager: `loginctl enable-linger robinhood`). The nginx origin
+in `crates/robin_highscores/deploy/` is a one-time root install.
+
+Secrets in `api-secrets/`: create the cursor key with
+`robin-highscores-admin --config server.toml initialize-cursor-key`; the
+printable 32..128-byte `moderation-bearer.token` (mode `0400`) is created by
+hand.
 
 ### Routine release
 
-`scripts/release.sh` (root `README.md`, "Releasing") runs the steps below and
-the Cloudflare frontend release as one command. Use `--server-only` for just
-the service. It builds `ops/build-release.sh` inside the Debian 12 image from
-`ops/release-image/Dockerfile`, in the detached worktree
-`.worktrees/release-build` at `HEAD`, because the host's glibc 2.36 is older
-than the development machine's. It copies the tarball to
-`~/releases-incoming/`, checks its sha256, runs the tarball's own
-`ops/deploy.sh`, and verifies `readyz` on the host and
-`/api/v1/leaderboard-metadata` publicly. If a check fails it prints the
-`rollback.sh` command for the previously live release. The sections below
-document the individual steps.
-
-### Build and deploy a service release
+`scripts/release.sh` (root `README.md`, "Releasing") builds a service tarball
+inside the Debian 12 image from `ops/release-image/Dockerfile`, copies it to
+`~/releases-incoming/`, runs the tarball's own `ops/deploy.sh`, and checks
+`readyz` and `/api/v1/leaderboard-metadata`. The steps:
 
 ```sh
-crates/robin_highscores/ops/build-release.sh [--with-verifier] [OUTPUT_DIR]
-```
-
-This runs `cargo build --locked --release -p robin_highscores --bins`, warns if
-the tree has uncommitted changes, and writes
-`robin-highscores-<commit>.tar.zst`. The tarball holds
-`robin-highscores-<commit>/{bin/,ops/,SOURCE_COMMIT,SHA256SUMS}`.
-Copy it to the VPS and run:
-
-```sh
+crates/robin_highscores/ops/build-release.sh [OUTPUT_DIR]
 ~/.local/opt/robin-highscores/current/ops/deploy.sh robin-highscores-<commit>.tar.zst
 ```
 
-`deploy.sh` requires the `authority` symlink. It unpacks into
-`releases/<commit>`, checks `sha256sum -c SHA256SUMS`, and stops the worker and
-API. It then writes `admin snapshot-db` to
-`backups/pre-deploy-<commit>-<time>/highscores.sqlite3`, runs `admin migrate`
-and compares `database-schema-version` before and after. It swaps `current`
-atomically, runs `daemon-reload`, starts `robin-highscores.target`, and waits
-for `curl --retry 10` on `http://127.0.0.1:8787/readyz`. It then keeps 3
-service releases (never the authority or current target) and the newest 5
-pre-deploy snapshots. If a step fails after the stop, it acts as follows:
-
-- **No migration ran:** it restores `current` and restarts the previous release.
-- **A migration ran:** it restores `current` but leaves services **stopped**,
-  because old binaries reject the newer schema. It prints the snapshot to
-  restore: copy it over `database_path`, delete the `-wal`/`-shm` files, then
-  `systemctl --user start robin-highscores.target`.
-
-`deploy.sh` does not install unit files. If `ops/systemd/` changed, copy the
-units into `~/.config/systemd/user/` first. Overrides:
-`ROBIN_HIGHSCORES_ROOT`, `ROBIN_HIGHSCORES_SERVER_CONFIG`,
-`ROBIN_HIGHSCORES_STATE`, `ROBIN_HIGHSCORES_HEALTH_URL`.
+`deploy.sh` requires the `authority` symlink with an executable verifier,
+verifies `SHA256SUMS`, stops the worker and API, snapshots the database to
+`backups/pre-deploy-<commit>-<time>/`, migrates, swaps `current`, starts
+`robin-highscores.target` and waits for `readyz`. It keeps 3 service releases
+(never `current` or the verifier release) and 5 pre-deploy snapshots. On
+failure without a migration it restores and restarts the previous release;
+after a migration it leaves services stopped and prints the snapshot to
+restore. It does not install unit files: copy changed units from
+`ops/systemd/` first. Overrides: `ROBIN_HIGHSCORES_ROOT`,
+`ROBIN_HIGHSCORES_SERVER_CONFIG`, `ROBIN_HIGHSCORES_STATE`,
+`ROBIN_HIGHSCORES_HEALTH_URL`.
 
 ### Rollback
 
@@ -704,10 +299,8 @@ units into `~/.config/systemd/user/` first. Overrides:
 ```
 
 The default target is the newest release that is neither current nor the
-authority. Rollback refuses when the live `database-schema-version` differs
-from the target's `supported-schema-version`. It also refuses releases that
-predate that command, and the authority release. After a migration, restore
-the schema first:
+verifier release. It refuses when the live schema differs from the target's
+`supported-schema-version`; restore the matching snapshot first:
 
 ```sh
 systemctl --user stop robin-highscores.target
@@ -717,154 +310,52 @@ rm -f ~/.local/share/robin-highscores/database/highscores.sqlite3-{wal,shm}
 ~/.local/opt/robin-highscores/current/ops/rollback.sh <previous-commit>
 ```
 
-Writes after the snapshot are lost. Replay/campaign objects written later are
-orphans that startup reconciliation and GC remove.
-
 ### Backups
 
-`robin-highscores-backup.timer` runs daily at 02:15, with up to 45 minutes of
-random delay and `Persistent=true`. It starts `current/ops/backup.sh`, which:
-
-1. writes `admin snapshot-db` (`VACUUM INTO`, while services keep running);
-2. hard-links `replays/` and `campaign-states/` (`cp -al`);
-3. copies `api-secrets/` and `~/.config/robin-highscores` into
-   `backups/<UTC stamp>/`;
-4. keeps the newest 7.
-
-The object trees may be slightly ahead of or behind the DB snapshot; startup
-reconciliation tolerates both. Run it on demand with
-`systemctl --user start robin-highscores-backup.service`. Off-host copy, run
-from the other machine:
+`robin-highscores-backup.timer` runs `current/ops/backup.sh` daily: a
+`snapshot-db` (`VACUUM INTO`) while services run, a hard-linked copy of
+`replays/`, and copies of `api-secrets/` and the config directory into
+`backups/<UTC stamp>/`, keeping the newest 7. Startup reconciliation tolerates
+the object tree being slightly ahead of or behind the snapshot. Off-host:
 
 ```sh
 rsync -aH --delete robinhood@vps:.local/share/robin-highscores/backups/ ./robin-highscores-backups/
 ```
 
-To restore:
-1. Stop the target.
-2. Copy `highscores.sqlite3` over the database (remove `-wal`/`-shm`).
-3. Copy `replays/`, `campaign-states/` and `api-secrets/` back with `cp -a`.
-4. Start the target.
-
-### Frontend (Cloudflare)
-
-```sh
-CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_ZONE_ID=... CLOUDFLARE_API_TOKEN=... \
-ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.128 \
-  wasm-www/scripts/deploy-cloudflare.sh [--datadir] [--runtime]
-```
-
-The script needs Wrangler 4.131.1. It runs `verify:deployment-config`, builds
-and verifies the public site and signer, and runs `verify:wrangler`. It deploys
-`robinhood-identity-signer` then `robinhood-public-site`, reconciles routes with
-`scripts/sync-cloudflare-routes.mjs --apply` and `--check`, and runs
-`pnpm smoke:cloudflare`.
-`--datadir` and `--runtime` also deploy the pre-assembled `datadir-dist`
-(`assemble-datadir-corpus.mjs`) and `runtime-dist`
-(`assemble-runtime-corpus.mjs`). Without them,
-`ROBINHOOD_DATADIR_VERSION_ID` and `ROBINHOOD_RUNTIME_VERSION_ID` must name the
-live Worker versions (`pnpm exec wrangler deployments list --config
-deploy/wrangler-runtime.json`). The manual `deploy` job of
-`.github/workflows/deploy-static-workers.yml` calls the same script. Rollback
-per Worker:
-
-```sh
-pnpm --dir wasm-www exec wrangler rollback --config deploy/wrangler-<public|signer|runtime|datadir>.json [VERSION_ID]
-```
-
-### One-time host migration
-
-This moves a host from the old sealed-release deploy to this layout. `ServerConfig`
-is `deny_unknown_fields`, so configs, units and binaries change together.
-
-1. Build the first simplified service tarball with `ops/build-release.sh` and
-   copy it to the VPS.
-2. `LIVE=$(readlink -f ~/.local/opt/robin-highscores/current)`.
-3. Stop the old services:
-   `systemctl --user disable --now robin-highscores.target robin-highscores-backup.timer`.
-4. Take a cold copy of `database/`, `api-secrets/` and `$LIVE/config/`
-   somewhere outside `~/.local/share/robin-highscores/backups/`.
-5. Create the new config directory:
-   ```sh
-   mkdir -p ~/.config/robin-highscores
-   grep -Ev '^(runtime_fence_directory|backup_authority_hmac_secret_path|backup_manifest_path|release_manifest_path|maximum_backup_age_hours) *=' \
-     "$LIVE/config/highscores-server.toml" > ~/.config/robin-highscores/server.toml
-   cp "$LIVE/config/highscores-worker.toml" ~/.config/robin-highscores/worker.toml
-   cp "$LIVE/config/api.env" "$LIVE/config/worker.env" ~/.config/robin-highscores/
-   ```
-   The server now rejects those five keys. Worker fields are unchanged, but set
-   its `server_config` to
-   `"/home/robinhood/.config/robin-highscores/server.toml"`, since the old path
-   still has the removed keys.
-6. Remove the old units from `~/.config/systemd/user/`
-   (`robin-highscores*.service`, `.target`, `.timer`). Also remove the
-   `robin-highscores-*.service.d/50-robin-highscores-openat2-compat.conf`
-   drop-ins; `RestrictSUIDSGID=no` is now in the base units. Install the new
-   units from the tarball's `ops/systemd/`, then run
-   `ln -sfn "$LIVE" ~/.local/opt/robin-highscores/authority`.
-7. `chmod u+w ~/.local/opt/robin-highscores/releases` (old releases were
-   mode `0550`).
-8. Unpack the tarball somewhere temporary and run its `ops/deploy.sh` on the
-   tarball.
-9. `systemctl --user enable robin-highscores.target robin-highscores-backup.timer`,
-   then `systemctl --user start robin-highscores-backup.service` once.
-10. After a week without problems, remove the unused old state:
-    `~/.local/share/robin-highscores/{runtime-fence,status}`,
-    `~/.local/opt/robin-highscores/{activation.lock,incoming}`,
-    `api-secrets/backup-authority-hmac.key`, and old `backups/backup-v4-*`
-    generations plus `backups/.release-authorities-v2/`. Run
-    `chmod -R u+w` first where directories are read-only.
+To restore: stop the target, copy `highscores.sqlite3` over the database
+(remove `-wal`/`-shm`), copy `replays/` and `api-secrets/` back with `cp -a`,
+start the target.
 
 ## Development and validation
 
-### Local development
-
-Copy `crates/robin_highscores/highscores-server.example.toml` and
-`highscores-worker.example.toml` to private absolute paths and configure the
-exact authorities. Empty `admission_profiles` permits health/read access but
-cannot issue offers. Build before starting a long-running process:
+Copy `highscores-server.example.toml` and `highscores-worker.example.toml` to
+private absolute paths, point `content.*.root` at local raw trees, and build
+before starting long-running processes:
 
 ```sh
 cargo build -p robin_highscores --bins
-cargo build -p robin_replay_verifier --bin robin-replay-verifier
-target/debug/robin-highscores-admin --config /absolute/highscores-server.toml migrate
-# Run the following separately; each process remains running.
-target/debug/robin-highscores-server --config /absolute/highscores-server.toml
-target/debug/robin-highscores-worker --config /absolute/highscores-worker.toml
+target/debug/robin-highscores-admin --config /abs/server.toml initialize-cursor-key
+target/debug/robin-highscores-admin --config /abs/server.toml migrate
+target/debug/robin-highscores-server --config /abs/server.toml
+target/debug/robin-highscores-worker --config /abs/worker.toml
 ```
 
-### Automated checks
+Checks:
 
 ```sh
-cargo test -p robin_replay_format
-cargo test -p robin_run_protocol
-cargo test -p robin_highscores --features test-support
-cargo test -p robin_highscores --features test-support --test router_e2e
-cargo test -p robin_manifest_tool
+cargo check -p robin_highscores --lib --bins --no-default-features
+cargo test -p robin_highscores --features test-support     # unit, router_e2e, ops_scripts
 bash crates/robin_highscores/ops/tests/deploy-rollback.sh
-python3 -m unittest discover -s scripts/release -p 'test_author_leaderboard_release.py'
 ```
 
-`ops/tests/deploy-rollback.sh` runs `deploy.sh` and `rollback.sh` against a
-temporary HOME with stub `systemctl`, `curl` and binaries. It also runs as the
-`ops_scripts` integration test.
-
-From `wasm-www/`, use lockfile-exact dependencies and the checked-in scripts:
-
-```sh
-pnpm install --frozen-lockfile
-pnpm test
-pnpm test:leaderboards
-pnpm test:deployment
-pnpm verify:public
-pnpm verify:runtime-source
-pnpm verify:runtime
-pnpm verify:deployment-config
-```
+`router_e2e` drives the real router (challenge → signed upload → queue →
+worker acceptance through the database → boards, history, deletion, reports).
+`ops/tests/deploy-rollback.sh` exercises `deploy.sh` and `rollback.sh` against
+a temporary HOME with stub `systemctl`, `curl` and binaries.
 
 ## Diagnostic reports
 
-Crash and bug reports use `/api/v1/diagnostics` and the private operator endpoints.
-See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
-for payload limits, retention, client behavior and migration requirements.
-Diagnostics are included in the normal SQLite backup and maintenance fencing.
+Crash and bug reports use `/api/v1/diagnostics` and the private operator
+endpoints. See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
+for payload limits, retention and client behavior. Diagnostics are included in
+the normal SQLite backup and maintenance fencing.

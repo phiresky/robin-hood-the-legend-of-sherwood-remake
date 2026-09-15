@@ -1,33 +1,33 @@
-//! Non-blocking mission-end leaderboard and ranked-submission coordination.
+//! Non-blocking mission-end leaderboard browsing and recorded-replay upload.
 //!
 //! The game-loop owner calls [`MissionEndLeaderboardController::poll`] once
 //! per rendered frame and feeds it explicit [`MissionEndLeaderboardAction`]s.
 //! No method in this module awaits a network request or performs a synchronous
 //! HTTP operation. Boards are available after wins, losses, and interrupted
-//! attempts; upload consent is accepted only for eligible won missions.
+//! attempts; a submission is offered only for a prepared eligible recording.
 //!
-//! Multiplayer final co-signing is deliberately an injected, typed task. The
-//! transport implementation must authenticate every response to its occupied
-//! seat. This module independently checks that the returned envelope is exact,
-//! that the signer set equals the offer's participant set, and that every
-//! Ed25519 signature covers the canonical final submission bytes.
+//! One upload is one replay signed by the uploader's durable identity: the
+//! backend requests a one-use upload challenge, signs the exact
+//! [`SubmissionV2`] and posts it together with the canonical compact replay.
+//! The server re-simulates the replay; nothing here is trusted as a result.
 
+use crate::leaderboard::task::PollTask;
 use crate::leaderboard_preferences::{LeaderboardPreferences, LeaderboardTab};
 use crate::leaderboard_service::{
-    LeaderboardApi, decode_board, decode_offer, decode_submission_accepted,
+    LeaderboardApi, decode_board, decode_submission_accepted, decode_upload_challenge,
 };
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 use robin_run_protocol::{
-    ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1,
-    CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
-    CanonicalDocument as _, Digest32, InitialStateExpectationV1, LeaderboardPageV1,
-    LeaderboardQueryV1, PublicKey32, RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1,
-    ReplayArtifactV1, ReplaySessionTranscriptV1, SCHEMA_VERSION_V1, SignatureAlgorithmV1,
-    SignedSubmissionV1, SubmissionAcceptedV1, SubmissionArtifactsV1, SubmissionEnvelopeV1,
-    SubmissionOfferRequestV1, SubmissionOfferV1, Validate as _,
+    ArtifactRefV1, BoardMetricV1, Digest32, LeaderboardPageV2, LeaderboardQueryV2, OpaqueId,
+    ParticipantPublicDisclosureV1, PublicKey32, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
+    SCHEMA_VERSION_V2, SubmissionAcceptedV1, SubmissionV2, TickDurationV1,
+    UploadChallengeRequestV2, UploadChallengeV1, Validate as _,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 use std::sync::Arc;
+
+/// Mission-end work reports failures as display strings.
+pub use crate::leaderboard::task::TryTake as MissionEndTask;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +62,7 @@ impl MissionEndOutcome {
         }
         Self::Interrupted
     }
+
     pub const fn can_submit(self) -> bool {
         matches!(self, Self::Won)
     }
@@ -72,7 +73,7 @@ impl MissionEndOutcome {
 pub struct MissionEndBoard {
     pub tab: LeaderboardTab,
     pub label: String,
-    pub query: LeaderboardQueryV1,
+    pub query: LeaderboardQueryV2,
 }
 
 impl MissionEndBoard {
@@ -91,36 +92,27 @@ impl MissionEndBoard {
     }
 }
 
-/// Lossless runtime evidence required after the server authors an offer.
-///
-/// `starting_campaign_bytes` is the exact bitcode campaign captured before
-/// mission construction. `replay_session_transcript` is identity-bearing
-/// co-sign evidence and remains separate from the canonical gameplay replay.
+/// Everything locally selected for one upload except the server challenge
+/// and the signature: the board chosen from published metadata and the
+/// exact identity of the canonical compact replay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MissionEndSubmissionInput {
-    pub offer_request: SubmissionOfferRequestV1,
-    pub replay_session_transcript: ReplaySessionTranscriptV1,
+    pub board_id: OpaqueId,
+    pub mission_id: String,
     pub requested_metrics: Vec<BoardMetricV1>,
-    /// Immutable controller established by campaign genesis. Required only
-    /// for a server-recognized continuation and not assumed to be this
-    /// session's host.
-    pub campaign_controller_public_key: Option<PublicKey32>,
-    #[serde(with = "arc_bytes")]
-    pub starting_campaign_bytes: Arc<[u8]>,
+    pub public_disclosure: ParticipantPublicDisclosureV1,
+    pub replay: ReplayArtifactV1,
+    /// Content identity of the recording, used for local submission links.
+    pub replay_session_id: Digest32,
 }
 
 impl MissionEndSubmissionInput {
     pub(crate) fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
-        self.offer_request
-            .validate()
-            .map_err(invalid_bundle_protocol)?;
-        self.replay_session_transcript
-            .validate()
-            .map_err(invalid_bundle_protocol)?;
-        if self.starting_campaign_bytes.is_empty() {
+        self.replay.validate().map_err(invalid_bundle)?;
+        if self.mission_id.is_empty() || self.replay_session_id.is_zero() {
             return Err(MissionEndLeaderboardError::InvalidRunBundle(
-                "ranked starting campaign is empty".to_owned(),
+                "submission needs a mission and a recording identity".to_owned(),
             ));
         }
         if self.requested_metrics.is_empty()
@@ -133,42 +125,25 @@ impl MissionEndSubmissionInput {
                 "requested metrics must be non-empty and strictly sorted".to_owned(),
             ));
         }
-        let ranked = &self.offer_request.session_genesis.claim.ranked_session;
-        let is_continuation = matches!(
-            &self.offer_request.scope_request,
-            robin_run_protocol::ScopeRequestV1::CampaignContinuation { .. }
-        );
-        if self.campaign_controller_public_key.is_some() != is_continuation
-            || self
-                .campaign_controller_public_key
-                .is_some_and(|controller| {
-                    !self
-                        .offer_request
-                        .participant_claims
-                        .iter()
-                        .any(|participant| participant.public_key == controller)
-                })
-        {
-            return Err(MissionEndLeaderboardError::InvalidRunBundle(
-                "campaign continuation controller is missing or is not an authenticated participant"
-                    .to_owned(),
-            ));
-        }
-        let campaign_length = u64::try_from(self.starting_campaign_bytes.len()).map_err(|_| {
-            MissionEndLeaderboardError::InvalidRunBundle(
-                "starting campaign length does not fit the protocol".to_owned(),
-            )
-        })?;
-        if Digest32::digest_bytes(&self.starting_campaign_bytes) != ranked.starting_campaign_sha256
-            || campaign_length != ranked.starting_campaign_byte_length
-            || self.replay_session_transcript.replay_session_id
-                != self.offer_request.session_genesis.claim.replay_session_id
-        {
-            return Err(MissionEndLeaderboardError::InvalidRunBundle(
-                "submission evidence does not match the signed ranked genesis".to_owned(),
-            ));
-        }
         Ok(())
+    }
+
+    /// The exact document the uploader signs for one issued challenge.
+    pub fn submission(
+        &self,
+        upload_challenge: UploadChallengeV1,
+        uploader_public_key: PublicKey32,
+    ) -> SubmissionV2 {
+        SubmissionV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            upload_challenge,
+            uploader_public_key,
+            public_disclosure: self.public_disclosure,
+            board_id: self.board_id.clone(),
+            mission_id: self.mission_id.clone(),
+            replay: self.replay.clone(),
+            requested_metrics: self.requested_metrics.clone(),
+        }
     }
 }
 
@@ -177,30 +152,17 @@ impl MissionEndSubmissionInput {
 pub struct MissionEndRunBundle {
     pub outcome: MissionEndOutcome,
     pub multiplayer: bool,
+    /// Duration of one simulation tick published with the board metadata.
+    pub tick_duration: TickDurationV1,
     pub boards: Vec<MissionEndBoard>,
-    /// Present only when the recorder and ranked genesis passed their local
-    /// eligibility checks. A tainted/missing capture remains browse-only.
-    /// The compact replay is checked again immediately before authorization;
-    /// this early flag is presentation state, not the trust boundary.
+    /// Present only when this recording may be offered for upload.
     pub eligible_submission: Option<MissionEndSubmissionInput>,
     pub submission_unavailable_reason: Option<String>,
 }
 
 impl MissionEndRunBundle {
-    fn can_submit(&self) -> bool {
-        self.outcome.can_submit()
-            || self.eligible_submission.as_ref().is_some_and(|input| {
-                input
-                    .offer_request
-                    .session_genesis
-                    .claim
-                    .ranked_session
-                    .recorded_replay
-                    .is_some()
-            })
-    }
-
     pub fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
+        self.tick_duration.validate().map_err(invalid_bundle)?;
         if self.boards.is_empty() {
             return Err(MissionEndLeaderboardError::InvalidRunBundle(
                 "mission-end view requires at least one board".to_owned(),
@@ -217,11 +179,6 @@ impl MissionEndRunBundle {
             tabs.push(board.tab);
         }
         if let Some(input) = &self.eligible_submission {
-            if !self.can_submit() {
-                return Err(MissionEndLeaderboardError::InvalidRunBundle(
-                    "only won missions may expose a submission".to_owned(),
-                ));
-            }
             input.validate()?;
         }
         if self.eligible_submission.is_some() && self.submission_unavailable_reason.is_some() {
@@ -244,270 +201,33 @@ impl MissionEndRunBundle {
     }
 }
 
+/// A replay upload admitted into the server's verification queue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ParticipantSigningProgress {
-    pub expected: Vec<PublicKey32>,
-    pub signed: Vec<PublicKey32>,
-}
-
-impl ParticipantSigningProgress {
-    pub fn validate(&self) -> Result<(), MissionEndLeaderboardError> {
-        if self.expected.is_empty()
-            || !strictly_sorted(&self.expected)
-            || !strictly_sorted(&self.signed)
-            || self
-                .signed
-                .iter()
-                .any(|key| self.expected.binary_search(key).is_err())
-        {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "co-sign progress is not a canonical subset of expected participants".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
-    values.windows(2).all(|pair| pair[0] < pair[1])
-}
-
-use crate::leaderboard::task::PollTask;
-/// Mission-end work reports failures as display strings.
-pub use crate::leaderboard::task::TryTake as MissionEndTask;
-use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
-
-pub trait SubmissionAuthorizationTask: MissionEndTask<SignedSubmissionV1> {
-    fn progress(&self) -> ParticipantSigningProgress;
-}
-
-pub trait MissionEndSubmissionAuthorizer {
-    /// Start exact participant/controller authorization. Multiplayer
-    /// implementations must keep every message typed and session-bound and
-    /// must not expose generic signing. A transport signature over a run
-    /// digest is correlation/consent evidence only: it cannot be inserted as
-    /// a [`ParticipantSignatureV1`](robin_run_protocol::ParticipantSignatureV1).
-    /// The returned protocol signatures must cover the exact finalized
-    /// [`SubmissionEnvelopeV1::signing_bytes`] contract.
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String>;
-
-    /// Notify an authenticated remote campaign controller after the server has
-    /// durably queued the exact signed submission. Local/single-player
-    /// authorizers need no transport acknowledgement.
-    fn submission_accepted(&mut self, _accepted: &SubmissionAcceptedV1) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Whether this process owns durable verification polling for an accepted
-    /// upload. A multiplayer host can upload for a remote campaign controller;
-    /// in that case only the authenticated controller persists the watcher.
-    fn owns_receipt_watch(&self) -> Result<bool, String> {
-        Ok(true)
-    }
-}
-
-/// Non-host participant state for a host-authored ranked submission. Consent
-/// is local and explicit; the responder validates the typed host context
-/// against this process's one canonical replay before exposing the fixed
-/// co-sign operation to the durable identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PeerCoSignPoll {
-    AwaitingConsent,
-    AwaitingHost,
-    Signing(ParticipantSigningProgress),
-    ResponseSent(ParticipantSigningProgress),
-    Accepted(SubmissionAcceptedV1),
-    Failed(String),
-}
-
-pub trait MissionEndPeerCoSigner {
-    fn consent(&mut self) -> Result<(), String>;
-    fn poll(&mut self) -> PeerCoSignPoll;
-    fn has_pending_work(&self) -> bool;
-}
-
-pub trait MissionEndReplayExporter {
-    fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String>;
-}
-
-#[derive(Serialize)]
-pub(crate) struct RecordedReplayExporter(#[serde(skip)] pub(crate) Arc<[u8]>);
-robin_util::deny_deserialize!(
-    RecordedReplayExporter,
-    "archive exporters require validated recording bytes"
-);
-impl MissionEndReplayExporter for RecordedReplayExporter {
-    fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
-        let mut bytes = Some(self.0.clone());
-        Ok(Box::new(move || bytes.take().map(Ok)))
-    }
+pub struct QueuedSubmission {
+    pub accepted: SubmissionAcceptedV1,
+    /// Identity that signed the upload and owns its private status.
+    pub uploader_public_key: PublicKey32,
 }
 
 pub trait MissionEndLeaderboardBackend {
     fn board(
         &mut self,
-        query: LeaderboardQueryV1,
-    ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV1>>, String>;
+        query: LeaderboardQueryV2,
+    ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV2>>, String>;
 
-    fn offer(
-        &mut self,
-        request: SubmissionOfferRequestV1,
-    ) -> Result<Box<dyn MissionEndTask<SubmissionOfferV1>>, String>;
-
+    /// Obtain a challenge, sign and upload `replay` for `input`.
     fn submit(
         &mut self,
-        submission: SignedSubmissionV1,
-        replay_bytes: Arc<[u8]>,
-        starting_campaign_bytes: Arc<[u8]>,
-    ) -> Result<Box<dyn MissionEndTask<SubmissionAcceptedV1>>, String>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubmissionAuthorizationRequest {
-    /// Exact locally-authored request that preceded the server offer. Remote
-    /// participants retain and compare this independently before arming any
-    /// co-sign request; the server-authored offer is not authority to replace
-    /// the requested mission, roster, rules, or campaign predecessor.
-    pub offer_request: SubmissionOfferRequestV1,
-    pub offer: SubmissionOfferV1,
-    pub replay_session_transcript: ReplaySessionTranscriptV1,
-    pub artifacts: SubmissionArtifactsV1,
-    pub requested_metrics: Vec<BoardMetricV1>,
-    pub campaign_controller_public_key: Option<PublicKey32>,
-}
-
-impl SubmissionAuthorizationRequest {
-    pub fn validate_exact_context(&self) -> Result<(), MissionEndLeaderboardError> {
-        self.offer_request
-            .validate()
-            .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-        validate_offer_matches_request(&self.offer, &self.offer_request).map_err(|error| {
-            MissionEndLeaderboardError::Authorization(format!(
-                "submission offer/request context mismatch: {error}"
-            ))
-        })?;
-        self.replay_session_transcript
-            .validate()
-            .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-        self.artifacts
-            .validate()
-            .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-        if self.replay_session_transcript.replay_session_id
-            != self.offer_request.session_genesis.claim.replay_session_id
-            || self.replay_session_transcript.replay_session_id
-                != self.offer.session_genesis.claim.replay_session_id
-        {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "submission transcript belongs to a different ranked session".to_owned(),
-            ));
-        }
-        if self.requested_metrics.is_empty()
-            || !self
-                .requested_metrics
-                .windows(2)
-                .all(|pair| pair[0] < pair[1])
-        {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "submission metrics must be non-empty and strictly sorted".to_owned(),
-            ));
-        }
-        let is_continuation = matches!(
-            &self.offer_request.scope_request,
-            robin_run_protocol::ScopeRequestV1::CampaignContinuation { .. }
-        );
-        if self.campaign_controller_public_key.is_some() != is_continuation
-            || self
-                .campaign_controller_public_key
-                .is_some_and(|controller| {
-                    !self
-                        .offer_request
-                        .participant_claims
-                        .iter()
-                        .any(|participant| participant.public_key == controller)
-                })
-        {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "campaign continuation controller is missing or outside the authenticated roster"
-                    .to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn expected_participants(&self) -> Vec<PublicKey32> {
-        self.offer
-            .participant_claims
-            .iter()
-            .map(|claim| claim.public_key)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    }
-
-    pub fn continuation_claim(
-        &self,
-    ) -> Result<Option<CampaignContinuationAuthorizationClaimV1>, MissionEndLeaderboardError> {
-        let InitialStateExpectationV1::CampaignContinuation {
-            chain_id,
-            predecessor_run_id,
-            predecessor_verification_sha256,
-            ..
-        } = &self.offer.starting_state
-        else {
-            return Ok(None);
-        };
-        let controller = self.campaign_controller_public_key.ok_or_else(|| {
-            MissionEndLeaderboardError::Authorization(
-                "campaign continuation controller is unavailable".to_owned(),
-            )
-        })?;
-        Ok(Some(CampaignContinuationAuthorizationClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            campaign_controller_public_key: controller,
-            chain_id: chain_id.clone(),
-            predecessor_run_id: predecessor_run_id.clone(),
-            predecessor_verification_sha256: *predecessor_verification_sha256,
-            next_session_genesis_sha256: self
-                .offer
-                .session_genesis
-                .canonical_digest()
-                .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
-            next_artifacts: self.artifacts.clone(),
-        }))
-    }
-
-    pub fn envelope(
-        &self,
-        continuation: Option<CampaignContinuationAuthorizationV1>,
-    ) -> SubmissionEnvelopeV1 {
-        SubmissionEnvelopeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            offer: self.offer.clone(),
-            replay_session_transcript: self.replay_session_transcript.clone(),
-            artifacts: self.artifacts.clone(),
-            campaign_aggregation_consent: match &self.offer.starting_state {
-                InitialStateExpectationV1::IndividualLevel { .. } => {
-                    CampaignAggregationConsentV1::NotAuthorized
-                }
-                InitialStateExpectationV1::CampaignGenesis { .. }
-                | InitialStateExpectationV1::CampaignContinuation { .. } => {
-                    CampaignAggregationConsentV1::AuthorizeSignedSessionInServerRecognizedChainV1
-                }
-            },
-            campaign_continuation_authorization: continuation,
-            requested_metrics: self.requested_metrics.clone(),
-        }
-    }
+        input: MissionEndSubmissionInput,
+        replay: Arc<[u8]>,
+    ) -> Result<Box<dyn MissionEndTask<QueuedSubmission>>, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BoardLoadState {
     Loading,
-    Ready(LeaderboardPageV1),
+    Ready(LeaderboardPageV2),
     Failed(String),
 }
 
@@ -516,19 +236,14 @@ pub enum MissionSubmissionState {
     WonMissionRequired,
     Unavailable(String),
     AwaitingConsent,
-    PreparingArtifacts,
-    AwaitingParticipantSignatures(ParticipantSigningProgress),
-    Uploading,
+    Submitting,
     Queued(SubmissionAcceptedV1),
     Failed(String),
 }
 
 impl MissionSubmissionState {
     pub const fn is_busy(&self) -> bool {
-        matches!(
-            self,
-            Self::PreparingArtifacts | Self::AwaitingParticipantSignatures(_) | Self::Uploading
-        )
+        matches!(self, Self::Submitting)
     }
 }
 
@@ -554,85 +269,38 @@ pub enum MissionEndLeaderboardEvent {
 pub enum MissionEndLeaderboardError {
     #[error("invalid mission-end leaderboard bundle: {0}")]
     InvalidRunBundle(String),
-    #[error("leaderboard backend rejected the operation: {0}")]
-    Backend(String),
-    #[error("ranked submission authorization failed: {0}")]
-    Authorization(String),
+    #[error("ranked submission failed: {0}")]
+    Submission(String),
     #[error("ranked replay export failed: {0}")]
     ReplayExport(String),
     #[error("leaderboard preference update failed: {0}")]
     Preferences(String),
 }
 
-struct PreparingSubmission {
-    offer_task: Box<dyn MissionEndTask<SubmissionOfferV1>>,
-    replay_task: Box<dyn MissionEndTask<Arc<[u8]>>>,
-    offer: Option<SubmissionOfferV1>,
-    replay: Option<Arc<[u8]>>,
-}
-
-struct AuthorizingSubmission {
-    task: Box<dyn SubmissionAuthorizationTask>,
-    request: SubmissionAuthorizationRequest,
-    replay: Arc<[u8]>,
-    presentation: MissionSubmissionState,
-}
-
 enum SubmissionTask {
-    /// No host task; peer work remains owned by the peer co-signer.
     Dormant(MissionSubmissionState),
+    Submitting(Box<dyn MissionEndTask<QueuedSubmission>>),
     /// Upload succeeded; this owner survives until durable receipt handoff.
     Queued {
+        queued: QueuedSubmission,
         presentation: MissionSubmissionState,
         persisted: bool,
     },
-    Preparing(PreparingSubmission),
-    Authorizing(AuthorizingSubmission),
-    Uploading(Box<dyn MissionEndTask<SubmissionAcceptedV1>>),
 }
 
 impl SubmissionTask {
     fn presentation(&self) -> &MissionSubmissionState {
         match self {
             Self::Dormant(state) => state,
+            Self::Submitting(_) => &MissionSubmissionState::Submitting,
             Self::Queued { presentation, .. } => presentation,
-            Self::Preparing(_) => &MissionSubmissionState::PreparingArtifacts,
-            Self::Authorizing(task) => &task.presentation,
-            Self::Uploading(_) => &MissionSubmissionState::Uploading,
         }
-    }
-
-    fn is_pending(&self) -> bool {
-        matches!(
-            self,
-            Self::Preparing(_) | Self::Authorizing(_) | Self::Uploading(_)
-        )
-    }
-
-    fn set_idle(&mut self, state: MissionSubmissionState) {
-        // A peer may report the same acceptance on successive polls.
-        let persisted = matches!(self, Self::Queued { presentation, persisted: true } if *presentation == state);
-        *self = if matches!(state, MissionSubmissionState::Queued(_)) {
-            Self::Queued {
-                presentation: state,
-                persisted,
-            }
-        } else {
-            Self::Dormant(state)
-        };
-    }
-
-    fn mark_receipt_persisted(&mut self) {
-        let Self::Queued { persisted, .. } = self else {
-            panic!("receipt handoff requires a queued submission");
-        };
-        *persisted = true;
     }
 }
 
 enum BoardTask {
     Unrequested,
-    Loading(Box<dyn MissionEndTask<LeaderboardPageV1>>),
+    Loading(Box<dyn MissionEndTask<LeaderboardPageV2>>),
     Complete(BoardLoadState),
 }
 
@@ -648,22 +316,19 @@ impl BoardTask {
 pub struct MissionEndLeaderboardController {
     history_tracking: bool,
     run: MissionEndRunBundle,
+    replay: Arc<[u8]>,
     preferences: LeaderboardPreferences,
     selected_tab: LeaderboardTab,
     board_task: BoardTask,
     submission_task: SubmissionTask,
     backend: Box<dyn MissionEndLeaderboardBackend>,
-    authorizer: Box<dyn MissionEndSubmissionAuthorizer>,
-    replay_exporter: Box<dyn MissionEndReplayExporter>,
-    peer_co_signer: Option<Box<dyn MissionEndPeerCoSigner>>,
-    peer_receipt_controller_public_key: Option<PublicKey32>,
     closed: bool,
 }
 
 /// Session-lifetime owner for consented mission-end work after its local
 /// presentation has closed. Keeping this outside the mission UI means a level
-/// transition never waits for HTTP while the exact authorization/upload task
-/// continues to be polled cooperatively.
+/// transition never waits for HTTP while the upload continues to be polled
+/// cooperatively.
 #[derive(Default)]
 pub struct MissionEndLeaderboardBackground {
     active: Vec<MissionEndLeaderboardController>,
@@ -733,17 +398,26 @@ impl MissionEndLeaderboardBackground {
 }
 
 impl MissionEndLeaderboardController {
+    /// `replay` must be the exact canonical compact bytes named by the
+    /// bundle's eligible submission.
     pub fn new(
         run: MissionEndRunBundle,
+        replay: Arc<[u8]>,
         preferences: LeaderboardPreferences,
         backend: Box<dyn MissionEndLeaderboardBackend>,
-        authorizer: Box<dyn MissionEndSubmissionAuthorizer>,
-        replay_exporter: Box<dyn MissionEndReplayExporter>,
     ) -> Result<Self, MissionEndLeaderboardError> {
         run.validate()?;
         preferences
             .validate()
             .map_err(|error| MissionEndLeaderboardError::Preferences(error.to_string()))?;
+        if let Some(input) = &run.eligible_submission
+            && (u64::try_from(replay.len()).ok() != Some(input.replay.artifact.byte_length)
+                || Digest32::digest_bytes(&replay) != input.replay.artifact.sha256)
+        {
+            return Err(MissionEndLeaderboardError::InvalidRunBundle(
+                "replay bytes differ from the artifact selected for upload".to_owned(),
+            ));
+        }
         let selected_tab = run
             .boards
             .iter()
@@ -751,29 +425,26 @@ impl MissionEndLeaderboardController {
             .or_else(|| run.boards.first())
             .expect("run validation requires one board")
             .tab;
-        let submission_state = if !run.can_submit() {
-            MissionSubmissionState::WonMissionRequired
-        } else if run.eligible_submission.is_some() {
+        let submission_state = if run.eligible_submission.is_some() {
             MissionSubmissionState::AwaitingConsent
+        } else if let Some(reason) = &run.submission_unavailable_reason {
+            MissionSubmissionState::Unavailable(reason.clone())
+        } else if !run.outcome.can_submit() {
+            MissionSubmissionState::WonMissionRequired
         } else {
             MissionSubmissionState::Unavailable(
-                run.submission_unavailable_reason
-                    .clone()
-                    .unwrap_or_else(|| "this run was not recorded as rank-eligible".to_owned()),
+                "this run was not recorded as rank-eligible".to_owned(),
             )
         };
         let mut controller = Self {
             history_tracking: false,
             run,
+            replay,
             preferences,
             selected_tab,
             board_task: BoardTask::Unrequested,
             submission_task: SubmissionTask::Dormant(submission_state),
             backend,
-            authorizer,
-            replay_exporter,
-            peer_co_signer: None,
-            peer_receipt_controller_public_key: None,
             closed: false,
         };
         if controller.preferences.show_mission_end_boards {
@@ -781,42 +452,8 @@ impl MissionEndLeaderboardController {
         }
         if controller
             .preferences
-            .automatically_submit(controller.run.can_submit())
+            .automatically_submit(controller.run.outcome.can_submit())
             && controller.run.eligible_submission.is_some()
-        {
-            controller.start_submission();
-        }
-        Ok(controller)
-    }
-
-    /// Construct a non-host multiplayer panel. It browses the same boards but
-    /// its submit control grants only this participant's co-sign consent; it
-    /// never creates a competing offer or uploads a second replay.
-    pub fn new_peer(
-        run: MissionEndRunBundle,
-        preferences: LeaderboardPreferences,
-        backend: Box<dyn MissionEndLeaderboardBackend>,
-        peer_co_signer: Box<dyn MissionEndPeerCoSigner>,
-        receipt_controller_public_key: Option<PublicKey32>,
-        replay_exports: crate::replay_service::ReplayExports,
-    ) -> Result<Self, MissionEndLeaderboardError> {
-        let mut controller = Self::new(
-            run,
-            preferences,
-            backend,
-            Box::new(LocalMissionEndSubmissionAuthorizer),
-            Box::new(ActiveMissionReplayExporter::new(replay_exports)),
-        )?;
-        controller.peer_co_signer = Some(peer_co_signer);
-        controller.peer_receipt_controller_public_key = receipt_controller_public_key;
-        controller.submission_task = SubmissionTask::Dormant(if controller.run.can_submit() {
-            MissionSubmissionState::AwaitingConsent
-        } else {
-            MissionSubmissionState::WonMissionRequired
-        });
-        if controller
-            .preferences
-            .automatically_submit(controller.run.can_submit())
         {
             controller.start_submission();
         }
@@ -833,6 +470,10 @@ impl MissionEndLeaderboardController {
 
     pub fn outcome(&self) -> MissionEndOutcome {
         self.run.outcome
+    }
+
+    pub fn tick_duration(&self) -> TickDurationV1 {
+        self.run.tick_duration
     }
 
     pub fn boards(&self) -> &[MissionEndBoard] {
@@ -859,15 +500,10 @@ impl MissionEndLeaderboardController {
         self.closed
     }
 
-    /// Whether a consented run still has preparation, co-signing, or upload
-    /// work in flight. A presentation owner may dismiss the overlay and keep
-    /// polling this controller in a background UI-task variant until false.
+    /// Whether a consented upload is still in flight. A presentation owner
+    /// may dismiss the overlay and keep polling this controller until false.
     pub fn has_pending_submission(&self) -> bool {
-        self.submission_task.is_pending()
-            || self
-                .peer_co_signer
-                .as_ref()
-                .is_some_and(|peer| peer.has_pending_work())
+        matches!(self.submission_task, SubmissionTask::Submitting(_))
     }
 
     pub fn can_retire_after_close(&self) -> bool {
@@ -878,10 +514,9 @@ impl MissionEndLeaderboardController {
         self.has_pending_submission() || self.has_unpersisted_receipt_watch()
     }
 
-    /// Build and durably enqueue the exact authenticated owner-status key once
-    /// `POST /submissions` has accepted the canonical replay into verification.
-    /// This method is idempotent and is called both while the panel remains
-    /// open and by the detached background owner.
+    /// Durably enqueue owner-status polling once `POST /submissions` has
+    /// accepted the replay into verification. Idempotent; called both while
+    /// the panel remains open and by the detached background owner.
     pub fn persist_queued_receipt_watch(
         &mut self,
         application_context: &crate::host::ApplicationContext,
@@ -901,57 +536,30 @@ impl MissionEndLeaderboardController {
             crate::leaderboard_receipt_watcher::QueuedSubmissionReceiptWatch,
         ) -> Result<bool, String>,
     ) -> Result<bool, String> {
-        if matches!(
-            self.submission_task,
-            SubmissionTask::Queued {
-                persisted: true,
-                ..
-            }
-        ) {
+        let SubmissionTask::Queued {
+            queued,
+            persisted: false,
+            ..
+        } = &self.submission_task
+        else {
             return Ok(false);
-        }
-        let MissionSubmissionState::Queued(accepted) = self.submission_state() else {
-            return Ok(false);
-        };
-        let controller_public_key = if self.peer_co_signer.is_some() {
-            let Some(controller) = self.peer_receipt_controller_public_key else {
-                self.submission_task.mark_receipt_persisted();
-                return Ok(false);
-            };
-            controller
-        } else {
-            if !self.authorizer.owns_receipt_watch()? {
-                self.submission_task.mark_receipt_persisted();
-                return Ok(false);
-            }
-            let input = self.run.eligible_submission.as_ref().ok_or_else(|| {
-                "queued leaderboard submission lost its exact ranked input".to_owned()
-            })?;
-            match &input.offer_request.scope_request {
-                robin_run_protocol::ScopeRequestV1::CampaignContinuation { .. } => {
-                    input.campaign_controller_public_key.ok_or_else(|| {
-                        "queued campaign continuation lost its authenticated controller".to_owned()
-                    })?
-                }
-                robin_run_protocol::ScopeRequestV1::IndividualLevel
-                | robin_run_protocol::ScopeRequestV1::CampaignGenesis => {
-                    input.offer_request.session_genesis.claim.host_public_key
-                }
-            }
         };
         let handoff =
             crate::leaderboard_receipt_watcher::QueuedSubmissionReceiptWatch::from_accepted(
-                accepted,
-                controller_public_key,
+                &queued.accepted,
+                queued.uploader_public_key,
             )
             .map_err(|error| error.to_string())?;
         if self.history_tracking {
-            if let Some(input) = &self.run.eligible_submission {
-                super::history::persist_link(input, &self.preferences, accepted, &handoff)?;
-            }
+            let input = self.run.eligible_submission.as_ref().ok_or_else(|| {
+                "queued leaderboard submission lost its recorded input".to_owned()
+            })?;
+            super::history::persist_link(input, &self.preferences, &queued.accepted, &handoff)?;
         }
         enqueue(handoff)?;
-        self.submission_task.mark_receipt_persisted();
+        if let SubmissionTask::Queued { persisted, .. } = &mut self.submission_task {
+            *persisted = true;
+        }
         Ok(true)
     }
 
@@ -1003,7 +611,7 @@ impl MissionEndLeaderboardController {
                     self.submission_state(),
                     MissionSubmissionState::AwaitingConsent
                 ) {
-                    return Err(MissionEndLeaderboardError::Authorization(
+                    return Err(MissionEndLeaderboardError::Submission(
                         "this run is not awaiting upload consent".to_owned(),
                     ));
                 }
@@ -1012,7 +620,7 @@ impl MissionEndLeaderboardController {
             }
             MissionEndLeaderboardAction::RetrySubmission => {
                 if !matches!(self.submission_state(), MissionSubmissionState::Failed(_)) {
-                    return Err(MissionEndLeaderboardError::Authorization(
+                    return Err(MissionEndLeaderboardError::Submission(
                         "only a failed eligible submission can be retried".to_owned(),
                     ));
                 }
@@ -1057,14 +665,10 @@ impl MissionEndLeaderboardController {
             .expect("selected tab is kept inside the validated board set")
             .query
             .clone();
-        match self.backend.board(query) {
-            Ok(task) => {
-                self.board_task = BoardTask::Loading(task);
-            }
-            Err(error) => {
-                self.board_task = BoardTask::Complete(BoardLoadState::Failed(error));
-            }
-        }
+        self.board_task = match self.backend.board(query) {
+            Ok(task) => BoardTask::Loading(task),
+            Err(error) => BoardTask::Complete(BoardLoadState::Failed(error)),
+        };
     }
 
     fn poll_board(&mut self) {
@@ -1081,22 +685,7 @@ impl MissionEndLeaderboardController {
     }
 
     fn start_submission(&mut self) {
-        if let Some(peer) = self.peer_co_signer.as_mut() {
-            if !self.run.can_submit() {
-                self.submission_task =
-                    SubmissionTask::Dormant(MissionSubmissionState::WonMissionRequired);
-                return;
-            }
-            match peer.consent() {
-                Ok(()) => {
-                    self.submission_task =
-                        SubmissionTask::Dormant(MissionSubmissionState::PreparingArtifacts);
-                }
-                Err(error) => self.fail_submission(error),
-            }
-            return;
-        }
-        let Some(input) = self.run.eligible_submission.as_ref() else {
+        let Some(input) = self.run.eligible_submission.clone() else {
             self.submission_task = SubmissionTask::Dormant(MissionSubmissionState::Unavailable(
                 self.run
                     .submission_unavailable_reason
@@ -1105,229 +694,40 @@ impl MissionEndLeaderboardController {
             ));
             return;
         };
-        if !self.run.can_submit() {
-            self.submission_task =
-                SubmissionTask::Dormant(MissionSubmissionState::WonMissionRequired);
-            return;
-        }
-        let offer_task = match self.backend.offer(input.offer_request.clone()) {
-            Ok(task) => task,
-            Err(error) => {
-                self.fail_submission(error);
-                return;
-            }
+        self.submission_task = match self.backend.submit(input, Arc::clone(&self.replay)) {
+            Ok(task) => SubmissionTask::Submitting(task),
+            Err(error) => SubmissionTask::Dormant(MissionSubmissionState::Failed(error)),
         };
-        let replay_task = match self.replay_exporter.begin() {
-            Ok(task) => task,
-            Err(error) => {
-                self.fail_submission(error);
-                return;
-            }
-        };
-        self.submission_task = SubmissionTask::Preparing(PreparingSubmission {
-            offer_task,
-            replay_task,
-            offer: None,
-            replay: None,
-        });
     }
 
     fn poll_submission(&mut self) {
-        if let Some(peer) = self.peer_co_signer.as_mut() {
-            self.submission_task.set_idle(match peer.poll() {
-                PeerCoSignPoll::AwaitingConsent => MissionSubmissionState::AwaitingConsent,
-                PeerCoSignPoll::AwaitingHost => MissionSubmissionState::PreparingArtifacts,
-                PeerCoSignPoll::Signing(progress) => {
-                    MissionSubmissionState::AwaitingParticipantSignatures(progress)
-                }
-                // Signature progress is complete; the UI now follows upload status.
-                PeerCoSignPoll::ResponseSent(_) => MissionSubmissionState::Uploading,
-                PeerCoSignPoll::Accepted(accepted) => MissionSubmissionState::Queued(accepted),
-                PeerCoSignPoll::Failed(error) => MissionSubmissionState::Failed(error),
-            });
+        let SubmissionTask::Submitting(task) = &mut self.submission_task else {
             return;
-        }
-        if !self.submission_task.is_pending() {
+        };
+        let Some(result) = task.try_take() else {
             return;
-        }
-        let mut task = std::mem::replace(
-            &mut self.submission_task,
-            SubmissionTask::Dormant(MissionSubmissionState::AwaitingConsent),
-        );
-        match &mut task {
-            SubmissionTask::Dormant(_) | SubmissionTask::Queued { .. } => {
-                unreachable!("pending task checked before polling")
-            }
-            SubmissionTask::Preparing(preparing) => {
-                if preparing.offer.is_none()
-                    && let Some(result) = preparing.offer_task.try_take()
-                {
-                    match result {
-                        Ok(offer) => preparing.offer = Some(offer),
-                        Err(error) => {
-                            self.fail_submission(error);
-                            return;
-                        }
-                    }
-                }
-                if preparing.replay.is_none()
-                    && let Some(result) = preparing.replay_task.try_take()
-                {
-                    match result {
-                        Ok(replay) => preparing.replay = Some(replay),
-                        Err(error) => {
-                            self.fail_submission(error);
-                            return;
-                        }
-                    }
-                }
-                if preparing.offer.is_some() && preparing.replay.is_some() {
-                    let offer = preparing.offer.take().expect("offer checked above");
-                    let replay = preparing.replay.take().expect("replay checked above");
-                    if let Err(error) = self.begin_authorization(offer, replay) {
-                        self.fail_submission(error.to_string());
-                    }
-                } else {
-                    self.submission_task = task;
-                }
-            }
-            SubmissionTask::Authorizing(authorizing) => {
-                let progress = authorizing.task.progress();
-                if let Err(error) = progress.validate() {
-                    self.fail_submission(error.to_string());
-                    return;
-                }
-                authorizing.presentation =
-                    MissionSubmissionState::AwaitingParticipantSignatures(progress);
-                let Some(result) = authorizing.task.try_take() else {
-                    self.submission_task = task;
-                    return;
-                };
-                let signed = match result {
-                    Ok(signed) => signed,
-                    Err(error) => {
-                        self.fail_submission(error);
-                        return;
-                    }
-                };
-                if let Err(error) = validate_authorized_submission(&authorizing.request, &signed) {
-                    self.fail_submission(error.to_string());
-                    return;
-                }
-                let input = self
-                    .run
-                    .eligible_submission
-                    .as_ref()
-                    .expect("authorization exists only for eligible input");
-                match self.backend.submit(
-                    signed,
-                    Arc::clone(&authorizing.replay),
-                    Arc::clone(&input.starting_campaign_bytes),
-                ) {
-                    Ok(upload) => {
-                        self.submission_task = SubmissionTask::Uploading(upload);
-                    }
-                    Err(error) => self.fail_submission(error),
-                }
-            }
-            SubmissionTask::Uploading(upload) => match upload.try_take() {
-                None => self.submission_task = task,
-                Some(Ok(accepted)) => {
-                    if let Err(error) = self.authorizer.submission_accepted(&accepted) {
-                        tracing::warn!(
-                            "ranked submission was queued but its peer acknowledgement failed: {error}"
-                        );
-                    }
-                    self.submission_task
-                        .set_idle(MissionSubmissionState::Queued(accepted));
-                }
-                Some(Err(error)) => self.fail_submission(error),
-            },
-        }
-    }
-
-    fn begin_authorization(
-        &mut self,
-        offer: SubmissionOfferV1,
-        replay: Arc<[u8]>,
-    ) -> Result<(), MissionEndLeaderboardError> {
-        let input = self
-            .run
-            .eligible_submission
-            .as_ref()
-            .expect("submission preparation exists only for eligible input");
-        validate_offer_matches_request(&offer, &input.offer_request)?;
-        let replay_artifact = canonical_replay_artifact(
-            &replay,
-            &input.starting_campaign_bytes,
-            &offer.mission_id,
-            &input.replay_session_transcript,
-        )?;
-        let campaign_artifact = ArtifactRefV1 {
-            sha256: Digest32::digest_bytes(&input.starting_campaign_bytes),
-            byte_length: u64::try_from(input.starting_campaign_bytes.len()).map_err(|_| {
-                MissionEndLeaderboardError::ReplayExport(
-                    "starting campaign length does not fit the protocol".to_owned(),
-                )
-            })?,
-            media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
         };
-        let request = SubmissionAuthorizationRequest {
-            offer_request: input.offer_request.clone(),
-            offer,
-            replay_session_transcript: input.replay_session_transcript.clone(),
-            artifacts: SubmissionArtifactsV1 {
-                replay: replay_artifact,
-                starting_campaign: campaign_artifact,
+        self.submission_task = match result {
+            Ok(queued) => SubmissionTask::Queued {
+                presentation: MissionSubmissionState::Queued(queued.accepted.clone()),
+                queued,
+                persisted: false,
             },
-            requested_metrics: input.requested_metrics.clone(),
-            campaign_controller_public_key: input.campaign_controller_public_key,
+            Err(error) => SubmissionTask::Dormant(MissionSubmissionState::Failed(error)),
         };
-        let task = self
-            .authorizer
-            .begin(request.clone())
-            .map_err(MissionEndLeaderboardError::Authorization)?;
-        let progress = task.progress();
-        progress.validate()?;
-        if progress.expected != request.expected_participants() {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "authorizer expected a different participant set".to_owned(),
-            ));
-        }
-        self.submission_task = SubmissionTask::Authorizing(AuthorizingSubmission {
-            task,
-            request,
-            replay,
-            presentation: MissionSubmissionState::AwaitingParticipantSignatures(progress),
-        });
-        Ok(())
-    }
-
-    fn fail_submission(&mut self, error: String) {
-        self.submission_task = SubmissionTask::Dormant(MissionSubmissionState::Failed(error));
     }
 }
 
-fn invalid_bundle_protocol(error: impl std::fmt::Display) -> MissionEndLeaderboardError {
+fn invalid_bundle(error: impl std::fmt::Display) -> MissionEndLeaderboardError {
     MissionEndLeaderboardError::InvalidRunBundle(error.to_string())
 }
 
-fn validate_offer_matches_request(
-    offer: &SubmissionOfferV1,
-    request: &SubmissionOfferRequestV1,
-) -> Result<(), MissionEndLeaderboardError> {
-    offer
-        .validate()
-        .map_err(|error| MissionEndLeaderboardError::Backend(error.to_string()))?;
-    robin_run_protocol::validate_offer_binding(request, offer)
-        .map_err(|error| MissionEndLeaderboardError::Backend(error.to_string()))
-}
-
+/// Identity of canonical compact replay bytes, after checking that they
+/// decode, re-encode byte-identically and record `expected_mission_id`.
+/// Input taints are preserved: the server decides rankability.
 pub(crate) fn canonical_replay_artifact(
     bytes: &[u8],
-    expected_starting_campaign: &[u8],
     expected_mission_id: &str,
-    _transcript: &ReplaySessionTranscriptV1,
 ) -> Result<ReplayArtifactV1, MissionEndLeaderboardError> {
     let text = std::str::from_utf8(bytes).map_err(|_| {
         MissionEndLeaderboardError::ReplayExport("compact replay is not UTF-8".to_owned())
@@ -1345,12 +745,9 @@ pub(crate) fn canonical_replay_artifact(
             "replay bytes are not their canonical compact re-encoding".to_owned(),
         ));
     }
-    if replay.header().campaign.as_slice() != expected_starting_campaign
-        || replay.header().mission_id != expected_mission_id
-    {
+    if replay.header().mission_id != expected_mission_id {
         return Err(MissionEndLeaderboardError::ReplayExport(
-            "compact replay does not contain the exact mission start selected for upload"
-                .to_owned(),
+            "compact replay records a different mission".to_owned(),
         ));
     }
     Ok(ReplayArtifactV1 {
@@ -1363,74 +760,12 @@ pub(crate) fn canonical_replay_artifact(
             })?,
             media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
         },
-        replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
+        replay_schema_version: replay.header().version,
     })
 }
 
-pub fn validate_authorized_submission(
-    request: &SubmissionAuthorizationRequest,
-    signed: &SignedSubmissionV1,
-) -> Result<(), MissionEndLeaderboardError> {
-    request.validate_exact_context()?;
-    signed
-        .validate()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    if signed.algorithm != SignatureAlgorithmV1::Ed25519
-        || signed.submission.offer != request.offer
-        || signed.submission.replay_session_transcript != request.replay_session_transcript
-        || signed.submission.artifacts != request.artifacts
-        || signed.submission.requested_metrics != request.requested_metrics
-    {
-        return Err(MissionEndLeaderboardError::Authorization(
-            "authorizer changed the exact submission claim".to_owned(),
-        ));
-    }
-    let expected_claim = request.continuation_claim()?;
-    match (
-        expected_claim,
-        &signed.submission.campaign_continuation_authorization,
-    ) {
-        (None, None) => {}
-        (Some(expected), Some(actual)) if actual.claim == expected => {
-            verify_ed25519(
-                actual.claim.campaign_controller_public_key,
-                actual.signature.as_bytes(),
-                &actual
-                    .signing_bytes(&signed.submission.offer)
-                    .map_err(|error| {
-                        MissionEndLeaderboardError::Authorization(error.to_string())
-                    })?,
-            )?;
-        }
-        _ => {
-            return Err(MissionEndLeaderboardError::Authorization(
-                "campaign continuation authorization was omitted or substituted".to_owned(),
-            ));
-        }
-    }
-    let signing_bytes = signed
-        .signing_bytes()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    for signature in &signed.participant_signatures {
-        verify_ed25519(
-            signature.public_key,
-            signature.signature.as_bytes(),
-            &signing_bytes,
-        )?;
-    }
-    Ok(())
-}
-
-fn verify_ed25519(
-    public_key: PublicKey32,
-    signature: &[u8; 64],
-    message: &[u8],
-) -> Result<(), MissionEndLeaderboardError> {
-    robin_run_protocol::verify_ed25519_strict(public_key.as_bytes(), signature, message)
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))
-}
-
-/// Production backend adapter over the bounded native/browser HTTP client.
+/// Production backend adapter over the bounded native/browser HTTP client
+/// and the platform identity signer.
 pub struct HttpMissionEndLeaderboardBackend {
     api: LeaderboardApi,
 }
@@ -1444,72 +779,88 @@ impl HttpMissionEndLeaderboardBackend {
 impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
     fn board(
         &mut self,
-        query: LeaderboardQueryV1,
-    ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV1>>, String> {
+        query: LeaderboardQueryV2,
+    ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV2>>, String> {
         let task = self.api.board(&query).map_err(|error| error.to_string())?;
         Ok(Box::new(task.map(move |result| {
             decode_board(result, &query).map_err(|error| error.to_string())
         })))
     }
 
-    fn offer(
-        &mut self,
-        request: SubmissionOfferRequestV1,
-    ) -> Result<Box<dyn MissionEndTask<SubmissionOfferV1>>, String> {
-        let task = self
-            .api
-            .submission_offer(&request)
-            .map_err(|error| error.to_string())?;
-        Ok(Box::new(task.map(|result| {
-            decode_offer(result).map_err(|error| error.to_string())
-        })))
-    }
-
     fn submit(
         &mut self,
-        submission: SignedSubmissionV1,
-        replay_bytes: Arc<[u8]>,
-        starting_campaign_bytes: Arc<[u8]>,
-    ) -> Result<Box<dyn MissionEndTask<SubmissionAcceptedV1>>, String> {
-        let task = self
-            .api
-            .submit(&submission, replay_bytes, starting_campaign_bytes)
-            .map_err(|error| error.to_string())?;
-        Ok(Box::new(task.map(|result| {
-            decode_submission_accepted(result).map_err(|error| error.to_string())
+        input: MissionEndSubmissionInput,
+        replay: Arc<[u8]>,
+    ) -> Result<Box<dyn MissionEndTask<QueuedSubmission>>, String> {
+        let api = self.api.clone();
+        let task = PollTask::spawn_background("leaderboard-submit", move || async move {
+            upload_recorded_replay(&api, &input, replay).await
+        })
+        .map_err(|error| format!("failed to start leaderboard upload: {error}"))?;
+        Ok(Box::new(task.into_try_take(|| {
+            "leaderboard upload worker stopped unexpectedly".to_owned()
         })))
     }
 }
 
+/// Challenge, sign and upload one recorded replay.
+async fn upload_recorded_replay(
+    api: &LeaderboardApi,
+    input: &MissionEndSubmissionInput,
+    replay: Arc<[u8]>,
+) -> Result<QueuedSubmission, String> {
+    let uploader_public_key = PlatformSigner::public_key()
+        .await
+        .map_err(|error| error.to_string())?;
+    let challenge_request = UploadChallengeRequestV2 {
+        schema_version: SCHEMA_VERSION_V2,
+        public_key: uploader_public_key,
+    };
+    let challenge_task = api
+        .upload_challenge(&challenge_request)
+        .map_err(|error| error.to_string())?;
+    let challenge =
+        decode_upload_challenge(challenge_task.take().await).map_err(|error| error.to_string())?;
+    let signed = PlatformSigner::sign_submission(input.submission(challenge, uploader_public_key))
+        .await
+        .map_err(|error| error.to_string())?;
+    let upload = api
+        .submit(&signed, replay)
+        .map_err(|error| error.to_string())?;
+    let accepted =
+        decode_submission_accepted(upload.take().await).map_err(|error| error.to_string())?;
+    Ok(QueuedSubmission {
+        accepted,
+        uploader_public_key,
+    })
+}
+
 /// Active bounded recorder export. Snapshotting shares complete spool chunks;
 /// parsing and compact-bitcode encoding run off the graphical call stack.
+// TODO: only the replay-service export back-pressure tests use this adapter
+// now; move it next to those tests.
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 pub struct ActiveMissionReplayExporter {
     exports: crate::replay_service::ReplayExports,
 }
 
+#[cfg(test)]
+pub trait MissionEndReplayExporter {
+    fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String>;
+}
+
+#[cfg(test)]
 impl ActiveMissionReplayExporter {
     pub fn new(exports: crate::replay_service::ReplayExports) -> Self {
         Self { exports }
     }
 }
 
-// TODO: `replay_service::ExportResult` is still a raw capacity-one receiver;
-// returning `leaderboard::task::PollTask` from `ReplayExports::export_snapshot`
-// would remove this last hand-written `TryRecvError` poll.
+#[cfg(test)]
 struct ReplayExportTask(crate::replay_service::ExportResult);
 
-impl Serialize for ReplayExportTask {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str("live replay export task")
-    }
-}
-
-robin_util::deny_deserialize!(
-    ReplayExportTask,
-    "replay export tasks must be constructed by their consumer"
-);
-
+#[cfg(test)]
 impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
     fn try_take(&mut self) -> Option<Result<Arc<[u8]>, String>> {
         match self.0.try_recv() {
@@ -1526,6 +877,7 @@ impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
     }
 }
 
+#[cfg(test)]
 impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
         let snapshot = self.exports.snapshot()?;
@@ -1535,127 +887,13 @@ impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     }
 }
 
-/// Authenticate the uploader of a recorded run. Other seats remain anonymous.
-pub struct LocalMissionEndSubmissionAuthorizer;
-
-/// Local single-participant authorization. The signer future starts in
-/// `begin`; native signers complete before `begin` returns, so `progress`
-/// already reports the signature before the first poll, exactly as a browser
-/// task does once its signer origin answers.
-struct LocalAuthorizationTask {
-    task: PollTask<Result<SignedSubmissionV1, String>>,
-    completed: Option<Result<SignedSubmissionV1, String>>,
-    progress: ParticipantSigningProgress,
-}
-
-impl LocalAuthorizationTask {
-    fn new(
-        task: PollTask<Result<SignedSubmissionV1, String>>,
-        expected: Vec<robin_run_protocol::PublicKey32>,
-    ) -> Self {
-        let mut this = Self {
-            task,
-            completed: None,
-            progress: ParticipantSigningProgress {
-                expected,
-                signed: Vec::new(),
-            },
-        };
-        this.completed = this.poll_signer();
-        this
-    }
-
-    fn poll_signer(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        let result = self
-            .task
-            .poll(|| "browser submission signer stopped unexpectedly".to_owned())?;
-        if let Ok(signed) = &result {
-            self.progress.signed = signed
-                .participant_signatures
-                .iter()
-                .map(|signature| signature.public_key)
-                .collect();
-        }
-        Some(result)
-    }
-}
-
-impl MissionEndTask<SignedSubmissionV1> for LocalAuthorizationTask {
-    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        self.completed.take().or_else(|| self.poll_signer())
-    }
-}
-
-impl SubmissionAuthorizationTask for LocalAuthorizationTask {
-    fn progress(&self) -> ParticipantSigningProgress {
-        self.progress.clone()
-    }
-}
-
-impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let expected = request.expected_participants();
-        if expected.len() != 1 {
-            return Err(
-                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
-            );
-        }
-        let task = PollTask::start(async move {
-            authorize_local(&request)
-                .await
-                .map_err(|error| error.to_string())
-        });
-        Ok(Box::new(LocalAuthorizationTask::new(task, expected)))
-    }
-}
-
-async fn authorize_local(
-    request: &SubmissionAuthorizationRequest,
-) -> Result<SignedSubmissionV1, MissionEndLeaderboardError> {
-    let continuation = match request.continuation_claim()? {
-        Some(claim) => Some(
-            PlatformSigner::sign_campaign_continuation(&request.offer, claim)
-                .await
-                .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
-        ),
-        None => None,
-    };
-    let envelope = request.envelope(continuation);
-    envelope
-        .validate()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signature = PlatformSigner::sign_submission_claim(&envelope)
-        .await
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signed = SignedSubmissionV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        submission: envelope,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        participant_signatures: vec![signature],
-    };
-    validate_authorized_submission(request, &signed)?;
-    Ok(signed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leaderboard::test_fixtures::{
-        MISSION_ID, RankedConfigSpec, campaign_artifact, host_participant_claim,
-        ranked_session_config, single_frame_replay, unsigned_fresh_run_preflight_grant,
-        unsigned_session_genesis,
-    };
+    use crate::leaderboard::test_fixtures::{MISSION_ID, compact_replay_bytes};
     use ed25519_dalek::Signer as _;
-    use robin_run_protocol::{
-        BoardCategoryV1, CanonicalCampaignStateKindV1, CanonicalCampaignStateRequirementV1,
-        ChallengeNonce32, LeaderboardQuerySubjectV1, OfficialContentEditionV1, OpaqueId,
-        ParticipantSignatureV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
-        ScopeRequestV1, Signature64, SpeechTimingAuthorityV1, SubmissionLifecycleV1,
-    };
-    use std::collections::VecDeque;
+    use robin_run_protocol::{ChallengeNonce32, SignatureAlgorithmV1, SignedSubmissionV2};
+    use robin_run_protocol::{Signature64, SubmissionLifecycleV1};
     use std::sync::Mutex;
 
     #[test]
@@ -1664,63 +902,6 @@ mod tests {
         let exporter = ActiveMissionReplayExporter::new(service.exports());
         let diagnostic = serde_json::to_string(&exporter).unwrap();
         assert!(serde_json::from_str::<ActiveMissionReplayExporter>(&diagnostic).is_err());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn replay_exporter_uses_injected_service_and_freezes_its_generation() {
-        let service = Arc::new(crate::replay_service::ReplayService::default());
-        let other = Arc::new(crate::replay_service::ReplayService::default());
-        let mut recorder = robin_engine::replay::ReplayRecorder::with_writer(
-            Box::new(service.recording().begin_recording()),
-            "injected-export".to_owned(),
-            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                "injected-export",
-                "export-map",
-                "export-map",
-            )
-            .unwrap(),
-            17,
-            robin_engine::engine::SimConfig::default(),
-            &robin_engine::campaign::Campaign::default(),
-        )
-        .unwrap();
-        assert!(recorder.write_frame(
-            0,
-            0,
-            1,
-            robin_engine::engine::SimulationFrameInput::default(),
-            Vec::new(),
-            None,
-        ));
-        let mut exporter = ActiveMissionReplayExporter::new(service.exports());
-        let task = exporter.begin().unwrap();
-        let empty_task = ActiveMissionReplayExporter::new(other.exports())
-            .begin()
-            .unwrap();
-        // Replacing the active generation must not replace the admitted export.
-        let _replacement = service.recording().begin_recording();
-        let finish = |mut task: Box<dyn MissionEndTask<Arc<[u8]>>>| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            loop {
-                if let Some(result) = task.try_take() {
-                    break result;
-                }
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "export worker timed out"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-        };
-        // Snapshot admission is synchronous; an empty service's missing replay
-        // header is rejected by the asynchronous parsing/encoding worker.
-        assert!(finish(empty_task).is_err());
-        let bytes = finish(task).unwrap();
-        let (_, replay) =
-            robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
-        assert_eq!(replay.header().mission_id, "injected-export");
-        drop(recorder);
     }
 
     struct ImmediateTask<T>(Option<Result<T, String>>);
@@ -1750,139 +931,84 @@ mod tests {
     #[derive(Default)]
     struct BackendCalls {
         boards: usize,
-        offers: usize,
         uploads: usize,
     }
 
     struct TestBackend {
-        page: LeaderboardPageV1,
-        offer: SubmissionOfferV1,
+        page: LeaderboardPageV2,
         calls: Arc<Mutex<BackendCalls>>,
         upload_delay_polls: usize,
+    }
+
+    fn uploader() -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[31; 32])
+    }
+
+    fn uploader_public_key() -> PublicKey32 {
+        PublicKey32::from_bytes(uploader().verifying_key().to_bytes())
     }
 
     impl MissionEndLeaderboardBackend for TestBackend {
         fn board(
             &mut self,
-            _query: LeaderboardQueryV1,
-        ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV1>>, String> {
+            _query: LeaderboardQueryV2,
+        ) -> Result<Box<dyn MissionEndTask<LeaderboardPageV2>>, String> {
             self.calls.lock().unwrap().boards += 1;
             Ok(Box::new(ImmediateTask(Some(Ok(self.page.clone())))))
         }
 
-        fn offer(
-            &mut self,
-            _request: SubmissionOfferRequestV1,
-        ) -> Result<Box<dyn MissionEndTask<SubmissionOfferV1>>, String> {
-            self.calls.lock().unwrap().offers += 1;
-            Ok(Box::new(ImmediateTask(Some(Ok(self.offer.clone())))))
-        }
-
         fn submit(
             &mut self,
-            submission: SignedSubmissionV1,
-            replay_bytes: Arc<[u8]>,
-            starting_campaign_bytes: Arc<[u8]>,
-        ) -> Result<Box<dyn MissionEndTask<SubmissionAcceptedV1>>, String> {
-            submission.validate().map_err(|error| error.to_string())?;
-            assert!(!replay_bytes.is_empty());
-            assert!(!starting_campaign_bytes.is_empty());
+            input: MissionEndSubmissionInput,
+            replay: Arc<[u8]>,
+        ) -> Result<Box<dyn MissionEndTask<QueuedSubmission>>, String> {
+            assert_eq!(
+                Digest32::digest_bytes(&replay),
+                input.replay.artifact.sha256
+            );
+            let submission = input.submission(challenge(), uploader_public_key());
+            let signature =
+                uploader().sign(&SignedSubmissionV2::signing_bytes(&submission).unwrap());
+            let signed = SignedSubmissionV2 {
+                schema_version: SCHEMA_VERSION_V2,
+                submission,
+                algorithm: SignatureAlgorithmV1::Ed25519,
+                signature: Signature64::from_bytes(signature.to_bytes()),
+            };
+            signed
+                .verify_signature()
+                .map_err(|error| error.to_string())?;
             self.calls.lock().unwrap().uploads += 1;
             Ok(Box::new(DelayedTask {
                 remaining_polls: self.upload_delay_polls,
-                result: Some(Ok(SubmissionAcceptedV1 {
-                    schema_version: SCHEMA_VERSION_V1,
-                    submission_id: id("submission-1"),
-                    state: SubmissionLifecycleV1::Queued,
-                    retry_after_ms: 250,
+                result: Some(Ok(QueuedSubmission {
+                    accepted: SubmissionAcceptedV1 {
+                        schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
+                        submission_id: OpaqueId::new("submission-1").unwrap(),
+                        state: SubmissionLifecycleV1::Queued,
+                        retry_after_ms: 250,
+                    },
+                    uploader_public_key: uploader_public_key(),
                 })),
             }))
         }
     }
 
-    struct TestExporter(Arc<[u8]>);
-
-    impl MissionEndReplayExporter for TestExporter {
-        fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
-            Ok(Box::new(ImmediateTask(Some(Ok(Arc::clone(&self.0))))))
+    fn challenge() -> UploadChallengeV1 {
+        UploadChallengeV1 {
+            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
+            upload_challenge_id: OpaqueId::new("upload-1").unwrap(),
+            upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
+            expires_at_unix_ms: 1_800_000_000_000,
         }
     }
 
-    struct TestAuthorizer(ed25519_dalek::SigningKey);
-
-    impl MissionEndSubmissionAuthorizer for TestAuthorizer {
-        fn begin(
-            &mut self,
-            request: SubmissionAuthorizationRequest,
-        ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-            assert!(request.continuation_claim().unwrap().is_none());
-            let envelope = request.envelope(None);
-            envelope.validate().map_err(|error| error.to_string())?;
-            let signature = self.0.sign(
-                &envelope
-                    .signing_bytes()
-                    .map_err(|error| error.to_string())?,
-            );
-            let public_key = PublicKey32::from_bytes(self.0.verifying_key().to_bytes());
-            let signed = SignedSubmissionV1 {
-                schema_version: SCHEMA_VERSION_V1,
-                submission: envelope,
-                algorithm: SignatureAlgorithmV1::Ed25519,
-                participant_signatures: vec![ParticipantSignatureV1 {
-                    public_key,
-                    signature: Signature64::from_bytes(signature.to_bytes()),
-                }],
-            };
-            Ok(Box::new(LocalAuthorizationTask::new(
-                PollTask::ready(Ok(signed)),
-                vec![public_key],
-            )))
-        }
-    }
-
-    struct TestPeerCoSigner {
-        consented: bool,
-        polls: VecDeque<PeerCoSignPoll>,
-    }
-
-    impl MissionEndPeerCoSigner for TestPeerCoSigner {
-        fn consent(&mut self) -> Result<(), String> {
-            if self.consented {
-                return Err("duplicate peer consent".to_owned());
-            }
-            self.consented = true;
-            Ok(())
-        }
-
-        fn poll(&mut self) -> PeerCoSignPoll {
-            if !self.consented {
-                return PeerCoSignPoll::AwaitingConsent;
-            }
-            self.polls.pop_front().unwrap_or(PeerCoSignPoll::Failed(
-                "test peer exhausted its scripted lifecycle".to_owned(),
-            ))
-        }
-
-        fn has_pending_work(&self) -> bool {
-            self.consented && !self.polls.is_empty()
-        }
-    }
-
-    fn id(value: &str) -> OpaqueId {
-        OpaqueId::new(value).unwrap()
-    }
-
-    fn query(metric: BoardMetricV1) -> LeaderboardQueryV1 {
-        LeaderboardQueryV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            subject_kind: LeaderboardQuerySubjectV1::Mission,
-            mission_id: Some("Dem_Lei_MP".to_owned()),
-            mission_scope: Some(BoardCategoryV1::IndividualLevel),
+    fn query(metric: BoardMetricV1) -> LeaderboardQueryV2 {
+        LeaderboardQueryV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            board_id: OpaqueId::new("demo-standard-normal").unwrap(),
+            mission_id: MISSION_ID.to_owned(),
             metric,
-            content_identity_sha256: Digest32::from_bytes([5; 32]),
-            rules_config_sha256: Some(Digest32::from_bytes([6; 32])),
-            ruleset_manifest_sha256: Some(Digest32::from_bytes([7; 32])),
-            competition_manifest_sha256: None,
             max_concurrent_players: Some(1),
             player_public_key: None,
             limit: 50,
@@ -1890,10 +1016,10 @@ mod tests {
         }
     }
 
-    fn board_page(query: &LeaderboardQueryV1) -> LeaderboardPageV1 {
-        LeaderboardPageV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            filter: query.filter().unwrap(),
+    fn board_page(query: &LeaderboardQueryV2) -> LeaderboardPageV2 {
+        LeaderboardPageV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            filter: query.filter(),
             accepted_sequence_watermark: 0,
             previous_cursor: None,
             entries: Vec::new(),
@@ -1903,122 +1029,57 @@ mod tests {
 
     struct Fixture {
         bundle: MissionEndRunBundle,
-        offer: SubmissionOfferV1,
         compact: Arc<[u8]>,
-        key: ed25519_dalek::SigningKey,
     }
 
     fn fixture(outcome: MissionEndOutcome) -> Fixture {
-        let key = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
-        let public_key = PublicKey32::from_bytes(key.verifying_key().to_bytes());
-        let campaign = robin_engine::campaign::Campaign::default();
-        let campaign_bytes = bitcode::encode(&campaign);
-        let mission_id = MISSION_ID.to_owned();
-        let ranked = ranked_session_config(RankedConfigSpec {
-            simulation_seed: 42,
-            starting_campaign_sha256: Digest32::digest_bytes(&campaign_bytes),
-            starting_campaign_byte_length: campaign_bytes.len() as u64,
-            prepared_inputs_projection_sha256: Digest32::from_bytes([18; 32]),
-            prepared_mission_inputs_seal_sha256: Digest32::from_bytes([19; 32]),
-            speech_timing: SpeechTimingAuthorityV1::LanguagePack {
-                canonical_locale: "en-US".to_owned(),
-            },
-        });
-        // An individual-level offer request is only valid when the genesis
-        // carries the fresh-run preflight grant that admitted it, bound to
-        // the same host identity, ranked session, and starting campaign.
-        let fresh_run_preflight_grant = unsigned_fresh_run_preflight_grant(
-            public_key,
-            &ranked,
-            campaign_artifact(&campaign_bytes),
-        );
-        let genesis = unsigned_session_genesis(public_key, ranked, Some(fresh_run_preflight_grant));
-        let host = host_participant_claim(&genesis, public_key);
-        let offer_request = SubmissionOfferRequestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            max_concurrent_players: 1,
-            participant_instance_count: 1,
-            participant_claims: vec![host.clone()],
-            session_genesis: genesis.clone(),
-            mission_id: mission_id.clone(),
-            scope_request: ScopeRequestV1::IndividualLevel,
-            ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
-            competition_manifest_sha256: None,
-        };
-        let transcript = ReplaySessionTranscriptV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            session_genesis_sha256: genesis.canonical_digest().unwrap(),
-            replay_session_id: genesis.claim.replay_session_id,
-            host_participant_instance_id: genesis.claim.host_participant_instance_id,
-            participant_instance_count: 1,
-            max_concurrent_players: 1,
-            events: vec![ReplaySeatLifecycleEventV1 {
-                event_ordinal: 0,
-                replay_ordinal: 0,
-                seat: 0,
-                participant_instance_id: genesis.claim.host_participant_instance_id,
-                lifecycle: ReplaySeatLifecycleKindV1::Connected {
-                    connection_epoch: 0,
-                },
-            }],
-        };
-        let offer = SubmissionOfferV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            upload_challenge_id: id("upload-1"),
-            upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
-            expires_at_unix_ms: 1_800_000_000_000,
-            max_concurrent_players: 1,
-            participant_instance_count: 1,
-            participant_claims: vec![host],
-            session_genesis: genesis,
-            mission_id: mission_id.clone(),
-            competition_manifest_sha256: None,
-            build_manifest_sha256: Digest32::from_bytes([4; 32]),
-            content_manifest_sha256: Digest32::from_bytes([5; 32]),
-            rules_config_sha256: Digest32::from_bytes([6; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
-            starting_state: InitialStateExpectationV1::IndividualLevel {
-                template_id: id("demo-template"),
-                campaign_state_requirement: CanonicalCampaignStateRequirementV1 {
-                    edition: OfficialContentEditionV1::Demo,
-                    kind: CanonicalCampaignStateKindV1::IndividualTemplate,
-                    rules_config_sha256: Digest32::from_bytes([6; 32]),
-                },
-                campaign_sha256: Digest32::digest_bytes(&campaign_bytes),
-                starting_campaign_byte_length: campaign_bytes.len() as u64,
-            },
-            allowed_metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
-        };
-        let replay = single_frame_replay(campaign_bytes.clone());
-        let compact: Arc<[u8]> =
-            robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-                .unwrap()
-                .into_bytes()
-                .into();
-        let score = query(BoardMetricV1::OriginalScore);
-        let eligible_submission = outcome.can_submit().then_some(MissionEndSubmissionInput {
-            offer_request,
-            replay_session_transcript: transcript,
+        let compact: Arc<[u8]> = compact_replay_bytes().into();
+        let eligible_submission = outcome.can_submit().then(|| MissionEndSubmissionInput {
+            board_id: OpaqueId::new("demo-standard-normal").unwrap(),
+            mission_id: MISSION_ID.to_owned(),
             requested_metrics: vec![BoardMetricV1::OriginalScore],
-            campaign_controller_public_key: None,
-            starting_campaign_bytes: campaign_bytes.into(),
+            public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
+            replay: canonical_replay_artifact(&compact, MISSION_ID).unwrap(),
+            replay_session_id: Digest32::from_bytes([9; 32]),
         });
         Fixture {
             bundle: MissionEndRunBundle {
                 outcome,
                 multiplayer: false,
+                tick_duration: TickDurationV1 {
+                    numerator_micros: 40_000,
+                    denominator: 1,
+                },
                 boards: vec![MissionEndBoard {
                     tab: LeaderboardTab::Score,
                     label: "Score".to_owned(),
-                    query: score,
+                    query: query(BoardMetricV1::OriginalScore),
                 }],
                 eligible_submission,
                 submission_unavailable_reason: None,
             },
-            offer,
             compact,
-            key,
         }
+    }
+
+    fn controller_with(
+        fixture: Fixture,
+        preferences: LeaderboardPreferences,
+        calls: Arc<Mutex<BackendCalls>>,
+        upload_delay_polls: usize,
+    ) -> MissionEndLeaderboardController {
+        let page = board_page(&fixture.bundle.boards[0].query);
+        MissionEndLeaderboardController::new(
+            fixture.bundle,
+            fixture.compact,
+            preferences,
+            Box::new(TestBackend {
+                page,
+                calls,
+                upload_delay_polls,
+            }),
+        )
+        .unwrap()
     }
 
     fn controller(
@@ -2026,107 +1087,7 @@ mod tests {
         preferences: LeaderboardPreferences,
         calls: Arc<Mutex<BackendCalls>>,
     ) -> MissionEndLeaderboardController {
-        let page = board_page(&fixture.bundle.boards[0].query);
-        MissionEndLeaderboardController::new(
-            fixture.bundle,
-            preferences,
-            Box::new(TestBackend {
-                page,
-                offer: fixture.offer,
-                calls,
-                upload_delay_polls: 0,
-            }),
-            Box::new(TestAuthorizer(fixture.key)),
-            Box::new(TestExporter(fixture.compact)),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn preparing_retains_either_early_result_after_presentation_closes() {
-        for (offer_delay, replay_delay) in [(0, 3), (3, 0)] {
-            let fixture = fixture(MissionEndOutcome::Won);
-            let offer = fixture.offer.clone();
-            let replay = Arc::clone(&fixture.compact);
-            let calls = Arc::new(Mutex::new(BackendCalls::default()));
-            let mut controller = controller(
-                fixture,
-                LeaderboardPreferences::default(),
-                Arc::clone(&calls),
-            );
-            controller.submission_task = SubmissionTask::Preparing(PreparingSubmission {
-                offer_task: Box::new(DelayedTask {
-                    remaining_polls: offer_delay,
-                    result: Some(Ok(offer)),
-                }),
-                replay_task: Box::new(DelayedTask {
-                    remaining_polls: replay_delay,
-                    result: Some(Ok(replay)),
-                }),
-                offer: None,
-                replay: None,
-            });
-            controller
-                .apply_action(MissionEndLeaderboardAction::Close)
-                .unwrap();
-            for _ in 0..8 {
-                controller.poll();
-            }
-            assert!(matches!(
-                controller.submission_state(),
-                MissionSubmissionState::Queued(_)
-            ));
-            assert_eq!(calls.lock().unwrap().uploads, 1);
-            assert!(!controller.has_pending_submission());
-            assert!(controller.has_unpersisted_receipt_watch());
-        }
-    }
-
-    #[test]
-    fn preparing_failure_retires_both_tasks_while_counterpart_is_pending() {
-        for offer_fails in [true, false] {
-            let fixture = fixture(MissionEndOutcome::Won);
-            let offer = fixture.offer.clone();
-            let replay = Arc::clone(&fixture.compact);
-            let calls = Arc::new(Mutex::new(BackendCalls::default()));
-            let mut controller = controller(
-                fixture,
-                LeaderboardPreferences::default(),
-                Arc::clone(&calls),
-            );
-            controller.submission_task = SubmissionTask::Preparing(PreparingSubmission {
-                offer_task: Box::new(DelayedTask {
-                    remaining_polls: if offer_fails { 0 } else { 10 },
-                    result: Some(if offer_fails {
-                        Err("offer failed".into())
-                    } else {
-                        Ok(offer)
-                    }),
-                }),
-                replay_task: Box::new(DelayedTask {
-                    remaining_polls: if offer_fails { 10 } else { 0 },
-                    result: Some(if offer_fails {
-                        Ok(replay)
-                    } else {
-                        Err("replay failed".into())
-                    }),
-                }),
-                offer: None,
-                replay: None,
-            });
-            controller
-                .apply_action(MissionEndLeaderboardAction::Close)
-                .unwrap();
-            for _ in 0..12 {
-                controller.poll();
-            }
-            assert!(matches!(
-                controller.submission_state(),
-                MissionSubmissionState::Failed(_)
-            ));
-            assert!(controller.can_retire_after_close());
-            assert_eq!(calls.lock().unwrap().uploads, 0);
-        }
+        controller_with(fixture, preferences, calls, 0)
     }
 
     #[test]
@@ -2147,47 +1108,7 @@ mod tests {
         assert!(matches!(controller.board_state(), BoardLoadState::Ready(_)));
         let calls = calls.lock().unwrap();
         assert_eq!(calls.boards, 1);
-        assert_eq!(calls.offers, 0);
         assert_eq!(calls.uploads, 0);
-    }
-
-    #[test]
-    fn recorded_attempts_can_be_uploaded_regardless_of_local_outcome() {
-        for outcome in [MissionEndOutcome::Lost, MissionEndOutcome::Interrupted] {
-            let mut fixture = fixture(MissionEndOutcome::Won);
-            fixture.bundle.outcome = outcome;
-            let input = fixture.bundle.eligible_submission.as_mut().unwrap();
-            let genesis = &mut input.offer_request.session_genesis;
-            genesis.host_signature = None;
-            genesis.claim.fresh_run_preflight_grant = None;
-            genesis.claim.ranked_session.recorded_replay = Some(ReplayArtifactV1 {
-                artifact: ArtifactRefV1 {
-                    sha256: Digest32::digest_bytes(&fixture.compact),
-                    byte_length: fixture.compact.len() as u64,
-                    media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
-                },
-                replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-            });
-            genesis
-                .claim
-                .ranked_session
-                .prepared_inputs_projection_sha256 = None;
-            genesis
-                .claim
-                .ranked_session
-                .prepared_mission_inputs_seal_sha256 = None;
-            input.replay_session_transcript.session_genesis_sha256 =
-                genesis.canonical_digest().unwrap();
-            let controller = controller(
-                fixture,
-                LeaderboardPreferences::default(),
-                Arc::new(Mutex::new(BackendCalls::default())),
-            );
-            assert_eq!(
-                controller.submission_state(),
-                &MissionSubmissionState::AwaitingConsent
-            );
-        }
     }
 
     #[test]
@@ -2206,12 +1127,33 @@ mod tests {
         controller.poll();
         let calls = calls.lock().unwrap();
         assert_eq!(calls.boards, 0);
-        assert_eq!(calls.offers, 0);
         assert_eq!(calls.uploads, 0);
     }
 
     #[test]
-    fn default_consent_is_off_and_explicit_consent_advances_one_stage_per_poll() {
+    fn replay_bytes_must_match_the_selected_artifact() {
+        let mut fixture = fixture(MissionEndOutcome::Won);
+        let mut other = compact_replay_bytes();
+        other.push(b'\n');
+        fixture.compact = other.into();
+        let page = board_page(&fixture.bundle.boards[0].query);
+        assert!(matches!(
+            MissionEndLeaderboardController::new(
+                fixture.bundle,
+                fixture.compact,
+                LeaderboardPreferences::default(),
+                Box::new(TestBackend {
+                    page,
+                    calls: Default::default(),
+                    upload_delay_polls: 0,
+                }),
+            ),
+            Err(MissionEndLeaderboardError::InvalidRunBundle(_))
+        ));
+    }
+
+    #[test]
+    fn default_consent_is_off_and_explicit_consent_uploads_once() {
         let calls = Arc::new(Mutex::new(BackendCalls::default()));
         let mut controller = controller(
             fixture(MissionEndOutcome::Won),
@@ -2222,117 +1164,36 @@ mod tests {
             controller.submission_state(),
             &MissionSubmissionState::AwaitingConsent
         );
-        assert_eq!(calls.lock().unwrap().offers, 0);
-        controller
-            .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
-            .unwrap();
-        assert_eq!(
-            controller.submission_state(),
-            &MissionSubmissionState::PreparingArtifacts
-        );
-        controller.poll();
-        assert!(matches!(
-            controller.submission_state(),
-            MissionSubmissionState::AwaitingParticipantSignatures(_)
-        ));
-        controller.poll();
-        assert_eq!(
-            controller.submission_state(),
-            &MissionSubmissionState::Uploading
-        );
-        controller.poll();
-        assert!(matches!(
-            controller.submission_state(),
-            MissionSubmissionState::Queued(_)
-        ));
-        let calls = calls.lock().unwrap();
-        assert_eq!(calls.offers, 1);
-        assert_eq!(calls.uploads, 1);
-    }
-
-    #[test]
-    fn peer_consent_never_uploads_and_controller_persists_the_accepted_receipt() {
-        let calls = Arc::new(Mutex::new(BackendCalls::default()));
-        let mut fixture = fixture(MissionEndOutcome::Won);
-        let controller_key = PublicKey32::from_bytes(fixture.key.verifying_key().to_bytes());
-        fixture.bundle.eligible_submission = None;
-        fixture.bundle.submission_unavailable_reason = Some(
-            "the host owns the one ranked upload and requests this peer's signature".to_owned(),
-        );
-        let page = board_page(&fixture.bundle.boards[0].query);
-        let accepted = SubmissionAcceptedV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            submission_id: id("peer-submission"),
-            state: SubmissionLifecycleV1::Queued,
-            retry_after_ms: 250,
-        };
-        let progress = ParticipantSigningProgress {
-            expected: vec![controller_key],
-            signed: vec![controller_key],
-        };
-        let mut controller = MissionEndLeaderboardController::new_peer(
-            fixture.bundle,
-            LeaderboardPreferences::default(),
-            Box::new(TestBackend {
-                page,
-                offer: fixture.offer,
-                calls: Arc::clone(&calls),
-                upload_delay_polls: 0,
-            }),
-            Box::new(TestPeerCoSigner {
-                consented: false,
-                polls: VecDeque::from([
-                    PeerCoSignPoll::ResponseSent(progress),
-                    PeerCoSignPoll::Accepted(accepted),
-                ]),
-            }),
-            Some(controller_key),
-            Arc::new(crate::replay_service::ReplayService::default()).exports(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            controller.submission_state(),
-            &MissionSubmissionState::AwaitingConsent
-        );
-        controller
-            .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
-            .unwrap();
-        controller.poll();
-        assert_eq!(
-            controller.submission_state(),
-            &MissionSubmissionState::Uploading
-        );
-        assert!(controller.has_pending_submission());
-        controller.poll();
-        assert!(matches!(
-            controller.submission_state(),
-            MissionSubmissionState::Queued(_)
-        ));
-        assert_eq!(calls.lock().unwrap().offers, 0);
         assert_eq!(calls.lock().unwrap().uploads, 0);
-
-        let mut handed_off = None;
+        controller
+            .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
+            .unwrap();
+        assert_eq!(
+            controller.submission_state(),
+            &MissionSubmissionState::Submitting
+        );
+        controller.poll();
+        assert!(matches!(
+            controller.submission_state(),
+            MissionSubmissionState::Queued(_)
+        ));
+        assert_eq!(calls.lock().unwrap().uploads, 1);
         assert!(
             controller
-                .persist_queued_receipt_watch_with(|handoff| {
-                    handed_off = Some(handoff);
-                    Ok(true)
-                })
-                .unwrap()
-        );
-        assert_eq!(
-            handed_off.unwrap().key.controller_public_key,
-            controller_key
+                .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
+                .is_err()
         );
     }
 
     #[test]
     fn dismissing_does_not_cancel_a_consented_submission() {
         let calls = Arc::new(Mutex::new(BackendCalls::default()));
-        let fixture = fixture(MissionEndOutcome::Won);
-        let expected_controller = PublicKey32::from_bytes(fixture.key.verifying_key().to_bytes());
-        let mut controller = controller(fixture, LeaderboardPreferences::default(), calls);
+        let mut controller = controller_with(
+            fixture(MissionEndOutcome::Won),
+            LeaderboardPreferences::default(),
+            calls,
+            2,
+        );
         controller
             .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
             .unwrap();
@@ -2344,12 +1205,11 @@ mod tests {
             MissionEndLeaderboardEvent::Closed
         );
         assert!(controller.is_closed());
-        assert!(controller.has_pending_submission());
         assert!(!controller.can_retire_after_close());
 
-        controller.poll();
-        controller.poll();
-        controller.poll();
+        for _ in 0..3 {
+            controller.poll();
+        }
         assert!(!controller.has_pending_submission());
         assert!(!controller.can_retire_after_close());
         let mut handed_off = None;
@@ -2363,44 +1223,36 @@ mod tests {
         );
         assert_eq!(
             handed_off.unwrap().key.controller_public_key,
-            expected_controller
+            uploader_public_key()
         );
         assert!(controller.can_retire_after_close());
+        assert!(
+            !controller
+                .persist_queued_receipt_watch_with(|_| panic!("already persisted"))
+                .unwrap()
+        );
     }
 
     #[test]
     fn closed_delayed_upload_moves_to_session_owner_without_blocking_transition() {
         let calls = Arc::new(Mutex::new(BackendCalls::default()));
-        let fixture = fixture(MissionEndOutcome::Won);
-        let page = board_page(&fixture.bundle.boards[0].query);
-        let mut controller = MissionEndLeaderboardController::new(
-            fixture.bundle,
+        let mut controller = controller_with(
+            fixture(MissionEndOutcome::Won),
             LeaderboardPreferences {
                 show_mission_end_boards: false,
                 always_submit_eligible_runs: true,
                 ..LeaderboardPreferences::default()
             },
-            Box::new(TestBackend {
-                page,
-                offer: fixture.offer,
-                calls: Arc::clone(&calls),
-                upload_delay_polls: 2,
-            }),
-            Box::new(TestAuthorizer(fixture.key)),
-            Box::new(TestExporter(fixture.compact)),
-        )
-        .unwrap();
+            Arc::clone(&calls),
+            4,
+        );
         controller
             .apply_action(MissionEndLeaderboardAction::Close)
             .unwrap();
 
         let mut background = MissionEndLeaderboardBackground::default();
         background.adopt(controller);
-        assert_eq!(background.active_count(), 1);
         let mut handed_off = 0;
-
-        // Foreground presentation/mission state has already relinquished the
-        // controller. Several later frames may pass before HTTP completes.
         for _ in 0..4 {
             background.poll_with_receipt_sink(|_| {
                 handed_off += 1;
@@ -2429,10 +1281,7 @@ mod tests {
             preferences.clone(),
             Arc::clone(&calls),
         );
-        assert_eq!(
-            won.submission_state(),
-            &MissionSubmissionState::PreparingArtifacts
-        );
+        assert_eq!(won.submission_state(), &MissionSubmissionState::Submitting);
         let lost = controller(
             fixture(MissionEndOutcome::Interrupted),
             preferences,
@@ -2442,68 +1291,25 @@ mod tests {
             lost.submission_state(),
             &MissionSubmissionState::WonMissionRequired
         );
-        assert_eq!(calls.lock().unwrap().offers, 1);
+        assert_eq!(calls.lock().unwrap().uploads, 1);
     }
 
     #[test]
-    fn exact_authorization_rejects_substituted_offer_transcript_and_artifacts() {
+    fn submission_document_carries_the_exact_local_selection() {
         let fixture = fixture(MissionEndOutcome::Won);
-        let input = fixture.bundle.eligible_submission.as_ref().unwrap();
-        let artifacts = SubmissionArtifactsV1 {
-            replay: canonical_replay_artifact(
-                &fixture.compact,
-                &input.starting_campaign_bytes,
-                "Dem_Lei_MP",
-                &input.replay_session_transcript,
-            )
-            .unwrap(),
-            starting_campaign: ArtifactRefV1 {
-                sha256: Digest32::digest_bytes(&input.starting_campaign_bytes),
-                byte_length: input.starting_campaign_bytes.len() as u64,
-                media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-            },
-        };
-        let request = SubmissionAuthorizationRequest {
-            offer_request: input.offer_request.clone(),
-            offer: fixture.offer,
-            replay_session_transcript: input.replay_session_transcript.clone(),
-            artifacts,
-            requested_metrics: input.requested_metrics.clone(),
-            campaign_controller_public_key: None,
-        };
-        let envelope = request.envelope(None);
-        let signature = fixture.key.sign(&envelope.signing_bytes().unwrap());
-        let public_key = PublicKey32::from_bytes(fixture.key.verifying_key().to_bytes());
-        let mut signed = SignedSubmissionV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            submission: envelope,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            participant_signatures: vec![ParticipantSignatureV1 {
-                public_key,
-                signature: Signature64::from_bytes(signature.to_bytes()),
-            }],
-        };
-        validate_authorized_submission(&request, &signed).unwrap();
-
-        let mut substituted_offer_request = request.clone();
-        substituted_offer_request.offer_request.mission_id = "foreign-mission".to_owned();
-        assert!(substituted_offer_request.validate_exact_context().is_err());
-
-        let mut substituted_transcript = request.clone();
-        substituted_transcript
-            .replay_session_transcript
-            .replay_session_id = Digest32::from_bytes([98; 32]);
-        assert!(substituted_transcript.validate_exact_context().is_err());
-
-        signed.submission.artifacts.replay.artifact.sha256 = Digest32::from_bytes([99; 32]);
-        assert!(validate_authorized_submission(&request, &signed).is_err());
+        let input = fixture.bundle.eligible_submission.unwrap();
+        let submission = input.submission(challenge(), uploader_public_key());
+        submission.validate().unwrap();
+        assert_eq!(submission.board_id, input.board_id);
+        assert_eq!(submission.replay, input.replay);
+        assert_eq!(submission.requested_metrics, input.requested_metrics);
+        assert_eq!(submission.uploader_public_key, uploader_public_key());
     }
 
     #[test]
     fn canonical_artifact_preserves_taints_for_server_verification() {
-        let fixture = fixture(MissionEndOutcome::Won);
-        let input = fixture.bundle.eligible_submission.as_ref().unwrap();
-        let text = std::str::from_utf8(&fixture.compact).unwrap();
+        let compact = compact_replay_bytes();
+        let text = std::str::from_utf8(&compact).unwrap();
         let (engine_hash, mut replay) = robin_replay_format::decode_compact(text).unwrap();
         replay
             .try_edit_header(|header| {
@@ -2514,59 +1320,15 @@ mod tests {
             })
             .unwrap();
         let tainted = robin_replay_format::encode_compact(&replay, &engine_hash).unwrap();
-
-        let artifact = canonical_replay_artifact(
-            tainted.as_bytes(),
-            &input.starting_campaign_bytes,
-            "Dem_Lei_MP",
-            &input.replay_session_transcript,
-        )
-        .unwrap();
+        let artifact = canonical_replay_artifact(tainted.as_bytes(), MISSION_ID).unwrap();
         assert_eq!(
             artifact.artifact.sha256,
             Digest32::digest_bytes(tainted.as_bytes())
         );
         assert!(replay.ranked_submission_verdict().is_err());
-    }
-
-    #[test]
-    fn cosign_progress_must_be_an_exact_canonical_subset() {
-        let first = PublicKey32::from_bytes([1; 32]);
-        let second = PublicKey32::from_bytes([2; 32]);
-        assert!(
-            ParticipantSigningProgress {
-                expected: vec![first, second],
-                signed: vec![second],
-            }
-            .validate()
-            .is_ok()
-        );
-        assert!(
-            ParticipantSigningProgress {
-                expected: vec![first, second],
-                signed: vec![PublicKey32::from_bytes([3; 32])],
-            }
-            .validate()
-            .is_err()
-        );
-    }
-}
-
-mod arc_bytes {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::sync::Arc;
-
-    pub fn serialize<S>(bytes: &Arc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        bytes.as_ref().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[u8]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Vec::<u8>::deserialize(deserializer).map(Arc::from)
+        assert!(canonical_replay_artifact(tainted.as_bytes(), "Demo_Lin").is_err());
+        let mut padded = tainted.into_bytes();
+        padded.push(b' ');
+        assert!(canonical_replay_artifact(&padded, MISSION_ID).is_err());
     }
 }

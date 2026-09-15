@@ -1,7 +1,7 @@
 //! Application composition, shared service ownership and runtime authority.
 //!
 //! Game-host state consumes this context; application services are never restored
-//! from serialized diagnostics. Normal and closed projection policies stay explicit.
+//! from serialized diagnostics.
 
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::engine as engine_api;
@@ -56,18 +56,9 @@ struct ApplicationServices {
     leaderboard_receipts: Mutex<crate::leaderboard_receipt_watcher::ApplicationReceiptWatcher>,
 }
 
-/// Construction policy is explicit: a closed projection must not load local trust,
-/// caches, profiles or the recording index as a side effect of sharing assembly.
-#[derive(Debug, Serialize, Deserialize)]
-enum PersistencePolicy {
-    Local(crate::player_profile_store::PlayerProfileStore),
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    ClosedOfficialProjection,
-}
-
 impl ApplicationServices {
     fn compose(
-        policy: PersistencePolicy,
+        profile_store: crate::player_profile_store::PlayerProfileStore,
         player_profiles: PlayerProfileManager,
         key_configs: KeyConfigStore,
         shipping: Option<Arc<ShippingDatadir>>,
@@ -75,51 +66,23 @@ impl ApplicationServices {
         preparation_files: Option<Arc<robin_engine::sbfile::SbFileSystem>>,
     ) -> Self {
         let trust_directory = key_configs.save_directory.clone();
-        let (profile_store, persistence_enabled) = match policy {
-            PersistencePolicy::Local(store) => (store, true),
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            PersistencePolicy::ClosedOfficialProjection => (
-                crate::player_profile_store::PlayerProfileStore::unavailable(
-                    "profiles disabled in closed official projection",
-                ),
-                false,
-            ),
-        };
-        let spellforge_trust = if persistence_enabled {
-            SpellforgeTrustStore::load(&trust_directory).unwrap_or_else(|error| {
-                tracing::error!(
-                    "Spellforge trust persistence is unavailable and remote code admission will fail closed: {error}"
-                );
-                SpellforgeTrustStore::unavailable(trust_directory.clone(), error)
-            })
-        } else {
-            SpellforgeTrustStore::unavailable(
-                trust_directory.clone(),
-                "Spellforge trust is disabled in the closed official projection context",
-            )
-        };
+        let spellforge_trust = SpellforgeTrustStore::load(&trust_directory).unwrap_or_else(|error| {
+            tracing::error!(
+                "Spellforge trust persistence is unavailable and remote code admission will fail closed: {error}"
+            );
+            SpellforgeTrustStore::unavailable(trust_directory.clone(), error)
+        });
         #[cfg(not(target_arch = "wasm32"))]
-        let distributed_mod_cache = if persistence_enabled {
-            DistributedModCache::open(&trust_directory).map_err(|error| {
-                tracing::error!(
-                    "distributed-mod cache is unavailable and host-distributed content admission will fail closed: {error}"
-                );
-                error
-            })
-        } else {
-            Err(
-                "distributed-mod cache is disabled in the closed official projection context"
-                    .to_owned(),
-            )
-        };
+        let distributed_mod_cache = DistributedModCache::open(&trust_directory).map_err(|error| {
+            tracing::error!(
+                "distributed-mod cache is unavailable and host-distributed content admission will fail closed: {error}"
+            );
+            error
+        });
         #[cfg(not(target_arch = "wasm32"))]
-        let recording_index = if persistence_enabled {
-            crate::mission_replays::RecordingIndex::native(
-                crate::mission_replays::default_directory(),
-            )
-        } else {
-            crate::mission_replays::RecordingIndex::disabled()
-        };
+        let recording_index = crate::mission_replays::RecordingIndex::native(
+            crate::mission_replays::default_directory(),
+        );
         #[cfg(target_arch = "wasm32")]
         let recording_index = crate::mission_replays::RecordingIndex::disabled();
         Self {
@@ -127,11 +90,7 @@ impl ApplicationServices {
             replay: Arc::new(Default::default()),
             recording_index: Arc::new(recording_index),
             asset_cache: Default::default(),
-            cache_maintenance: if persistence_enabled {
-                crate::cache_maintenance::CacheMaintenance::new()
-            } else {
-                Default::default()
-            },
+            cache_maintenance: crate::cache_maintenance::CacheMaintenance::new(),
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             browser_audio: Default::default(),
             preparation_files,
@@ -465,80 +424,6 @@ impl ApplicationContext {
         )
     }
 
-    /// Construct the closed, in-memory application authority used by the
-    /// native official simulation-content exporter.
-    ///
-    /// Unlike production startup, this path never reads or writes player
-    /// profiles, key bindings, identities, localization preferences, saves,
-    /// or mods. The exact deterministic config was decoded from the signed
-    /// rules document before this constructor is called.
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    pub fn complete_official_projection(
-        options: engine_api::GlobalOptions,
-        sim_config: engine_api::SimConfig,
-        shipping: Option<Arc<ShippingDatadir>>,
-    ) -> Result<Self, String> {
-        Self::complete_official_projection_with_files(options, sim_config, shipping, None)
-    }
-
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    pub fn complete_official_projection_with_files(
-        options: engine_api::GlobalOptions,
-        sim_config: engine_api::SimConfig,
-        shipping: Option<Arc<ShippingDatadir>>,
-        preparation_files: Option<Arc<robin_engine::sbfile::SbFileSystem>>,
-    ) -> Result<Self, String> {
-        sim_config
-            .validate()
-            .map_err(|error| format!("invalid official projection SimConfig: {error}"))?;
-        let option_config = engine_api::SimConfig::from_options(&options, sim_config.difficulty);
-        if (
-            option_config.script_enabled,
-            option_config.highlander,
-            option_config.highlander2,
-            option_config.golden_eye,
-            option_config.ignore_default_loose,
-            option_config.bypass_fog_sprites_crash,
-        ) != (
-            sim_config.script_enabled,
-            sim_config.highlander,
-            sim_config.highlander2,
-            sim_config.golden_eye,
-            sim_config.ignore_default_loose,
-            sim_config.bypass_fog_sprites_crash,
-        ) {
-            return Err(
-                "official projection options differ from the exact supplied SimConfig".to_owned(),
-            );
-        }
-
-        const MEMORY_ONLY_SAVE_DIRECTORY: &str = "official-projection-memory-only";
-        let mut player_profiles = PlayerProfileManager::new(MEMORY_ONLY_SAVE_DIRECTORY.to_owned());
-        let active_index =
-            player_profiles.create_profile("Official Projection".to_owned(), sim_config.difficulty);
-        player_profiles.set_active(active_index);
-        let active = player_profiles
-            .get_active_mut()
-            .ok_or_else(|| "official projection profile was not activated".to_owned())?;
-        active.sound_config.amount_of_speaking = sim_config.amount_of_speaking;
-        sim_config.copy_gameplay_to_profile(&mut active.gameplay_config);
-
-        let mut key_configs = KeyConfigStore::new(MEMORY_ONLY_SAVE_DIRECTORY.to_owned());
-        key_configs.entry_or_default(active.id);
-        Ok(Self {
-            options,
-            sim_config: Arc::new(Mutex::new(sim_config)),
-            services: Some(Arc::new(ApplicationServices::compose(
-                PersistencePolicy::ClosedOfficialProjection,
-                player_profiles,
-                key_configs,
-                shipping,
-                LocalizationService::disabled(),
-                preparation_files,
-            ))),
-        })
-    }
-
     /// Complete a production application context with localization already
     /// installed. Keeping this separate from [`Self::complete`] prevents unit
     /// test contexts from mutating the process-wide resource search order.
@@ -619,7 +504,7 @@ impl ApplicationContext {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
             services: Some(Arc::new(ApplicationServices::compose(
-                PersistencePolicy::Local(profile_store),
+                profile_store,
                 player_profiles,
                 key_configs,
                 shipping,

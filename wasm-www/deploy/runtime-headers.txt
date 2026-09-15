@@ -15,7 +15,3 @@
 /wasm/latest.json
   ! Cache-Control
   Cache-Control: public, max-age=0, must-revalidate
-
-/wasm/datadir-deployment.json
-  ! Cache-Control
-  Cache-Control: public, max-age=0, must-revalidate

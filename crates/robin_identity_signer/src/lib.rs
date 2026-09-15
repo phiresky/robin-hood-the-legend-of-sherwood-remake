@@ -11,8 +11,6 @@ pub enum LeaderboardSigningError {
     InvalidClaim(String),
     #[error("leaderboard signing claim names a different public key")]
     WrongIdentity,
-    #[error("leaderboard submission does not claim this public key")]
-    IdentityNotClaimed,
     #[error("canonical leaderboard signing failed: {0}")]
     Canonical(String),
     #[error("leaderboard bridge document exceeds {maximum} bytes")]

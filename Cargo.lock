@@ -1003,16 +1003,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "command-fds"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b60b5124979fccd9addd89d8b97a1d6eebb4950694520c75ddd722535ea443f"
-dependencies = [
- "nix",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2379,17 +2369,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
-]
-
-[[package]]
-name = "goblin"
-version = "0.10.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17582616a7718cca54cec18e534a76c7c4aec11a8b9a85695712f262fd15a4c8"
-dependencies = [
- "log",
- "plain",
- "scroll",
 ]
 
 [[package]]
@@ -6001,7 +5980,6 @@ dependencies = [
  "robin_test_support",
  "robin_util",
  "serde",
- "serde-big-array",
  "serde-value",
  "serde_json",
  "serde_json_any_key",
@@ -6043,7 +6021,6 @@ dependencies = [
  "bytes",
  "cap-std",
  "clap",
- "command-fds",
  "ed25519-dalek",
  "flate2",
  "futures-util",
@@ -6140,27 +6117,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "robin_manifest_tool"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
- "clap",
- "goblin",
- "robin_assets",
- "robin_engine",
- "robin_run_protocol",
- "robin_util",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
- "toml",
- "wait-timeout",
-]
-
-[[package]]
 name = "robin_modding_tools"
 version = "0.0.0"
 dependencies = [
@@ -6212,7 +6168,6 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_replay_format",
- "robin_run_protocol",
  "robin_util",
  "serde",
  "serde_json",
@@ -6251,24 +6206,19 @@ dependencies = [
 name = "robin_replay_verifier"
 version = "0.0.0"
 dependencies = [
- "anyhow",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "clap",
- "ed25519-dalek",
  "nix",
- "rand",
  "robin_engine",
  "robin_ranked_verification",
  "robin_replay_format",
  "robin_run_protocol",
- "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
- "walkdir",
 ]
 
 [[package]]
@@ -6332,7 +6282,6 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
- "robin_manifest_tool",
  "robin_modding_tools",
  "robin_replay_format",
  "robin_run_protocol",
@@ -6379,15 +6328,11 @@ dependencies = [
 name = "robin_run_protocol"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
- "hex",
  "robin_run_types",
- "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sha2 0.11.0",
  "thiserror 2.0.20",
  "zstd",
 ]
@@ -6740,26 +6685,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scroll"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1257cd4248b4132760d6524d6dda4e053bc648c9070b960929bf50cfb1e7add"
-dependencies = [
- "scroll_derive",
-]
-
-[[package]]
-name = "scroll_derive"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1a36a382ed65dbcc0ab47fd5e9a94112417ccd34560a392ef3b7b0f0ec39148"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.5",
-]
-
-[[package]]
 name = "sctk-adwaita"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6830,15 +6755,6 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde-big-array"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
-dependencies = [
- "serde",
 ]
 
 [[package]]

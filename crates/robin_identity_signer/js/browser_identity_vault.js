@@ -17,16 +17,7 @@ const textEncoder = new TextEncoder();
 
 const SIGNING_DOMAINS = Object.freeze({
     username_update: textEncoder.encode('robinhood/leaderboards/1/username-update\0'),
-    submission: textEncoder.encode('robinhood/leaderboards/1/submission\0'),
-    competition_run_grant_request: textEncoder.encode('robinhood/leaderboards/1/competition-run-grant-request\0'),
-    fresh_run_preflight_request: textEncoder.encode('robinhood/leaderboards/1/fresh-run-preflight-request\0'),
-    campaign_continuation_preflight_host: textEncoder.encode('robinhood/leaderboards/1/campaign-continuation-preflight-host\0'),
-    campaign_continuation_preflight_controller: textEncoder.encode('robinhood/leaderboards/1/campaign-continuation-preflight-controller\0'),
-    campaign_continuation: textEncoder.encode('robinhood/leaderboards/1/campaign-continuation\0'),
-    multiplayer_campaign_continuation: textEncoder.encode('robinhood/leaderboards/1/co-sign-payload\0'),
-    multiplayer_submission: textEncoder.encode('robinhood/leaderboards/1/co-sign-payload\0'),
-    named_seat_join: textEncoder.encode('robinhood/multiplayer/1/join-attestation\0'),
-    replay_session_genesis: textEncoder.encode('robinhood/multiplayer/1/session-genesis\0'),
+    submission: textEncoder.encode('robinhood/leaderboards/2/submission\0'),
     submission_owner_status: textEncoder.encode('robinhood/leaderboards/1/submission-owner-status\0'),
     deletion_request: textEncoder.encode('robinhood/leaderboards/1/deletion-request\0'),
 });
@@ -34,15 +25,6 @@ const SIGNING_DOMAINS = Object.freeze({
 const SIGNING_LIMITS = Object.freeze({
     username_update: 4 * 1024,
     submission: 128 * 1024,
-    competition_run_grant_request: 128 * 1024,
-    fresh_run_preflight_request: 128 * 1024,
-    campaign_continuation_preflight_host: 128 * 1024,
-    campaign_continuation_preflight_controller: 128 * 1024,
-    campaign_continuation: 128 * 1024,
-    multiplayer_campaign_continuation: 139,
-    multiplayer_submission: 139,
-    named_seat_join: 8 * 1024,
-    replay_session_genesis: 64 * 1024,
     submission_owner_status: 8 * 1024,
     deletion_request: 8 * 1024,
 });
@@ -226,18 +208,6 @@ function validateSigningMessage(operation, value) {
         fail('unsupported_operation', `Unsupported leaderboard identity operation: ${String(operation)}`);
     }
     const message = exactBytes(value);
-    const multiplayerPurpose = operation === 'multiplayer_campaign_continuation'
-        ? 1
-        : operation === 'multiplayer_submission'
-            ? 2
-            : undefined;
-    if (multiplayerPurpose !== undefined) {
-        if (message.byteLength !== domain.byteLength + 1 + (3 * 32)
-            || message[domain.byteLength] !== multiplayerPurpose) {
-            fail('invalid_message', `Invalid ${operation} fixed co-signing payload`);
-        }
-        return message;
-    }
     if (message.byteLength <= domain.byteLength || message.byteLength > maximum) {
         fail('invalid_message', `Invalid ${operation} signing message length`);
     }

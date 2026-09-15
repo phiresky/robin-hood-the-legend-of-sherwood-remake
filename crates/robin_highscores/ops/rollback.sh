@@ -34,7 +34,7 @@ else
 fi
 target=$(realpath "$target")
 [[ "$target" != "$current" ]] || die "$(basename "$target") is already current"
-[[ "$target" != "$authority" ]] || die "refusing to run services from the authority release"
+[[ "$target" != "$authority" ]] || die "refusing to run services from the verifier release"
 [[ -x "$target/bin/robin-highscores-server" ]] || die "$target is not a service release"
 
 database=$("$current/bin/robin-highscores-admin" --config "$server_config" database-schema-version)
