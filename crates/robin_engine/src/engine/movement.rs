@@ -1178,32 +1178,6 @@ fn is_in_place_movement_transition(order: OrderType) -> bool {
     )
 }
 
-/// Whether an outgoing movement is still in one of the generated locomotion
-/// transitions that owns the previously published waypoint.
-///
-/// A replacement instructed while the actor is in a concrete walk/run order
-/// does not inherit that waypoint: Original clears it at the replacement
-/// arbitration boundary and leaves it zero until the new movement executes.
-/// The transition case is different because the transition itself continues
-/// to own the live movement forecast across the hand-off.
-fn movement_transition_retains_goal(order: OrderType) -> bool {
-    matches!(
-        order,
-        OrderType::TransitionWalkingUprightWaitingUpright
-            | OrderType::TransitionRunningUprightWaitingUpright
-            | OrderType::TransitionWaitingUprightWalkingUpright
-            | OrderType::TransitionWaitingUprightRunningUpright
-            | OrderType::TransitionWalkingUprightRunningUpright
-            | OrderType::TransitionRunningUprightWalkingUpright
-            | OrderType::TransitionWaitingCrouchedWalkingCrouched
-            | OrderType::TransitionWalkingCrouchedWaitingCrouched
-            | OrderType::TransitionWalkingUprightWalkingCrouched
-            | OrderType::TransitionWalkingCrouchedWalkingUpright
-            | OrderType::TransitionRunningUprightWalkingCrouched
-            | OrderType::TransitionWalkingCrouchedRunningUpright
-    )
-}
-
 // ─── Group-move formation helper ─────────────────────────────────────
 
 /// Compute per-character destination points for a "mercenary"-style group

@@ -21,7 +21,6 @@ mod drunken_turn_timing_tests;
 mod exact_lift_sector_tests;
 mod group_move_authorization_tests;
 mod line_crossing_eligibility_tests;
-mod movement_goal_replacement_tests;
 mod post_seek_hit_handoff_tests;
 mod route_source_tests;
 mod selected_movement_preparation_tests;
