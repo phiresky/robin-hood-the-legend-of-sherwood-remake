@@ -1,15 +1,17 @@
-//! Owner-authenticated submission status, lifecycle documents and exact response binding.
+//! Public submission status, owner-signed private status and lifecycle documents.
 
-use super::SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1;
 use crate::CanonicalDocument as _;
+use crate::signed_request::{SignedRequestClaim, SignedRequestV2};
 use crate::{
-    ChallengeNonce32, Digest32, OpaqueId, PublicKey32, Signature64, SignatureAlgorithmV1, Validate,
-    ValidationError, VerificationRejectionCodeV1,
+    Digest32, OpaqueId, PublicKey32, Validate, ValidationError, VerificationRejectionCodeV1,
 };
 use serde::{Deserialize, Serialize};
 
+pub const SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V2: &[u8] =
+    b"robinhood/leaderboards/2/submission-owner-status\0";
+
 /// Minimal shareable progress. Detailed failures remain available only through
-/// the authenticated owner-status endpoint.
+/// the owner-signed status endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicSubmissionStatusV1 {
@@ -41,115 +43,47 @@ pub enum SubmissionFailureCodeV1 {
     VerificationInfrastructure,
 }
 
-/// Requests a one-use owner-status challenge. Servers must return the same
-/// challenge shape whether or not the submission exists or is owned by this
-/// key; this request is not an ownership/existence oracle.
+/// Owner-signed request for one submission's private lifecycle. Replaying a
+/// captured request within the signing window only returns what the key
+/// owner can already see; responses to unknown or foreign submissions are
+/// indistinguishable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SubmissionOwnerStatusChallengeRequestV1 {
+pub struct SubmissionOwnerStatusRequestV2 {
     pub schema_version: u32,
-    pub controller_public_key: PublicKey32,
+    pub public_key: PublicKey32,
+    pub signed_at_unix_ms: u64,
     pub submission_id: OpaqueId,
 }
 
-impl Validate for SubmissionOwnerStatusChallengeRequestV1 {
+impl Validate for SubmissionOwnerStatusRequestV2 {
     fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema(
-            "SubmissionOwnerStatusChallengeRequestV1",
+        crate::validation::schema_exact(
+            "SubmissionOwnerStatusRequestV2",
+            crate::SCHEMA_VERSION_V2,
             self.schema_version,
         )?;
+        crate::validation::nonzero("submission_owner_status.public_key", &self.public_key)?;
         crate::validation::nonzero(
-            "submission_owner_status_challenge_request.controller_public_key",
-            &self.controller_public_key,
-        )?;
-        Ok(())
-    }
-}
-
-/// Server-authored one-use challenge. Issuance proves no ownership fact; the
-/// server performs the ownership check only after verifying the signed
-/// envelope and must keep unauthorized/not-found failures indistinguishable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SubmissionOwnerStatusChallengeV1 {
-    pub schema_version: u32,
-    pub owner_status_challenge_id: OpaqueId,
-    pub owner_status_challenge_nonce: ChallengeNonce32,
-    pub expires_at_unix_ms: u64,
-    pub controller_public_key: PublicKey32,
-    pub submission_id: OpaqueId,
-}
-
-impl Validate for SubmissionOwnerStatusChallengeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("SubmissionOwnerStatusChallengeV1", self.schema_version)?;
-        crate::validation::nonzero(
-            "submission_owner_status_challenge.nonce",
-            &self.owner_status_challenge_nonce,
-        )?;
-        if self.expires_at_unix_ms == 0 {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status_challenge.expires_at_unix_ms",
-            });
-        }
-        crate::validation::nonzero(
-            "submission_owner_status_challenge.controller_public_key",
-            &self.controller_public_key,
-        )?;
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-struct SubmissionOwnerStatusSignable<'a> {
-    schema_version: u32,
-    challenge: &'a SubmissionOwnerStatusChallengeV1,
-    algorithm: SignatureAlgorithmV1,
-}
-
-/// Domain-separated Ed25519 proof authorizing one private status read. The
-/// complete challenge is signed, so key, submission, nonce, expiry, and
-/// challenge namespace cannot be transplanted independently.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SubmissionOwnerStatusEnvelopeV1 {
-    pub schema_version: u32,
-    pub challenge: SubmissionOwnerStatusChallengeV1,
-    pub algorithm: SignatureAlgorithmV1,
-    pub signature: Signature64,
-}
-
-impl SubmissionOwnerStatusEnvelopeV1 {
-    pub fn validate_signing_claim(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("SubmissionOwnerStatusEnvelopeV1", self.schema_version)?;
-        self.challenge.validate()?;
-        if self.schema_version != self.challenge.schema_version {
-            return Err(ValidationError::ClaimMismatch {
-                field: "submission_owner_status.challenge.schema_version",
-            });
-        }
-        Ok(())
-    }
-
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(
-            SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1,
-            &SubmissionOwnerStatusSignable {
-                schema_version: self.schema_version,
-                challenge: &self.challenge,
-                algorithm: self.algorithm,
-            },
+            "submission_owner_status.signed_at_unix_ms",
+            &self.signed_at_unix_ms,
         )
     }
 }
 
-impl Validate for SubmissionOwnerStatusEnvelopeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.validate_signing_claim()?;
-        crate::validation::nonzero("submission_owner_status.signature", &self.signature)?;
-        Ok(())
+impl SignedRequestClaim for SubmissionOwnerStatusRequestV2 {
+    const DOMAIN: &'static [u8] = SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V2;
+
+    fn signer_public_key(&self) -> PublicKey32 {
+        self.public_key
+    }
+
+    fn signed_at_unix_ms(&self) -> u64 {
+        self.signed_at_unix_ms
     }
 }
+
+pub type SignedSubmissionOwnerStatusRequestV2 = SignedRequestV2<SubmissionOwnerStatusRequestV2>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -224,47 +158,53 @@ impl Validate for SubmissionAcceptedV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SubmissionOwnerStatusResponseV1 {
+pub struct SubmissionOwnerStatusResponseV2 {
     pub schema_version: u32,
     pub submission_id: OpaqueId,
-    pub controller_public_key: PublicKey32,
-    /// Digest of the exact signed `SubmissionOwnerStatusEnvelopeV1` accepted
-    /// for this one private read.
-    pub owner_status_envelope_sha256: Digest32,
+    pub public_key: PublicKey32,
+    /// Canonical digest of the exact signed request answered by this response.
+    pub request_sha256: Digest32,
     pub state: SubmissionLifecycleV1,
 }
 
-impl Validate for SubmissionOwnerStatusResponseV1 {
+impl Validate for SubmissionOwnerStatusResponseV2 {
     fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("SubmissionOwnerStatusResponseV1", self.schema_version)?;
-        if self.controller_public_key.is_zero() || self.owner_status_envelope_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "submission_owner_status_response.owner_binding",
-            });
-        }
+        crate::validation::schema_exact(
+            "SubmissionOwnerStatusResponseV2",
+            crate::SCHEMA_VERSION_V2,
+            self.schema_version,
+        )?;
+        crate::validation::nonzero(
+            "submission_owner_status_response.public_key",
+            &self.public_key,
+        )?;
+        crate::validation::nonzero(
+            "submission_owner_status_response.request_sha256",
+            &self.request_sha256,
+        )?;
         self.state.validate()
     }
 }
 
-impl SubmissionOwnerStatusResponseV1 {
-    pub fn validate_against_envelope(
+impl SubmissionOwnerStatusResponseV2 {
+    pub fn validate_against_request(
         &self,
-        envelope: &SubmissionOwnerStatusEnvelopeV1,
+        request: &SignedSubmissionOwnerStatusRequestV2,
     ) -> Result<(), ValidationError> {
         self.validate()?;
-        envelope.validate()?;
-        let envelope_sha256 =
-            envelope
+        request.validate()?;
+        let request_sha256 =
+            request
                 .canonical_digest()
                 .map_err(|_| ValidationError::ClaimMismatch {
-                    field: "submission_owner_status_response.envelope",
+                    field: "submission_owner_status_response.request",
                 })?;
-        if self.submission_id != envelope.challenge.submission_id
-            || self.controller_public_key != envelope.challenge.controller_public_key
-            || self.owner_status_envelope_sha256 != envelope_sha256
+        if self.submission_id != request.request.submission_id
+            || self.public_key != request.request.public_key
+            || self.request_sha256 != request_sha256
         {
             return Err(ValidationError::ClaimMismatch {
-                field: "submission_owner_status_response.envelope",
+                field: "submission_owner_status_response.request",
             });
         }
         Ok(())

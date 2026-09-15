@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod moderation;
 pub mod query;
 pub mod rejection_code;
+pub mod signed_request;
 pub mod strict_json;
 pub mod submission;
 pub mod verification;
@@ -32,13 +33,12 @@ pub use canonical::{
     canonical_json_bytes,
 };
 pub use digest::{
-    ChallengeNonce32, Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64,
-    SimulationSeedError,
+    Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64, SimulationSeedError,
 };
 pub use moderation::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
-    DELETION_REQUEST_SIGNATURE_DOMAIN_V1, DeletionChallengeRequestV1, DeletionChallengeV1,
-    DeletionReceiptV1, DeletionRequestEnvelopeV1, DeletionTargetV1,
+    DELETION_REQUEST_SIGNATURE_DOMAIN_V2, DeletionReceiptV1, DeletionRequestV2, DeletionTargetV1,
+    SignedDeletionRequestV2,
 };
 pub use query::{
     AchievementSummaryV1, BoardMetricValueV2, LeaderboardCursorV2, LeaderboardEntryV2,
@@ -46,22 +46,28 @@ pub use query::{
     PlayerProfileV1, PlayerRunHistoryEntryV2, PlayerRunHistoryFilterV1, PlayerRunHistoryPageV2,
     PlayerRunHistoryQueryV1, PublicAchievementDecisionV1, PublicParticipantV1,
     PublicSubmissionStateV1, PublicSubmissionStatusV1, RunDetailV2, RunFilterV2, RunMetricsV1,
-    RunSummaryV2, SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1, SubmissionAcceptedV1,
-    SubmissionFailureCodeV1, SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    SubmissionOwnerStatusResponseV1, ViewerAvailabilityV2, ViewerLaunchV2,
+    RunSummaryV2, SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V2,
+    SignedSubmissionOwnerStatusRequestV2, SubmissionAcceptedV1, SubmissionFailureCodeV1,
+    SubmissionLifecycleV1, SubmissionOwnerStatusRequestV2, SubmissionOwnerStatusResponseV2,
+    ViewerAvailabilityV2, ViewerLaunchV2,
 };
 pub use robin_run_types::{
     ArtifactRefV1, BoardSimulationPolicyV1, MAX_PARTICIPANT_INSTANCES_V1, MAX_REPLAY_SEATS_V1,
     OfficialContentEditionV1, RANKED_SIMULATION_POLICY_VERSION_V1, RankedSimulationDifficultyV1,
     RankedSimulationPolicyV1, RankedSimulationPresetV1, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2,
 };
+#[cfg(feature = "authentication")]
+pub use signed_request::SignedRequestError;
+pub use signed_request::{
+    SIGNED_REQUEST_DEFAULT_MAX_AGE_MS, SIGNED_REQUEST_DEFAULT_MAX_FUTURE_SKEW_MS,
+    SignatureAlgorithmV1, SignedRequestClaim, SignedRequestFreshnessError, SignedRequestV2,
+    SignedRequestWindowV1,
+};
 pub use submission::{
     InputIneligibilityReasonV1, InputProvenanceStatusV1, InputTaintKindV1, InputTaintV1,
     ParticipantPublicDisclosureV1, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-    SUBMISSION_SIGNATURE_DOMAIN_V2, SignatureAlgorithmV1, SignedSubmissionV2, SubmissionV2,
-    TerminalOutcomeV1, USERNAME_UPDATE_SIGNATURE_DOMAIN_V1, UploadChallengeRequestV2,
-    UploadChallengeV1, UsernameChallengeRequestV1, UsernameChallengeV1, UsernameUpdateEnvelopeV1,
+    SUBMISSION_SIGNATURE_DOMAIN_V2, SignedSubmissionV2, SignedUsernameUpdateV2, SubmissionV2,
+    TerminalOutcomeV1, USERNAME_UPDATE_SIGNATURE_DOMAIN_V2, UsernameUpdateV2,
 };
 pub use validation::{Validate, ValidationError};
 pub use verification::{
@@ -91,10 +97,10 @@ mod tests {
     #[test]
     fn every_signature_domain_is_distinct_and_terminated() {
         let domains = [
-            crate::SUBMISSION_SIGNATURE_DOMAIN_V2,
-            crate::USERNAME_UPDATE_SIGNATURE_DOMAIN_V1,
-            crate::DELETION_REQUEST_SIGNATURE_DOMAIN_V1,
-            crate::SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1,
+            <crate::SubmissionV2 as crate::SignedRequestClaim>::DOMAIN,
+            <crate::UsernameUpdateV2 as crate::SignedRequestClaim>::DOMAIN,
+            <crate::DeletionRequestV2 as crate::SignedRequestClaim>::DOMAIN,
+            <crate::SubmissionOwnerStatusRequestV2 as crate::SignedRequestClaim>::DOMAIN,
         ];
         let mut seen = std::collections::BTreeSet::new();
         for domain in domains {

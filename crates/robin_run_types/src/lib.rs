@@ -23,8 +23,7 @@ pub use canonical::{
 };
 pub use content::OfficialContentEditionV1;
 pub use digest::{
-    ChallengeNonce32, Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64,
-    SimulationSeedError,
+    Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64, SimulationSeedError,
 };
 pub use ruleset::{
     BoardSimulationPolicyV1, RANKED_SIMULATION_POLICY_VERSION_V1, RankedSimulationDifficultyV1,

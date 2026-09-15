@@ -139,11 +139,6 @@ fixed_hex_type!(
     64,
     "Raw Ed25519 signature bytes, compatible with an iroh Signature."
 );
-fixed_hex_type!(
-    ChallengeNonce32,
-    32,
-    "A server-issued 32-byte anti-replay nonce."
-);
 
 /// Exact unsigned 64-bit simulation seed serialized as canonical decimal
 /// text. JavaScript JSON numbers cannot represent every `u64` exactly.
@@ -389,7 +384,6 @@ mod tests {
     fn iroh_compatible_key_and_signature_lengths_are_pinned() {
         assert_eq!(PublicKey32::LENGTH, 32);
         assert_eq!(Signature64::LENGTH, 64);
-        assert_eq!(ChallengeNonce32::LENGTH, 32);
         assert!(PublicKey32::default().is_zero());
         assert!(!PublicKey32::from_bytes([1; 32]).is_zero());
         assert_eq!(

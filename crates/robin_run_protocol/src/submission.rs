@@ -1,162 +1,59 @@
-//! Upload challenges, signed replay submissions, usernames and input provenance.
+//! Signed replay submissions, username updates and input provenance.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ArtifactRefV1, BoardMetricV1, ChallengeNonce32, OpaqueId, PublicKey32, Signature64, Validate,
-    ValidationError,
-};
+use crate::signed_request::{SignedRequestClaim, SignedRequestV2};
+use crate::{ArtifactRefV1, BoardMetricV1, OpaqueId, PublicKey32, Validate, ValidationError};
 
 pub const SUBMISSION_SIGNATURE_DOMAIN_V2: &[u8] = b"robinhood/leaderboards/2/submission\0";
-pub const USERNAME_UPDATE_SIGNATURE_DOMAIN_V1: &[u8] =
-    b"robinhood/leaderboards/1/username-update\0";
+pub const USERNAME_UPDATE_SIGNATURE_DOMAIN_V2: &[u8] =
+    b"robinhood/leaderboards/2/username-update\0";
 
 /// The one wire/storage format accepted for ranked replays. JSONL and older
 /// Rust replay containers are local developer formats, not protocol lanes.
 pub const RANKED_REPLAY_MEDIA_TYPE_V1: &str = "application/x-robin-rhrec+compact";
 
-/// Request for a one-use replay upload challenge bound to one identity key.
+/// Mutable display name of one identity key. Usernames are not part of run
+/// submissions and are not required to be unique. The server only accepts an
+/// update newer than the last accepted update for the key, so replaying a
+/// captured request cannot roll a later name back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct UploadChallengeRequestV2 {
+pub struct UsernameUpdateV2 {
     pub schema_version: u32,
     pub public_key: PublicKey32,
+    pub signed_at_unix_ms: u64,
+    pub username: String,
 }
 
-impl Validate for UploadChallengeRequestV2 {
+impl Validate for UsernameUpdateV2 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema_exact(
-            "UploadChallengeRequestV2",
+            "UsernameUpdateV2",
             crate::SCHEMA_VERSION_V2,
             self.schema_version,
         )?;
-        crate::validation::nonzero("upload_challenge_request.public_key", &self.public_key)
-    }
-}
-
-/// Server-authored one-use challenge embedded in exactly one signed submission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UploadChallengeV1 {
-    pub schema_version: u32,
-    pub upload_challenge_id: OpaqueId,
-    pub upload_challenge_nonce: ChallengeNonce32,
-    pub expires_at_unix_ms: u64,
-}
-
-impl Validate for UploadChallengeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("UploadChallengeV1", self.schema_version)?;
-        crate::validation::nonzero(
-            "upload_challenge.upload_challenge_nonce",
-            &self.upload_challenge_nonce,
-        )?;
-        crate::validation::nonzero(
-            "upload_challenge.expires_at_unix_ms",
-            &self.expires_at_unix_ms,
-        )
-    }
-}
-
-/// A one-use challenge dedicated to a mutable username update.
-///
-/// It is intentionally a different namespace from replay upload challenges,
-/// preventing a challenge minted for one operation from authorizing the other.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UsernameChallengeV1 {
-    pub schema_version: u32,
-    pub username_challenge_id: OpaqueId,
-    pub username_challenge_nonce: ChallengeNonce32,
-    pub expires_at_unix_ms: u64,
-}
-
-impl Validate for UsernameChallengeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("UsernameChallengeV1", self.schema_version)?;
-        crate::validation::nonzero(
-            "username_challenge.username_challenge_nonce",
-            &self.username_challenge_nonce,
-        )?;
-        crate::validation::nonzero(
-            "username_challenge.expires_at_unix_ms",
-            &self.expires_at_unix_ms,
-        )
-    }
-}
-
-/// Request for a one-use username-update challenge.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UsernameChallengeRequestV1 {
-    pub schema_version: u32,
-    pub public_key: PublicKey32,
-}
-
-impl Validate for UsernameChallengeRequestV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("UsernameChallengeRequestV1", self.schema_version)?;
-        crate::validation::nonzero("username_challenge_request.public_key", &self.public_key)
-    }
-}
-
-#[derive(Serialize)]
-struct UsernameUpdateSignable<'a> {
-    schema_version: u32,
-    username_challenge_id: &'a OpaqueId,
-    username_challenge_nonce: ChallengeNonce32,
-    public_key: PublicKey32,
-    username: &'a str,
-}
-
-/// Separately signed mutable username operation. Usernames are intentionally
-/// not part of run submissions and are not required to be unique.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UsernameUpdateEnvelopeV1 {
-    pub schema_version: u32,
-    pub username_challenge_id: OpaqueId,
-    pub username_challenge_nonce: ChallengeNonce32,
-    pub public_key: PublicKey32,
-    pub username: String,
-    pub signature: Signature64,
-}
-
-impl UsernameUpdateEnvelopeV1 {
-    /// Validate every signed claim while intentionally ignoring the signature
-    /// field. This is the safe pre-signing entry point for identity bridges.
-    pub fn validate_signing_claim(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("UsernameUpdateEnvelopeV1", self.schema_version)?;
-        crate::validation::nonzero(
-            "username_update.username_challenge_nonce",
-            &self.username_challenge_nonce,
-        )?;
         crate::validation::nonzero("username_update.public_key", &self.public_key)?;
+        crate::validation::nonzero("username_update.signed_at_unix_ms", &self.signed_at_unix_ms)?;
         crate::validation::text("username_update.username", &self.username, 48)
     }
+}
 
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(
-            USERNAME_UPDATE_SIGNATURE_DOMAIN_V1,
-            &UsernameUpdateSignable {
-                schema_version: self.schema_version,
-                username_challenge_id: &self.username_challenge_id,
-                username_challenge_nonce: self.username_challenge_nonce,
-                public_key: self.public_key,
-                username: &self.username,
-            },
-        )
+impl SignedRequestClaim for UsernameUpdateV2 {
+    const DOMAIN: &'static [u8] = USERNAME_UPDATE_SIGNATURE_DOMAIN_V2;
+
+    fn signer_public_key(&self) -> PublicKey32 {
+        self.public_key
+    }
+
+    fn signed_at_unix_ms(&self) -> u64 {
+        self.signed_at_unix_ms
     }
 }
 
-impl Validate for UsernameUpdateEnvelopeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.validate_signing_claim()?;
-        crate::validation::nonzero("username_update.signature", &self.signature)
-    }
-}
+pub type SignedUsernameUpdateV2 = SignedRequestV2<UsernameUpdateV2>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -206,19 +103,15 @@ pub enum ParticipantPublicDisclosureV1 {
     Anonymous,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SignatureAlgorithmV1 {
-    Ed25519,
-}
-
 /// One replay upload claimed by one identity key for one board and mission.
+/// The signature covers the replay's SHA-256 and length; a replay already
+/// pending or accepted cannot be submitted again by anyone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubmissionV2 {
     pub schema_version: u32,
-    pub upload_challenge: UploadChallengeV1,
     pub uploader_public_key: PublicKey32,
+    pub signed_at_unix_ms: u64,
     pub public_disclosure: ParticipantPublicDisclosureV1,
     pub board_id: OpaqueId,
     pub mission_id: String,
@@ -233,8 +126,8 @@ impl Validate for SubmissionV2 {
             crate::SCHEMA_VERSION_V2,
             self.schema_version,
         )?;
-        self.upload_challenge.validate()?;
         crate::validation::nonzero("submission.uploader_public_key", &self.uploader_public_key)?;
+        crate::validation::nonzero("submission.signed_at_unix_ms", &self.signed_at_unix_ms)?;
         crate::validation::text("submission.mission_id", &self.mission_id, 256)?;
         self.replay.validate_current_schema()?;
         if self.requested_metrics.is_empty()
@@ -248,53 +141,20 @@ impl Validate for SubmissionV2 {
     }
 }
 
-/// A submission signed by its uploader. The server verifies the signature,
-/// consumes the embedded challenge and queues the replay for verification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SignedSubmissionV2 {
-    pub schema_version: u32,
-    pub submission: SubmissionV2,
-    pub algorithm: SignatureAlgorithmV1,
-    pub signature: Signature64,
-}
+impl SignedRequestClaim for SubmissionV2 {
+    const DOMAIN: &'static [u8] = SUBMISSION_SIGNATURE_DOMAIN_V2;
 
-impl SignedSubmissionV2 {
-    /// Bytes the uploader signs: the domain-separated canonical submission.
-    pub fn signing_bytes(
-        submission: &SubmissionV2,
-    ) -> Result<Vec<u8>, crate::canonical::CanonicalDocumentError> {
-        submission.validate()?;
-        Ok(crate::canonical::domain_separated_bytes(
-            SUBMISSION_SIGNATURE_DOMAIN_V2,
-            submission,
-        )?)
+    fn signer_public_key(&self) -> PublicKey32 {
+        self.uploader_public_key
     }
 
-    /// Verify the uploader's Ed25519 signature over the exact submission.
-    #[cfg(feature = "authentication")]
-    pub fn verify_signature(&self) -> Result<(), crate::SignatureVerificationError> {
-        let bytes = Self::signing_bytes(&self.submission)
-            .map_err(|_| crate::SignatureVerificationError::InvalidSignature)?;
-        crate::verify_ed25519_strict(
-            self.submission.uploader_public_key.as_bytes(),
-            self.signature.as_bytes(),
-            &bytes,
-        )
+    fn signed_at_unix_ms(&self) -> u64 {
+        self.signed_at_unix_ms
     }
 }
 
-impl Validate for SignedSubmissionV2 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema_exact(
-            "SignedSubmissionV2",
-            crate::SCHEMA_VERSION_V2,
-            self.schema_version,
-        )?;
-        self.submission.validate()?;
-        crate::validation::nonzero("signed_submission.signature", &self.signature)
-    }
-}
+/// Multipart `submission` field of `POST /api/v1/submissions`.
+pub type SignedSubmissionV2 = SignedRequestV2<SubmissionV2>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -402,18 +262,13 @@ impl InputProvenanceStatusV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Digest32;
+    use crate::{Digest32, Signature64, SignatureAlgorithmV1};
 
     pub(crate) fn submission() -> SubmissionV2 {
         SubmissionV2 {
             schema_version: crate::SCHEMA_VERSION_V2,
-            upload_challenge: UploadChallengeV1 {
-                schema_version: crate::SCHEMA_VERSION_V1,
-                upload_challenge_id: OpaqueId::new("challenge-1").unwrap(),
-                upload_challenge_nonce: ChallengeNonce32::from_bytes([3; 32]),
-                expires_at_unix_ms: 10,
-            },
             uploader_public_key: PublicKey32::from_bytes([4; 32]),
+            signed_at_unix_ms: 1_800_000_000_000,
             public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
             board_id: OpaqueId::new("demo-standard-normal").unwrap(),
             mission_id: "Dem_Lei_MP".into(),
@@ -444,25 +299,56 @@ mod tests {
         let mut wrong_media = submission();
         wrong_media.replay.artifact.media_type = "application/jsonl".into();
         assert!(wrong_media.validate().is_err());
+        let mut unsigned_time = submission();
+        unsigned_time.signed_at_unix_ms = 0;
+        assert!(unsigned_time.validate().is_err());
     }
 
     #[cfg(feature = "authentication")]
     #[test]
-    fn uploader_signature_binds_the_exact_submission() {
+    fn uploader_signature_binds_the_exact_fresh_submission_and_operation() {
+        use crate::signed_request::{SignedRequestError, SignedRequestWindowV1};
         use ed25519_dalek::{Signer as _, SigningKey};
+
         let key = SigningKey::from_bytes(&[9; 32]);
         let mut submission = submission();
         submission.uploader_public_key = PublicKey32::from_bytes(key.verifying_key().to_bytes());
+        let now = submission.signed_at_unix_ms + 1_000;
         let signature = key.sign(&SignedSubmissionV2::signing_bytes(&submission).unwrap());
-        let mut signed = SignedSubmissionV2 {
+        let signed = SignedSubmissionV2 {
             schema_version: crate::SCHEMA_VERSION_V2,
-            submission,
+            request: submission,
             algorithm: SignatureAlgorithmV1::Ed25519,
             signature: Signature64::from_bytes(signature.to_bytes()),
         };
-        assert!(signed.validate().is_ok());
-        assert!(signed.verify_signature().is_ok());
-        signed.submission.mission_id = "Other".into();
-        assert!(signed.verify_signature().is_err());
+        let window = SignedRequestWindowV1::default();
+        assert!(signed.verify(window, now).is_ok());
+
+        let mut changed = signed.clone();
+        changed.request.board_id = OpaqueId::new("demo-original-normal").unwrap();
+        assert!(matches!(
+            changed.verify(window, now),
+            Err(SignedRequestError::Signature(_))
+        ));
+        assert!(matches!(
+            signed.verify(window, now + window.max_age_ms),
+            Err(SignedRequestError::Freshness(_))
+        ));
+
+        // A signature made for another operation by the same key at the same
+        // time never verifies as a submission.
+        let update = UsernameUpdateV2 {
+            schema_version: crate::SCHEMA_VERSION_V2,
+            public_key: signed.request.uploader_public_key,
+            signed_at_unix_ms: signed.request.signed_at_unix_ms,
+            username: "Robin".into(),
+        };
+        let foreign = key.sign(&SignedUsernameUpdateV2::signing_bytes(&update).unwrap());
+        let mut cross_operation = signed.clone();
+        cross_operation.signature = Signature64::from_bytes(foreign.to_bytes());
+        assert!(matches!(
+            cross_operation.verify(window, now),
+            Err(SignedRequestError::Signature(_))
+        ));
     }
 }

@@ -11,9 +11,6 @@ use crate::{
     VerifiedAchievementEvaluationV1, VerifiedAchievementV1, ViewerContentRequirementV2,
 };
 
-pub const SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V1: &[u8] =
-    b"robinhood/leaderboards/1/submission-owner-status\0";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunMetricsV1 {
@@ -843,10 +840,9 @@ impl Validate for RunDetailV2 {
 
 mod submission_status;
 pub use submission_status::{
-    PublicSubmissionStateV1, PublicSubmissionStatusV1, SubmissionAcceptedV1,
-    SubmissionFailureCodeV1, SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    SubmissionOwnerStatusResponseV1,
+    PublicSubmissionStateV1, PublicSubmissionStatusV1, SUBMISSION_OWNER_STATUS_SIGNATURE_DOMAIN_V2,
+    SignedSubmissionOwnerStatusRequestV2, SubmissionAcceptedV1, SubmissionFailureCodeV1,
+    SubmissionLifecycleV1, SubmissionOwnerStatusRequestV2, SubmissionOwnerStatusResponseV2,
 };
 
 #[cfg(test)]
