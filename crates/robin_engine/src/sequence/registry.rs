@@ -91,7 +91,6 @@ impl SequenceManager {
             sequences: IndexMap::new().into(),
             actor_live: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
-            actor_in_progress: BTreeMap::new(),
             elements_to_go: VecDeque::new(),
             next_sequence_id: 1,
             next_element_id: 1,
@@ -111,7 +110,6 @@ impl SequenceManager {
                 .into(),
             actor_live: BTreeMap::new(),
             postpone_tail_cache: BTreeMap::new(),
-            actor_in_progress: BTreeMap::new(),
             elements_to_go: state.elements_to_go,
             next_sequence_id: state.next_sequence_id,
             next_element_id: state.next_element_id,
@@ -129,7 +127,6 @@ impl SequenceManager {
     pub fn rebuild_indices(&mut self) {
         self.actor_live.clear();
         self.postpone_tail_cache.clear();
-        self.actor_in_progress.clear();
         for (seq_id, seq) in &self.sequences {
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
                 let Some(owner) = elem.owner else {
@@ -138,12 +135,6 @@ impl SequenceManager {
                 let elem_ref = SequenceElementRef::new(*seq_id, elem_idx);
                 if Self::is_actor_live_state(elem.state) {
                     self.actor_live.entry(owner).or_default().insert(elem_ref);
-                }
-                if elem.state == SequenceState::InProgress {
-                    self.actor_in_progress
-                        .entry(owner)
-                        .or_default()
-                        .insert(elem_ref);
                 }
             }
         }

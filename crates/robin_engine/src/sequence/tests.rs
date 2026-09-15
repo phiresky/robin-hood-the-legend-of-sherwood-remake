@@ -269,6 +269,68 @@ fn stop_preserves_live_replacement_following_link_after_nested_callback() {
 }
 
 #[test]
+fn in_progress_query_tracks_live_state_and_owner_changes() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let other = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    let sim = test_context();
+    let pending = engine
+        .orders
+        .sequence_manager
+        .insert_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let running = engine
+        .orders
+        .sequence_manager
+        .insert_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), running, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .in_progress_element_for_actor_matching(owner, |_| true),
+        Some((running, 0)),
+    );
+    engine.postpone_element(&sim, &assets, &mut Vec::new(), running, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .in_progress_element_for_actor_matching(owner, |_| true),
+        None,
+    );
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), running, 0);
+    engine
+        .orders
+        .sequence_manager
+        .reassign_element_owner(running, 0, other);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .in_progress_element_for_actor_matching(owner, |_| true),
+        None,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .in_progress_element_for_actor_matching(other, |_| true),
+        Some((running, 0)),
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(pending, 0)
+            .unwrap()
+            .state,
+        SequenceState::Todo,
+    );
+}
+
+#[test]
 fn populated_actor_indexes_round_trip_through_json() {
     let (mut engine, mut assets, owner) = live_sequence_fixture();
     let other = engine.add_test_entity(
@@ -285,7 +347,6 @@ fn populated_actor_indexes_round_trip_through_json() {
         engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), sequence, 0);
     }
     assert_eq!(engine.orders.sequence_manager.actor_live.len(), 2);
-    assert_eq!(engine.orders.sequence_manager.actor_in_progress.len(), 2);
     let json = serde_json::to_string(&engine.orders.sequence_manager)
         .expect("serialize populated actor indexes");
     let restored: SequenceManager = serde_json::from_str(&json).expect("restore actor indexes");
@@ -293,10 +354,15 @@ fn populated_actor_indexes_round_trip_through_json() {
         restored.actor_live,
         engine.orders.sequence_manager.actor_live
     );
-    assert_eq!(
-        restored.actor_in_progress,
-        engine.orders.sequence_manager.actor_in_progress
-    );
+    for owner in [owner, other] {
+        assert_eq!(
+            restored.in_progress_element_for_actor_matching(owner, |_| true),
+            engine
+                .orders
+                .sequence_manager
+                .in_progress_element_for_actor_matching(owner, |_| true),
+        );
+    }
     assert_eq!(
         robin_util::state_hash::compute(&restored),
         robin_util::state_hash::compute(&engine.orders.sequence_manager),
@@ -3787,39 +3853,6 @@ fn last_real_action_stops_at_halt_severed_following_edge() {
     assert!(
         mgr.is_last_real_action(sequence_id, 0),
         "Halt's nulled following pointer must hide physically adjacent dead elements"
-    );
-}
-
-#[test]
-fn clearing_actor_goal_snapshots_removes_typed_and_generic_caches() {
-    let owner = EntityId::Civilian(crate::entity_id::CivilianId(1));
-    let mut mgr = SequenceManager::new();
-    let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
-    turn.set_property(
-        Field::RetainedMovementGoal,
-        FieldValue::GeoPoint2D { x: 12.0, y: 34.0 },
-    );
-    let turn_id = mgr.insert_element(turn);
-    let movement_id = mgr.insert_element(movement_elem(owner, OrderType::WalkingUpright));
-    mgr.get_element_mut(movement_id, 0)
-        .expect("movement exists")
-        .retained_movement_goal = Some(crate::coordinates::MapPoint::new(56.0, 78.0));
-
-    mgr.clear_retained_movement_goals_for_actor(owner);
-
-    assert!(
-        mgr.get_element(turn_id, 0)
-            .expect("Turn exists")
-            .get_property(Field::RetainedMovementGoal)
-            .is_none(),
-        "deferred facing must not restore a movement goal cleared by the outgoing notification"
-    );
-    assert!(
-        mgr.get_element(movement_id, 0)
-            .expect("movement exists")
-            .retained_movement_goal
-            .is_none(),
-        "typed replacement movement snapshots must still be cleared"
     );
 }
 

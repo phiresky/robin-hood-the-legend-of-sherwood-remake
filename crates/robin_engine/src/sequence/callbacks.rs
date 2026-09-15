@@ -752,8 +752,8 @@ impl crate::engine::EngineInner {
     /// counter decrements when the waiter was InProgress), while the
     /// `Postponed` case body itself does nothing extra — no cascade,
     /// no signal_ready, no condolation.  `CascadeFlags::empty()`
-    /// reflects that, and `process_effects` keeps `actor_in_progress`
-    /// / `elements_in_progress` consistent on the InProgress→Postponed
+    /// reflects that, and `process_effects` keeps
+    /// `elements_in_progress` consistent on the InProgress→Postponed
     /// transition.  The element's `cross_postponed` / `postponed_by`
     /// links are set separately by the caller before this call.
     pub(crate) fn postpone_element(
@@ -828,7 +828,6 @@ impl crate::engine::EngineInner {
                 command = ?card.command,
                 terminal_state = ?card.terminal_state,
                 selected = ?self.world.entities.current_element_for_actor(card.owner),
-                in_progress = ?self.orders.sequence_manager.actor_in_progress.get(&card.owner),
                 "removal notification capturing selection at state change"
             );
         }
@@ -857,35 +856,6 @@ impl crate::engine::EngineInner {
                     .sequence_manager
                     .remove_actor_live_ref(owner, elem_ref),
                 _ => {}
-            }
-        }
-
-        // Maintain `actor_in_progress`. The (elem_idx, owner) carried
-        // by `entered/left_in_progress` point at whichever element
-        // actually transitioned — which can differ from any outer
-        // elem_idx the caller passed in (e.g. `stop_element` recurses
-        // to a sibling / postponed element).
-        if let Some((elem_idx, owner)) = effects.entered_in_progress {
-            self.orders
-                .sequence_manager
-                .actor_in_progress
-                .entry(owner)
-                .or_default()
-                .insert(SequenceElementRef::new(seq_id, elem_idx));
-        }
-        if let Some((elem_idx, owner)) = effects.left_in_progress
-            && let Some(set) = self
-                .orders
-                .sequence_manager
-                .actor_in_progress
-                .get_mut(&owner)
-        {
-            set.remove(&SequenceElementRef::new(seq_id, elem_idx));
-            if set.is_empty() {
-                self.orders
-                    .sequence_manager
-                    .actor_in_progress
-                    .remove(&owner);
             }
         }
 

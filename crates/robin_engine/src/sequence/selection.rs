@@ -83,14 +83,6 @@ impl SequenceManager {
         if Self::is_actor_live_state(state) {
             self.remove_actor_live_ref(old_owner, element_ref);
         }
-        if state == SequenceState::InProgress
-            && let Some(set) = self.actor_in_progress.get_mut(&old_owner)
-        {
-            set.remove(&element_ref);
-            if set.is_empty() {
-                self.actor_in_progress.remove(&old_owner);
-            }
-        }
 
         self.get_element_mut(sequence_id, element_index)
             .expect("element disappeared during owner reassignment")
@@ -98,12 +90,6 @@ impl SequenceManager {
 
         if Self::is_actor_live_state(state) {
             self.insert_actor_live_ref(new_owner, element_ref);
-        }
-        if state == SequenceState::InProgress {
-            self.actor_in_progress
-                .entry(new_owner)
-                .or_default()
-                .insert(element_ref);
         }
     }
 
@@ -125,12 +111,6 @@ impl SequenceManager {
         for (owner, elem_ref, state) in refs {
             if Self::is_actor_live_state(state) {
                 self.insert_actor_live_ref(owner, elem_ref);
-            }
-            if state == SequenceState::InProgress {
-                self.actor_in_progress
-                    .entry(owner)
-                    .or_default()
-                    .insert(elem_ref);
             }
         }
     }
@@ -323,37 +303,6 @@ impl SequenceManager {
         self.get_sequence_mut(seq_id)?.get_mut(elem_idx)
     }
 
-    /// Drop queue-time movement-goal snapshots held by live work for an
-    /// actor whose outgoing movement genuinely exhausted. Those snapshots
-    /// only bridge an interrupted replacement handoff; they must not revive
-    /// a goal cleared by ordinary movement completion.
-    pub(crate) fn clear_retained_movement_goals_for_actor(&mut self, actor: EntityId) {
-        let live: Vec<_> = self
-            .actor_live
-            .get(&actor)
-            .into_iter()
-            .flatten()
-            .copied()
-            .collect();
-        for element_ref in live {
-            let element = self
-                .get_element_mut(element_ref.sequence_id, element_ref.element_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "actor_live contains stale element ref {:?}/{}",
-                        element_ref.sequence_id, element_ref.element_index
-                    )
-                });
-            // Replacement movements use the typed cache, while deferred
-            // Facing commands store the same snapshot as a Generic property until
-            // the manager instructs its Turn. Both are Rust mirrors of
-            // the one original-game map-position goal owned and cleared by
-            // the actor's completion callback.
-            element.retained_movement_goal = None;
-            element.remove_property(Field::RetainedMovementGoal);
-        }
-    }
-
     // ─── Launch ─────────────────────────────────────────────────
 
     /// Assign stable identities and store a sequence before engine execution.
@@ -479,7 +428,7 @@ impl SequenceManager {
     }
 
     /// Find the first in-progress element owned by `actor` that
-    /// satisfies `predicate`, using the actor's in-progress index.
+    /// satisfies `predicate`, filtering the actor's live elements.
     /// Lets callers check the actor's parallel in-progress elements
     /// without scanning every sequence in the manager.
     pub fn in_progress_element_for_actor_matching(
@@ -488,13 +437,12 @@ impl SequenceManager {
         mut predicate: impl FnMut(&SequenceElement) -> bool,
     ) -> Option<(SequenceId, usize)> {
         let actor = actor.into();
-        let set = self.actor_in_progress.get(&actor)?;
+        let set = self.actor_live.get(&actor)?;
         for elem_ref in set {
             let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
-                debug_assert!(false, "actor_in_progress contains stale element ref");
-                continue;
+                panic!("actor_live contains stale element ref {elem_ref:?}");
             };
-            if predicate(elem) {
+            if elem.state == SequenceState::InProgress && predicate(elem) {
                 return Some((elem_ref.sequence_id, elem_ref.element_index));
             }
         }

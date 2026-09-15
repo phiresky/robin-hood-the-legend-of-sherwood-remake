@@ -59,10 +59,6 @@ impl SequenceManager {
             refs.retain(|r| sequences.contains_key(&r.sequence_id));
             !refs.is_empty()
         });
-        self.actor_in_progress.retain(|_, refs| {
-            refs.retain(|r| sequences.contains_key(&r.sequence_id));
-            !refs.is_empty()
-        });
     }
 
     // ─── Cancellation helpers ───────────────────────────────────
@@ -1029,10 +1025,20 @@ impl crate::engine::EngineInner {
                 element_index,
             }]
         } else {
-            let Some(refs) = self.orders.sequence_manager.actor_in_progress.get(&entity) else {
+            let Some(refs) = self.orders.sequence_manager.actor_live.get(&entity) else {
                 return false;
             };
-            refs.iter().copied().collect()
+            refs.iter()
+                .copied()
+                .filter(|element_ref| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(element_ref.sequence_id, element_ref.element_index)
+                        .expect("actor_live contains stale element ref")
+                        .state
+                        == SequenceState::InProgress
+                })
+                .collect()
         };
         for elem_ref in refs {
             let Some(seq) = self
@@ -1041,13 +1047,13 @@ impl crate::engine::EngineInner {
                 .sequences
                 .get(&elem_ref.sequence_id)
             else {
-                debug_assert!(false, "actor_in_progress contains stale sequence ref");
+                debug_assert!(false, "actor_live contains stale sequence ref");
                 continue;
             };
             let seq_id = seq.id;
             let elem_idx = elem_ref.element_index;
             let Some(elem) = seq.elements.get(elem_idx) else {
-                debug_assert!(false, "actor_in_progress contains stale element ref");
+                debug_assert!(false, "actor_live contains stale element ref");
                 continue;
             };
             if elem.owner != Some(entity)
