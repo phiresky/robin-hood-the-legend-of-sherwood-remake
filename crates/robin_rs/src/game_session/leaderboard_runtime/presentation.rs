@@ -1,4 +1,4 @@
-//! Cooperative post-mission UI ownership. Admission and signature tasks are separate owners.
+//! Cooperative post-mission UI ownership. Preparation and upload tasks are separate owners.
 
 use super::*;
 use crate::ingame_menu::widget_bridge::ModalScreenIo;
@@ -56,7 +56,8 @@ impl MissionEndLeaderboardTaskState {
         match &mut self.phase {
             MissionEndLeaderboardTaskPhase::Preparing(preparation) => {
                 let replay_exports = self.application_context.replay_exports();
-                let Some(result) = preparation.poll_bundle(&replay_exports) else {
+                let edition = super::installed_content_edition(&self.application_context);
+                let Some(result) = preparation.poll_bundle(&replay_exports, edition) else {
                     render_preparing(renderer, resources, cursor);
                     return MissionEndLeaderboardTaskProgress::Pending;
                 };
@@ -87,10 +88,9 @@ impl MissionEndLeaderboardTaskState {
                 };
                 let controller = MissionEndLeaderboardController::new(
                     bundle,
+                    bytes,
                     preferences,
                     Box::new(HttpMissionEndLeaderboardBackend::new(api)),
-                    Box::new(LocalMissionEndSubmissionAuthorizer),
-                    Box::new(RecordedReplayExporter(bytes)),
                 );
                 let mut controller = match controller {
                     Ok(controller) => controller,

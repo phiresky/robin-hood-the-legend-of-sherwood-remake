@@ -308,6 +308,9 @@ impl ReplayExports {
     }
     /// Enqueues an already frozen generation on the same bounded scheduler as
     /// HTTP export. Errors (including saturation) arrive through the receiver.
+    // TODO: only the export back-pressure tests freeze a snapshot first now;
+    // drop this seam if no production consumer needs it again.
+    #[cfg(test)]
     pub(crate) fn export_snapshot(&self, snapshot: ReplaySnapshot) -> ExportResult {
         self.0.export_snapshot(snapshot)
     }

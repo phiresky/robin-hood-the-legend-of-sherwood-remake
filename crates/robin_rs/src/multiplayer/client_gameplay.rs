@@ -1,8 +1,7 @@
 //! Shared post-admission gameplay delivery for native and browser clients.
 //!
-//! Welcome/content admission and ranked transitions belong to their lifecycle
-//! owners. In particular, BeginSim must pass the platform's ranked-admission
-//! policy before it can become an event; it is deliberately not decoded here.
+//! Welcome/content admission and session control (reconnect directives,
+//! rejections) belong to their lifecycle owners in `client_session`.
 
 use super::{MultiplayerError, NetEvent, NetMsg};
 use std::sync::mpsc::Sender;
@@ -31,8 +30,8 @@ pub(super) fn deliver_lifecycle(
         .try_for_each(|event| deliver(incoming, event))
 }
 
-/// Decode only messages whose meaning is independent of transport and rank.
-/// Other messages retain their ownership for the adapter's lifecycle handler.
+/// Decode only messages whose meaning is independent of transport.
+/// Other messages retain their ownership for the session lifecycle handler.
 pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
     Ok(match message {
         NetMsg::BroadcastInput {
@@ -54,6 +53,13 @@ pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
         } => NetEvent::InitialSnapshot {
             frame,
             engine_bytes,
+        },
+        NetMsg::BeginSim {
+            frame,
+            start_epoch_ms,
+        } => NetEvent::BeginSim {
+            frame,
+            start_epoch_ms,
         },
         NetMsg::ModalDecision(decision) => NetEvent::ModalDecision(decision),
         NetMsg::PrepareSnapshotTransition { id, payload } => {
@@ -169,9 +175,9 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
-    fn begin_sim_cannot_bypass_adapter_admission_policy() {
+    fn begin_sim_is_forwarded_with_its_exact_start_barrier() {
         let (tx, rx) = mpsc::channel();
-        assert!(matches!(
+        assert!(
             forward(
                 NetMsg::BeginSim {
                     frame: 42,
@@ -179,13 +185,16 @@ mod tests {
                 },
                 &tx
             )
-            .unwrap(),
-            Some(NetMsg::BeginSim {
+            .unwrap()
+            .is_none()
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(NetEvent::BeginSim {
                 frame: 42,
                 start_epoch_ms: 77
             })
         ));
-        assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]

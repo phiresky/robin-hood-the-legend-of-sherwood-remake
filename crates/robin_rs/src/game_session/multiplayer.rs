@@ -567,38 +567,6 @@ impl NetDrain<'_> {
                         channel_failure("fatal multiplayer modal routing error", error)
                     })?;
             }
-            event @ (NetEvent::RankedCoSignContext(_)
-            | NetEvent::RankedSubmissionAccepted(_)
-            | NetEvent::RankedOfficialSessionSetup(_)
-            | NetEvent::RankedContinuationReceiptSelectionRequest(_)
-            | NetEvent::RankedContinuationReceiptSelection { .. }
-            | NetEvent::RankedContinuationPreflightClaim(_)
-            | NetEvent::RankedContinuationPreflightSignature { .. }
-            | NetEvent::LeaderboardCoSignRequest(_)
-            | NetEvent::LeaderboardCoSignResponse { .. }) => {
-                self.host
-                    .transport
-                    .net()
-                    .expect("admitted session retains its channels")
-                    .defer_leaderboard_cosign_event(event)
-                    .map_err(|error| {
-                        channel_failure(
-                            "fatal multiplayer leaderboard co-sign routing error",
-                            error,
-                        )
-                    })?;
-            }
-            NetEvent::RankedJoinChallenge(_)
-            | NetEvent::RankedJoinResponse { .. }
-            | NetEvent::RankedJoinAccepted(_)
-            | NetEvent::RankedParticipantRoster(_)
-            | NetEvent::RankedBrowseOnly { .. } => {
-                // The authenticated transport has already validated these
-                // admission/control events and applied them to the shared
-                // ranked lifecycle. They must never enter deterministic
-                // simulation input or the mission-end authorization inbox.
-                tracing::debug!("multiplayer: consumed transport-owned ranked admission status");
-            }
         }
         Ok(())
     }
@@ -1342,21 +1310,6 @@ mod tests {
     use robin_engine::engine_manager::EngineManager;
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use robin_engine::sim_timeline::RestorePolicy;
-    use robin_run_protocol::{
-        Digest32, LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1,
-        LeaderboardCoSignRequestV1,
-    };
-
-    fn leaderboard_cosign_request() -> LeaderboardCoSignRequestV1 {
-        LeaderboardCoSignRequestV1 {
-            instance: LeaderboardCoSignInstanceV1 {
-                purpose: LeaderboardCoSignPurposeV1::Submission,
-                replay_session_id: Digest32::from_bytes([81; 32]),
-                submission_offer_sha256: Digest32::from_bytes([82; 32]),
-            },
-            run_digest: Digest32::from_bytes([83; 32]),
-        }
-    }
 
     use robin_engine::spellforge::{
         SPELLFORGE_CONTRACT_VERSION, SpellforgePackage, SpellforgeRuntime, SpellforgeScriptMode,
@@ -1790,86 +1743,6 @@ mod tests {
             assert!(matches!(result, Err(MultiplayerSessionError::Protocol(_))));
             assert_eq!(before, manager.engine.encode_native_snapshot());
         }
-    }
-
-    #[test]
-    fn mission_drain_routes_cosign_to_dedicated_inbox_without_requeue_spin() {
-        let (mut host, mut manager, mut assets, incoming, _outgoing) = network_drain_fixture();
-        let request = leaderboard_cosign_request();
-        incoming
-            .send(NetEvent::LeaderboardCoSignRequest(request))
-            .unwrap();
-        let mut rewind = RewindBuffer::new();
-        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
-        let _ = drain_net_inputs(
-            &mut host,
-            &mut manager,
-            0,
-            &mut pending,
-            &mut assets,
-            &mut rewind,
-        )
-        .expect("network drain succeeds");
-
-        let net = host.transport.net().unwrap();
-        assert!(matches!(
-            net.try_recv_leaderboard_cosign_event().unwrap(),
-            Some(NetEvent::LeaderboardCoSignRequest(decoded)) if decoded == request
-        ));
-        assert!(net.try_recv_leaderboard_cosign_event().unwrap().is_none());
-    }
-
-    #[test]
-    fn mission_drain_routes_ranked_context_to_authorization_inbox() {
-        let (mut host, mut manager, mut assets, incoming, _outgoing) = network_drain_fixture();
-        let context = robin_engine::multiplayer::RankedCoSignContextDocument::new(
-            br#"{"kind":"submission"}"#.to_vec(),
-        )
-        .unwrap();
-        incoming
-            .send(NetEvent::RankedCoSignContext(context.clone()))
-            .unwrap();
-        let mut rewind = RewindBuffer::new();
-        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
-        let _ = drain_net_inputs(
-            &mut host,
-            &mut manager,
-            0,
-            &mut pending,
-            &mut assets,
-            &mut rewind,
-        )
-        .expect("network drain succeeds");
-
-        let net = host.transport.net().unwrap();
-        assert!(matches!(
-            net.try_recv_leaderboard_cosign_event().unwrap(),
-            Some(NetEvent::RankedCoSignContext(decoded)) if decoded == context
-        ));
-        assert!(net.try_recv_leaderboard_cosign_event().unwrap().is_none());
-    }
-
-    #[test]
-    #[should_panic(expected = "leaderboard co-sign inbox exceeds its 64-event limit")]
-    fn mission_drain_fails_closed_on_cosign_inbox_overflow() {
-        let (mut host, mut manager, mut assets, incoming, _outgoing) = network_drain_fixture();
-        let request = leaderboard_cosign_request();
-        for _ in 0..=robin_engine::multiplayer::MAX_LEADERBOARD_COSIGN_INBOX_EVENTS {
-            incoming
-                .send(NetEvent::LeaderboardCoSignRequest(request))
-                .unwrap();
-        }
-        let mut rewind = RewindBuffer::new();
-        let mut pending = super::super::runtime::reconciliation::NetworkReconciliation::default();
-        let _ = drain_net_inputs(
-            &mut host,
-            &mut manager,
-            0,
-            &mut pending,
-            &mut assets,
-            &mut rewind,
-        )
-        .expect("network drain succeeds");
     }
 
     fn rewind_with_horizon(manager: &EngineManager, start: u32, end: u32) -> RewindBuffer {

@@ -1,18 +1,13 @@
 //! Native durable identity: the persistent iroh game key signs in-process.
 //! Every operation completes without suspending.
 
-use super::{GameIdentitySigner, LeaderboardSigningError, canonical, invalid_claim};
-use crate::leaderboard_ranked_session::{
-    self as ranked, OfficialRankedSessionSetupV1, RankedSessionHost,
+use super::{
+    GameIdentitySigner, LeaderboardSigningError, assemble_signed_submission, invalid_claim,
 };
-use ed25519_dalek::SigningKey;
-use robin_run_protocol::DomainSignedClaim as _;
+use ed25519_dalek::{Signer as _, SigningKey};
 use robin_run_protocol::{
-    CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
-    CampaignContinuationPreflightRequestClaimV1, FreshRunPreflightRequestClaimV1,
-    FreshRunPreflightRequestV1, LeaderboardCoSignRequestV1, ParticipantSignatureV1, PublicKey32,
-    Signature64, SignatureAlgorithmV1, SubmissionEnvelopeV1, SubmissionOfferV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, Validate,
+    PublicKey32, Signature64, SignatureAlgorithmV1, SignedSubmissionV2,
+    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, SubmissionV2, Validate,
 };
 
 pub struct NativeSigner;
@@ -23,92 +18,40 @@ fn native_key() -> Result<SigningKey, LeaderboardSigningError> {
     Ok(SigningKey::from_bytes(&seed))
 }
 
+fn public_key(key: &SigningKey) -> PublicKey32 {
+    PublicKey32::from_bytes(key.verifying_key().to_bytes())
+}
+
+fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
+    Signature64::from_bytes(key.sign(bytes).to_bytes())
+}
+
+/// Bytes the uploader signs for `submission`, validating the claim first.
+fn submission_signing_bytes(submission: &SubmissionV2) -> Result<Vec<u8>, LeaderboardSigningError> {
+    SignedSubmissionV2::signing_bytes(submission)
+        .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))
+}
+
+fn sign_submission_with_key(
+    submission: SubmissionV2,
+    key: &SigningKey,
+) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
+    if submission.uploader_public_key != public_key(key) {
+        return Err(LeaderboardSigningError::WrongIdentity);
+    }
+    let signature = signature(key, &submission_signing_bytes(&submission)?);
+    assemble_signed_submission(submission, public_key(key), signature)
+}
+
 impl GameIdentitySigner for NativeSigner {
     async fn public_key() -> Result<PublicKey32, LeaderboardSigningError> {
-        let key = native_key()?;
-        Ok(ranked::public_key(&key))
+        Ok(public_key(&native_key()?))
     }
 
-    async fn create_official_ranked_session(
-        network_protocol_version: u32,
-        setup: OfficialRankedSessionSetupV1,
-    ) -> Result<RankedSessionHost, LeaderboardSigningError> {
-        RankedSessionHost::new_official(&native_key()?, network_protocol_version, setup)
-            .map_err(invalid_claim)
-    }
-
-    async fn sign_submission_claim(
-        envelope: &SubmissionEnvelopeV1,
-    ) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-        envelope.validate().map_err(invalid_claim)?;
-        let key = native_key()?;
-        let public_key = ranked::public_key(&key);
-        if !envelope
-            .offer
-            .participant_claims
-            .iter()
-            .any(|claim| claim.public_key == public_key)
-        {
-            return Err(LeaderboardSigningError::IdentityNotClaimed);
-        }
-        sign_co_sign_request_with_key(
-            &envelope.co_sign_request().map_err(canonical_document)?,
-            &key,
-        )
-    }
-
-    async fn sign_multiplayer_leaderboard_request(
-        request: &LeaderboardCoSignRequestV1,
-    ) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-        sign_co_sign_request_with_key(request, &native_key()?)
-    }
-
-    async fn sign_fresh_run_preflight_request(
-        claim: FreshRunPreflightRequestClaimV1,
-    ) -> Result<FreshRunPreflightRequestV1, LeaderboardSigningError> {
-        claim.validate().map_err(invalid_claim)?;
-        let key = native_key()?;
-        if claim.host_public_key != ranked::public_key(&key) {
-            return Err(LeaderboardSigningError::WrongIdentity);
-        }
-        let signed = FreshRunPreflightRequestV1 {
-            host_signature: ranked::signature(&key, &canonical(claim.signing_bytes())?),
-            claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        signed.validate().map_err(invalid_claim)?;
-        Ok(signed)
-    }
-
-    async fn sign_campaign_continuation_preflight_as_host(
-        claim: &CampaignContinuationPreflightRequestClaimV1,
-    ) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-        sign_campaign_continuation_preflight_claim_with_key(claim, false, &native_key()?)
-    }
-
-    async fn sign_campaign_continuation_preflight_as_controller(
-        claim: &CampaignContinuationPreflightRequestClaimV1,
-    ) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-        sign_campaign_continuation_preflight_claim_with_key(claim, true, &native_key()?)
-    }
-
-    async fn sign_campaign_continuation(
-        offer: &SubmissionOfferV1,
-        claim: CampaignContinuationAuthorizationClaimV1,
-    ) -> Result<CampaignContinuationAuthorizationV1, LeaderboardSigningError> {
-        let request = claim.co_sign_request(offer).map_err(canonical_document)?;
-        let key = native_key()?;
-        if claim.campaign_controller_public_key != ranked::public_key(&key) {
-            return Err(LeaderboardSigningError::WrongIdentity);
-        }
-        let signature = sign_co_sign_request_with_key(&request, &key)?.signature;
-        let signed = CampaignContinuationAuthorizationV1 {
-            claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            signature,
-        };
-        signed.validate().map_err(invalid_claim)?;
-        Ok(signed)
+    async fn sign_submission(
+        submission: SubmissionV2,
+    ) -> Result<SignedSubmissionV2, LeaderboardSigningError> {
+        sign_submission_with_key(submission, &native_key()?)
     }
 
     async fn sign_submission_owner_status(
@@ -116,7 +59,7 @@ impl GameIdentitySigner for NativeSigner {
     ) -> Result<SubmissionOwnerStatusEnvelopeV1, LeaderboardSigningError> {
         challenge.validate().map_err(invalid_claim)?;
         let key = native_key()?;
-        if challenge.controller_public_key != ranked::public_key(&key) {
+        if challenge.controller_public_key != public_key(&key) {
             return Err(LeaderboardSigningError::WrongIdentity);
         }
         let mut envelope = SubmissionOwnerStatusEnvelopeV1 {
@@ -126,84 +69,37 @@ impl GameIdentitySigner for NativeSigner {
             signature: Signature64::from_bytes([0; 64]),
         };
         envelope.validate_signing_claim().map_err(invalid_claim)?;
-        envelope.signature = ranked::signature(&key, &canonical(envelope.signing_bytes())?);
+        let bytes = envelope
+            .signing_bytes()
+            .map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))?;
+        envelope.signature = signature(&key, &bytes);
         envelope.validate().map_err(invalid_claim)?;
         Ok(envelope)
     }
 }
 
-fn sign_co_sign_request_with_key(
-    request: &LeaderboardCoSignRequestV1,
-    key: &SigningKey,
-) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-    let bytes = request.signing_bytes().map_err(invalid_claim)?;
-    Ok(ParticipantSignatureV1 {
-        public_key: ranked::public_key(key),
-        signature: ranked::signature(key, &bytes),
-    })
-}
-
-fn sign_campaign_continuation_preflight_claim_with_key(
-    claim: &CampaignContinuationPreflightRequestClaimV1,
-    controller: bool,
-    key: &SigningKey,
-) -> Result<ParticipantSignatureV1, LeaderboardSigningError> {
-    claim.validate().map_err(invalid_claim)?;
-    let public_key = ranked::public_key(key);
-    let (expected_key, bytes) = if controller {
-        (
-            claim.campaign_controller_public_key,
-            claim.controller_signing_bytes(),
-        )
-    } else {
-        (claim.host_public_key, claim.host_signing_bytes())
-    };
-    if public_key != expected_key {
-        return Err(LeaderboardSigningError::WrongIdentity);
-    }
-    Ok(ParticipantSignatureV1 {
-        public_key,
-        signature: ranked::signature(key, &canonical(bytes)?),
-    })
-}
-
-fn canonical_document(
-    error: robin_run_protocol::CanonicalDocumentError,
-) -> LeaderboardSigningError {
-    LeaderboardSigningError::Canonical(error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_run_protocol::{Digest32, LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1};
+    use crate::leaderboard::test_fixtures::submission;
 
     #[test]
-    fn native_multiplayer_signer_signs_the_protocol_payload_verbatim() {
-        let secret = SigningKey::from_bytes(&[0x43; 32]);
-        let request = LeaderboardCoSignRequestV1 {
-            instance: LeaderboardCoSignInstanceV1 {
-                purpose: LeaderboardCoSignPurposeV1::Submission,
-                replay_session_id: Digest32::from_bytes([0x81; 32]),
-                submission_offer_sha256: Digest32::from_bytes([0x82; 32]),
-            },
-            run_digest: Digest32::from_bytes([0x83; 32]),
-        };
-        let signed = sign_co_sign_request_with_key(&request, &secret).unwrap();
-        assert_eq!(signed.public_key, ranked::public_key(&secret));
-        let signature = ed25519_dalek::Signature::from_bytes(signed.signature.as_bytes());
-        secret
-            .verifying_key()
-            .verify_strict(&request.signing_bytes().unwrap(), &signature)
-            .unwrap();
+    fn native_submission_signature_binds_the_exact_v2_submission() {
+        let key = SigningKey::from_bytes(&[0x43; 32]);
+        let signed = sign_submission_with_key(submission(public_key(&key)), &key).unwrap();
+        signed.verify_signature().unwrap();
+        let mut substituted = signed.clone();
+        substituted.submission.mission_id = "Demo_Lin".to_owned();
+        assert!(substituted.verify_signature().is_err());
+    }
 
-        let mut substituted = request;
-        substituted.instance.purpose = LeaderboardCoSignPurposeV1::CampaignContinuation;
-        assert!(
-            secret
-                .verifying_key()
-                .verify_strict(&substituted.signing_bytes().unwrap(), &signature)
-                .is_err()
+    #[test]
+    fn native_signer_refuses_a_submission_for_another_uploader() {
+        let key = SigningKey::from_bytes(&[0x43; 32]);
+        let other = PublicKey32::from_bytes([0x44; 32]);
+        assert_eq!(
+            sign_submission_with_key(submission(other), &key),
+            Err(LeaderboardSigningError::WrongIdentity)
         );
     }
 }

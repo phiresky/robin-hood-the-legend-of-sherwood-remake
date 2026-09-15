@@ -1580,11 +1580,6 @@ impl InteractiveMissionBuilder {
 
         stage.bootstrap.report_spellforge_startup();
         timer.step("spellforge startup");
-        if let Some(net) = stage.bootstrap.host.transport.net()
-            && let Err(error) = net.install_ranked_session_setup(None)
-        {
-            tracing::warn!("could not clear the transport's pre-game ranking slot: {error}");
-        }
         let stage = match stage.prepare_audio(profiles) {
             Ok(stage) => stage,
             Err((bootstrap, error)) => {

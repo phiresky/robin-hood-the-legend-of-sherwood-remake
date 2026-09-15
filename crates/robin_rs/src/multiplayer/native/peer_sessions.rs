@@ -1,10 +1,10 @@
-//! Authenticated seat ownership, independent of transport and ranked policy.
+//! Authenticated seat ownership, independent of transport.
 //!
 //! A writer may detach while its generation still owns the seat. Only a
 //! matching owner/generation may release that seat into a reconnect reservation.
 use super::{
     HostSessionContinuation, InactivePeerSession, MultiplayerError, NetMsg, PeerDispatchFailure,
-    PeerOwner, PlayerId, RankedPeerIdentity, SeatClaim, SeatClaimKind,
+    PeerOwner, PlayerId, SeatClaim, SeatClaimKind,
 };
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::UnboundedSender;
@@ -42,7 +42,6 @@ struct ServerSeat {
     sender: Option<UnboundedSender<NetMsg>>,
     nickname: String,
     owner: PeerOwner,
-    ranked_identity: RankedPeerIdentity,
     claim_kind: SeatClaimKind,
     generation: u64,
     ready_frame: Option<u32>,
@@ -101,12 +100,14 @@ impl PeerSessions {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn sim_connected_seats(&self) -> impl Iterator<Item = &u8> {
         self.seats
             .iter()
             .filter_map(|(seat, session)| session.sim_connected.then_some(seat))
     }
 
+    #[cfg(test)]
     pub(super) fn is_sim_connected(&self, seat: &u8) -> bool {
         self.seats
             .get(seat)
@@ -115,6 +116,7 @@ impl PeerSessions {
 
     /// A completed admission belongs to one stream generation, never merely
     /// to a seat number that a replacement stream could have reclaimed.
+    #[cfg(test)]
     pub(super) fn admit_session(
         &mut self,
         seat: u8,
@@ -128,7 +130,7 @@ impl PeerSessions {
         Ok(!std::mem::replace(&mut session.sim_connected, true))
     }
 
-    /// Browse-only policy admits all current provisional streams together.
+    /// Admit all current provisional (freshly claimed) streams together.
     /// Detached writers are retained owners, not candidates for admission.
     pub(super) fn admit_provisional_sessions(&mut self) -> Vec<(u8, String)> {
         let mut seats = self
@@ -153,16 +155,9 @@ impl PeerSessions {
             .expect("test seat must be active")
     }
 
+    #[cfg(test)]
     pub(super) fn generation(&self, seat: &u8) -> Option<&u64> {
         self.seats.get(seat).map(|session| &session.generation)
-    }
-
-    pub(super) fn ranked_identity(&self, seat: &u8) -> Option<&RankedPeerIdentity> {
-        self.seats.get(seat).map(|session| &session.ranked_identity)
-    }
-
-    pub(super) fn nickname(&self, seat: &u8) -> Option<&String> {
-        self.seats.get(seat).map(|session| &session.nickname)
     }
 
     pub(super) fn clear_ready(&mut self) {
@@ -248,7 +243,6 @@ impl PeerSessions {
         &mut self,
         owner: PeerOwner,
         nickname: &str,
-        ranked_identity: RankedPeerIdentity,
         sender: UnboundedSender<NetMsg>,
     ) -> Result<SeatClaim, MultiplayerError> {
         // Prepare all fallible counters before consuming a retained reservation
@@ -300,7 +294,6 @@ impl PeerSessions {
                 sender: Some(sender),
                 nickname: nickname.to_owned(),
                 owner,
-                ranked_identity,
                 claim_kind: kind,
                 generation,
                 ready_frame: None,
@@ -336,12 +329,6 @@ impl PeerSessions {
         self.expected_players
     }
 
-    pub(super) fn ranked_identities(&self) -> impl Iterator<Item = (&u8, &RankedPeerIdentity)> {
-        self.seats
-            .iter()
-            .map(|(seat, session)| (seat, &session.ranked_identity))
-    }
-
     /// Readiness projection contains no writable session authority.
     pub(super) fn readiness(&self) -> impl Iterator<Item = (bool, bool, Option<u32>)> + '_ {
         self.seats.values().map(|session| {
@@ -360,14 +347,6 @@ impl PeerSessions {
             .expect("test requires a claimed seat")
             .ready_frame
     }
-
-    #[cfg(test)]
-    pub(super) fn set_test_ranked_identity(&mut self, seat: u8, identity: RankedPeerIdentity) {
-        self.seats
-            .get_mut(&seat)
-            .expect("test requires a claimed seat")
-            .ranked_identity = identity;
-    }
 }
 
 #[cfg(test)]
@@ -375,22 +354,10 @@ mod tests {
     use super::super::{ServerPeers, maybe_begin_sim_locked};
     use super::*;
     use tokio::sync::mpsc::unbounded_channel;
-    fn ranked_identity(byte: u8) -> RankedPeerIdentity {
-        RankedPeerIdentity {
-            durable_public_key: Some([byte; 32]),
-            transport_endpoint_id: [byte; 32],
-            public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
-        }
-    }
     fn claim_test_seat(peers: &mut ServerPeers, seat: u8, sender: UnboundedSender<NetMsg>) {
         let claim = peers
             .sessions
-            .claim_seat(
-                PeerOwner::Native([seat; 32]),
-                "test peer",
-                ranked_identity(seat),
-                sender,
-            )
+            .claim_seat(PeerOwner::Native([seat; 32]), "test peer", sender)
             .unwrap();
         assert_eq!(claim.seat, seat);
     }
@@ -400,16 +367,12 @@ mod tests {
         let mut sessions = PeerSessions::new(2);
         let owner = PeerOwner::Native([7; 32]);
         let (sender, _receiver) = unbounded_channel();
-        let first = sessions
-            .claim_seat(owner, "first", ranked_identity(7), sender)
-            .unwrap();
+        let first = sessions.claim_seat(owner, "first", sender).unwrap();
         sessions
             .record_ready(first.seat, first.generation, 10)
             .unwrap();
         let (sender, _replacement_receiver) = unbounded_channel();
-        let replacement = sessions
-            .claim_seat(owner, "replacement", ranked_identity(7), sender)
-            .unwrap();
+        let replacement = sessions.claim_seat(owner, "replacement", sender).unwrap();
 
         assert!(matches!(
             sessions.admit_session(first.seat, first.generation),
@@ -470,7 +433,6 @@ mod tests {
                     .claim_seat(
                         PeerOwner::Native([byte; 32]),
                         &format!("peer {byte}"),
-                        ranked_identity(byte),
                         sender,
                     )
                     .unwrap(),
@@ -491,9 +453,7 @@ mod tests {
         let mut sessions = PeerSessions::new(2);
         let owner = PeerOwner::Browser([7; 32]);
         let (sender, _receiver) = unbounded_channel();
-        let claim = sessions
-            .claim_seat(owner, "peer", ranked_identity(7), sender)
-            .unwrap();
+        let claim = sessions.claim_seat(owner, "peer", sender).unwrap();
         for release in [false, true] {
             if release {
                 assert_eq!(
@@ -517,10 +477,7 @@ mod tests {
         let mut peers = ServerPeers::new(2);
         let owner = PeerOwner::Native([7; 32]);
         let (sender, _receiver) = unbounded_channel();
-        let first = peers
-            .sessions
-            .claim_seat(owner, "first", ranked_identity(7), sender)
-            .unwrap();
+        let first = peers.sessions.claim_seat(owner, "first", sender).unwrap();
         peers.sessions.connect_sim_seat(first.seat);
         peers
             .sessions
@@ -536,12 +493,11 @@ mod tests {
         let (sender, _replacement_receiver) = unbounded_channel();
         let replacement = peers
             .sessions
-            .claim_seat(owner, "replacement", ranked_identity(8), sender)
+            .claim_seat(owner, "replacement", sender)
             .unwrap();
         let session = &peers.sessions.seats[&first.seat];
         assert_eq!(session.claim_kind, SeatClaimKind::ActiveReplacement);
         assert_eq!(session.nickname, "replacement");
-        assert_eq!(session.ranked_identity, ranked_identity(8));
         assert!(session.sim_connected);
         assert_eq!(session.ready_frame, None);
         drop(detached);
@@ -582,7 +538,7 @@ mod tests {
         let (sender, _reconnect_receiver) = unbounded_channel();
         let reconnect = peers
             .sessions
-            .claim_seat(owner, "reconnect", ranked_identity(7), sender)
+            .claim_seat(owner, "reconnect", sender)
             .unwrap();
         assert_eq!(reconnect.kind, SeatClaimKind::Reconnect);
         assert_eq!(reconnect.seat, first.seat);
@@ -662,10 +618,7 @@ mod tests {
             let mut peers = ServerPeers::new(3);
             let owner = PeerOwner::Native([7; 32]);
             let (sender, _receiver) = unbounded_channel();
-            let first = peers
-                .sessions
-                .claim_seat(owner, "first", ranked_identity(7), sender)
-                .unwrap();
+            let first = peers.sessions.claim_seat(owner, "first", sender).unwrap();
             if release {
                 assert_eq!(
                     peers
@@ -682,7 +635,7 @@ mod tests {
                 assert!(
                     peers
                         .sessions
-                        .claim_seat(candidate, "failed", ranked_identity(8), sender)
+                        .claim_seat(candidate, "failed", sender)
                         .unwrap_err()
                         .to_string()
                         .contains("generation overflow")

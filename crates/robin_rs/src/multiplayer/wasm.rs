@@ -7,30 +7,24 @@
 //!
 //! The session state machine is shared with native in `client_session`; this
 //! module supplies the browser endpoint, timers, polled outbound queue and the
-//! stable shell's identity/invitation glue. Ranked admission lives in
-//! `browser_ranked`.
+//! stable shell's identity/invitation glue.
 //!
 //! Browser hosting and DHT discovery remain deliberately unsupported.
 //! TODO(browser-webrtc): if iroh gains a production WebRTC path, add it below
 //! this endpoint abstraction instead of inventing a second game protocol.
 
-use super::browser_ranked::BrowserRankedAdmission;
 use super::client_protocol::ClientConfig;
 use super::client_session::{
     self, ClientHandle, ClientSlots, ClientTimer, ClientTimings, ClientTransport, InitialHandshake,
-    StartupFailure, WriterCommand, ranked_setup_channel,
+    StartupFailure,
 };
 use super::join_ticket::BrowserJoinTicket;
-use super::{
-    MultiplayerError, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, RankedJoinResponse,
-};
-use crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1;
+use super::{MultiplayerError, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound};
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use robin_engine::multiplayer::{
     BrowserPeerAuth, MultiplayerSessionId, NetFatal, browser_seat_proof_message,
 };
-use robin_run_protocol::PublicKey32;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -62,9 +56,7 @@ pub fn connect_client(
     let ticket =
         BrowserJoinTicket::decode_authenticated(addr.as_ref()).map_err(std::io::Error::other)?;
     let server_addr = ticket.endpoint_addr().map_err(std::io::Error::other)?;
-    let ranked_authenticated_host_public_key = PublicKey32::from_bytes(*server_addr.id.as_bytes());
     let slots = ClientSlots::new();
-    let (ranked_setup_tx, ranked_setup_rx) = ranked_setup_channel();
     wasm_bindgen_futures::spawn_local(run_client_io(
         ticket,
         ClientConfig {
@@ -74,15 +66,9 @@ pub fn connect_client(
         incoming_tx,
         outgoing_rx,
         slots.clone(),
-        ranked_setup_rx,
     ));
 
-    Ok(ClientHandle::new(
-        slots,
-        ranked_setup_tx,
-        ranked_authenticated_host_public_key,
-        None,
-    ))
+    Ok(ClientHandle::new(slots, None))
 }
 
 async fn run_client_io(
@@ -91,7 +77,6 @@ async fn run_client_io(
     incoming_tx: Sender<NetEvent>,
     mut outgoing_rx: Receiver<NetOutbound>,
     slots: ClientSlots,
-    ranked_setup_rx: async_channel::Receiver<Option<OfficialRankedSessionSetupV1>>,
 ) {
     let transport_key = SecretKey::generate();
     let transport_endpoint_id = transport_key.public();
@@ -102,7 +87,6 @@ async fn run_client_io(
             return;
         }
     };
-    slots.set_ranked_local_public_key(PublicKey32::from_bytes(browser_auth.durable_public_key));
     let endpoint = match Endpoint::builder(presets::N0)
         .secret_key(transport_key)
         .bind()
@@ -148,13 +132,6 @@ async fn run_client_io(
         }
     };
 
-    let ranked = BrowserRankedAdmission::new(
-        Arc::clone(&slots.ranked_lifecycle),
-        ranked_setup_rx,
-        browser_auth.clone(),
-        transport_endpoint_id,
-        config.server_addr.id,
-    );
     let transport = BrowserClientTransport {
         endpoint,
         config,
@@ -163,7 +140,7 @@ async fn run_client_io(
         invitation_session_id: ticket.payload().session_id.as_str().to_owned(),
         cancellation: Arc::clone(&slots.cancellation),
     };
-    client_session::run_client_io(&transport, &ranked, &mut outgoing_rx, incoming_tx, &slots).await;
+    client_session::run_client_io(&transport, &mut outgoing_rx, incoming_tx, &slots).await;
 
     transport.endpoint.close().await;
 }
@@ -207,7 +184,6 @@ struct BrowserClientTransport {
 
 impl ClientTransport for BrowserClientTransport {
     type Timer = BrowserTimer;
-    type Ranked = BrowserRankedAdmission;
     type Outbound = Receiver<NetOutbound>;
 
     const TIMINGS: ClientTimings = ClientTimings {
@@ -240,7 +216,6 @@ impl ClientTransport for BrowserClientTransport {
             protocol_version: NET_PROTOCOL_VERSION,
             nickname: self.config.nickname.clone(),
             browser_auth: Some(self.browser_auth.clone()),
-            ranked_public_key: Some(self.browser_auth.durable_public_key),
         }
     }
 
@@ -264,45 +239,6 @@ impl ClientTransport for BrowserClientTransport {
             discarded += 1;
         }
         discarded
-    }
-
-    /// Ranked responses go first; `ReadyToSim` is held until ranked admission
-    /// resolves (admitted or browse-only).
-    async fn next_writer_command(
-        &self,
-        outbound: &mut Self::Outbound,
-        responses: &async_channel::Receiver<RankedJoinResponse>,
-        ranked: &Self::Ranked,
-        pending_ready: &mut Option<u32>,
-    ) -> WriterCommand {
-        loop {
-            if self.cancellation.load(std::sync::atomic::Ordering::Acquire) {
-                return WriterCommand::Closed;
-            }
-            if let Ok(response) = responses.try_recv() {
-                return WriterCommand::RankedResponse(response);
-            }
-            let resolved = match ranked.admission_resolved() {
-                Ok(resolved) => resolved,
-                Err(error) => return WriterCommand::Fatal(error),
-            };
-            if let Some(frame) = *pending_ready {
-                if resolved {
-                    *pending_ready = None;
-                    return WriterCommand::Outbound(NetOutbound::ReadyToSim { frame });
-                }
-                BrowserTimer::sleep(OUTGOING_POLL).await;
-                continue;
-            }
-            match outbound.try_recv() {
-                Ok(NetOutbound::ReadyToSim { frame }) if !resolved => {
-                    *pending_ready = Some(frame);
-                }
-                Ok(outgoing) => return WriterCommand::Outbound(outgoing),
-                Err(TryRecvError::Empty) => BrowserTimer::sleep(OUTGOING_POLL).await,
-                Err(TryRecvError::Disconnected) => return WriterCommand::Closed,
-            }
-        }
     }
 
     fn initial_handshake_exhausted(last_error: MultiplayerError) -> MultiplayerError {

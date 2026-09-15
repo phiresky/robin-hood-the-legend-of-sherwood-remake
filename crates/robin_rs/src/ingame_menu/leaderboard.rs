@@ -12,7 +12,7 @@ use crate::leaderboard_mission_end::{
 };
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
-use robin_run_protocol::BoardMetricValueV1;
+use robin_run_protocol::{BoardMetricValueV2, TickDurationV1};
 
 use super::layout::{
     MENU_W, MenuRect, MenuTransform, TextAlign, VAlign, draw_screen_background,
@@ -355,16 +355,19 @@ impl MissionEndLeaderboardScreen {
             BoardLoadState::Ready(page) => {
                 for (row, entry) in page.entries.iter().take(MAX_VISIBLE_ROWS).enumerate() {
                     let y = TABLE_Y + 8 + i32::try_from(row).unwrap_or(0) * 28;
+                    // Only the uploader can be named; every other recorded
+                    // participant instance is anonymous.
                     let player = participant_text(
                         entry
-                            .named_participants
+                            .uploader
                             .iter()
                             .map(|participant| participant.username.as_str()),
-                        entry.anonymous_participant_instance_count,
+                        u32::from(entry.participant_instance_count)
+                            - u32::from(entry.uploader.is_some()),
                     );
                     let rank = format!("#{}", entry.rank);
                     let player = truncate_chars(&renderable_text(font, &player), 34);
-                    let metric = metric_text(&entry.metric_value);
+                    let metric = metric_text(&entry.metric_value, self.controller.tick_duration());
                     render_text_virt_font(renderer, font, transform, &rank, TABLE_X + 10, y);
                     render_text_virt_font(renderer, font, transform, &player, TABLE_X + 65, y);
                     render_text_virt_font(
@@ -392,27 +395,20 @@ fn submission_status(state: &MissionSubmissionState) -> &str {
         MissionSubmissionState::AwaitingConsent => {
             "This won run is eligible. Submit it, or continue without uploading."
         }
-        MissionSubmissionState::PreparingArtifacts => "Preparing the canonical replay...",
-        MissionSubmissionState::AwaitingParticipantSignatures(progress) => {
-            if progress.expected.len() == progress.signed.len() {
-                "All authenticated participants signed; preparing upload..."
-            } else {
-                "Waiting for authenticated multiplayer participants to co-sign..."
-            }
+        MissionSubmissionState::Submitting => {
+            "Signing and uploading the replay for server verification..."
         }
-        MissionSubmissionState::Uploading => "Uploading for server verification...",
         MissionSubmissionState::Queued(_) => {
             "Submitted. Verification continues on the server; you may continue playing."
         }
     }
 }
 
-fn metric_text(value: &BoardMetricValueV1) -> String {
+fn metric_text(value: &BoardMetricValueV2, tick_duration: TickDurationV1) -> String {
     match value {
-        BoardMetricValueV1::OriginalScore { points } => format!("{points} pts"),
-        BoardMetricValueV1::FastestSuccess {
+        BoardMetricValueV2::OriginalScore { points } => format!("{points} pts"),
+        BoardMetricValueV2::FastestSuccess {
             active_simulation_ticks,
-            tick_duration,
         } => {
             let micros = u128::from(*active_simulation_ticks)
                 .saturating_mul(u128::from(tick_duration.numerator_micros))
@@ -485,18 +481,21 @@ mod tests {
 
     #[test]
     fn metric_labels_use_score_and_authoritative_tick_fraction() {
+        let tick = TickDurationV1 {
+            numerator_micros: 40_000,
+            denominator: 1,
+        };
         assert_eq!(
-            metric_text(&BoardMetricValueV1::OriginalScore { points: 1234 }),
+            metric_text(&BoardMetricValueV2::OriginalScore { points: 1234 }, tick),
             "1234 pts"
         );
         assert_eq!(
-            metric_text(&BoardMetricValueV1::FastestSuccess {
-                active_simulation_ticks: 2_250,
-                tick_duration: robin_run_protocol::TickDurationV1 {
-                    numerator_micros: 40_000,
-                    denominator: 1,
+            metric_text(
+                &BoardMetricValueV2::FastestSuccess {
+                    active_simulation_ticks: 2_250,
                 },
-            }),
+                tick
+            ),
             "1:30"
         );
     }

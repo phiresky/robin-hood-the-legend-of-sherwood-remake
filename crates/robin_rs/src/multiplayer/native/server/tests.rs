@@ -1,29 +1,14 @@
-//! Native server transport tests: peer dispatch, admission/transition
-//! trackers, seat ownership, co-signing, and real-iroh host sessions.
-use super::super::test_support::{leaderboard_request, signed_response};
+//! Native server transport tests: peer dispatch, transition trackers, seat
+//! ownership, and real-iroh host sessions.
 use super::{
-    ClientKeys, HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind,
-    ServerPeers, connect_client_with_keys, retain_transition_peer_for_reconnect,
-    start_server_with_key, take_committed_snapshot_transition, validate_peer_command_authority,
+    HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind, ServerPeers,
+    connect_client_with_key, retain_transition_peer_for_reconnect, start_server_with_key,
+    take_committed_snapshot_transition, validate_peer_command_authority,
     validate_server_gameplay_outbound, validate_server_gameplay_wire_msg,
 };
-use crate::leaderboard_ranked_session::{
-    OfficialRankedSessionSetupV1, RankedRunPreflightAdmissionV1,
-};
 use crate::multiplayer::{ServerChannels, ServerConfig};
-use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::multiplayer::{NetEvent, NetOutbound};
 use robin_engine::player_command::PlayerId;
-use robin_run_protocol::DomainSignedClaim as _;
-use robin_run_protocol::{
-    ArtifactRefV1, CanonicalDocument as _, ChallengeNonce32, Digest32,
-    FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
-    FreshRunPreflightRequestV1, FreshRunScopeV1, LeaderboardCoSignPurposeV1,
-    OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublicKey32,
-    RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ResourceLocaleRootV1, SCHEMA_VERSION_V1,
-    Signature64, SignatureAlgorithmV1, SimulationSeed64, SpeechTimingAuthorityV1,
-    SubmissionAcceptedV1, SubmissionLifecycleV1,
-};
 use std::collections::HashSet;
 use std::sync::atomic::AtomicU32;
 use std::sync::mpsc::{Receiver, channel};
@@ -49,10 +34,6 @@ fn dispatch_test_context() -> (super::ServerContext, Receiver<NetEvent>) {
         sim_config: Default::default(),
         host_endpoint_id: iroh::SecretKey::from_bytes(&[9; 32]).public(),
         session_id: super::MultiplayerSessionId([4; 32]),
-        ranked_lifecycle: Arc::new(StdMutex::new(
-            super::RankedSessionLifecycle::awaiting_prepared_inputs(),
-        )),
-        ranked_browse_reason: super::Mutex::new(None),
         continued_session: false,
         relay_url: super::Mutex::new(None),
         speech_timing_locale: None,
@@ -88,58 +69,34 @@ fn fatal_server_failure_cancels_and_notifies_once() {
     ));
 }
 
-fn admission_challenge(
-    seat: u8,
-    generation: u64,
-    deadline: Instant,
-) -> super::PendingRankedAdmission {
-    super::PendingRankedAdmission {
-        seat,
-        generation,
-        kind: super::RankedAdmissionKind::Fresh,
-        challenge: super::RankedJoinChallenge {
-            session_genesis: super::RankedSessionGenesisDocument::new(vec![1]).unwrap(),
-            join_claim: super::RankedJoinClaimDocument::new(vec![2]).unwrap(),
-        },
-        deadline,
-    }
-}
-
 #[test]
 fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
     use robin_engine::multiplayer::{
-        ModalInstanceId, NetMsg, RankedContinuationPreflightSignatureDocument,
-        RankedContinuationReceiptSelectionDocument, RankedJoinUnavailableReason,
-        SnapshotTransitionId, SnapshotTransitionPayload,
+        ModalInstanceId, NetMsg, SnapshotTransitionId, SnapshotTransitionPayload,
     };
     use robin_engine::player_command::{DialogResult, ModalKind};
     for invalidation in ["replacement", "detachment", "release"] {
         let (context, events) = dispatch_test_context();
         let owner = PeerOwner::Native([1; 32]);
-        let key = iroh::SecretKey::from_bytes(&[2; 32]);
-        let mut identity = ranked_identity(1);
-        identity.durable_public_key = Some(*key.public().as_bytes());
         let (sender, mut old_wire) = unbounded_channel();
         let first = context
             .peers
             .lock()
             .sessions
-            .claim_seat(owner, "first", identity, sender)
+            .claim_seat(owner, "first", sender)
             .unwrap();
         let (replacement_sender, mut replacement_wire) = unbounded_channel();
-        let generation = {
+        {
             let mut peers = context.peers.lock();
             match invalidation {
                 "replacement" => {
                     peers
                         .sessions
-                        .claim_seat(owner, "next", identity, replacement_sender)
-                        .unwrap()
-                        .generation
+                        .claim_seat(owner, "next", replacement_sender)
+                        .unwrap();
                 }
                 "detachment" => {
                     peers.sessions.detach_writer(&first.seat).unwrap();
-                    first.generation
                 }
                 "release" => {
                     assert_eq!(
@@ -148,19 +105,19 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
                             .release_seat_if_owner(first.seat, owner, first.generation),
                         Some(false)
                     );
-                    first.generation
                 }
                 _ => unreachable!(),
             }
-        };
+        }
         let id = SnapshotTransitionId {
             session_id: context.session_id,
             sequence: 1,
         };
-        let request = leaderboard_request(LeaderboardCoSignPurposeV1::Submission, 90);
-        {
-            let mut peers = context.peers.lock();
-            peers.transitions.begin(PendingSnapshotTransition {
+        context
+            .peers
+            .lock()
+            .transitions
+            .begin(PendingSnapshotTransition {
                 id,
                 payload: SnapshotTransitionPayload::Save {
                     mission_id: 7,
@@ -168,15 +125,6 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
                 },
                 awaiting: HashSet::from([first.seat]),
             });
-            // Pure tracker setup ensures even detached/released denial cannot
-            // accidentally consume a still-pending session-level request.
-            peers.cosigns.begin(PlayerId(first.seat), request).unwrap();
-            peers.admission.begin(admission_challenge(
-                first.seat,
-                generation,
-                Instant::now() + Duration::from_secs(30),
-            ));
-        }
         let messages = [
             (
                 "input",
@@ -187,34 +135,6 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
             ),
             ("ready", NetMsg::ReadyToSim { frame: 99 }),
             ("snapshot ack", NetMsg::SnapshotTransitionReady { id }),
-            (
-                "co-sign",
-                NetMsg::LeaderboardCoSignResponse(signed_response(&request, &key)),
-            ),
-            (
-                "ranked unavailable",
-                NetMsg::RankedJoinResponse(super::RankedJoinResponse::Unavailable(
-                    RankedJoinUnavailableReason::DurableIdentityUnavailable,
-                )),
-            ),
-            (
-                "ranked attestation",
-                NetMsg::RankedJoinResponse(super::RankedJoinResponse::Attestation(
-                    super::RankedJoinAttestationDocument::new(vec![1]).unwrap(),
-                )),
-            ),
-            (
-                "receipt selection",
-                NetMsg::RankedContinuationReceiptSelection(
-                    RankedContinuationReceiptSelectionDocument::new(vec![1]).unwrap(),
-                ),
-            ),
-            (
-                "preflight signature",
-                NetMsg::RankedContinuationPreflightSignature(
-                    RankedContinuationPreflightSignatureDocument::new(vec![1]).unwrap(),
-                ),
-            ),
             (
                 "modal proposal",
                 NetMsg::ModalProposal(robin_engine::multiplayer::ModalProposal {
@@ -234,7 +154,6 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
                 &context,
                 PlayerId(first.seat),
                 first.generation,
-                identity,
                 message,
             )
             .unwrap_err();
@@ -263,8 +182,6 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
                     .awaiting
                     .contains(&first.seat)
             );
-            assert_eq!(peers.cosigns.pending_count(), 1);
-            assert_eq!(peers.admission.pending().unwrap().generation, generation);
             assert!(
                 peers
                     .sessions
@@ -272,12 +189,6 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
                     .all(|(_, _, ready_frame)| ready_frame.is_none())
             );
             assert!(peers.readiness.begun.is_none());
-            drop(peers);
-            assert!(
-                super::ranked_lifecycle_lock(&context.ranked_lifecycle)
-                    .is_awaiting_prepared_inputs(),
-                "{invalidation} {label} downgraded ranked lifecycle"
-            );
         }
     }
 }
@@ -285,19 +196,12 @@ fn stale_peer_dispatch_rejects_every_effect_before_touching_successor_state() {
 #[test]
 fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
     let (context, events) = dispatch_test_context();
-    // Explicit browse-only resolution is host policy, unrelated to freshness.
-    super::ranked_lifecycle_lock(&context.ranked_lifecycle).downgrade("test browse session");
     let (sender, mut wire) = unbounded_channel();
     let claim = {
         let mut peers = context.peers.lock();
         let claim = peers
             .sessions
-            .claim_seat(
-                PeerOwner::Native([1; 32]),
-                "peer",
-                ranked_identity(1),
-                sender,
-            )
+            .claim_seat(PeerOwner::Native([1; 32]), "peer", sender)
             .unwrap();
         peers.sessions.connect_sim_seat(claim.seat);
         peers.readiness.host_frame = Some(10);
@@ -307,7 +211,6 @@ fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
         &context,
         PlayerId(claim.seat),
         claim.generation,
-        ranked_identity(1),
         super::NetMsg::Input {
             origin_frame: 10,
             command: super::PlayerCommand::Noop,
@@ -325,7 +228,6 @@ fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
         &context,
         PlayerId(claim.seat),
         claim.generation,
-        ranked_identity(1),
         super::NetMsg::ReadyToSim { frame: 12 },
     )
     .unwrap();
@@ -351,12 +253,7 @@ fn current_snapshot_ack_commits_once_and_detaches_authority() {
         .peers
         .lock()
         .sessions
-        .claim_seat(
-            PeerOwner::Native([1; 32]),
-            "peer",
-            ranked_identity(1),
-            sender,
-        )
+        .claim_seat(PeerOwner::Native([1; 32]), "peer", sender)
         .unwrap();
     let id = robin_engine::multiplayer::SnapshotTransitionId {
         session_id: context.session_id,
@@ -378,7 +275,6 @@ fn current_snapshot_ack_commits_once_and_detaches_authority() {
         &context,
         PlayerId(claim.seat),
         claim.generation,
-        ranked_identity(1),
         super::NetMsg::SnapshotTransitionReady { id },
     )
     .unwrap();
@@ -392,43 +288,11 @@ fn current_snapshot_ack_commits_once_and_detaches_authority() {
         &context,
         PlayerId(claim.seat),
         claim.generation,
-        ranked_identity(1),
         super::NetMsg::SnapshotTransitionReady { id },
     )
     .unwrap_err();
     assert!(error.to_string().contains("detached writer"));
     assert!(events.try_recv().is_err());
-}
-
-#[test]
-fn admission_tracker_deadlines_and_cancellation_are_generation_bound() {
-    use super::server_protocol::{AdmissionDeadline, RankedAdmissionTracker};
-    let now = Instant::now();
-    let mut tracker = RankedAdmissionTracker::default();
-    tracker.begin(admission_challenge(1, 7, now));
-    assert_eq!(
-        tracker.deadline(1, 7, Some(7), false, now),
-        AdmissionDeadline::Expired
-    );
-    assert_eq!(
-        tracker.deadline(1, 7, Some(8), false, now),
-        AdmissionDeadline::Finished
-    );
-    assert_eq!(
-        tracker.deadline(1, 7, None, false, now),
-        AdmissionDeadline::Finished
-    );
-    assert_eq!(
-        tracker.deadline(1, 7, Some(7), true, now),
-        AdmissionDeadline::Finished
-    );
-    assert!(!tracker.cancel_for(1, 8));
-    assert!(tracker.pending().is_some());
-    assert!(tracker.cancel_for(1, 7));
-    assert_eq!(
-        tracker.deadline(1, 7, Some(7), false, now),
-        AdmissionDeadline::Waiting
-    );
 }
 
 #[test]
@@ -454,21 +318,20 @@ fn ready_barrier_requires_attached_connected_quorum_and_preserves_provisional_fr
 #[test]
 fn superseded_reader_teardown_cannot_connect_or_admit_successor() {
     let (context, events) = dispatch_test_context();
-    super::ranked_lifecycle_lock(&context.ranked_lifecycle).downgrade("test browse session");
     let owner = PeerOwner::Native([1; 32]);
     let (sender, _old_wire) = unbounded_channel();
     let first = context
         .peers
         .lock()
         .sessions
-        .claim_seat(owner, "old", ranked_identity(1), sender)
+        .claim_seat(owner, "old", sender)
         .unwrap();
     let (sender, mut next_wire) = unbounded_channel();
     let next = context
         .peers
         .lock()
         .sessions
-        .claim_seat(owner, "next", ranked_identity(1), sender)
+        .claim_seat(owner, "next", sender)
         .unwrap();
     super::release_peer_session(&context, PlayerId(first.seat), owner, first.generation);
     assert_eq!(
@@ -486,13 +349,12 @@ async fn inactive_reader_drains_terminal_frames_after_buffered_input_without_res
     for mode in ["commit", "reconnect", "replacement", "release"] {
         let (context, events) = dispatch_test_context();
         let owner = PeerOwner::Native([1; 32]);
-        let identity = ranked_identity(1);
         let (sender, mut wire) = unbounded_channel();
         let claim = context
             .peers
             .lock()
             .sessions
-            .claim_seat(owner, "old", identity, sender)
+            .claim_seat(owner, "old", sender)
             .unwrap();
         let id = SnapshotTransitionId {
             session_id: context.session_id,
@@ -534,7 +396,6 @@ async fn inactive_reader_drains_terminal_frames_after_buffered_input_without_res
                     &context,
                     PlayerId(claim.seat),
                     claim.generation,
-                    identity,
                     NetMsg::SnapshotTransitionReady { id },
                 )
                 .unwrap();
@@ -557,7 +418,7 @@ async fn inactive_reader_drains_terminal_frames_after_buffered_input_without_res
                         let (sender, _replacement_wire) = unbounded_channel();
                         peers
                             .sessions
-                            .claim_seat(owner, "successor", identity, sender)
+                            .claim_seat(owner, "successor", sender)
                             .unwrap();
                     }
                     "release" => {
@@ -576,7 +437,6 @@ async fn inactive_reader_drains_terminal_frames_after_buffered_input_without_res
                 &context,
                 PlayerId(claim.seat),
                 claim.generation,
-                identity,
                 NetMsg::Input {
                     origin_frame: 99,
                     command: super::PlayerCommand::Noop,
@@ -651,7 +511,7 @@ async fn independent_writer_failure_releases_generation_and_allows_snapshot_reco
         .peers
         .lock()
         .sessions
-        .claim_seat(owner, "peer", ranked_identity(1), sender.clone())
+        .claim_seat(owner, "peer", sender.clone())
         .unwrap();
     let reader = std::future::pending::<Result<super::PeerReaderExit, super::MultiplayerError>>();
     let writer = async move {
@@ -682,7 +542,7 @@ async fn independent_writer_failure_releases_generation_and_allows_snapshot_reco
         .peers
         .lock()
         .sessions
-        .claim_seat(owner, "peer", ranked_identity(1), replacement)
+        .claim_seat(owner, "peer", replacement)
         .unwrap();
     assert_eq!(reconnect.seat, claim.seat);
     assert_eq!(reconnect.kind, SeatClaimKind::Reconnect);
@@ -722,104 +582,6 @@ fn snapshot_tracker_rejects_wrong_and_duplicate_acknowledgements_without_consumi
     assert_eq!(transitions.take_completed(), None);
 }
 
-fn ranked_identity(byte: u8) -> super::RankedPeerIdentity {
-    super::RankedPeerIdentity {
-        durable_public_key: Some([byte; 32]),
-        transport_endpoint_id: [byte.wrapping_add(1); 32],
-        public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
-    }
-}
-
-fn official_ranked_setup(host_key: &iroh::SecretKey) -> OfficialRankedSessionSetupV1 {
-    let ranked_session = RankedSessionConfigV1 {
-        recorded_replay: None,
-        custom_rules_config: None,
-        custom_canonical_campaign: None,
-        schema_version: SCHEMA_VERSION_V1,
-        mission_id: "Dem_Lei_MP".to_string(),
-        content_edition: OfficialContentEditionV1::Demo,
-        content_subject: OfficialContentSubjectV1::FieldMission {
-            mission_id: "Dem_Lei_MP".to_string(),
-        },
-        simulation_seed: SimulationSeed64::new(7),
-        starting_campaign_sha256: Digest32::from_bytes([1; 32]),
-        starting_campaign_byte_length: 1,
-        prepared_inputs_projection_sha256: Some(Digest32::from_bytes([2; 32])),
-        prepared_mission_inputs_seal_sha256: Some(Digest32::from_bytes([3; 32])),
-        build_manifest_sha256: Digest32::from_bytes([4; 32]),
-        content_manifest_sha256: Digest32::from_bytes([5; 32]),
-        campaign_content_manifest_sha256: None,
-        rules_config_sha256: Digest32::from_bytes([6; 32]),
-        ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
-        competition_manifest_sha256: None,
-        spellforge_content_sha256: None,
-        resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
-        speech_timing: SpeechTimingAuthorityV1::BaseInstallation,
-    };
-    let host_signing_key = SigningKey::from_bytes(&host_key.to_bytes());
-    let authority_key = SigningKey::from_bytes(&[0x71; 32]);
-    let request_claim = FreshRunPreflightRequestClaimV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        request_nonce: ChallengeNonce32::from_bytes([0x72; 32]),
-        host_public_key: PublicKey32::from_bytes(host_signing_key.verifying_key().to_bytes()),
-        replay_session_id: Digest32::from_bytes([0x73; 32]),
-        host_participant_instance_id: Digest32::from_bytes([0x74; 32]),
-        host_nonce: ChallengeNonce32::from_bytes([0x75; 32]),
-        scope: FreshRunScopeV1::IndividualLevel,
-        starting_campaign: ArtifactRefV1 {
-            sha256: ranked_session.starting_campaign_sha256,
-            byte_length: ranked_session.starting_campaign_byte_length,
-            media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_string(),
-        },
-        ranked_session: ranked_session.clone(),
-    };
-    let request = FreshRunPreflightRequestV1 {
-        host_signature: Signature64::from_bytes(
-            host_signing_key
-                .sign(&request_claim.signing_bytes().unwrap())
-                .to_bytes(),
-        ),
-        claim: request_claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-    };
-    let grant_claim = FreshRunPreflightGrantClaimV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        grant_id: OpaqueId::new("native-ranked-test-grant").unwrap(),
-        grant_nonce: ChallengeNonce32::from_bytes([0x76; 32]),
-        grant_authority_public_key: PublicKey32::from_bytes(
-            authority_key.verifying_key().to_bytes(),
-        ),
-        host_public_key: request.claim.host_public_key,
-        grant_request_sha256: request.canonical_digest().unwrap(),
-        ranked_session_sha256: ranked_session.canonical_digest().unwrap(),
-        replay_session_id: request.claim.replay_session_id,
-        host_participant_instance_id: request.claim.host_participant_instance_id,
-        host_nonce: request.claim.host_nonce,
-        scope: request.claim.scope,
-        starting_campaign: request.claim.starting_campaign.clone(),
-        admitted_at_unix_ms: 1_000,
-        expires_at_unix_ms: 2_000,
-    };
-    let grant = FreshRunPreflightGrantV1 {
-        authority_signature: Signature64::from_bytes(
-            authority_key
-                .sign(&grant_claim.signing_bytes().unwrap())
-                .to_bytes(),
-        ),
-        claim: grant_claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-    };
-    OfficialRankedSessionSetupV1 {
-        ranked_session,
-        custom_package_present: false,
-        run_preflight: RankedRunPreflightAdmissionV1::Fresh { request, grant },
-        run_preflight_grant_public_key: PublicKey32::from_bytes(
-            authority_key.verifying_key().to_bytes(),
-        ),
-        trusted_now_unix_ms: 1_500,
-    }
-}
-
 #[track_caller]
 fn recv_matching(
     receiver: &Receiver<NetEvent>,
@@ -843,17 +605,6 @@ fn recv_matching(
     }
 }
 
-fn admit_ranked_test_identity(peers: &mut ServerPeers, seat: u8, key: &iroh::SecretKey) {
-    peers.sessions.set_test_ranked_identity(
-        seat,
-        super::RankedPeerIdentity {
-            durable_public_key: Some(*key.public().as_bytes()),
-            transport_endpoint_id: *key.public().as_bytes(),
-            public_disclosure: robin_run_protocol::ParticipantPublicDisclosureV1::NamedProfile,
-        },
-    );
-}
-
 fn claim_test_seat(
     peers: &mut ServerPeers,
     seat: u8,
@@ -861,12 +612,7 @@ fn claim_test_seat(
 ) {
     let claim = peers
         .sessions
-        .claim_seat(
-            PeerOwner::Native([seat; 32]),
-            "test peer",
-            ranked_identity(seat),
-            sender,
-        )
+        .claim_seat(PeerOwner::Native([seat; 32]), "test peer", sender)
         .unwrap();
     assert_eq!(claim.seat, seat);
 }
@@ -903,7 +649,6 @@ fn native_server_gameplay_rejects_wrong_direction_messages() {
             protocol_version: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
             nickname: "late".into(),
             browser_auth: None,
-            ranked_public_key: None,
         })
         .unwrap_err()
         .to_string()
@@ -1009,12 +754,12 @@ fn replacement_transport_seeds_exact_authenticated_seats() {
     let (browser_tx, _browser_rx) = unbounded_channel();
     let browser_claim = peers
         .sessions
-        .claim_seat(browser, "renamed browser", ranked_identity(7), browser_tx)
+        .claim_seat(browser, "renamed browser", browser_tx)
         .unwrap();
     let (native_tx, _native_rx) = unbounded_channel();
     let native_claim = peers
         .sessions
-        .claim_seat(native, "renamed native", ranked_identity(8), native_tx)
+        .claim_seat(native, "renamed native", native_tx)
         .unwrap();
 
     assert_eq!(browser_claim.seat, 1);
@@ -1025,12 +770,7 @@ fn replacement_transport_seeds_exact_authenticated_seats() {
     assert!(
         peers
             .sessions
-            .claim_seat(
-                PeerOwner::Browser([9; 32]),
-                "same nickname",
-                ranked_identity(9),
-                intruder_tx,
-            )
+            .claim_seat(PeerOwner::Browser([9; 32]), "same nickname", intruder_tx)
             .is_err(),
         "a replacement session may not allocate beyond its retained roster"
     );
@@ -1091,114 +831,12 @@ fn disconnected_transition_peer_must_ack_again_after_reconnect() {
 }
 
 #[test]
-fn server_cosign_state_targets_one_authenticated_seat_and_rejects_duplicates() {
-    let request = leaderboard_request(LeaderboardCoSignPurposeV1::Submission, 70);
-    let key = iroh::SecretKey::generate();
-    let response = signed_response(&request, &key);
-    let mut peers = ServerPeers::new(3);
-    let (seat_one_tx, mut seat_one_rx) = unbounded_channel();
-    let (seat_two_tx, mut seat_two_rx) = unbounded_channel();
-    claim_test_seat(&mut peers, 1, seat_one_tx);
-    claim_test_seat(&mut peers, 2, seat_two_tx);
-    admit_ranked_test_identity(&mut peers, 1, &key);
-
-    let target = peers
-        .begin_leaderboard_cosign(PlayerId(1), request)
-        .unwrap();
-    target
-        .send(robin_engine::multiplayer::NetMsg::LeaderboardCoSignRequest(
-            request,
-        ))
-        .unwrap();
-    assert!(matches!(
-        seat_one_rx.try_recv().unwrap(),
-        robin_engine::multiplayer::NetMsg::LeaderboardCoSignRequest(decoded)
-            if decoded == request
-    ));
-    assert!(
-        seat_two_rx.try_recv().is_err(),
-        "request must not broadcast"
-    );
-
-    assert!(
-        peers
-            .complete_leaderboard_cosign(PlayerId(2), &response)
-            .unwrap_err()
-            .to_string()
-            .contains("wrong-target")
-    );
-    peers
-        .complete_leaderboard_cosign(PlayerId(1), &response)
-        .unwrap();
-    assert!(
-        peers
-            .complete_leaderboard_cosign(PlayerId(1), &response)
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate")
-    );
-    assert!(
-        peers
-            .begin_leaderboard_cosign(PlayerId(1), request)
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate")
-    );
-}
-
-#[test]
-fn server_cosign_state_allows_same_final_request_for_distinct_targets_only() {
-    let request = leaderboard_request(LeaderboardCoSignPurposeV1::Submission, 71);
-    let mut peers = ServerPeers::new(3);
-    for seat in [1, 2] {
-        let (sender, _receiver) = unbounded_channel();
-        claim_test_seat(&mut peers, seat, sender);
-        peers
-            .begin_leaderboard_cosign(PlayerId(seat), request)
-            .unwrap();
-    }
-    assert_eq!(peers.cosigns.pending_count(), 2);
-    assert_eq!(peers.cosigns.seen_count(), 2);
-}
-
-#[test]
-fn invalid_cosign_signature_does_not_consume_the_pending_request() {
-    let request = leaderboard_request(LeaderboardCoSignPurposeV1::CampaignContinuation, 72);
-    let mut peers = ServerPeers::new(2);
-    let admitted_key = iroh::SecretKey::generate();
-    let (sender, _receiver) = unbounded_channel();
-    claim_test_seat(&mut peers, 1, sender);
-    admit_ranked_test_identity(&mut peers, 1, &admitted_key);
-    peers
-        .begin_leaderboard_cosign(PlayerId(1), request)
-        .unwrap();
-
-    let invalid = signed_response(&request, &iroh::SecretKey::generate());
-    assert!(
-        peers
-            .complete_leaderboard_cosign(PlayerId(1), &invalid)
-            .unwrap_err()
-            .to_string()
-            .contains("other than its admitted durable identity")
-    );
-    assert_eq!(peers.cosigns.pending_count(), 1);
-    let valid = signed_response(&request, &admitted_key);
-    peers
-        .complete_leaderboard_cosign(PlayerId(1), &valid)
-        .unwrap();
-    assert!(peers.cosigns.pending_count() == 0);
-}
-
-#[test]
 fn authenticated_owner_reclaims_and_replaces_only_its_original_seat() {
     let mut peers = ServerPeers::new(3);
     let owner = PeerOwner::Browser([7; 32]);
     let other = PeerOwner::Browser([8; 32]);
     let (first_tx, _first_rx) = unbounded_channel();
-    let first = peers
-        .sessions
-        .claim_seat(owner, "Robin", ranked_identity(7), first_tx)
-        .unwrap();
+    let first = peers.sessions.claim_seat(owner, "Robin", first_tx).unwrap();
     let seat = first.seat;
     let generation = first.generation;
     assert_eq!(seat, 1);
@@ -1208,7 +846,7 @@ fn authenticated_owner_reclaims_and_replaces_only_its_original_seat() {
     let (replacement_tx, _replacement_rx) = unbounded_channel();
     let replacement = peers
         .sessions
-        .claim_seat(owner, "Robin renamed", ranked_identity(7), replacement_tx)
+        .claim_seat(owner, "Robin renamed", replacement_tx)
         .unwrap();
     let replacement_seat = replacement.seat;
     let replacement_generation = replacement.generation;
@@ -1232,7 +870,7 @@ fn authenticated_owner_reclaims_and_replaces_only_its_original_seat() {
     let (other_tx, _other_rx) = unbounded_channel();
     let other_claim = peers
         .sessions
-        .claim_seat(other, "Robin renamed", ranked_identity(8), other_tx)
+        .claim_seat(other, "Robin renamed", other_tx)
         .unwrap();
     let other_seat = other_claim.seat;
     assert_eq!(
@@ -1243,7 +881,7 @@ fn authenticated_owner_reclaims_and_replaces_only_its_original_seat() {
     let (rejoin_tx, _rejoin_rx) = unbounded_channel();
     let rejoined = peers
         .sessions
-        .claim_seat(owner, "New name", ranked_identity(7), rejoin_tx)
+        .claim_seat(owner, "New name", rejoin_tx)
         .unwrap();
     let rejoined_seat = rejoined.seat;
     assert_eq!(rejoined_seat, seat);
@@ -1251,220 +889,8 @@ fn authenticated_owner_reclaims_and_replaces_only_its_original_seat() {
 }
 
 #[test]
-fn real_iroh_ranked_admission_uses_durable_key_and_gates_begin_and_reconnect() {
-    let _ = tracing_subscriber::fmt()
-        .with_test_writer()
-        .with_max_level(tracing::Level::INFO)
-        .try_init();
-    let host_key = iroh::SecretKey::generate();
-    let setup = official_ranked_setup(&host_key);
-    let transport_key = iroh::SecretKey::generate();
-    let durable_key = iroh::SecretKey::generate();
-    let transport_public = *transport_key.public().as_bytes();
-    let durable_public = *durable_key.public().as_bytes();
-    assert_ne!(transport_public, durable_public);
-
+fn real_iroh_seat_connects_and_ready_begins_gameplay() {
     let (server_in_tx, server_in_rx) = channel();
-    let (server_out_tx, server_out_rx) = channel();
-    let mut server = start_server_with_key(
-        host_key,
-        ServerConfig {
-            host_nickname: "host".into(),
-            mission_id: "Dem_Lei_MP".into(),
-            mission_seed: 7,
-            sim_config: robin_engine::engine::SimConfig::default(),
-            speech_timing_locale: Some("en-US".into()),
-            expected_players: 2,
-            browser_join_enabled: false,
-        },
-        ServerChannels {
-            incoming_tx: server_in_tx,
-            outgoing_rx: server_out_rx,
-            frame_cursor: Arc::new(AtomicU32::new(0)),
-            initial_snapshot: Arc::new(StdMutex::new(None)),
-        },
-        None,
-    )
-    .expect("start real iroh ranked host");
-    server
-        .install_ranked_session_setup(Some(setup.clone()))
-        .expect("install ranked host setup");
-
-    let (client_in_tx, client_in_rx) = channel();
-    let (client_out_tx, client_out_rx) = channel();
-    let mut client = connect_client_with_keys(
-        ClientKeys {
-            transport_key: transport_key.clone(),
-            durable_ranked_key: Some(durable_key.clone()),
-        },
-        server.connect_string(),
-        "alice".into(),
-        client_in_tx,
-        client_out_rx,
-    )
-    .expect("connect ranked client");
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::AssignedLocalSeat(PlayerId(1)))
-    });
-
-    client_out_tx
-        .send(NetOutbound::ReadyToSim { frame: 0 })
-        .unwrap();
-    server_out_tx
-        .send(NetOutbound::ReadyToSim { frame: 0 })
-        .unwrap();
-    let setup_deadline = Instant::now() + Duration::from_millis(200);
-    loop {
-        match client_in_rx.recv_timeout(setup_deadline.saturating_duration_since(Instant::now())) {
-            Ok(NetEvent::BeginSim { .. }) => {
-                panic!("ranked admission must resolve before BeginSim")
-            }
-            Ok(NetEvent::RankedBrowseOnly { reason }) => {
-                panic!("ReadyToSim resolved pending ranked setup as browse-only: {reason:?}")
-            }
-            Ok(_) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                panic!("ranked client event channel closed before setup")
-            }
-        }
-    }
-    assert!(
-        super::ranked_lifecycle_lock(&client.ranked_lifecycle())
-            .browse_only_reason()
-            .is_none(),
-        "ReadyToSim must leave explicit ranked setup unresolved"
-    );
-
-    client
-        .install_ranked_session_setup(Some(setup.clone()))
-        .expect("install exact ranked client setup");
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::RankedJoinAccepted(_))
-    });
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::BeginSim { .. })
-    });
-    recv_matching(&server_in_rx, Duration::from_secs(10), |event| {
-        matches!(
-            event,
-            NetEvent::Input { input, .. }
-                if matches!(
-                    input.command,
-                    robin_engine::player_command::PlayerCommand::ConnectSeat {
-                        player_id: PlayerId(1),
-                        ..
-                    }
-                )
-        )
-    });
-
-    let submission_accepted = SubmissionAcceptedV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        submission_id: OpaqueId::new("native-ranked-submission").unwrap(),
-        state: SubmissionLifecycleV1::Queued,
-        retry_after_ms: 250,
-    };
-    let accepted_document = robin_engine::multiplayer::RankedSubmissionAcceptedDocument::new(
-        crate::leaderboard_ranked_session::encode_ranked_wire_document(&submission_accepted)
-            .unwrap(),
-    )
-    .unwrap();
-    server_out_tx
-        .send(NetOutbound::RankedSubmissionAccepted {
-            to: PlayerId(1),
-            accepted: accepted_document,
-        })
-        .unwrap();
-    let received = recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::RankedSubmissionAccepted(_))
-    });
-    let NetEvent::RankedSubmissionAccepted(received) = received else {
-        unreachable!()
-    };
-    let decoded: SubmissionAcceptedV1 =
-        crate::leaderboard_ranked_session::decode_ranked_wire_document(received.as_bytes())
-            .unwrap();
-    assert_eq!(decoded, submission_accepted);
-
-    {
-        let ranked_lifecycle = server.ranked_lifecycle();
-        let lifecycle = super::ranked_lifecycle_lock(&ranked_lifecycle);
-        let session = lifecycle
-            .ranked_session()
-            .expect("host remains ranked after admission");
-        let guest = session
-            .participant_claims()
-            .into_iter()
-            .find(|participant| participant.seat == 1)
-            .expect("guest claim retained");
-        assert_eq!(*guest.public_key.as_bytes(), durable_public);
-        assert_eq!(
-            *guest
-                .join_attestation
-                .expect("guest claim is attested")
-                .claim
-                .transport_endpoint_id
-                .as_bytes(),
-            transport_public
-        );
-    }
-
-    let disconnected_sender = server
-        .context
-        .peers
-        .lock()
-        .sessions
-        .detach_writer(&1)
-        .expect("ranked client has an active server writer");
-    drop(disconnected_sender);
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::Disconnected)
-    });
-    recv_matching(&server_in_rx, Duration::from_secs(10), |event| {
-        matches!(
-            event,
-            NetEvent::Input { input, .. }
-                if matches!(
-                    input.command,
-                    robin_engine::player_command::PlayerCommand::DisconnectSeat {
-                        player_id: PlayerId(1)
-                    }
-                )
-        )
-    });
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::Reconnected)
-    });
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::AssignedLocalSeat(PlayerId(1)))
-    });
-    let reconnect_deadline = Instant::now() + Duration::from_secs(10);
-    let mut accepted_before_begin = false;
-    loop {
-        let event = client_in_rx
-            .recv_timeout(reconnect_deadline.saturating_duration_since(Instant::now()))
-            .expect("ranked reconnect did not resume before timeout");
-        match event {
-            NetEvent::RankedJoinAccepted(_) => accepted_before_begin = true,
-            NetEvent::BeginSim { .. } => {
-                assert!(
-                    accepted_before_begin,
-                    "cached BeginSim bypassed reconnect admission"
-                );
-                break;
-            }
-            NetEvent::Fatal(error) => panic!("ranked reconnect failed: {error}"),
-            _ => {}
-        }
-    }
-    client.shutdown();
-    server.shutdown();
-}
-
-#[test]
-fn real_iroh_ready_before_browse_downgrade_still_begins_gameplay() {
-    let (server_in_tx, _server_in_rx) = channel();
     let (server_out_tx, server_out_rx) = channel();
     let mut server = start_server_with_key(
         iroh::SecretKey::generate(),
@@ -1485,22 +911,32 @@ fn real_iroh_ready_before_browse_downgrade_still_begins_gameplay() {
         },
         None,
     )
-    .expect("start real iroh browse-only host");
+    .expect("start real iroh host");
     let (client_in_tx, client_in_rx) = channel();
     let (client_out_tx, client_out_rx) = channel();
-    let mut client = connect_client_with_keys(
-        ClientKeys {
-            transport_key: iroh::SecretKey::generate(),
-            durable_ranked_key: None,
-        },
+    let mut client = connect_client_with_key(
+        iroh::SecretKey::generate(),
         server.connect_string(),
         "alice".into(),
         client_in_tx,
         client_out_rx,
     )
-    .expect("connect browse-only client");
+    .expect("connect client");
     recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
         matches!(event, NetEvent::AssignedLocalSeat(PlayerId(1)))
+    });
+    recv_matching(&server_in_rx, Duration::from_secs(10), |event| {
+        matches!(
+            event,
+            NetEvent::Input { input, .. }
+                if matches!(
+                    input.command,
+                    robin_engine::player_command::PlayerCommand::ConnectSeat {
+                        player_id: PlayerId(1),
+                        ..
+                    }
+                )
+        )
     });
     client_out_tx
         .send(NetOutbound::ReadyToSim { frame: 0 })
@@ -1509,21 +945,8 @@ fn real_iroh_ready_before_browse_downgrade_still_begins_gameplay() {
         .send(NetOutbound::ReadyToSim { frame: 0 })
         .unwrap();
     recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
-        matches!(event, NetEvent::RankedBrowseOnly { .. })
-    });
-    recv_matching(&client_in_rx, Duration::from_secs(10), |event| {
         matches!(event, NetEvent::BeginSim { .. })
     });
-    assert!(
-        super::ranked_lifecycle_lock(&server.ranked_lifecycle())
-            .browse_only_reason()
-            .is_some()
-    );
-    assert!(
-        super::ranked_lifecycle_lock(&client.ranked_lifecycle())
-            .browse_only_reason()
-            .is_some()
-    );
     client.shutdown();
     server.shutdown();
 }
