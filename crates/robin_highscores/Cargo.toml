@@ -36,7 +36,6 @@ base64.workspace = true
 bytes = "1"
 cap-std = "4.0.3"
 clap = { workspace = true, features = ["derive", "env"] }
-command-fds = "0.3.3"
 ed25519-dalek.workspace = true
 futures-util.workspace = true
 hex.workspace = true
