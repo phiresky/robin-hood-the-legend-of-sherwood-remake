@@ -7,7 +7,6 @@ mod paths;
 
 #[path = "tick_action_change_step.rs"]
 mod tick_action_change_step;
-use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
 use super::*;
@@ -2311,67 +2310,6 @@ impl EngineInner {
         // arms use tick_actor_animation_for; selected movement, melee, bow,
         // ability, beggar, and WaitingSword work use their live owner arms;
         // the human/PC/NPC derived tail hook runs before the slot advances.
-    }
-
-    fn tick_one_actor_animation_action_change_slot<ExecuteMotion>(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        before_actor: &mut impl FnMut(&mut Self, EntityId),
-        execute_owner_arm: &mut impl FnMut(
-            &mut Self,
-            EntityId,
-            Option<super::movement::MovementOwnerSelection>,
-            Option<MeleeOwnerSelection>,
-            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
-            Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)>,
-            Option<std::num::NonZeroU32>,
-        ) -> ExecuteMotion,
-        after_slot: &mut impl FnMut(&mut Self, EntityId, crate::order::OrderType),
-    ) where
-        ExecuteMotion: IntoExplicitExecuteMotion,
-    {
-        let ctx = ActionChangeSlotCtx {
-            sim,
-            assets,
-            entity_id,
-        };
-
-        // The actor update consumes one queued base
-        // position update before it inspects the current
-        // sequence/order.
-        self.apply_delayed_actor_position(sim, assets, entity_id);
-        self.debug_patrol_turn_lifecycle("actor_slot_before_prelude", entity_id);
-        before_actor(self, entity_id);
-        self.debug_patrol_turn_lifecycle("actor_slot_after_prelude", entity_id);
-        observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
-
-        if self.action_change_frozen_without_order(ctx) {
-            after_slot(self, entity_id, crate::order::OrderType::NonanimationEnd);
-            return;
-        }
-
-        let entry = self.action_change_install_entry_order(ctx);
-        let selections = self.action_change_owner_selections(ctx, entry);
-        let explicit_execute = execute_owner_arm(
-            self,
-            entity_id,
-            selections.movement_selection,
-            selections.melee_selection,
-            selections.bow_selection,
-            selections.ability_selection,
-            selections.beggar_selection,
-        )
-        .into_explicit_execute_motion();
-        let motion =
-            self.action_change_specialized_motion(ctx, entry, selections, explicit_execute);
-
-        self.action_change_generic_execute(ctx, entry, selections, motion);
-        self.action_change_latch_completion_motion(ctx, entry, motion);
-        let installed_tail_order_type = self.action_change_dispatch(ctx);
-        after_slot(self, entity_id, installed_tail_order_type);
-        self.action_change_slot_tail(ctx, entry);
     }
 
     /// Fuse the supported Actor → Human → PC/NPC update phases into one
