@@ -225,7 +225,10 @@ mod suite {
 
     fn run_fast_wall_anti_collision_fixture(
         first_distance: u16,
-    ) -> (MapPoint, crate::movement_diagnostics::ParityMovementStep) {
+    ) -> (
+        MapPoint,
+        Vec<crate::movement_diagnostics::ParityMovementStep>,
+    ) {
         let assets = LevelAssets::new();
         use crate::element::{
             ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
@@ -349,21 +352,20 @@ mod suite {
             .element_data()
             .position_map();
         let capture = captures
-            .iter()
-            .find(|capture| capture.entity == owner)
-            .expect("fast wall owner must emit a production movement capture")
-            .clone();
+            .into_iter()
+            .filter(|capture| capture.entity == owner)
+            .collect();
         (position, capture)
     }
 
     #[test]
     fn fast_wall_anti_collision_commits_each_perform_motion_before_the_next() {
         let (position, capture) = run_fast_wall_anti_collision_fixture(4);
-        assert_eq!(capture.split_calls.len(), 2);
-        assert_eq!(capture.split_calls[0].pre_position.x.bits, 1155272038);
-        assert_eq!(capture.split_calls[0].post_position.x.bits, 1155275468);
-        assert_eq!(capture.split_calls[1].pre_position.x.bits, 1155275468);
-        assert_eq!(capture.split_calls[1].post_position.x.bits, 1155278898);
+        assert_eq!(capture.len(), 2);
+        assert_eq!(capture[0].pre_position.x.bits, 1155272038);
+        assert_eq!(capture[0].post_position.x.bits, 1155275468);
+        assert_eq!(capture[1].pre_position.x.bits, 1155275468);
+        assert_eq!(capture[1].post_position.x.bits, 1155278898);
         assert_eq!(position.x.to_bits(), 1155278898);
         assert_eq!(position.y.to_bits(), 1148896312);
         assert_ne!(
@@ -382,12 +384,12 @@ mod suite {
             "the nonzero second motion step must still commit"
         );
         assert_eq!(
-            capture.split_calls.len(),
+            capture.len(),
             1,
             "Original emits no movement-step record for the zero-distance first call"
         );
-        assert_eq!(capture.split_calls[0].frame_distance_raw.value, 4.0);
-        assert_eq!(capture.split_calls[0].pre_position.x.bits, 1155272038);
+        assert_eq!(capture[0].frame_distance_raw.value, 4.0);
+        assert_eq!(capture[0].pre_position.x.bits, 1155272038);
     }
 
     #[test]
@@ -472,33 +474,24 @@ mod suite {
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
-        let capture = crate::movement_diagnostics::take_parity_movement_capture()
+        let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
-            .find(|capture| capture.entity == owner)
-            .expect("running-stairs owner must emit a production movement capture");
+            .filter(|capture| capture.entity == owner)
+            .collect();
 
-        assert_eq!(capture.split_calls.len(), 2);
-        assert_eq!(
-            capture.split_calls[0].pre_position.x.bits,
-            start.x.to_bits()
-        );
-        assert_eq!(
-            capture.split_calls[0].post_position.x.bits,
-            goal.x.to_bits()
-        );
-        assert_eq!(
-            capture.split_calls[0].post_position.y.bits,
-            goal.y.to_bits()
-        );
-        assert_eq!(capture.split_calls[1].pre_position.x.bits, goal.x.to_bits());
-        assert_eq!(capture.split_calls[1].pre_position.y.bits, goal.y.to_bits());
+        assert_eq!(capture.len(), 2);
+        assert_eq!(capture[0].pre_position.x.bits, start.x.to_bits());
+        assert_eq!(capture[0].post_position.x.bits, goal.x.to_bits());
+        assert_eq!(capture[0].post_position.y.bits, goal.y.to_bits());
+        assert_eq!(capture[1].pre_position.x.bits, goal.x.to_bits());
+        assert_eq!(capture[1].pre_position.y.bits, goal.y.to_bits());
         assert_ne!(
-            capture.split_calls[0].requested_delta.x.bits, 0,
+            capture[0].requested_delta.x.bits, 0,
             "the first call must genuinely overshoot before its arrival snap"
         );
         assert_ne!(
-            capture.split_calls[1].requested_delta.x.bits, 0,
+            capture[1].requested_delta.x.bits, 0,
             "running on stairs must still execute its second motion step after termination"
         );
     }
@@ -508,7 +501,7 @@ mod suite {
     ) -> (
         EngineInner,
         EntityId,
-        crate::movement_diagnostics::ParityMovementStep,
+        Vec<crate::movement_diagnostics::ParityMovementStep>,
         crate::fast_find_grid::LineIndex,
     ) {
         let mut assets = LevelAssets::new();
@@ -637,29 +630,29 @@ mod suite {
 
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
-        let capture = crate::movement_diagnostics::take_parity_movement_capture()
+        let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
-            .find(|capture| capture.entity == owner)
-            .expect("running-stairs owner must emit a production movement capture");
+            .filter(|capture| capture.entity == owner)
+            .collect();
         (engine, owner, capture, line_index)
     }
 
     #[test]
     fn running_stairs_crossing_uses_outer_pre_position() {
         let (engine, owner, capture, line_index) = run_running_stairs_outer_crossing_fixture(true);
-        assert_eq!(capture.split_calls.len(), 2);
+        assert_eq!(capture.len(), 2);
         let outer_pre = MapPoint::new(
-            capture.split_calls[0].pre_position.x.value,
-            capture.split_calls[0].pre_position.y.value,
+            capture[0].pre_position.x.value,
+            capture[0].pre_position.y.value,
         );
         let first_post = MapPoint::new(
-            capture.split_calls[0].post_position.x.value,
-            capture.split_calls[0].post_position.y.value,
+            capture[0].post_position.x.value,
+            capture[0].post_position.y.value,
         );
         let second_post = MapPoint::new(
-            capture.split_calls[1].post_position.x.value,
-            capture.split_calls[1].post_position.y.value,
+            capture[1].post_position.x.value,
+            capture[1].post_position.y.value,
         );
         assert_eq!(
             engine
@@ -710,12 +703,12 @@ mod suite {
     fn running_stairs_without_outer_crossing_keeps_ground_plane() {
         let (engine, owner, capture, line_index) = run_running_stairs_outer_crossing_fixture(false);
         let outer_pre = MapPoint::new(
-            capture.split_calls[0].pre_position.x.value,
-            capture.split_calls[0].pre_position.y.value,
+            capture[0].pre_position.x.value,
+            capture[0].pre_position.y.value,
         );
         let second_post = MapPoint::new(
-            capture.split_calls[1].post_position.x.value,
-            capture.split_calls[1].post_position.y.value,
+            capture[1].post_position.x.value,
+            capture[1].post_position.y.value,
         );
         assert!(
             engine
@@ -827,7 +820,7 @@ mod suite {
         };
 
         set_increment_z(&mut sprite, 0.75);
-        refresh_motion_forecast(&mut sprite, 4.0, None);
+        refresh_motion_forecast(&mut sprite, 4.0);
         assert_eq!(
             sprite.position_iface.get_forecasted_movement(),
             WorldVec3D::new(0.5, -1.0, 1.5),
@@ -836,7 +829,7 @@ mod suite {
 
         // A zero-distance second motion step never reaches the original game's
         // forecast write. The positive first-call value therefore remains.
-        refresh_motion_forecast(&mut sprite, 0.0, Some((0.0, 0.0)));
+        refresh_motion_forecast(&mut sprite, 0.0);
         assert_eq!(
             sprite.position_iface.get_forecasted_movement(),
             WorldVec3D::new(0.5, -1.0, 1.5),
@@ -844,7 +837,7 @@ mod suite {
         );
 
         set_increment_z(&mut sprite, -0.75);
-        refresh_motion_forecast(&mut sprite, 4.0, None);
+        refresh_motion_forecast(&mut sprite, 4.0);
         assert_eq!(
             sprite.position_iface.get_forecasted_movement(),
             WorldVec3D::new(0.5, -1.0, -1.5),

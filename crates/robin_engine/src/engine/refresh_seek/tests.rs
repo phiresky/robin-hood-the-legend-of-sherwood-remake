@@ -1273,6 +1273,109 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
     );
 }
 
+#[test]
+fn running_stairs_refreshes_a_moved_target_before_its_second_motion() {
+    use crate::sprite_script::SpriteScript;
+    use std::sync::Arc;
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = crate::engine::EngineInner::new();
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+    let mut assets = LevelAssets::new();
+    Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+    let target = engine.add_test_entity(test_pc_at(80.0, 10.0, 1));
+    let physical = OrderType::WalkingStairs;
+    let script = SpriteScript {
+        action_id: physical as u16,
+        action_done: 2,
+        average_speed: 2.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 6,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0; 3],
+        distances: vec![2; 3],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    conversion[physical as usize] = 0;
+    let entity = engine.get_entity_mut(owner).unwrap();
+    entity.element_data_mut().sprite =
+        crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    entity
+        .element_data_mut()
+        .set_position_map(MapPoint::new(10.0, 10.0));
+    entity.element_data_mut().set_sector(SectorHandle::new(1));
+    entity.element_data_mut().set_direction_instantly(4);
+    entity.position_iface_mut().set_anti_collision_on(false);
+    entity
+        .position_iface_mut()
+        .set_move_box(crate::coordinates::MoveBox::from_coords(
+            -6.0, -4.0, 6.0, 4.0,
+        ));
+    let mut seek =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::RunningStairs);
+    seek.orders.push_back(crate::order::Order::test_new(
+        OrderType::RunningStairs,
+        80.0,
+        10.0,
+    ));
+    if let SequenceElementData::Movement {
+        flags,
+        element,
+        tolerance,
+        ..
+    } = &mut seek.data
+    {
+        *flags = MoveFlags::SEEK;
+        *element = Some(target);
+        *tolerance = 10.0;
+    }
+    let sequence = engine.launch_element(&sim, &assets, seek);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
+    let actor = engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap();
+    actor.seek_target = Some(target);
+    actor.seek_distance = 10.0;
+    actor.seek_refresh_wait = 1;
+    actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
+
+    crate::movement_diagnostics::begin_parity_movement_capture();
+    engine.tick_actor_owner_envelopes(&sim, &assets);
+    let calls: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
+        .unwrap()
+        .into_iter()
+        .filter(|call| call.entity == owner)
+        .collect();
+    assert_eq!(
+        calls.len(),
+        1,
+        "timer expiry must refresh before a second sprite/geometry call"
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted
+    );
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(
+        entity.actor_data().unwrap().continuation.motion_state,
+        MotionState::InProgress
+    );
+    assert_eq!(entity.element_data().sprite.current_frame, 0);
+}
+
 fn assert_moved_target_refresh_returns_explicit_in_progress(
     stale_sprite_motion: MotionState,
     target_sector: u16,

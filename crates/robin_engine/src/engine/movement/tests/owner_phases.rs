@@ -1,6 +1,78 @@
 use super::*;
 
 #[test]
+fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
+    use crate::element::{ActionState, Command, Entity, Posture};
+    use crate::sequence::SequenceElement;
+    use crate::sprite_script::SpriteScript;
+    use std::sync::Arc;
+
+    let mut engine = EngineInner::new();
+    let sector = crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+    let position = MapPoint::new(100.0, 100.0);
+    let physical = OrderType::WalkingStairs;
+    let script = SpriteScript {
+        action_id: physical as u16,
+        action_done: 2,
+        average_speed: 1.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+        sum_distance: 3,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0; 3],
+        distances: vec![1; 3],
+        offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0; 3],
+    };
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    conversion[physical as usize] = 0;
+    let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
+    pc.element.sprite =
+        crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    pc.element.active = true;
+    pc.element.set_position_map(position);
+    pc.element.set_sector(Some(sector));
+    pc.element.set_direction_instantly(0);
+    pc.element.set_direction_goal(4);
+    pc.element
+        .sprite
+        .position_iface
+        .set_anti_collision_on(false);
+    pc.actor.action_state = ActionState::Moving;
+    let owner = engine.add_test_entity(Entity::Pc(pc));
+    let mut movement =
+        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningStairs);
+    let order_id = engine.orders.allocate_order_id();
+    let mut order =
+        crate::order::Order::new(OrderType::RunningStairs, position.x, position.y, order_id);
+    order.compute_direction = false;
+    movement.orders.push_back(order);
+    let sim = crate::sim_rng::test_context();
+    let assets = engine.test_runtime_assets();
+    let sequence = engine.launch_element(&sim, &assets, movement);
+    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    engine.select_sequence_element(owner, Some((sequence, 0)));
+
+    engine.tick_entity_movement_owner(
+        &sim,
+        &assets,
+        owner,
+        Some(MovementOwnerSelection {
+            seq_id: sequence,
+            elem_idx: 0,
+            order_id,
+        }),
+    );
+
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.element_data().position_map(), position);
+    assert_eq!(
+        entity.position_iface().get_direction().as_u8(),
+        2,
+        "running stairs executes both turns even when the first motion returns at the goal"
+    );
+}
+
+#[test]
 fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
     use crate::element::{ActionState, Command, Entity, Posture};
     use crate::sequence::{

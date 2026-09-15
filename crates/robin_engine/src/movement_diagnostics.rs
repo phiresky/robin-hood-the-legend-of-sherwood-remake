@@ -153,20 +153,6 @@ pub struct ParityMovementStep {
     pub deviated_after: bool,
     pub blocked_count_after: u16,
     pub goal_reached_after_commit: bool,
-    /// Per-motion-step operands for fast stairs/ladder/wall dispatch.
-    /// Those original-game execution paths advance movement twice and therefore
-    /// round the stored map position after each call. Ordinary motion leaves
-    /// this empty.
-    pub split_calls: Vec<ParityMovementCall>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ParityMovementCall {
-    pub frame_distance_raw: ParityFloat,
-    pub effective_distance: ParityFloat,
-    pub pre_position: ParityPoint,
-    pub requested_delta: ParityPoint,
-    pub post_position: ParityPoint,
 }
 
 /// Exact state around one flight-motion update.
@@ -225,10 +211,10 @@ pub fn record_parity_late_movement_retranslation(entity: EntityId) {
 }
 
 /// Record one movement commit when parity capture is active.
-pub fn record_parity_movement_step(step: ParityMovementStep) {
+pub fn record_parity_movement_step(step: impl FnOnce() -> ParityMovementStep) {
     CAPTURE.with(|capture| {
         if let Some(steps) = capture.borrow_mut().as_mut() {
-            steps.push(step);
+            steps.push(step());
         }
     });
 }

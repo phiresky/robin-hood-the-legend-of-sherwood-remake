@@ -29,7 +29,6 @@ mod routing;
 // the movement-private helpers without widening their visibility.
 #[path = "movement_step.rs"]
 mod movement_step;
-use movement_step::MovementStepCtx;
 
 pub(in crate::engine) use formation::PlannedRecordedGroupMoveOutcome;
 
@@ -887,31 +886,19 @@ fn motion_recomputes_exact_position(
 /// Transition-distance orders use a separate commit path from ordinary walking,
 /// though both
 /// through the same forecast update before its arrival check.
-fn refresh_motion_forecast(
-    sprite: &mut crate::sprite::Sprite,
-    speed: f32,
-    split_motion_speeds: Option<(f32, f32)>,
-) {
+fn refresh_motion_forecast(sprite: &mut crate::sprite::Sprite, speed: f32) {
     if sprite.position_iface.is_blocked() {
         return;
     }
 
-    // Fast movement processes motion twice. Each nonzero step updates
-    // the forecast, so the second distance wins when it moved; otherwise the
-    // first call's forecast remains live.
-    let forecast_distance = match split_motion_speeds {
-        Some((_, second)) if second != 0.0 => second,
-        Some((first, _)) => first,
-        None => speed,
-    };
-    if forecast_distance == 0.0 {
+    if speed == 0.0 {
         return;
     }
 
     let wait = sprite.wait_time(sprite.current_row, sprite.current_frame);
     sprite
         .position_iface
-        .update_forecasted_movement(forecast_distance, wait + 1);
+        .update_forecasted_movement(speed, wait + 1);
 }
 
 /// Original only performs the exact zero-tolerance goal snap from the
@@ -937,99 +924,6 @@ fn both_sword_ranges_contain_distance(
     let between =
         |maximal: u16, uber: u16| f32::from(maximal) < distance && distance <= f32::from(uber);
     between(my_maximal, my_uber) && between(opponent_maximal, opponent_uber)
-}
-
-/// Does the step this execution is about to commit reach the goal?
-///
-/// Motion processing moves first and only then asks the position interface
-/// whether the goal is reached, so a call that would otherwise return `START`
-/// can return `TERMINATED` instead. Rust stages the physical step until after
-/// the sprite call, so the answer has to be projected on a throwaway copy of
-/// the position interface, anti-collision and all. Comparing the straight-line
-/// distance against the step length is not a substitute: the predicate is a
-/// tolerance-compared dot product against the movement increment, and a step
-/// deviated around another actor both leaves that line and rebuilds the
-/// increment it is measured against.
-fn projected_step_reaches_goal(
-    position_iface: &crate::position_interface::PositionInterface,
-    mover: Option<&super::anti_collision::CollisionMover>,
-    collision: super::anti_collision::CollisionWorld<'_>,
-    static_repulsive_points: &[crate::ai::RepulsivePoint],
-    mobile: &LiveMobileGeometry,
-    grid: &crate::fast_find_grid::FastFindGrid,
-    goal: MapPoint,
-    target: Option<crate::position_interface::TargetInfo>,
-    speed: f32,
-) -> bool {
-    if speed == 0.0 {
-        return false;
-    }
-    let mut projected = position_iface.clone();
-    let increment = projected.get_increment_map();
-    let anti_on = projected.is_anti_collision_on();
-    let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
-        if anti_on && let Some(mover) = mover.filter(|mover| mover.active) {
-            let move_box = *projected.get_move_box();
-            let half_diagonal = projected.get_half_diagonal();
-            let was_deviated = projected.is_deviated();
-            let mut state = super::anti_collision::AntiCollisionState {
-                pi: &mut projected,
-                move_box,
-                half_diagonal,
-                goal_map: goal,
-            };
-            let (dx_step, dy_step) = super::anti_collision::apply_anti_collision_step(
-                mover,
-                collision,
-                static_repulsive_points,
-                mobile
-                    .mobile_points_by_layer
-                    .get(&mover.layer)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                mobile
-                    .mobile_lines_by_layer
-                    .get(&mover.layer)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                mobile
-                    .mobile_polygons_by_layer
-                    .get(&mover.layer)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                Some(grid),
-                Some(&mut state),
-                increment.x,
-                increment.y,
-                speed,
-                anti_on,
-            );
-            (
-                dx_step,
-                dy_step,
-                was_deviated && !state.pi.is_deviated(),
-                state.pi.is_deviated() && state.pi.blocked_count == 0,
-            )
-        } else {
-            (increment.x * speed, increment.y * speed, false, false)
-        };
-    let mut projected_position = projected.map_position();
-    projected_position.x += dx_step;
-    projected_position.y += dy_step;
-    projected.set_map_position(projected_position);
-    // A committed deviation invalidates the cached increment and rebuilds it
-    // from the new position toward the same goal, and the arrival predicate
-    // that follows reads the rebuilt vector. Skipping the rebuild leaves the
-    // dot product measuring against the pre-deviation heading, which is how a
-    // sidestepped walker looked as if it had already arrived.
-    if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
-        projected.reset_increment_computed();
-        projected.compute_increment_all(false);
-    } else if recovered_from_deviation {
-        projected.reset_increment_computed();
-        projected.compute_increment_all(true);
-    }
-    projected.is_goal_reached(grid, target)
 }
 
 /// Motion state observed by the original game after seek movement.
@@ -2766,18 +2660,6 @@ struct MovementArrivalBoundary {
     )>,
 }
 
-/// Literal operands of the ordinary position commit, captured after motion.
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
-struct MovementStepOperands {
-    actor_id: crate::entity_id::ActorId,
-    provenance_frame: u32,
-    speed: f32,
-    split_motion_speeds: Option<(f32, f32)>,
-    first_step_committed: bool,
-    cached_increment: MapVec,
-    anti_on: bool,
-}
-
 /// Argument plumbing shared by the two movement-Execute anti-collision
 /// dispatches (the transition fast-climb arm and the ordinary walk arm).
 /// A free function rather than a method: at both call sites the mover is
@@ -3894,112 +3776,65 @@ impl EngineInner {
         owner: EntityId,
         executes_shield_movement: bool,
     ) -> (Option<MapPoint>, bool) {
-        let mut combat_face_target = None;
-        let mut combat_face_target_is_ground = false;
-        for (_actor_id, entity) in self
+        let entity = self
             .world
             .entities
-            .actors()
-            .filter(|(id, _)| EntityId::from(*id) == owner)
-        {
-            let actor = entity
-                .actor_data()
-                .expect("entities.actors() yielded non-actor entity");
-            // Shield bearers face the stored danger point. Freshly launched
-            // RaiseShield keeps the transient 2D copy on ActorData; loaded
-            // saves retain the original game's authoritative shield-danger point on
-            // PcData. The latter must not be mistaken for an absent point and
-            // fall through to the protected-PC branch.
-            // Sword fighters face their principal opponent.
-            let saved_shield_face_point = entity.pc_data().and_then(|pc| {
-                let pt = pc.shield_danger_point;
-                (pt.x != 0.0 || pt.y != 0.0 || pt.z != 0.0)
-                    .then(|| crate::coordinates::MapPoint::new(pt.x, pt.y))
+            .get(owner)
+            .expect("combat movement owner disappeared");
+        let actor = entity
+            .actor_data()
+            .expect("combat movement owner must be an actor");
+        if executes_shield_movement {
+            let saved_danger_point = entity.pc_data().and_then(|pc| {
+                let point = pc.shield_danger_point;
+                (point.x != 0.0 || point.y != 0.0 || point.z != 0.0)
+                    .then(|| MapPoint::new(point.x, point.y))
             });
-            if executes_shield_movement
-                && let Some(pt) = actor.shield_face_point.or(saved_shield_face_point)
+            if let Some(point) = actor.shield_face_point.or(saved_danger_point) {
+                // Danger coordinates are compared with the actor's ground position.
+                return (Some(point), true);
+            }
+            if let Some(protected) = entity.pc_data().and_then(|pc| pc.shield_protected)
+                && let Some(ally) = self.world.entities.get(protected)
             {
-                combat_face_target = Some(pt);
-                // Danger-facing subtracts the ground position from the raw
-                // X/Y of the shield danger point.
-                combat_face_target_is_ground = true;
-                continue;
+                let position = entity.element_data().position();
+                let ally_position = ally.element_data().position();
+                // Reflect the ally around the owner so facing points away from it.
+                return (
+                    Some(MapPoint::new(
+                        2.0 * position.x - ally_position.x,
+                        2.0 * position.y - ally_position.y,
+                    )),
+                    true,
+                );
             }
-            // Shield bearer with no danger point stored: face *away*
-            // from the protected ally.  Encode this as a target equal
-            // to `2 * self_pos - ally_pos` so the downstream
-            // `vector_to_sector_0_to_15(target - self)` math aims the
-            // shield-bearer away from the ally.
-            if executes_shield_movement
-                && let Some(protected_id) = entity.pc_data().and_then(|pc| pc.shield_protected)
-                && let Some(ally) = self.world.entities.get(protected_id)
-            {
-                let self_pos = entity.element_data().position();
-                let ally_pos = ally.element_data().position();
-                combat_face_target = Some(crate::coordinates::MapPoint {
-                    x: 2.0 * self_pos.x - ally_pos.x,
-                    y: 2.0 * self_pos.y - ally_pos.y,
-                });
-                combat_face_target_is_ground = true;
-                continue;
-            }
-            if executes_shield_movement {
-                // Danger-facing does not fall through to general
-                // opponent-facing logic when its own point is unresolved.
-                continue;
-            }
-            // Opponent-facing dispatch for sword movement:
-            //   swordfighting → principal opponent's ground position
-            //   else if soldier → primary target's ground position
-            //   else            → return WALKING_SWORD without facing change
-            //
-            // Build this even before `action_state` flips to MovingSword;
-            // forced sword movement can still be represented only by the
-            // movement element's FORCE_SWORD_MOVEMENT flag at this point.
-            //
-            // The non-soldier, non-swordfighting branch returns
-            // `WALKING_SWORD` immediately, without constructing a facing
-            // vector. Keep that distinct as `None`: using the actor's own
-            // position as a sentinel is not equivalent because Position and
-            // Ground position can differ while cached projection state is
-            // refreshed, turning a nominally-zero vector into a small real
-            // angle and selecting a strafe row.
-            let is_swordfighting = entity
-                .human_data()
-                .map(|human| !human.opponents.is_empty())
-                .unwrap_or(false);
-            let opp_id_opt: Option<EntityId> = if is_swordfighting {
-                // Principal opponent = first in opponent list.
-                entity
-                    .human_data()
-                    .and_then(|h| h.opponents.first())
-                    .copied()
-            } else if entity.is_soldier() {
-                // Primary target—the soldier's AI-picked priority target,
-                // which can differ from opponents[0]. The stored handle is a
-                // raw element slot and the occupant is any human, not just a
-                // PC: soldiers routinely keep an enemy soldier as their
-                // primary target once a swordfight has ended, and facing it
-                // is what keeps the fighter turned toward the melee.
-                entity
-                    .ai_controller()
-                    .and_then(|c| c.primary_target)
-                    .map(crate::ai::AiEntityHandle::get)
-                    .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
-            } else {
-                None
-            };
-
-            if let Some(opp_id) = opp_id_opt
-                && let Some(opp) = self.world.entities.get(opp_id)
-            {
-                let position = opp.element_data().position();
-                combat_face_target =
-                    Some(crate::coordinates::MapPoint::new(position.x, position.y));
-                combat_face_target_is_ground = true;
-            }
+            return (None, false);
         }
-        (combat_face_target, combat_face_target_is_ground)
+
+        // A non-soldier without opponents leaves its facing unchanged. A soldier
+        // instead faces its primary target, whose legacy slot may hold any human.
+        let opponent = entity
+            .human_data()
+            .and_then(|human| human.opponents.first())
+            .copied()
+            .or_else(|| {
+                entity
+                    .is_soldier()
+                    .then(|| {
+                        entity
+                            .ai_controller()
+                            .and_then(|controller| controller.primary_target)
+                            .map(crate::ai::AiEntityHandle::get)
+                            .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
+                    })
+                    .flatten()
+            });
+        if let Some(opponent) = opponent.and_then(|id| self.world.entities.get(id)) {
+            let position = opponent.element_data().position();
+            (Some(MapPoint::new(position.x, position.y)), true)
+        } else {
+            (None, false)
+        }
     }
 
     /// Run the sword-/shield-walking Execute arm's facing prologue for a frame
@@ -4762,111 +4597,6 @@ impl EngineInner {
         false
     }
 
-    /// Movement Execute body for the single movement owner. Every early
-    /// `return` is a per-actor "done" exit.
-    fn tick_one_movement_actor(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        owner: EntityId,
-        selected: MovementOwnerSelection,
-        actor_id: crate::entity_id::ActorId,
-        final_tolerance: FinalTol,
-        prepared: &LiveMobileGeometry,
-    ) -> MovementOwnerMotion {
-        let entity_id = actor_id.into();
-        let seek_operands = self.movement_seek_operands(entity_id, selected, final_tolerance);
-        let entity = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("movement actor ID collected from entity table must remain present");
-        let Some(selection) = MovementStepCtx::select_movement_order(
-            entity,
-            &self.orders.sequence_manager,
-            selected,
-            actor_id,
-            entity_id,
-            self.control.frame_counter,
-        ) else {
-            self.finish_actor_movement(sim, assets, owner, selected, None);
-            return MovementOwnerMotion::default();
-        };
-        let mut ctx = MovementStepCtx {
-            engine: self,
-            sim,
-            assets,
-            owner,
-            actor_id,
-            entity_id,
-            final_tolerance,
-            prepared,
-            seek_operands,
-            traits: selection.traits,
-            order: selection.order,
-            order_compute_direction: selection.order.order_compute_direction,
-            terminal_pc_external_direction_goal: selection.terminal_pc_external_direction_goal,
-        };
-        if let Some(motion) = ctx.execute_non_sprite_movement_action() {
-            ctx.engine
-                .finish_actor_movement(sim, assets, owner, selected, Some(motion));
-            return MovementOwnerMotion {
-                initial: (motion == MotionState::InProgress).then_some(motion),
-                post_completion_override: None,
-            };
-        }
-        let seek = ctx.age_movement_seek_refresh();
-        let facing = ctx.apply_combat_movement_facing();
-        let anim = ctx.select_movement_animation(seek, facing);
-        let plan = ctx.plan_movement_motion(seek, facing, anim);
-        let first_motion = ctx.perform_first_movement_motion(&plan);
-        let mut step = ctx.perform_fast_climb_second_motion(&plan, first_motion);
-        let effects = ctx.resolve_movement_step_effects(&plan, &step);
-        ctx.trace_door_pass_movement_state(&plan, &effects);
-        let motion = if plan.is_transition_without_tolerance_arrival() {
-            ctx.tick_movement_transition(&plan, &mut step, &effects)
-        } else if !stationary_motion_waits(
-            effects.speed,
-            plan.seek.tolerance_arrival,
-            plan.facing.dist,
-        ) && let Some(mut arrival) = ctx.prepare_movement_arrival(&plan, &effects)
-        {
-            ctx.run_movement_arrival_loop(&plan, &step, &effects, &mut arrival)
-                .unwrap_or(effects.state_effect_motion)
-        } else {
-            effects.state_effect_motion
-        };
-        let motion = ctx.finish_movement_execute(&plan, &step, motion);
-        // Keep the entry orientation across crossing and order-advance callbacks.
-        let terminal_direction = (plan.is_transition_without_tolerance_arrival()
-            && step.motion_state == MotionState::Terminated)
-            .then_some(ctx.terminal_pc_external_direction_goal)
-            .flatten();
-        ctx.engine
-            .finish_actor_movement(sim, assets, owner, selected, Some(motion));
-        if let Some((external_direction, movement_direction)) = terminal_direction {
-            let entity = ctx
-                .engine
-                .world
-                .entities
-                .get_mut(owner)
-                .expect("terminal movement owner disappeared");
-            if i16::from(entity.position_iface().get_direction_goal()) == movement_direction {
-                entity
-                    .element_data_mut()
-                    .set_direction_goal(external_direction);
-            }
-        }
-        MovementOwnerMotion {
-            initial: (motion == MotionState::InProgress).then_some(motion),
-            post_completion_override: committed_arrival_post_completion_override(
-                step.motion_state,
-                effects.state_effect_motion,
-                effects.state_effect_motion == MotionState::Terminated,
-            ),
-        }
-    }
-
     /// Commit collision-adjusted geometry and its forecast.
     /// Returns whether movement aborted; arrival and START remain caller-owned.
     // Disjoint world/AI borrows remain explicit rather than introducing another
@@ -4874,7 +4604,9 @@ impl EngineInner {
     fn commit_ordinary_movement_step(
         entity: &mut crate::element::Entity,
         selected_order: SelectedMovementOrder,
-        operands: MovementStepOperands,
+        actor_id: crate::entity_id::ActorId,
+        provenance_frame: u32,
+        speed: f32,
         collision: super::anti_collision::CollisionWorld<'_>,
         repulsive_points: &[crate::ai::RepulsivePoint],
         prepared: &LiveMobileGeometry,
@@ -4886,33 +4618,12 @@ impl EngineInner {
             order_reverse,
             ..
         } = selected_order;
-        let MovementStepOperands {
-            actor_id,
-            provenance_frame,
-            speed,
-            split_motion_speeds,
-            first_step_committed,
-            cached_increment,
-            anti_on,
-        } = operands;
         let entity_id = actor_id.into();
         let mover = super::anti_collision::CollisionMover::new(entity_id, entity);
+        let cached_increment = entity.position_iface().get_increment_map();
+        let anti_on = entity.position_iface().is_anti_collision_on();
         let nx = cached_increment.x;
         let ny = cached_increment.y;
-        // Preserve the two storage roundings of Original's
-        // two-step fast-climb dispatch. See the
-        // transition branch above for why the summed distance is
-        // insufficient even when both calls use one increment.
-        let split_motion_target = split_motion_speeds
-            .filter(|_| !anti_on && !first_step_committed)
-            .map(|(first_speed, second_speed)| {
-                let mut target = entity.element_data().position_map();
-                target.x += nx * first_speed;
-                target.y += ny * first_speed;
-                target.x += nx * second_speed;
-                target.y += ny * second_speed;
-                target
-            });
         // Pull transient anti-collision context from position_iface
         // (move box, half-diagonal) + the current path goal.  The
         // persistent state (deviated / blocked_count / box_blocked /
@@ -4972,12 +4683,9 @@ impl EngineInner {
                 let raw = vector_to_sector_0_to_15(dx_step, dy_step);
                 elem.set_direction_goal(if order_reverse { raw ^ 8 } else { raw });
             }
-            let pm = split_motion_target.unwrap_or_else(|| {
-                let mut pm = elem.position_map();
-                pm.x += dx_step;
-                pm.y += dy_step;
-                pm
-            });
+            let mut pm = elem.position_map();
+            pm.x += dx_step;
+            pm.y += dy_step;
             elem.set_position_map(pm);
             if rebuild_after_deviation && (dx_step != 0.0 || dy_step != 0.0) {
                 elem.sprite.position_iface.reset_increment_computed();
@@ -4998,11 +4706,7 @@ impl EngineInner {
         // anti-collision step, using the effective distance and
         // the wait time of the frame the sprite has just
         // reached.  A blocked step aborts before reaching it.
-        //
-        // The fast climb arms commit two motion calls in one
-        // tick; only the later one's distance survives in the
-        // forecast, so prefer the second speed when it moved.
-        refresh_motion_forecast(entity.sprite_mut(), speed, split_motion_speeds);
+        refresh_motion_forecast(entity.sprite_mut(), speed);
 
         // Water splash titbit emission.  Every walk tick
         // where `speed > 2` and the actor's cached material
@@ -5074,115 +4778,6 @@ impl EngineInner {
         movement_aborted
     }
 
-    /// Commit the first fast-motion call before the second turn samples its
-    /// position and increment. Stairs may snap here; wall/ladder steps may not.
-    // These are disjoint engine borrows, not a second movement-state owner.
-    fn commit_first_fast_movement_step(
-        sprite: &mut crate::sprite::Sprite,
-        selected_order: SelectedMovementOrder,
-        goal_target_info: Option<crate::position_interface::TargetInfo>,
-        provenance_frame: u32,
-        first_speed: f32,
-        mover: super::anti_collision::CollisionMover,
-        collision: super::anti_collision::CollisionWorld<'_>,
-        repulsive_points: &[crate::ai::RepulsivePoint],
-        prepared: &LiveMobileGeometry,
-        fast_grid: &crate::fast_find_grid::FastFindGrid,
-    ) -> (MapPoint, MapVec, f32, MapPoint) {
-        let SelectedMovementOrder {
-            goal,
-            order_reverse,
-            order_action,
-            order_tolerance,
-            ..
-        } = selected_order;
-        let first_pre = sprite.position_iface.map_position();
-        let first_increment = sprite.position_iface.get_increment_map();
-        let anti_on = sprite.position_iface.is_anti_collision_on();
-        let (first_dx, first_dy, recovered, rebuild) = if anti_on && mover.active {
-            let move_box = *sprite.position_iface.get_move_box();
-            let half_diagonal = sprite.position_iface.get_half_diagonal();
-            let was_deviated = sprite.position_iface.is_deviated();
-            let mut state = super::anti_collision::AntiCollisionState {
-                pi: &mut sprite.position_iface,
-                move_box,
-                half_diagonal,
-                goal_map: goal,
-            };
-            let (dx, dy) = apply_prepared_anti_collision_step(
-                provenance_frame,
-                &mover,
-                collision,
-                repulsive_points,
-                prepared,
-                fast_grid,
-                &mut state,
-                first_increment.x,
-                first_increment.y,
-                first_speed,
-                true,
-            );
-            (
-                dx,
-                dy,
-                was_deviated && !state.pi.is_deviated(),
-                state.pi.is_deviated() && state.pi.blocked_count == 0,
-            )
-        } else {
-            (
-                first_increment.x * first_speed,
-                first_increment.y * first_speed,
-                false,
-                false,
-            )
-        };
-        let first_raw_post = MapPoint::new(first_pre.x + first_dx, first_pre.y + first_dy);
-        sprite.position_iface.set_map_position(first_raw_post);
-        if rebuild && (first_dx != 0.0 || first_dy != 0.0) {
-            let raw = vector_to_sector_0_to_15(first_dx, first_dy);
-            sprite
-                .position_iface
-                .set_direction(crate::position_interface::Direction::from_raw(i32::from(
-                    if order_reverse { raw ^ 8 } else { raw },
-                )));
-            sprite.position_iface.reset_increment_computed();
-            sprite.position_iface.compute_increment_all(false);
-        } else if recovered {
-            sprite.position_iface.reset_increment_computed();
-            sprite.position_iface.compute_increment_all(true);
-        }
-        // Running on stairs is the one double-motion
-        // Execute arm which deliberately continues after its first
-        // motion processing returns a terminated result. That first step still
-        // owns the complete ordinary arrival branch: goal-arrival testing,
-        // followed by the zero-tolerance goal snap.  The second
-        // turning and motion therefore observe the snapped position,
-        // rather than both raw displacements being committed before a
-        // single aggregate arrival check.
-        let first_post = if order_action == OrderType::RunningStairs
-            && sprite
-                .position_iface
-                .is_goal_reached(fast_grid, goal_target_info)
-            && order_tolerance == 0.0
-            && !sprite.position_iface.is_deviated()
-        {
-            sprite.position_iface.set_map_position(goal);
-            goal
-        } else {
-            first_raw_post
-        };
-
-        // Fast wall/ladder Execute arms contain two literal
-        // motion steps. The original game refreshes the forecast at
-        // the end of each nonzero call, immediately after its
-        // position commit. Keep that first write here: when the
-        // second sprite frame has zero distance the stationary tail
-        // returns before the aggregate commit below, and the first
-        // call's forecast must remain observable.
-        refresh_motion_forecast(sprite, first_speed, None);
-        (first_pre, first_increment, first_speed, first_post)
-    }
-
     /// Settle a reached ordinary waypoint and return its motion result.
     fn settle_movement_waypoint(
         &mut self,
@@ -5192,6 +4787,7 @@ impl EngineInner {
         selected_order: SelectedMovementOrder,
         entity_id: EntityId,
         boundary: MovementArrivalBoundary,
+        finish_door_pass: bool,
     ) -> MotionState {
         let SelectedMovementOrder {
             goal,
@@ -5401,7 +4997,7 @@ impl EngineInner {
             return MotionState::InProgress;
         }
 
-        if is_final_waypoint {
+        if is_final_waypoint && finish_door_pass {
             // All waypoints for current walk step consumed.
             // Check if we have more door-pass steps.
             let advance = if actor.active_door_pass.is_some() {
