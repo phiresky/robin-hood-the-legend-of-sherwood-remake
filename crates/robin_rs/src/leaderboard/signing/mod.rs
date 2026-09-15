@@ -71,6 +71,10 @@ impl LeaderboardSigningError {
 pub(crate) trait GameIdentitySigner {
     async fn public_key() -> Result<PublicKey32, LeaderboardSigningError>;
 
+    async fn sign_username_update(
+        request: robin_run_protocol::UsernameUpdateV2,
+    ) -> Result<robin_run_protocol::SignedUsernameUpdateV2, LeaderboardSigningError>;
+
     /// Sign one replay submission whose `uploader_public_key` is this identity.
     async fn sign_submission(
         submission: SubmissionV3,

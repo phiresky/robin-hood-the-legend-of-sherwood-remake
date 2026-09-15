@@ -170,6 +170,8 @@ mod native {
     #[derive(Debug, Serialize)]
     struct Entry {
         #[serde(skip)]
+        registration: crate::leaderboard_registration::RegistrationHandle,
+        #[serde(skip)]
         info: Arc<std::sync::Mutex<ReplaySubmissionInfo>>,
         retry_submission: bool,
         #[serde(skip)]
@@ -189,6 +191,7 @@ mod native {
             self.entries.insert(
                 path,
                 Entry {
+                    registration: Default::default(),
                     info: Arc::new(std::sync::Mutex::new(info)),
                     retry_submission: true,
                     inspected_at: std::time::Instant::now(),
@@ -227,6 +230,7 @@ mod native {
                     });
                 let entry = match task {
                     Ok(task) => Entry {
+                        registration: Default::default(),
                         info: Arc::new(std::sync::Mutex::new(ReplaySubmissionInfo::unavailable(
                             "Checking submission...",
                         ))),
@@ -237,6 +241,7 @@ mod native {
                         receipt_retry_at: None,
                     },
                     Err(error) => Entry {
+                        registration: Default::default(),
                         info: Arc::new(std::sync::Mutex::new(ReplaySubmissionInfo::unavailable(
                             format!("Cannot inspect submission: {error}"),
                         ))),
@@ -266,16 +271,35 @@ mod native {
             }
             let owned = path.to_owned();
             let progress = entry.info.clone();
+            let registration = entry.registration.clone();
             entry.retry_submission = true;
             entry.task = Some(
                 PollTask::spawn_background("archive-submit", move || async move {
-                    submit(&owned, expected, edition, &progress)
+                    submit(&owned, expected, edition, &progress, registration)
                 })
                 .map_err(|e| e.to_string())?,
             );
             *robin_util::sync::lock(&entry.info) =
                 ReplaySubmissionInfo::unavailable("Submitting replay...");
             Ok(())
+        }
+        pub(crate) fn registration(
+            &self,
+            path: &Path,
+        ) -> Option<crate::leaderboard_registration::RegistrationHandle> {
+            self.entries
+                .get(path)
+                .map(|entry| entry.registration.clone())
+        }
+        pub(crate) fn active_registration(
+            &self,
+        ) -> Option<crate::leaderboard_registration::RegistrationHandle> {
+            self.entries.values().find_map(|entry| {
+                robin_util::sync::lock(&entry.registration)
+                    .as_ref()
+                    .is_some_and(|registration| !registration.cancelled)
+                    .then(|| entry.registration.clone())
+            })
         }
         pub(crate) fn poll(&mut self, application: &crate::host::ApplicationContext) {
             for (path, entry) in &mut self.entries {
@@ -416,6 +440,7 @@ mod native {
         expected: Identity,
         edition: robin_run_protocol::OfficialContentEditionV1,
         progress: &std::sync::Mutex<ReplaySubmissionInfo>,
+        registration: crate::leaderboard_registration::RegistrationHandle,
     ) -> Completion {
         let replay = recording(path)?;
         if crate::mission_replays::replay_attempt_identity(&replay)? != Some(expected) {
@@ -449,6 +474,7 @@ mod native {
         )
         .map_err(|e| e.to_string())?;
         controller.enable_history_tracking();
+        controller.set_registration_handle(registration);
         controller
             .apply_action(MissionEndLeaderboardAction::SubmitThisRun)
             .map_err(|e| e.to_string())?;
