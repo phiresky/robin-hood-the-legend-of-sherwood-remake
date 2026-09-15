@@ -15,13 +15,18 @@ import {
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-    parseDeletionChallenge,
-    parseDeletionRequestEnvelope,
+    SIGNED_REQUEST_DOMAINS,
+    parseDeletionRequestClaim,
     parsePlayerProfile,
-    parseUsernameChallenge,
-    parseUsernameUpdateEnvelope,
+    parseSignedDeletionRequest,
+    parseSignedSubmissionOwnerStatusRequest,
+    parseSignedUsernameUpdate,
+    parseSubmissionOwnerStatusClaim,
+    parseSubmissionOwnerStatusResponse,
+    parseUsernameUpdateClaim,
+    signedRequestSigningBytes,
 } from './account-contract.js';
-import { canonicalDocumentSha256 } from './canonical.js';
+import { canonicalDocumentSha256, canonicalDocumentSha256Sync } from './canonical.js';
 import { formatActiveTime, formatMetricValue } from './format.js';
 import {
     parseBoardMetadata,
@@ -216,32 +221,55 @@ test('public identity fingerprints are derived from the exact key and hostile na
     }), /control characters/u);
 });
 
-test('owner-operation parsers retain exact signed claims', () => {
-    assert.deepEqual(parseUsernameChallenge({
-        schema_version: 1,
-        username_challenge_id: 'rename-1',
-        username_challenge_nonce: '2'.repeat(64),
-        expires_at_unix_ms: 1_800_000_000_000,
-    }), { id: 'rename-1', nonce: '2'.repeat(64), expiresAtUnixMs: 1_800_000_000_000 });
-    assert.equal(parseUsernameUpdateEnvelope({
-        schema_version: 1,
-        username_challenge_id: 'rename-1',
-        username_challenge_nonce: '2'.repeat(64),
-        public_key: publicKey,
-        username: 'Robin',
-        signature: '3'.repeat(128),
-    }).public_key, publicKey);
-    const challenge = parseDeletionChallenge({
-        schema_version: 1,
-        deletion_challenge_id: 'delete-1',
-        deletion_challenge_nonce: '4'.repeat(64),
-        expires_at_unix_ms: 1_800_000_000_000,
-        public_key: publicKey,
-        target: { kind: 'run', run_id: 'run-1' },
+const signedAt = 1_800_000_000_000;
+const signed = (request: unknown, signature = '3'.repeat(128)) => ({ schema_version: 2, request, algorithm: 'ed25519', signature });
+
+test('owner-operation parsers retain exact timestamped signed claims', () => {
+    const rename = { schema_version: 2, public_key: publicKey, signed_at_unix_ms: signedAt, username: 'Robin' };
+    assert.deepEqual(parseSignedUsernameUpdate(signed(rename)).request, rename);
+    const deletion = { schema_version: 2, public_key: publicKey, signed_at_unix_ms: signedAt, target: { kind: 'run', run_id: 'run-1' } };
+    assert.deepEqual(parseSignedDeletionRequest(signed(deletion)).request.target, { kind: 'run', run_id: 'run-1' });
+    const status = { schema_version: 2, public_key: publicKey, signed_at_unix_ms: signedAt, submission_id: 'sub-1' };
+    assert.equal(parseSignedSubmissionOwnerStatusRequest(signed(status)).request.submission_id, 'sub-1');
+
+    // Removed challenge embeddings and V1 envelopes are rejected.
+    assert.throws(() => parseUsernameUpdateClaim({ ...rename, username_challenge_nonce: '2'.repeat(64) }), /unknown field username_challenge_nonce/u);
+    assert.throws(() => parseDeletionRequestClaim({ ...deletion, schema_version: 1 }), /schema_version must be 2/u);
+    assert.throws(() => parseSignedDeletionRequest({ schema_version: 1, challenge: deletion, signature: '5'.repeat(128) }), /unknown field challenge|schema_version must be 2/u);
+    assert.throws(() => parseSubmissionOwnerStatusClaim({ ...status, signed_at_unix_ms: 0 }), /positive/u);
+    assert.throws(() => parseSignedUsernameUpdate({ ...signed(rename), algorithm: 'rsa' }), /algorithm/u);
+    assert.throws(() => parseSignedUsernameUpdate(signed(rename, '0'.repeat(128))), /non-zero 128/u);
+});
+
+test('signing bytes are the NUL-terminated domain followed by the canonical claim', () => {
+    const claim = { username: 'Robin', signed_at_unix_ms: signedAt, public_key: publicKey, schema_version: 2 };
+    assert.equal(
+        new TextDecoder().decode(signedRequestSigningBytes(SIGNED_REQUEST_DOMAINS.usernameUpdate, claim)),
+        `robinhood/leaderboards/2/username-update\0{"public_key":"${publicKey}","schema_version":2,"signed_at_unix_ms":${signedAt},"username":"Robin"}`,
+    );
+    assert.equal(SIGNED_REQUEST_DOMAINS.submission, 'robinhood/leaderboards/3/submission\0');
+    assert.equal(SIGNED_REQUEST_DOMAINS.deletionRequest, 'robinhood/leaderboards/2/deletion-request\0');
+    assert.equal(SIGNED_REQUEST_DOMAINS.submissionOwnerStatus, 'robinhood/leaderboards/2/submission-owner-status\0');
+});
+
+test('owner status responses bind the submission, owner key and exact signed request digest', () => {
+    const request = parseSignedSubmissionOwnerStatusRequest(signed({
+        schema_version: 2, public_key: publicKey, signed_at_unix_ms: signedAt, submission_id: 'sub-1',
+    }));
+    const response = (state: unknown, overrides: Record<string, unknown> = {}) => ({
+        schema_version: 2, submission_id: 'sub-1', public_key: publicKey,
+        request_sha256: canonicalDocumentSha256Sync(request), state, ...overrides,
     });
-    assert.deepEqual(parseDeletionRequestEnvelope({
-        schema_version: 1,
-        challenge,
-        signature: '5'.repeat(128),
-    }).challenge.target, { kind: 'run', run_id: 'run-1' });
+    assert.deepEqual(parseSubmissionOwnerStatusResponse(response({ state: 'accepted', run_id: 'run-1' }), request).lifecycle,
+        { state: 'accepted', runId: 'run-1' });
+    assert.deepEqual(parseSubmissionOwnerStatusResponse(response({ state: 'rejected', code: 'state_hash_mismatch', safe_message: 'Desync.' }), request).lifecycle,
+        { state: 'rejected', code: 'state_hash_mismatch', safeMessage: 'Desync.' });
+    for (const mismatch of [
+        { submission_id: 'sub-2' }, { public_key: sha('2') }, { request_sha256: sha('3') },
+    ]) {
+        assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'queued' }, mismatch), request), /does not answer/u);
+    }
+    assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'queued' }, { schema_version: 1 }), request), /schema_version must be 2/u);
+    assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'failed', code: 'other', safe_message: 'x' }), request), /code/u);
+    assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'queued', run_id: 'run-1' }), request), /unknown field run_id/u);
 });

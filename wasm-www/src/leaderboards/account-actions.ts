@@ -1,29 +1,41 @@
 import type { HighscoreApi } from './api.js';
 import { withAbort } from '../cancellation.js';
 import type { LeaderboardSigningBridge } from './signing.js';
-import type { PlayerProfile, DeletionTarget, AbuseReportCategory } from './types.js';
-import { parseUsernameUpdateEnvelope, parseDeletionRequestEnvelope } from './account-contract.js';
+import type {
+    PlayerProfile,
+    DeletionTarget,
+    AbuseReportCategory,
+    DeletionRequestClaim,
+    SubmissionOwnerStatusClaim,
+    UsernameUpdateClaim,
+} from './types.js';
+import {
+    parseSignedDeletionRequest,
+    parseSignedSubmissionOwnerStatusRequest,
+    parseSignedUsernameUpdate,
+} from './account-contract.js';
+import { canonicalJson } from './canonical.js';
 
-/** A route owns the entire challenge/sign/write operation, including unabortable signer awaits. */
+/** Clock used for `signed_at_unix_ms`; injectable for tests. */
+export type SigningClock = () => number;
+
+/** A route owns the entire sign/write operation, including unabortable signer awaits. */
 export async function updateUsername(
-    api: Pick<HighscoreApi, 'usernameChallenge' | 'updateUsername'>,
+    api: Pick<HighscoreApi, 'updateUsername'>,
     bridge: LeaderboardSigningBridge, profile: PlayerProfile, username: string,
-    signal: AbortSignal, status: (message: string) => void,
+    signal: AbortSignal, status: (message: string) => void, now: SigningClock = Date.now,
 ): Promise<PlayerProfile> {
     signal.throwIfAborted();
     const error = usernameValidationError(username);
     if (error !== null) throw new Error(error);
-    const challenge = await api.usernameChallenge(profile.publicKey, signal);
-    signal.throwIfAborted();
-    const unsigned = {
-        schema_version: 1, username_challenge_id: challenge.id, username_challenge_nonce: challenge.nonce,
-        public_key: profile.publicKey, username, signature: '0'.repeat(128),
-    } as const;
+    const claim: UsernameUpdateClaim = {
+        schema_version: 2, public_key: profile.publicKey, signed_at_unix_ms: now(), username,
+    };
     status('Signing the typed rename request…');
-    const document = await withAbort(signal, () => bridge.signUsernameUpdate(JSON.stringify(unsigned)));
+    const document = await withAbort(signal, () => bridge.signUsernameUpdate(JSON.stringify(claim)));
     signal.throwIfAborted();
-    const signed = parseUsernameUpdateEnvelope(JSON.parse(document) as unknown);
-    assertUsernameSignatureClaim(signed, unsigned);
+    const signed = parseSignedUsernameUpdate(JSON.parse(document) as unknown);
+    assertSignedClaim(signed.request, claim, 'rename');
     const updated = await api.updateUsername(profile.publicKey, signed, signal);
     signal.throwIfAborted();
     if (updated.publicKey !== profile.publicKey || updated.username !== username) {
@@ -33,30 +45,48 @@ export async function updateUsername(
 }
 
 export async function deleteRecord(
-    api: Pick<HighscoreApi, 'deletionChallenge' | 'requestDeletion'>,
+    api: Pick<HighscoreApi, 'requestDeletion'>,
     bridge: LeaderboardSigningBridge, target: DeletionTarget,
-    signal: AbortSignal, status: (message: string) => void,
+    signal: AbortSignal, status: (message: string) => void, now: SigningClock = Date.now,
 ) {
     signal.throwIfAborted();
     const publicKey = await withAbort(signal, () => bridge.publicKey());
     signal.throwIfAborted();
-    const challenge = await api.deletionChallenge(publicKey, target, signal);
+    const claim: DeletionRequestClaim = {
+        schema_version: 2, public_key: publicKey, signed_at_unix_ms: now(), target,
+    };
+    status('Signing the exact deletion target…');
+    const document = await withAbort(signal, () => bridge.signDeletionRequest(JSON.stringify(claim)));
     signal.throwIfAborted();
-    if (challenge.public_key !== publicKey || !sameDeletionTarget(challenge.target, target)) {
-        throw new Error('The server returned a deletion challenge for a different owner or target.');
-    }
-    const unsigned = { schema_version: 1, challenge, signature: '0'.repeat(128) } as const;
-    status('Signing the exact deletion target and server challenge…');
-    const document = await withAbort(signal, () => bridge.signDeletionRequest(JSON.stringify(unsigned)));
-    signal.throwIfAborted();
-    const signed = parseDeletionRequestEnvelope(JSON.parse(document) as unknown);
-    assertDeletionSignatureClaim(signed, unsigned);
+    const signed = parseSignedDeletionRequest(JSON.parse(document) as unknown);
+    assertSignedClaim(signed.request, claim, 'deletion');
     const receipt = await api.requestDeletion(signed, signal);
     signal.throwIfAborted();
     if (!sameDeletionTarget(receipt.target, target)) {
         throw new Error('The server returned a deletion receipt for a different target.');
     }
     return receipt;
+}
+
+/** Owner-signed private lifecycle read for one submission. */
+export async function submissionOwnerStatus(
+    api: Pick<HighscoreApi, 'submissionOwnerStatus'>,
+    bridge: LeaderboardSigningBridge, submissionId: string,
+    signal: AbortSignal, now: SigningClock = Date.now,
+) {
+    signal.throwIfAborted();
+    const publicKey = await withAbort(signal, () => bridge.publicKey());
+    signal.throwIfAborted();
+    const claim: SubmissionOwnerStatusClaim = {
+        schema_version: 2, public_key: publicKey, signed_at_unix_ms: now(), submission_id: submissionId,
+    };
+    const document = await withAbort(signal, () => bridge.signSubmissionOwnerStatus(JSON.stringify(claim)));
+    signal.throwIfAborted();
+    const signed = parseSignedSubmissionOwnerStatusRequest(JSON.parse(document) as unknown);
+    assertSignedClaim(signed.request, claim, 'owner-status');
+    const response = await api.submissionOwnerStatus(signed, signal);
+    signal.throwIfAborted();
+    return response;
 }
 
 export async function reportRecord(
@@ -80,38 +110,12 @@ export function usernameValidationError(username: string): string | null {
     return null;
 }
 
-
-export function assertUsernameSignatureClaim(
-    signed: ReturnType<typeof parseUsernameUpdateEnvelope>,
-    unsigned: Omit<ReturnType<typeof parseUsernameUpdateEnvelope>, 'signature'> & { readonly signature: string },
-): void {
-    if (signed.schema_version !== unsigned.schema_version
-        || signed.username_challenge_id !== unsigned.username_challenge_id
-        || signed.username_challenge_nonce !== unsigned.username_challenge_nonce
-        || signed.public_key !== unsigned.public_key
-        || signed.username !== unsigned.username) {
-        throw new Error('The identity signer changed a signed rename claim.');
+/** The signer must return a signature over exactly the claim it was given. */
+export function assertSignedClaim(signed: unknown, requested: unknown, label: string): void {
+    if (canonicalJson(signed, 'signed claim', 0) !== canonicalJson(requested, 'requested claim', 0)) {
+        throw new Error(`The identity signer changed a signed ${label} claim.`);
     }
 }
-
-
-export function assertDeletionSignatureClaim(
-    signed: ReturnType<typeof parseDeletionRequestEnvelope>,
-    unsigned: { readonly schema_version: 1; readonly challenge: ReturnType<typeof parseDeletionRequestEnvelope>['challenge'] },
-): void {
-    const a = signed.challenge;
-    const b = unsigned.challenge;
-    if (signed.schema_version !== unsigned.schema_version
-        || a.schema_version !== b.schema_version
-        || a.deletion_challenge_id !== b.deletion_challenge_id
-        || a.deletion_challenge_nonce !== b.deletion_challenge_nonce
-        || a.expires_at_unix_ms !== b.expires_at_unix_ms
-        || a.public_key !== b.public_key
-        || !sameDeletionTarget(a.target, b.target)) {
-        throw new Error('The identity signer changed a signed deletion claim.');
-    }
-}
-
 
 export function sameDeletionTarget(left: DeletionTarget, right: DeletionTarget): boolean {
     return left.kind === right.kind && (left.kind === 'run'

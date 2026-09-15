@@ -4,14 +4,22 @@ import test from 'node:test';
 import { HighscoreApi, PublicApiError } from './api.js';
 import { leaderboardPage } from './model-fixtures.js';
 import type { SelectedBoardFilters } from './state.js';
+import { canonicalDocumentSha256Sync } from './canonical.js';
+import type { SignedDeletionRequest, SignedSubmissionOwnerStatusRequest, SignedUsernameUpdate } from './types.js';
 
 const digest = '11'.repeat(32);
 const substitutedPlayerKey = '22'.repeat(32);
+const signedDeletion: SignedDeletionRequest = {
+    schema_version: 2,
+    request: { schema_version: 2, public_key: digest, signed_at_unix_ms: 1_800_000_000_000, target: { kind: 'run', run_id: 'run-1' } },
+    algorithm: 'ed25519',
+    signature: '33'.repeat(64),
+};
 
 for (const method of ['GET', 'POST'] as const) {
     test(`${method} JSON transport retains decoding, bounds, error envelopes and request policies`, async t => {
         const call = (api: HighscoreApi): Promise<unknown> => method === 'GET'
-            ? api.metadata() : api.usernameChallenge(digest);
+            ? api.metadata() : api.requestDeletion(signedDeletion);
         const api = new HighscoreApi('https://scores.example/api/v1');
         let response: Response;
         t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
@@ -24,7 +32,7 @@ for (const method of ['GET', 'POST'] as const) {
             assert.ok(init.signal instanceof AbortSignal);
             assert.equal(new Headers(init.headers).get('accept'), 'application/json');
             assert.equal(new Headers(init.headers).get('content-type'), method === 'POST' ? 'application/json' : null);
-            assert.equal(init.body, method === 'POST' ? JSON.stringify({ schema_version: 1, public_key: digest }) : undefined);
+            assert.equal(init.body, method === 'POST' ? JSON.stringify(signedDeletion) : undefined);
             return response;
         });
         response = new Response('{');
@@ -54,7 +62,7 @@ for (const method of ['GET', 'POST'] as const) {
     test(`${method} JSON deadlines and caller cancellation cover headers and body`, { timeout: 2000 }, async t => {
         const call = (signal?: AbortSignal): Promise<unknown> => {
             const api = new HighscoreApi('https://scores.example/api/v1', 20);
-            return method === 'GET' ? api.metadata(signal) : api.usernameChallenge(digest, signal);
+            return method === 'GET' ? api.metadata(signal) : api.requestDeletion(signedDeletion, signal);
         };
         for (const stalledBody of [false, true]) {
             for (const abort of [false, true]) {
@@ -332,6 +340,51 @@ test('a first leaderboard page correctly binds the absence of a cursor', async (
             cursor: null,
         });
         assert.equal(page.previousCursor, null);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('signed owner requests use one-step routes and bind owner-status responses to the request digest', async () => {
+    const originalFetch = globalThis.fetch;
+    const rename: SignedUsernameUpdate = {
+        schema_version: 2,
+        request: { schema_version: 2, public_key: digest, signed_at_unix_ms: 1_800_000_000_000, username: 'Robin' },
+        algorithm: 'ed25519',
+        signature: '44'.repeat(64),
+    };
+    const status: SignedSubmissionOwnerStatusRequest = {
+        schema_version: 2,
+        request: { schema_version: 2, public_key: digest, signed_at_unix_ms: 1_800_000_000_000, submission_id: 'sub-1' },
+        algorithm: 'ed25519',
+        signature: '55'.repeat(64),
+    };
+    const requests: { url: string; method: string | undefined; body: unknown }[] = [];
+    const responses: unknown[] = [
+        { schema_version: 1, username: 'Robin', public_key: digest, public_key_fingerprint: fingerprint(digest) },
+        { schema_version: 1, deletion_request_id: 'del-1', target: { kind: 'run', run_id: 'run-1' }, tombstoned_at_unix_ms: 1, purge_eligible_at_unix_ms: null },
+        { schema_version: 2, submission_id: 'sub-1', public_key: digest, request_sha256: canonicalDocumentSha256Sync(status), state: { state: 'verifying' } },
+        { schema_version: 2, submission_id: 'sub-1', public_key: digest, request_sha256: '66'.repeat(32), state: { state: 'verifying' } },
+    ];
+    globalThis.fetch = (async (input, init) => {
+        requests.push({ url: String(input), method: init?.method, body: JSON.parse(String(init?.body)) as unknown });
+        return new Response(JSON.stringify(responses.shift()), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+        const api = new HighscoreApi('https://scores.example/api/v1');
+        assert.equal((await api.updateUsername(digest, rename)).username, 'Robin');
+        assert.equal((await api.requestDeletion(signedDeletion)).requestId, 'del-1');
+        assert.deepEqual((await api.submissionOwnerStatus(status)).lifecycle, { state: 'verifying' });
+        await assert.rejects(api.submissionOwnerStatus(status), /does not answer the signed request/u);
+        await assert.rejects(api.updateUsername(substitutedPlayerKey, rename), { code: 'signed_request_mismatch' });
+        assert.deepEqual(requests.map(request => [request.method, request.url]), [
+            ['PUT', `https://scores.example/api/v1/players/${digest}/username`],
+            ['POST', 'https://scores.example/api/v1/deletion-requests'],
+            ['POST', 'https://scores.example/api/v1/submissions/sub-1/private-status'],
+            ['POST', 'https://scores.example/api/v1/submissions/sub-1/private-status'],
+        ]);
+        assert.deepEqual(requests.map(request => request.body), [rename, signedDeletion, status, status]);
+        assert.equal(requests.some(request => request.url.includes('challenge')), false);
     } finally {
         globalThis.fetch = originalFetch;
     }

@@ -43,7 +43,7 @@ export function renderUsernameForm(
         }
         input.setCustomValidity('');
         submit.disabled = true;
-        status.textContent = 'Requesting a one-use rename challenge…';
+        status.textContent = 'Preparing the rename request…';
         void (async () => {
             const updated = await updateUsername(api, bridge, profile, username, signal,
                 message => { status.textContent = message; });
@@ -91,7 +91,7 @@ export function renderDeletionForm(
         }
         submit.disabled = true;
         confirm.disabled = true;
-        status.textContent = 'Requesting a one-use deletion challenge…';
+        status.textContent = 'Preparing the deletion request…';
         void (async () => {
             const receipt = await deleteRecord(api, bridge, target, signal,
                 message => { status.textContent = message; });

@@ -1,63 +1,125 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto';
 import test from 'node:test';
-import { updateUsername, deleteRecord, reportRecord, usernameValidationError } from './account-actions.js';
+import {
+    updateUsername, deleteRecord, reportRecord, submissionOwnerStatus, usernameValidationError,
+} from './account-actions.js';
+import { SIGNED_REQUEST_DOMAINS, signedRequestSigningBytes } from './account-contract.js';
 import type { HighscoreApi } from './api.js';
+import { canonicalDocumentSha256Sync } from './canonical.js';
 import type { LeaderboardSigningBridge } from './signing.js';
-import type { DeletionChallenge, DeletionTarget } from './types.js';
+import type { DeletionTarget } from './types.js';
 
-const profile = { publicKey: '12'.repeat(32), username: 'before', publicKeyFingerprint: 'fingerprint' };
+const { privateKey, publicKey: publicKeyObject } = generateKeyPairSync('ed25519');
+const ownerKey = Buffer.from(publicKeyObject.export({ format: 'jwk' }).x!, 'base64url').toString('hex');
+const profile = { publicKey: ownerKey, username: 'before', publicKeyFingerprint: 'fingerprint' };
 const target: DeletionTarget = { kind: 'run', run_id: 'run-1' };
-const sign = async (json: string): Promise<string> => JSON.stringify({ ...JSON.parse(json), signature: '34'.repeat(64) });
-const bridge: LeaderboardSigningBridge = { publicKey: async () => profile.publicKey, signUsernameUpdate: sign, signDeletionRequest: sign };
-const challenge: DeletionChallenge = { schema_version: 1, deletion_challenge_id: 'challenge-1', deletion_challenge_nonce: '56'.repeat(32),
-    expires_at_unix_ms: 2_000_000_000_000, public_key: profile.publicKey, target };
-function api(calls: string[]): Pick<HighscoreApi, 'usernameChallenge' | 'updateUsername' | 'deletionChallenge' | 'requestDeletion'> {
-    return {
-        usernameChallenge: async () => { calls.push('rename-challenge'); return { id: 'challenge-1', nonce: '56'.repeat(32), expiresAtUnixMs: 2_000_000_000_000 }; },
-        updateUsername: async (key, envelope) => {
-            calls.push('rename-write'); assert.equal(key, profile.publicKey); assert.equal(envelope.signature, '34'.repeat(64));
-            return { ...profile, username: envelope.username };
-        },
-        deletionChallenge: async () => { calls.push('delete-challenge'); return challenge; },
-        requestDeletion: async envelope => { calls.push('delete-write'); return { requestId: 'delete-1', target: envelope.challenge.target, tombstonedAtUnixMs: 1, purgeEligibleAtUnixMs: null }; },
+const clock = () => 1_800_000_000_000;
+
+function signer(domain: string) {
+    return async (claimJson: string): Promise<string> => {
+        const request = JSON.parse(claimJson) as unknown;
+        const signature = ed25519Sign(null, signedRequestSigningBytes(domain, request), privateKey).toString('hex');
+        return JSON.stringify({ schema_version: 2, request, algorithm: 'ed25519', signature });
     };
 }
 
-test('owner controllers sign exact claims and write only validated returned documents', async () => {
+const bridge: LeaderboardSigningBridge = {
+    publicKey: async () => ownerKey,
+    signUsernameUpdate: signer(SIGNED_REQUEST_DOMAINS.usernameUpdate),
+    signSubmissionOwnerStatus: signer(SIGNED_REQUEST_DOMAINS.submissionOwnerStatus),
+    signDeletionRequest: signer(SIGNED_REQUEST_DOMAINS.deletionRequest),
+};
+
+function verifies(domain: string, document: { request: unknown; signature: string }): boolean {
+    return ed25519Verify(null, signedRequestSigningBytes(domain, document.request), publicKeyObject,
+        Buffer.from(document.signature, 'hex'));
+}
+
+type AccountApi = Pick<HighscoreApi, 'updateUsername' | 'requestDeletion' | 'submissionOwnerStatus'>;
+
+function api(calls: string[]): AccountApi {
+    return {
+        updateUsername: async (key, signed) => {
+            calls.push('rename-write');
+            assert.equal(key, ownerKey);
+            assert.deepEqual(signed.request, { schema_version: 2, public_key: ownerKey, signed_at_unix_ms: clock(), username: signed.request.username });
+            assert.ok(verifies(SIGNED_REQUEST_DOMAINS.usernameUpdate, signed));
+            return { ...profile, username: signed.request.username };
+        },
+        requestDeletion: async signed => {
+            calls.push('delete-write');
+            assert.deepEqual(signed.request, { schema_version: 2, public_key: ownerKey, signed_at_unix_ms: clock(), target });
+            assert.ok(verifies(SIGNED_REQUEST_DOMAINS.deletionRequest, signed));
+            return { requestId: 'delete-1', target: signed.request.target, tombstonedAtUnixMs: 1, purgeEligibleAtUnixMs: null };
+        },
+        submissionOwnerStatus: async signed => {
+            calls.push('owner-status-read');
+            assert.ok(verifies(SIGNED_REQUEST_DOMAINS.submissionOwnerStatus, signed));
+            return {
+                submissionId: signed.request.submission_id, publicKey: signed.request.public_key,
+                requestSha256: canonicalDocumentSha256Sync(signed), lifecycle: { state: 'queued' },
+            };
+        },
+    };
+}
+
+test('owner controllers sign timestamped claims in one step and send only validated signed documents', async () => {
     const calls: string[] = [];
-    assert.equal((await updateUsername(api(calls), bridge, profile, 'after', new AbortController().signal, () => {})).username, 'after');
-    assert.deepEqual((await deleteRecord(api(calls), bridge, target, new AbortController().signal, () => {})).target, target);
-    assert.deepEqual(calls, ['rename-challenge', 'rename-write', 'delete-challenge', 'delete-write']);
+    const signal = new AbortController().signal;
+    assert.equal((await updateUsername(api(calls), bridge, profile, 'after', signal, () => {}, clock)).username, 'after');
+    assert.deepEqual((await deleteRecord(api(calls), bridge, target, signal, () => {}, clock)).target, target);
+    assert.equal((await submissionOwnerStatus(api(calls), bridge, 'sub-1', signal, clock)).submissionId, 'sub-1');
+    assert.deepEqual(calls, ['rename-write', 'delete-write', 'owner-status-read']);
 });
 
-test('signer substitutions and mismatched deletion challenges never reach account writes', async () => {
+test('signer claim substitutions and malformed signed documents never reach account requests', async () => {
     const calls: string[] = [];
-    const signer = { ...bridge, signUsernameUpdate: async (json: string) => sign(JSON.stringify({ ...JSON.parse(json), username: 'attacker' })),
-        signDeletionRequest: async (json: string) => { const value = JSON.parse(json); value.challenge.target = { kind: 'run', run_id: 'other' }; return sign(JSON.stringify(value)); } };
-    await assert.rejects(updateUsername(api(calls), signer, profile, 'after', new AbortController().signal, () => {}), /changed a signed rename/u);
-    await assert.rejects(deleteRecord(api(calls), signer, target, new AbortController().signal, () => {}), /changed a signed deletion/u);
-    await assert.rejects(deleteRecord({ ...api(calls), deletionChallenge: async () => ({ ...challenge, public_key: '78'.repeat(32) }) }, bridge, target, new AbortController().signal, () => {}), /different owner or target/u);
-    assert.equal(calls.some(call => call.endsWith('write')), false);
+    const signal = new AbortController().signal;
+    const tamper = (domain: string, change: (claim: Record<string, unknown>) => void) => async (json: string) => {
+        const claim = JSON.parse(json) as Record<string, unknown>;
+        change(claim);
+        return signer(domain)(JSON.stringify(claim));
+    };
+    const substituted: LeaderboardSigningBridge = {
+        ...bridge,
+        signUsernameUpdate: tamper(SIGNED_REQUEST_DOMAINS.usernameUpdate, claim => { claim.username = 'attacker'; }),
+        signDeletionRequest: tamper(SIGNED_REQUEST_DOMAINS.deletionRequest, claim => { claim.target = { kind: 'run', run_id: 'other' }; }),
+        signSubmissionOwnerStatus: tamper(SIGNED_REQUEST_DOMAINS.submissionOwnerStatus, claim => { claim.signed_at_unix_ms = 1; }),
+    };
+    await assert.rejects(updateUsername(api(calls), substituted, profile, 'after', signal, () => {}, clock), /changed a signed rename/u);
+    await assert.rejects(deleteRecord(api(calls), substituted, target, signal, () => {}, clock), /changed a signed deletion/u);
+    await assert.rejects(submissionOwnerStatus(api(calls), substituted, 'sub-1', signal, clock), /changed a signed owner-status/u);
+    const legacy: LeaderboardSigningBridge = {
+        ...bridge,
+        signDeletionRequest: async json => JSON.stringify({
+            schema_version: 1, challenge: JSON.parse(json) as unknown, signature: '34'.repeat(64),
+        }),
+    };
+    await assert.rejects(deleteRecord(api(calls), legacy, target, signal, () => {}, clock), /schema_version must be 2|unknown field/u);
+    assert.deepEqual(calls, []);
 });
 
-test('navigation cancels pending signer work and prevents subsequent privileged writes', async () => {
-    for (const operation of ['rename', 'delete']) {
+test('navigation cancels pending signer work and prevents subsequent privileged requests', async () => {
+    for (const operation of ['rename', 'delete', 'owner-status']) {
         const calls: string[] = [], controller = new AbortController();
         let entered!: () => void;
         const signing = new Promise<void>(resolve => { entered = resolve; });
         const wait = (): Promise<string> => { entered(); return new Promise(() => {}); };
-        const signer = { ...bridge, signUsernameUpdate: wait, signDeletionRequest: wait };
+        const stalled = { ...bridge, signUsernameUpdate: wait, signDeletionRequest: wait, signSubmissionOwnerStatus: wait };
         const pending = operation === 'rename'
-            ? updateUsername(api(calls), signer, profile, 'after', controller.signal, () => {})
-            : deleteRecord(api(calls), signer, target, controller.signal, () => {});
+            ? updateUsername(api(calls), stalled, profile, 'after', controller.signal, () => {}, clock)
+            : operation === 'delete'
+                ? deleteRecord(api(calls), stalled, target, controller.signal, () => {}, clock)
+                : submissionOwnerStatus(api(calls), stalled, 'sub-1', controller.signal, clock);
         const rejection = assert.rejects(pending, { name: 'AbortError' });
         await signing; controller.abort(); await rejection;
-        assert.equal(calls.some(call => call.endsWith('write')), false);
+        assert.deepEqual(calls, []);
     }
 });
 
 test('public name/report validation rejects byte overflow and controls before network work', async () => {
-    for (const name of ['', ' x', 'x ', '😀'.repeat(13), 'x\u202ey', 'x\ny']) assert.notEqual(usernameValidationError(name), null);
+    for (const name of ['', ' x', 'x ', '😀'.repeat(13), 'x‮y', 'x\ny']) assert.notEqual(usernameValidationError(name), null);
     assert.equal(usernameValidationError('😀'.repeat(12)), null);
     let submitted = false;
     const reporter = { report: async () => { submitted = true; return { reportId: 'r', receivedAtUnixMs: 1 }; } };

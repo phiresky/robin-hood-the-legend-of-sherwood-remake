@@ -10,25 +10,23 @@ import {
 } from './public-response.js';
 import {
     parseAbuseReportAccepted,
-    parseDeletionChallenge,
     parseDeletionReceipt,
     parsePlayerProfile,
-    parseUsernameChallenge,
+    parseSubmissionOwnerStatusResponse,
 } from './account-contract.js';
 import {
     type BoardMetadata,
     type BoardPage,
     type AbuseReportAccepted,
     type AbuseReportCategory,
-    type DeletionChallenge,
-    type DeletionRequestEnvelope,
     type DeletionReceipt,
-    type DeletionTarget,
     type PlayerProfile,
     type PlayerRunHistoryPage,
     type RunDetail,
-    type UsernameChallenge,
-    type UsernameUpdateEnvelope,
+    type SignedDeletionRequest,
+    type SignedSubmissionOwnerStatusRequest,
+    type SignedUsernameUpdate,
+    type SubmissionOwnerStatus,
 } from './types.js';
 import { filtersToApiQuery, PAGE_SIZE, type SelectedBoardFilters } from './state.js';
 
@@ -110,51 +108,46 @@ export class HighscoreApi {
         return page;
     }
 
-    async usernameChallenge(publicKey: string, signal?: AbortSignal): Promise<UsernameChallenge> {
-        return parseUsernameChallenge(await this.sendJson(
-            ['username-challenges'],
-            'POST',
-            { schema_version: 1, public_key: publicKey },
-            signal,
-        ));
-    }
-
     async updateUsername(
         publicKey: string,
-        envelope: UsernameUpdateEnvelope,
+        signed: SignedUsernameUpdate,
         signal?: AbortSignal,
     ): Promise<PlayerProfile> {
+        requireSha256(publicKey, 'Player public key');
+        if (signed.request.public_key !== publicKey) {
+            throw new PublicApiError(0, 'signed_request_mismatch', 'The signed rename is for a different player.');
+        }
         return parsePlayerProfile(await this.sendJson(
             ['players', publicKey, 'username'],
             'PUT',
-            envelope,
-            signal,
-        ));
-    }
-
-    async deletionChallenge(
-        publicKey: string,
-        target: DeletionTarget,
-        signal?: AbortSignal,
-    ): Promise<DeletionChallenge> {
-        return parseDeletionChallenge(await this.sendJson(
-            ['deletion-challenges'],
-            'POST',
-            { schema_version: 1, public_key: publicKey, target },
+            signed,
             signal,
         ));
     }
 
     async requestDeletion(
-        envelope: DeletionRequestEnvelope,
+        signed: SignedDeletionRequest,
         signal?: AbortSignal,
     ): Promise<DeletionReceipt> {
         return parseDeletionReceipt(await this.sendJson(
             ['deletion-requests'],
             'POST',
-            envelope,
+            signed,
             signal,
         ));
+    }
+
+    /** Private lifecycle of one owned submission; the response must answer this exact request. */
+    async submissionOwnerStatus(
+        signed: SignedSubmissionOwnerStatusRequest,
+        signal?: AbortSignal,
+    ): Promise<SubmissionOwnerStatus> {
+        return parseSubmissionOwnerStatusResponse(await this.sendJson(
+            ['submissions', signed.request.submission_id, 'private-status'],
+            'POST',
+            signed,
+            signal,
+        ), signed);
     }
 
     async report(
