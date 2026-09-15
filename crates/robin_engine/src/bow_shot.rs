@@ -6,7 +6,7 @@
 //!    `Command::ShootBow` sequence element is dispatched to a shooter.
 //!    It sets the shooter into the appropriate aiming action state,
 //!    pushes aim-transition and shoot orders onto the order queue,
-//!    and marks the `ActiveShot` in-progress.
+//!    on the sequence element.
 //!
 //! 2. The engine executes each actor's selected bow order directly,
 //!    including equip callbacks, arrow release, and order completion.
@@ -42,7 +42,6 @@ use crate::element::{
     ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
 use crate::entities::Entities;
-use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::profiles::{Action, ProfileManager};
@@ -195,19 +194,6 @@ fn shoot_order_type_for_mode(mode: ShootMode, anonymous: bool) -> OrderType {
     }
 }
 
-/// Recover the authored shoot mode from a concrete shooting order. Used when
-/// rebuilding Rust's derived active-shot latch after loading an Original save.
-pub(crate) fn shoot_mode_for_order(order: OrderType) -> Option<ShootMode> {
-    match order {
-        OrderType::ShootingWithBow | OrderType::ShootingWithBowAnonymous => Some(ShootMode::Normal),
-        OrderType::ShootingWithBowUp | OrderType::ShootingWithBowUpAnonymous => {
-            Some(ShootMode::Long)
-        }
-        OrderType::ShootingWithBowLeaningOut => Some(ShootMode::Down),
-        _ => None,
-    }
-}
-
 /// The original game's bow-point calculation selects these non-anonymous
 /// animation ids for hotspot lookup even when the active shoot animation is
 /// an anonymous archer variant.
@@ -295,13 +281,6 @@ pub(crate) fn is_bow_transition_order(ot: OrderType) -> bool {
 
 pub(crate) fn is_active_bow_order(ot: OrderType) -> bool {
     ACTIVE_BOW_ORDERS.contains(&ot)
-}
-
-pub(crate) fn has_active_bow_order(element: &crate::sequence::SequenceElement) -> bool {
-    element
-        .orders
-        .iter()
-        .any(|order| is_active_bow_order(order.order_type))
 }
 
 pub(crate) fn apply_bow_transition_state_side_effect(
@@ -503,31 +482,6 @@ pub enum BeginShotResult {
     Impossible,
 }
 
-/// Forget Rust's execution-side bow latch before retranslating the same
-/// postponed Original sequence element.
-///
-/// The original game stores the active shot entirely in the selected sequence element and
-/// its current order. When an injury postpones that element, resuming it calls
-/// instruction/translation again with no separate "shot already active" state.
-/// Rust needs the separate [`ActiveShot`] driver while an order is executing,
-/// but that driver must not reject re-instruction of its own postponed owner.
-pub(crate) fn clear_matching_retranslated_shot(
-    entities: &mut Entities,
-    owner: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
-) {
-    let actor = entities
-        .get_mut(owner)
-        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} disappeared"))
-        .actor_data_mut()
-        .unwrap_or_else(|| panic!("postponed bow owner {owner:?} has no actor data"));
-    if actor.active_shot.sequence_id == Some(seq_id) && actor.active_shot.element_index == elem_idx
-    {
-        actor.active_shot.clear();
-    }
-}
-
 /// Begin a bow shot on behalf of a `Command::ShootBow` sequence element.
 ///
 /// Called from the engine's sequence-action dispatch when it sees a
@@ -586,7 +540,7 @@ pub fn begin_bow_shot(
     };
 
     // Validate shooter.  Read posture before the mutable borrow.
-    let (shooter_valid, shooter_posture, current_state) = match entities.get(shooter_id) {
+    let (shooter_posture, current_state) = match entities.get(shooter_id) {
         Some(e) if e.is_human() && !e.is_dead() => {
             let posture = e.element_data().posture();
             let Some(actor) = e.actor_data() else {
@@ -596,17 +550,10 @@ pub fn begin_bow_shot(
                 );
                 return BeginShotResult::Impossible;
             };
-            if actor.active_shot.is_active() {
-                (false, posture, ActionState::Waiting)
-            } else {
-                (true, posture, actor.action_state)
-            }
+            (posture, actor.action_state)
         }
         _ => return BeginShotResult::Impossible,
     };
-    if !shooter_valid {
-        return BeginShotResult::Impossible;
-    }
 
     let shooter = match entities.get_mut(shooter_id) {
         Some(e) => e,
@@ -647,14 +594,6 @@ pub fn begin_bow_shot(
     };
 
     let order_id = crate::order::alloc_order_id(next_order_id);
-    actor.active_shot = ActiveShot {
-        sequence_id: Some(seq_id),
-        element_index: elem_idx,
-        target: Some(target_id),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(desired_mode),
-    };
     actor.clear_path();
 
     // Push aim-transition orders if needed.  Orders live on the owning

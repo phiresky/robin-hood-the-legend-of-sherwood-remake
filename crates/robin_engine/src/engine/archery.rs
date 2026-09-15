@@ -163,67 +163,6 @@ mod arrow_hurtable_tests {
 impl EngineInner {
     // ─── Bow shots & arrow projectiles ───────────────────────────
 
-    /// Rebuild Rust's derived active-shot latch after loading an Original
-    /// save in the middle of a shooting order. Original needs no parallel
-    /// latch: the selected sequence element and current order are sufficient
-    /// for execution to shoot the bow on the action-done pulse.
-    pub(crate) fn restore_loaded_active_shots(&mut self) {
-        let owners = self
-            .world
-            .entities
-            .actors()
-            .map(|(id, _)| EntityId::from(id))
-            .collect::<Vec<_>>();
-        let active = owners
-            .into_iter()
-            .filter_map(|owner| {
-                let (sequence_id, element_index, _order) = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, owner)?;
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(sequence_id, element_index)?;
-                if !matches!(element.command, Command::ShootBow | Command::ShootBowOnce) {
-                    return None;
-                }
-                let (shoot_mode, shoot_order_id) = element.orders.iter().find_map(|order| {
-                    crate::bow_shot::shoot_mode_for_order(order.order_type)
-                        .map(|mode| (mode, order.order_id))
-                })?;
-                let target = match &element.data {
-                    crate::sequence::SequenceElementData::Interaction { antagonist } => {
-                        (*antagonist)?
-                    }
-                    _ => return None,
-                };
-                Some((
-                    owner,
-                    crate::movement::ActiveShot {
-                        sequence_id: Some(sequence_id),
-                        element_index,
-                        target: Some(target),
-                        order_id: Some(shoot_order_id),
-                        released: false,
-                        shoot_mode: Some(shoot_mode),
-                    },
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        for (owner, shot) in active {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("loaded bow-shot owner {owner:?} is missing required actor state")
-                })
-                .active_shot = shot;
-        }
-    }
-
     pub(super) fn apply_projectile_landing_resolution(
         &mut self,
         assets: &LevelAssets,
@@ -434,15 +373,17 @@ impl EngineInner {
         &self,
         owner: EntityId,
     ) -> Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)> {
-        let shot = self.get_entity(owner)?.actor_data()?.active_shot;
         let (seq_id, elem_idx, order) = self
             .orders
             .sequence_manager
             .current_order_for_actor(&self.world.entities, owner)?;
-        (shot.is_active()
-            && shot.sequence_id == Some(seq_id)
-            && shot.element_index == elem_idx
-            && bow_shot::is_active_bow_order(order.order_type))
+        (matches!(
+            self.orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)?
+                .command,
+            Command::ShootBow | Command::ShootBowOnce
+        ) && bow_shot::is_active_bow_order(order.order_type))
         .then_some((seq_id, elem_idx, order.order_id))
     }
 
@@ -520,39 +461,33 @@ impl EngineInner {
 
         let shooter = self.expect_entity(shooter_id, "bow execution owner");
         let actor = shooter.actor_data().expect("bow owner must be an actor");
-        if actor.execution_frozen || !actor.active_shot.is_active() {
+        if actor.execution_frozen {
             return Vec::new();
         }
-        let shot = actor.active_shot;
-        let Some(sequence_id) = shot.sequence_id else {
+        let Some((sequence_id, element_index, order_id)) = self.selected_bow_order(shooter_id)
+        else {
             return Vec::new();
         };
-        let element_index = shot.element_index;
+        if order_id != expected_order_id {
+            return Vec::new();
+        }
         let element = self
             .orders
             .sequence_manager
             .get_element(sequence_id, element_index)
-            .expect("active bow shot lost its sequence element");
-        let Some(order) = element.current_order() else {
-            return Vec::new();
+            .expect("selected bow element must exist");
+        let order_type = element
+            .current_order()
+            .expect("selected bow order must exist")
+            .order_type;
+        let target_id = match element.data {
+            crate::sequence::SequenceElementData::Interaction {
+                antagonist: Some(target),
+            } => target,
+            _ => panic!("selected bow element must have an interaction target"),
         };
-        if order.order_id != expected_order_id {
-            return Vec::new();
-        }
-        let order_type = order.order_type;
-        if !bow_shot::is_active_bow_order(order_type) {
-            if !bow_shot::has_active_bow_order(element) {
-                self.expect_entity_mut(shooter_id, "bow execution owner")
-                    .actor_data_mut()
-                    .unwrap()
-                    .active_shot
-                    .clear();
-            }
-            return Vec::new();
-        }
         let script_driven = element.script_driven;
         if bow_shot::is_shoot_order(order_type) && actor.execute_order_initialising {
-            let target_id = shot.target.expect("active bow shot has no target");
             let target = self.expect_entity(target_id, "bow initialization target");
             let (target_position, shooter_position) =
                 if order_type == OrderType::ShootingWithBowLeaningOut {
@@ -615,15 +550,14 @@ impl EngineInner {
                     crate::profiles::Action::Bow,
                 );
             }
-        } else if motion == MotionState::Done && !shot.released {
-            let shoot_mode = shot
-                .shoot_mode
-                .expect("active bow shot missing resolved shoot mode");
-            let target = shot
-                .target
-                .expect("active bow shot has no target at release");
-            shooter.actor_data_mut().unwrap().active_shot.released = true;
-            let arrow = self.release_bow_arrow(sim, assets, shooter_id, target, shoot_mode);
+        } else if motion == MotionState::Done {
+            let shoot_mode = match shooter.actor_data().unwrap().action_state {
+                ActionState::AimingWithBow => crate::weapons::ShootMode::Normal,
+                ActionState::AimingWithBowUp => crate::weapons::ShootMode::Long,
+                ActionState::AimingWithBowDown => crate::weapons::ShootMode::Down,
+                state => panic!("bow release requires an aiming action, got {state:?}"),
+            };
+            let arrow = self.release_bow_arrow(sim, assets, shooter_id, target_id, shoot_mode);
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
             if order_type == OrderType::ShootingWithBowLeaningOut {
@@ -652,15 +586,11 @@ impl EngineInner {
                         order_type: order.order_type,
                     });
             let complete = element.orders.is_empty();
-            let still_bow = bow_shot::has_active_bow_order(element);
             let actor = self
                 .expect_entity_mut(shooter_id, "bow order advancement owner")
                 .actor_data_mut()
                 .unwrap();
             actor.installed_order = installed_order;
-            if complete || !still_bow {
-                actor.active_shot.clear();
-            }
             if complete {
                 self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
             }
@@ -3632,10 +3562,15 @@ impl EngineInner {
         let strangle_victim_after_attacker = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                (actor.active_ability.kind == Some(crate::movement::AbilityKind::Strangle)
-                    && actor.active_ability.done_effect_applied)
-                    .then_some(actor.active_ability.target)
+            .and_then(|_| {
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Strangle
+                    && ability.done_effect_applied)
+                    .then_some(ability.target)
                     .flatten()
             })
             .map(|victim_id| {
@@ -3704,21 +3639,16 @@ impl EngineInner {
         use crate::abilities::AbilityTickResult;
         match result {
             AbilityTickResult::Terminated {
-                actor_id,
-                kind,
-                seq_id,
-                elem_idx,
-            } => self.finish_ability_order(sim, assets, actor_id, kind, seq_id, elem_idx),
+                seq_id, elem_idx, ..
+            } => self.do_next_order(sim, assets, seq_id, elem_idx),
             AbilityTickResult::Aborted {
                 actor_id,
-                kind,
                 seq_id,
                 elem_idx,
-                order_id,
+                ..
             } => {
-                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, order_id);
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                if kind == crate::movement::AbilityKind::Strangle {}
             }
             AbilityTickResult::CarryDone {
                 carrier_id,
@@ -3868,85 +3798,6 @@ impl EngineInner {
                 elem_idx,
                 sprite_frozen,
             ),
-        }
-    }
-
-    fn finish_ability_order(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        actor_id: EntityId,
-        kind: crate::movement::AbilityKind,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
-        self.do_next_order(sim, assets, seq_id, elem_idx);
-        // Order advancement terminates the exhausted element, and
-        // The original game immediately sends the condolence notification before
-        // returning from that state-change stack. This is required
-        // for every ability, not only Strangle: it clears the
-        // actor's selected element (so the command becomes Wait)
-        // and may synchronously instruct a successor.
-        let next = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| element.current_order())
-            .map(|order| (order.order_id, order.order_type));
-        if let Some(actor) = self
-            .get_entity_mut(actor_id)
-            .and_then(Entity::actor_data_mut)
-            && actor.active_ability.kind == Some(kind)
-            && actor.active_ability.sequence_id == Some(seq_id)
-            && actor.active_ability.element_index == elem_idx
-        {
-            match (kind, next) {
-                (
-                    crate::movement::AbilityKind::Listen,
-                    Some((order_id, crate::order::OrderType::Listening)),
-                ) => {
-                    actor.listen_phase = crate::element::ListenPhase::CountingDown;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::Listen,
-                    Some((order_id, crate::order::OrderType::TransitionListeningWaitingUpright)),
-                ) => {
-                    actor.listen_phase = crate::element::ListenPhase::ExitTransition;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::ReceivePurse,
-                    Some((order_id, crate::order::OrderType::WaitingWithPurse)),
-                ) => {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Waiting;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                (
-                    crate::movement::AbilityKind::ReceivePurse,
-                    Some((
-                        order_id,
-                        crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright,
-                    )),
-                ) => {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Transition;
-                    actor.active_ability.order_id = Some(order_id);
-                    actor.active_ability.done_effect_applied = false;
-                }
-                _ => {
-                    if kind == crate::movement::AbilityKind::Listen {
-                        actor.listen_phase = crate::element::ListenPhase::Inactive;
-                        actor.listen_wait_time = 0;
-                    } else if kind == crate::movement::AbilityKind::ReceivePurse {
-                        actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-                    }
-                    actor.active_ability.clear();
-                    actor.action_state = crate::element::ActionState::Waiting;
-                }
-            }
         }
     }
 
@@ -4591,13 +4442,7 @@ impl EngineInner {
             )
         };
         if !valid {
-            self.cleanup_aborted_ability(
-                pc_id,
-                crate::movement::AbilityKind::Pay,
-                seq_id,
-                elem_idx,
-                Some(order_id),
-            );
+            self.record_aborted_ability_motion(pc_id);
             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
@@ -4951,15 +4796,7 @@ impl EngineInner {
                 layer,
             )
         {
-            self.cleanup_aborted_ability(
-                actor_id,
-                crate::movement::AbilityKind::Strangle,
-                seq_id,
-                elem_idx,
-                self.get_entity(actor_id)
-                    .and_then(Entity::actor_data)
-                    .and_then(|actor| actor.active_ability.order_id),
-            );
+            self.record_aborted_ability_motion(actor_id);
             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
@@ -5015,21 +4852,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Pay)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Pay
                     && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Pay initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Pay initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Pay initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5052,13 +4889,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Pay,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5093,21 +4924,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Hit)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Hit
                     && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Hit initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Hit initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Hit initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5152,13 +4983,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Hit,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5176,8 +5001,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                let kind = ability.kind?;
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                let kind = ability.kind;
                 (matches!(
                     kind,
                     crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
@@ -5185,16 +5014,12 @@ impl EngineInner {
                     .then(|| {
                         (
                             kind,
-                            ability
-                                .sequence_id
-                                .expect("pending tying initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending tying initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending tying initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5224,7 +5049,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5266,8 +5091,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Carry)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Carry
                     && actor.execute_order_initialising
                     && actor.installed_order.is_some_and(|installed| {
                         installed.order_type
@@ -5304,8 +5133,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::ClimbOnShoulders
                     && actor.execute_order_initialising
                     && actor.installed_order.is_some_and(|installed| {
                         installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
@@ -5333,8 +5166,12 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Heal)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Heal
                     && actor.execute_order_initialising)
                     .then_some(ability.target)
                     .flatten()
@@ -5378,21 +5215,21 @@ impl EngineInner {
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
-                    && !ability.strangle_initialized)
+                let ability = crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    actor_id,
+                )?;
+                (ability.kind == crate::movement::AbilityKind::Strangle
+                    && actor.execute_order_initialising)
                     .then(|| {
                         (
-                            ability
-                                .sequence_id
-                                .expect("pending Strangle initialization lost sequence identity"),
+                            ability.sequence_id,
                             ability.element_index,
                             ability
                                 .target
                                 .expect("pending Strangle initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Strangle initialization lost order identity"),
+                            ability.order_id,
                         )
                     })
             });
@@ -5417,13 +5254,7 @@ impl EngineInner {
                 self.check_sequence_element_validity(assets, actor_id, element, true)
             };
             if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Strangle,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
+                self.record_aborted_ability_motion(actor_id);
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return false;
             }
@@ -5455,25 +5286,11 @@ impl EngineInner {
                 .expect("validated Strangle victim vanished before direction initialization")
                 .element_data_mut()
                 .set_direction_goal(facing);
-            self.get_entity_mut(actor_id)
-                .expect("validated strangler vanished before initialization latch")
-                .actor_data_mut()
-                .expect("validated strangler lost actor state before initialization latch")
-                .active_ability
-                .strangle_initialized = true;
         }
         true
     }
 
-    pub(super) fn cleanup_aborted_ability(
-        &mut self,
-        actor_id: EntityId,
-        kind: crate::movement::AbilityKind,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_id: Option<std::num::NonZeroU32>,
-    ) {
-        // Every caller reaches this helper because the selected derived
+    pub(super) fn record_aborted_ability_motion(&mut self, actor_id: EntityId) {
         // The execution arm returned an aborted motion. Publish that result for
         // the actor-owner envelope as well. In particular, Tie deliberately
         // fails validity one frame after DONE changed its victim from Lying
@@ -5488,23 +5305,6 @@ impl EngineInner {
                 .expect("ability owner must retain actor state during abort cleanup")
                 .continuation
                 .motion_state = crate::sprite::MotionState::Aborted;
-        }
-        if let Some(actor) = self
-            .get_entity_mut(actor_id)
-            .and_then(Entity::actor_data_mut)
-            && actor.active_ability.kind == Some(kind)
-            && actor.active_ability.sequence_id == Some(seq_id)
-            && actor.active_ability.element_index == elem_idx
-            && actor.active_ability.order_id == order_id
-        {
-            actor.active_ability.clear();
-            if kind == crate::movement::AbilityKind::Listen {
-                actor.listen_phase = crate::element::ListenPhase::Inactive;
-                actor.listen_wait_time = 0;
-            } else if kind == crate::movement::AbilityKind::ReceivePurse {
-                actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-            }
-            actor.action_state = crate::element::ActionState::Waiting;
         }
     }
 
@@ -6781,21 +6581,25 @@ mod tests {
                 .action_state(ActionState::Waiting)
                 .build(),
         );
-        let selected = crate::movement::ActiveAbility {
-            kind: Some(crate::movement::AbilityKind::Carry),
-            sequence_id: Some(crate::sequence::SequenceId(91)),
-            element_index: 2,
-            target: Some(target),
-            done_effect_applied: true,
-            ..Default::default()
-        };
+        let mut element = crate::sequence::SequenceElement::new_interaction(
+            1,
+            crate::element::Command::TakeCorpse,
+            Some(carrier),
+            Some(target),
+        );
+        element.orders.push_back(crate::order::Order::test_new(
+            OrderType::TransitionWaitingUprightCarryingCorpse,
+            0.0,
+            0.0,
+        ));
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        let selected = crate::sequence::SequenceElementRef::new(sequence, 0);
         engine
             .get_entity_mut(carrier)
             .unwrap()
             .actor_data_mut()
             .unwrap()
-            .active_ability = selected.clone();
-        let selected_before = bitcode::encode(&selected);
+            .selected_sequence_element = Some(selected);
 
         engine.apply_ability_tick_result(
             &crate::sim_rng::test_context(),
@@ -6805,16 +6609,16 @@ mod tests {
                 carrier_id: carrier,
                 target_id: target,
                 carried_posture: Posture::Lying,
-                seq_id: crate::sequence::SequenceId(91),
-                elem_idx: 2,
+                seq_id: sequence,
+                elem_idx: 0,
             },
         );
 
         let carrier = engine.get_entity(carrier).unwrap();
         assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
         assert_eq!(
-            bitcode::encode(&carrier.actor_data().unwrap().active_ability),
-            selected_before
+            carrier.actor_data().unwrap().selected_sequence_element,
+            Some(selected)
         );
         let target = engine.get_entity(target).unwrap();
         assert_eq!(target.posture(), Posture::Carried);
