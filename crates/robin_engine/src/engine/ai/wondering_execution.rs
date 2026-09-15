@@ -126,7 +126,7 @@ impl EngineInner {
                 } else {
                     crate::ai::LookDirection::LeftRight
                 };
-                self.execute_ai_look_sidewards(owner, direction);
+                self.execute_ai_look_sidewards(sim, assets, owner, direction);
             }
             (Substate::SeekingJustWatchingSidewards, EventDone) => {
                 match self.seek_enemy(owner).profile(&assets.profile_manager).rank {

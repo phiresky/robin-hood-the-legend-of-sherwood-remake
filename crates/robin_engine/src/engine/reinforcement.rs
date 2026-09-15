@@ -6,8 +6,7 @@
 //! enemy-detectable for every NPC, and launches a
 //! `PASS_DOOR → MOVE(jitter)` sequence.
 //!
-//! Runs inside `perform_hourglass` (see `EngineInner::drain_pending_reinforcements`)
-//! so sim-state mutation stays confined to the tick. The reinforcement
+//! Creation runs at the command or arrival boundary. The reinforcement
 //! PC's sprite is preloaded at level-load time by
 //! `preload_campaign_peasant_sprites` so the cache-only
 //! `Sprite::load_frame_info_cached` call here always hits.
@@ -23,30 +22,7 @@ use crate::order::OrderType;
 use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
 
 impl EngineInner {
-    /// Drain the deferred reinforcement queue.
-    ///
-    /// Runs from `perform_hourglass` so the sim-state mutation it
-    /// performs (new entities, `sim_rng` draws, `instanced` flags)
-    /// lives inside the replayed tick and rollback stays deterministic.
-    /// Reinforcement-PC sprites are preloaded at level-load by
-    /// [`EngineInner::preload_campaign_peasant_sprites`], so this path
-    /// only reads the scriptor cache (`&LevelAssets`).
-    pub(crate) fn drain_pending_reinforcements(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        if self.orders.pending_reinforcements.is_empty() {
-            return;
-        }
-        let requests: Vec<Option<EntityId>> =
-            std::mem::take(&mut self.orders.pending_reinforcements);
-        for dead_pc in requests {
-            self.create_reinforcement(sim, assets, dead_pc);
-        }
-    }
-
-    fn create_reinforcement(
+    pub(crate) fn create_reinforcement(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -60,7 +36,7 @@ impl EngineInner {
         }
         assert!(
             self.scripts.mission.is_some(),
-            "queued reinforcement requires an installed mission script"
+            "reinforcement requires an installed mission script"
         );
         let pick = crate::sim_rng::usize(
             sim,
@@ -178,6 +154,20 @@ impl EngineInner {
             return;
         }
 
+        let pathfinder_index = assets
+            .profile_manager
+            .get_character(profile_idx)
+            .expect("reinforcement character profile remains available")
+            .pathfinder_index;
+        let half_diagonal = self.world.fast_grid.try_move_box_half_diagonal(pathfinder_index as usize)
+            .unwrap_or_else(|| panic!("reinforcement profile {profile_idx} references missing pathfinder slot {pathfinder_index}"));
+        sprite.position_iface.configure_for_actor(
+            crate::position_interface::PathfinderIndex::new(u16::from(pathfinder_index))
+                .expect("character pathfinder index cannot equal 0xffff"),
+            half_diagonal,
+            door_snap.point_out,
+        );
+
         // Build the new PC entity.  Uses door outer-point / outer-layer
         // as the spawn site — i.e. the new PC appears *outside* the map
         // and then walks in via the `PASS_DOOR` element below.
@@ -266,10 +256,9 @@ impl EngineInner {
         // tries, ±50 in each axis.
         let pin = door_snap.point_in;
         let hd = self
-            .get_entity(new_id)
-            .map(|e| e.position_iface())
-            .map(|pi| pi.get_half_diagonal())
-            .unwrap_or_else(|| crate::coordinates::MoveBoxHalfDiagonal::new(12.0, 8.0));
+            .expect_entity(new_id, "reinforcement entry movement")
+            .position_iface()
+            .get_half_diagonal();
         let mut jitter: Option<MapPoint> = None;
         for _ in 0..10 {
             let dx = -50.0
@@ -313,7 +302,7 @@ impl EngineInner {
             seq.append_element(mv);
         }
 
-        let seq_id = self.launch_sequence(seq);
+        let seq_id = self.launch_sequence(sim, assets, seq);
         tracing::info!(
             new_pc = ?new_id,
             ?seq_id,
@@ -423,8 +412,105 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "queued reinforcement requires an installed mission script")]
-    fn queued_reinforcement_rejects_missing_mission_script() {
+    fn console_reinforcement_publishes_pc_and_entry_sequence_before_returning() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+            "reinforcement",
+        ));
+        let profile = crate::profiles::CharacterProfile {
+            filename: "Peasant".into(),
+            profile_name: "Paysan A".into(),
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(profile);
+        std::sync::Arc::make_mut(&mut assets.sprite_scriptor).insert(
+            "Peasant/Paysan A",
+            crate::sprite_script::SpriteInfo {
+                scripts: std::sync::Arc::new(Vec::new()),
+                conversion: std::sync::Arc::new(crate::engine::test_support::unmapped_conversion()),
+                size: crate::coordinates::SpriteSize::new(12.0, 8.0),
+                center: crate::coordinates::SpriteAnchor::new(2.0, 3.0),
+            },
+        );
+        engine
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+                instanced: false,
+                status: Default::default(),
+            });
+        engine.mission_domain.campaign.gang_indices.push(0);
+        engine
+            .world
+            .fast_grid_mut()
+            .add_move_box_half_diagonal(crate::coordinates::MoveBoxHalfDiagonal::new(4.0, 6.0));
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                sector_out: crate::sector::SectorNumber::new(0),
+                sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+                ..Default::default()
+            });
+        engine
+            .ai
+            .global
+            .reinforcement_doors
+            .push(crate::ai::ReinforcementDoorInfo {
+                position_in: crate::ai::Position {
+                    x: 0.0,
+                    y: 0.0,
+                    sector: None,
+                    level: 0,
+                },
+                door_index: crate::gate::DoorIndex::new(0).unwrap(),
+                point_out: MapPoint::new(0.0, 0.0),
+                point_mid: MapPoint::new(0.0, 0.0),
+                layer_out: 0,
+                sector_out: None,
+                point_in: MapPoint::new(0.0, 0.0),
+            });
+
+        engine.dispatch_sim_console_command(
+            &sim,
+            &assets,
+            &mut None,
+            &crate::console::ConsoleCommand::Reinforcement,
+        );
+
+        assert!(engine.mission_domain.campaign.characters[0].instanced);
+        let (id, pc) = engine
+            .world
+            .entities
+            .occupied()
+            .find(|(_, entity)| entity.is_pc())
+            .expect("reinforcement is already published");
+        assert_eq!(pc.pc_data().unwrap().campaign_description_index, Some(0));
+        assert_eq!(
+            pc.position_iface().get_half_diagonal(),
+            crate::coordinates::MoveBoxHalfDiagonal::new(4.0, 6.0)
+        );
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .expect("entry sequence is already registered");
+        assert_eq!(sequence.elements[0].owner, Some(id));
+        assert_eq!(sequence.elements[0].command, Command::PassDoor);
+    }
+
+    #[test]
+    #[should_panic(expected = "reinforcement requires an installed mission script")]
+    fn reinforcement_rejects_missing_mission_script() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
         let mut engine = EngineInner::new();

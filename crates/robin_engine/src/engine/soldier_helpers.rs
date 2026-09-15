@@ -173,11 +173,15 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn set_soldier_attentive_mode(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         target: bool,
         fast_variant: bool,
     ) {
         self.set_soldier_attentive_mode_from(
+            sim,
+            assets,
             entity_id,
             target,
             fast_variant,
@@ -187,6 +191,8 @@ impl EngineInner {
 
     pub(crate) fn set_soldier_attentive_mode_from(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         entity_id: EntityId,
         target: bool,
         fast_variant: bool,
@@ -270,8 +276,11 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
-        let launched_sequence =
-            self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
+        let launched_sequence = self.launch_element(
+            sim,
+            assets,
+            SequenceElement::new(1, command, Some(entity_id)),
+        );
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
@@ -993,23 +1002,9 @@ impl EngineInner {
                     )
                 });
 
-                // Wait instructs the victim before the freeze is released and
-                // EventGotHit can start another decision. Preserve the caller's
-                // pending work while closing this nested instruction boundary.
-                let continuation = self
-                    .orders
-                    .sequence_manager
-                    .take_pending_synchronous_actions();
-                self.actor_wait(victim_id);
-                self.drain_script_synchronous_actions(sim, assets, active_scripts)
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Strangle condolation for {owner:?} failed to instruct victim {victim_id:?}: {error:?}"
-                        )
-                    });
-                self.orders
-                    .sequence_manager
-                    .restore_pending_synchronous_actions(continuation);
+                // Low-priority Wait element to re-park the victim's AI
+                // in the default loop.
+                self.actor_wait(sim, assets, victim_id);
                 #[cfg(test)]
                 observe_strangle_condolation_step("Wait");
 
@@ -1095,20 +1090,7 @@ impl EngineInner {
                 // either here erases the pre-drop old position and makes a
                 // body whose slot already passed start its new sprite one
                 // frame early.
-                let preexisting_sequence_work = self
-                    .orders
-                    .sequence_manager
-                    .take_pending_synchronous_actions();
-                self.force_drop_carried_corpse_instant(owner);
-                self.drain_script_synchronous_actions(sim, assets, active_scripts)
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "TakeCorpse condolation for {owner:?} failed to instruct dropped body {carried_id:?}: {error:?}"
-                        )
-                    });
-                self.orders
-                    .sequence_manager
-                    .restore_pending_synchronous_actions(preexisting_sequence_work);
+                self.force_drop_carried_corpse_instant(sim, assets, owner);
                 if let Some(carrier) = self.world.entities.get_mut(owner)
                     && let Some(actor) = carrier.actor_data_mut()
                     && actor.active_ability.kind == Some(crate::movement::AbilityKind::Carry)
@@ -1372,7 +1354,9 @@ impl EngineInner {
             .map(|e| (e.is_pc(), e.is_soldier()));
         match kind {
             Some((true, _)) => {
-                self.send_before_door_to_fight_pc(sim, actor_id, goal, direction, delay, adversary);
+                self.send_before_door_to_fight_pc(
+                    sim, assets, actor_id, goal, direction, delay, adversary,
+                );
             }
             Some((_, true)) => {
                 let info = DoorCombatInfo {
@@ -1416,6 +1400,7 @@ impl EngineInner {
     fn send_before_door_to_fight_pc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         pc_id: EntityId,
         goal: Position,
         direction: u16,
@@ -1542,6 +1527,7 @@ impl EngineInner {
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
                     self.launch_gate_movement_order(
                         sim,
+                        assets,
                         crate::engine::movement::GateRouteRequest {
                             entity_id: pc_id,
                             source_sector: Some(source_sector),
@@ -1607,7 +1593,7 @@ impl EngineInner {
             level += 1;
         }
 
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 }
 
@@ -1685,7 +1671,7 @@ mod tests {
             34.0,
             engine.orders.allocate_order_id(),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_element(movement);
+        let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
 
         assert!(
             engine
@@ -1841,7 +1827,15 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let (mut crossing, pc, goal) = door_fight_route_fixture(0);
         let (_, crossing_draws) = with_draw_trace(|| {
-            crossing.send_before_door_to_fight_pc(&sim, pc, goal, 4, 20, None);
+            crossing.send_before_door_to_fight_pc(
+                &sim,
+                &LevelAssets::default(),
+                pc,
+                goal,
+                4,
+                20,
+                None,
+            );
         });
         assert_eq!(
             crossing_draws,
@@ -1870,7 +1864,15 @@ mod tests {
 
         let (mut callback_complete, pc, goal) = door_fight_route_fixture(1);
         let (_, callback_complete_draws) = with_draw_trace(|| {
-            callback_complete.send_before_door_to_fight_pc(&sim, pc, goal, 4, 20, None);
+            callback_complete.send_before_door_to_fight_pc(
+                &sim,
+                &LevelAssets::default(),
+                pc,
+                goal,
+                4,
+                20,
+                None,
+            );
         });
         assert_eq!(
             callback_complete_draws,
@@ -1904,7 +1906,15 @@ mod tests {
         });
 
         let (_, draws) = with_draw_trace(|| {
-            engine.send_before_door_to_fight_pc(&sim, pc, goal, 4, 10, None);
+            engine.send_before_door_to_fight_pc(
+                &sim,
+                &LevelAssets::default(),
+                pc,
+                goal,
+                4,
+                10,
+                None,
+            );
         });
         assert_eq!(
             draws,
@@ -1961,7 +1971,15 @@ mod tests {
         goal.sector = Some(writer_goal);
 
         let (_, draws) = with_draw_trace(|| {
-            engine.send_before_door_to_fight_pc(&sim, pc, goal, 4, 10, None);
+            engine.send_before_door_to_fight_pc(
+                &sim,
+                &LevelAssets::default(),
+                pc,
+                goal,
+                4,
+                10,
+                None,
+            );
         });
         assert_eq!(
             draws,

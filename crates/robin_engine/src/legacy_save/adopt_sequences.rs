@@ -1770,7 +1770,7 @@ mod tests {
         );
         let mut fresh = Sequence::new();
         fresh.append_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-        let fresh_id = engine.orders.sequence_manager.launch_sequence(fresh);
+        let fresh_id = engine.orders.sequence_manager.insert_sequence(fresh);
         assert_eq!(fresh_id, SequenceId(21));
         assert_eq!(
             engine

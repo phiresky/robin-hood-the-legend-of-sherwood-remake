@@ -377,6 +377,7 @@ impl EngineInner {
     pub(crate) fn actor_make_upright(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         entity: EntityId,
     ) {
         if self.selected_element(entity).is_some() {
@@ -404,13 +405,14 @@ impl EngineInner {
         let elem = SequenceElement::new(1, Command::CrouchUp, Some(entity));
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(elem);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     /// Crouch the actor down.
     pub(crate) fn actor_make_crouched(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         entity: EntityId,
     ) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
@@ -435,7 +437,7 @@ impl EngineInner {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(elem);
-            self.launch_sequence(sequence);
+            self.launch_sequence(sim, assets, sequence);
         }
     }
 
@@ -1328,7 +1330,11 @@ mod tests {
         movement
             .orders
             .push_back(Order::new(OrderType::RunningUpright, 10.0, 20.0, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1421,7 +1427,11 @@ mod tests {
             20.0,
             walk_order_id,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1439,7 +1449,7 @@ mod tests {
             order_type: OrderType::WalkingUpright,
         });
 
-        engine.actor_make_crouched(&crate::sim_rng::test_context(), owner);
+        engine.actor_make_crouched(&crate::sim_rng::test_context(), &assets, owner);
 
         let selected = engine
             .orders
@@ -1560,7 +1570,11 @@ mod tests {
         movement
             .orders
             .push_back(Order::new(OrderType::PassingDoor, 0.0, 0.0, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

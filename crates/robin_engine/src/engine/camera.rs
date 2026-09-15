@@ -3,7 +3,6 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint, ScreenSize};
 use crate::element_kinds::Command;
-use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::sequence::SequenceState;
 
 impl EngineInner {
@@ -296,21 +295,17 @@ impl EngineInner {
                 > self.feedback.cutscene_camera.zoom_factor
             {
                 if self.is_zoom_up_possible() {
-                    self.feedback.cutscene_camera.mechanized_zoom = true;
-                    self.orders.messenger.send(Message::with_value(
-                        MessageType::Simple(SimpleMessage::ZoomUp),
-                        1,
-                    ));
+                    if self.change_state(display, 0, EngineStateRequest::ZoomingUp) {
+                        self.feedback.cutscene_camera.mechanized_zoom = true;
+                    }
                 } else {
                     self.feedback.cutscene_camera.desired_zoom_factor =
                         self.feedback.cutscene_camera.zoom_factor;
                 }
             } else if self.is_zoom_down_possible() {
-                self.feedback.cutscene_camera.mechanized_zoom = true;
-                self.orders.messenger.send(Message::with_value(
-                    MessageType::Simple(SimpleMessage::ZoomDown),
-                    1,
-                ));
+                if self.change_state(display, 0, EngineStateRequest::ZoomingDown) {
+                    self.feedback.cutscene_camera.mechanized_zoom = true;
+                }
             } else {
                 self.feedback.cutscene_camera.desired_zoom_factor =
                     self.feedback.cutscene_camera.zoom_factor;
@@ -320,15 +315,11 @@ impl EngineInner {
         // ── Delayed zoom requests ────────────────────────────────
         if display.background_transform.required_zoom_down {
             display.background_transform.required_zoom_down = false;
-            self.orders
-                .messenger
-                .send(Message::new(MessageType::Simple(SimpleMessage::ZoomDown)));
+            self.change_state(display, 0, EngineStateRequest::ZoomingDown);
         }
         if display.background_transform.required_zoom_up {
             display.background_transform.required_zoom_up = false;
-            self.orders
-                .messenger
-                .send(Message::new(MessageType::Simple(SimpleMessage::ZoomUp)));
+            self.change_state(display, 0, EngineStateRequest::ZoomingUp);
         }
 
         // ── Camera slide animation ───────────────────────────────
@@ -672,8 +663,6 @@ impl EngineInner {
 
         if count >= steps {
             // Zoom animation complete — snap to target and finalize.
-            let zoom_up = self.is_zoom_up_possible() as u32;
-            let zoom_down = self.is_zoom_down_possible() as u32;
 
             self.feedback.cutscene_camera.zoom_factor = display.background_transform.zoom_to;
             let target = display.background_transform.view_to;
@@ -683,16 +672,8 @@ impl EngineInner {
             self.feedback.cutscene_camera.zoom_init_done = false;
 
             if display.background_transform.zoom_to_up {
-                self.orders.messenger.send(Message::with_value(
-                    MessageType::Simple(SimpleMessage::ZoomUpEnd),
-                    (zoom_up << 16) | zoom_down,
-                ));
                 display.background_transform.zoom_to_up = false;
             } else {
-                self.orders.messenger.send(Message::with_value(
-                    MessageType::Simple(SimpleMessage::ZoomDownEnd),
-                    (zoom_up << 16) | zoom_down,
-                ));
                 display.background_transform.zoom_to_down = false;
                 self.feedback.pending_side_effects.invalidate_background = true;
             }

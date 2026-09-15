@@ -258,7 +258,7 @@ impl EngineInner {
                     .expect("shooting requires target");
                 self.stop_ai_owner(sim, assets, owner);
                 let target = self.expect_human_id_for_ai_handle(target.get(), "shot target");
-                self.shoot_bow_at(assets, owner, target);
+                self.shoot_bow_at(sim, assets, owner, target);
             } else {
                 self.duty_set_state(
                     sim,
@@ -295,11 +295,11 @@ impl EngineInner {
             } else {
                 crate::element::Command::EquipBow
             };
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                command,
-                Some(owner),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, command, Some(owner)),
+            );
         }
         ControlFlow::Break(true)
     }

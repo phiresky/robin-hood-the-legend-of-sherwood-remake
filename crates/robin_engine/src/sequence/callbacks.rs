@@ -100,7 +100,7 @@ impl SequenceManager {
             // original, premature instruction.
             element.state = SequenceState::Todo;
             element.posture_after_transition = crate::element::Posture::Undefined;
-            self.register_element_to_go(sequence_id, element_index);
+            self.elements_to_go.push_back((sequence_id, element_index));
         }
     }
 
@@ -476,9 +476,9 @@ impl crate::engine::EngineInner {
             caller = %std::panic::Location::caller(),
             "element_terminated"
         );
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
 
         let effects = self.prepare_live_sequence_state(
             sim,
@@ -515,7 +515,7 @@ impl crate::engine::EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        let Some(seq) = self.orders.sequence_manager.sequences.get(&seq_id) else {
             return;
         };
 
@@ -573,9 +573,9 @@ impl crate::engine::EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
 
         let effects = self.prepare_live_sequence_state(
             sim,
@@ -606,9 +606,9 @@ impl crate::engine::EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
 
         let effects = self.prepare_live_sequence_state(
             sim,
@@ -640,9 +640,9 @@ impl crate::engine::EngineInner {
         elem_idx: usize,
         flags: CascadeFlags,
     ) {
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
 
         let effects = self.prepare_live_sequence_state(
             sim,
@@ -682,9 +682,9 @@ impl crate::engine::EngineInner {
         elem_idx: usize,
         flags: CascadeFlags,
     ) {
-        let Some(sequence) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
         let mut effects = self.prepare_live_sequence_state(
             sim,
             assets,
@@ -731,11 +731,11 @@ impl crate::engine::EngineInner {
         assets: &crate::engine::LevelAssets,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         actor: EntityId,
-        exempt_seq: SequenceId,
+        exempt_seq: Option<SequenceId>,
     ) {
         let mut targets: Vec<(SequenceId, usize)> = Vec::new();
         for (seq_id, seq) in &self.orders.sequence_manager.sequences {
-            if *seq_id == exempt_seq {
+            if Some(*seq_id) == exempt_seq {
                 continue;
             }
             for (elem_idx, elem) in seq.elements.iter().enumerate() {
@@ -766,9 +766,9 @@ impl crate::engine::EngineInner {
             }
         }
         for (seq_id, elem_idx) in targets {
-            let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+            if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
                 continue;
-            };
+            }
             let effects = self.prepare_live_sequence_state(
                 sim,
                 assets,
@@ -807,9 +807,9 @@ impl crate::engine::EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+        if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
-        };
+        }
         let effects = self.prepare_live_sequence_state(
             sim,
             assets,
@@ -840,19 +840,6 @@ impl crate::engine::EngineInner {
             .sequence_manager
             .elements_to_go
             .retain(|entry| *entry != target);
-        self.orders
-            .sequence_manager
-            .pending_synchronous_actions
-            .retain(|entry| {
-                !matches!(
-                    entry.as_action(),
-                    Some(SequenceAction::InstructOwner {
-                        sequence_id,
-                        element_index,
-                        ..
-                    }) if (*sequence_id, *element_index) == target
-                )
-            });
     }
 
     pub(crate) fn complete_sequence_state_change(
@@ -1086,10 +1073,7 @@ impl crate::engine::EngineInner {
                     Vec::new()
                 }
             };
-            self.orders
-                .sequence_manager
-                .register_level_elements_to_go(seq_id, to_go);
-            self.drain_script_synchronous_actions(sim, assets, active_scripts)
+            self.register_sequence_level(sim, assets, active_scripts, seq_id, to_go)
                 .unwrap_or_else(|error| panic!("sequence Ready failed: {error:?}"));
         }
 
@@ -1165,11 +1149,15 @@ impl crate::engine::EngineInner {
                 successor.command = Command::Move;
             }
         }
-        self.orders
-            .sequence_manager
-            .register_element_to_go(target.sequence_id, target.element_index);
-        self.drain_script_synchronous_actions(sim, assets, active_scripts)
-            .unwrap_or_else(|error| panic!("postponed registration failed: {error:?}"));
+        self.register_sequence_element(
+            sim,
+            assets,
+            active_scripts,
+            target.sequence_id,
+            target.element_index,
+            false,
+        )
+        .unwrap_or_else(|error| panic!("postponed registration failed: {error:?}"));
         self.orders
             .sequence_manager
             .sequences

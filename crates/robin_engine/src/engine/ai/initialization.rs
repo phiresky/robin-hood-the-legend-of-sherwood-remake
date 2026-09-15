@@ -283,28 +283,6 @@ impl EngineInner {
                 &all_soldier_entity_ids,
                 &soldier_subordinate_ids,
             );
-
-            // State initialization may finish by making the actor wait for an
-            // authored sleeping, sitting, dead, unconscious, or special
-            // pose. Priority-WAIT launch is a synchronous call chain in the
-            // Original game: waiting launches a sequence element, followed by
-            // successor release → launch → instruction. Finish that chain
-            // before initialization advances to the next NPC. Leaving the
-            // instruction queued lets the actor update execute a lazy
-            // fallback first and restart the authored animation one frame
-            // late.
-            self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "NPC {npc_id:?} initialization failed synchronous sequence dispatch: {error:?}"
-                    )
-                });
-
-            // The original game initializes each AI state inline, after all
-            // actor scripts have been initialized. Close the same owner's
-            // callback/effect boundary before the next NPC initializes so a
-            // state callback cannot leak to the first update tick or
-            // observe later owners' initialized state.
         }
 
         // Lift each ambush point's 2D position into 3D (eye height
@@ -905,7 +883,7 @@ impl EngineInner {
                 ActionState::Waiting
             };
         }
-        self.actor_wait(owner);
+        self.actor_wait(sim, assets, owner);
 
         let entity = self
             .world

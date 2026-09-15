@@ -125,7 +125,8 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         0.0,
         0.0,
     ));
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -339,7 +340,8 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         0.0,
         0.0,
     ));
-    let seq = engine.orders.sequence_manager.launch_element(element);
+    let seq = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

@@ -51,7 +51,10 @@ fn retired_seek_crossing_preserves_increment_and_direction() {
             140.0,
             order_id,
         ));
-        let seq_id = engine.orders.sequence_manager.launch_element(movement);
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(movement);
+        let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine.orders.sequence_manager.start_sequence_level(seq_id);
         engine.finish_actor_movement(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),

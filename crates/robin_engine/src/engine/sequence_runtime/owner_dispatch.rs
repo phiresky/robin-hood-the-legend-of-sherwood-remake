@@ -1,12 +1,11 @@
 use super::*;
 
 impl EngineInner {
-    pub(super) fn dispatch_sequence_phase_action(
+    pub(in crate::engine) fn dispatch_sequence_phase_action(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         action: crate::sequence::SequenceAction,
-        accepted_instruct_owners: &mut Vec<EntityId>,
     ) {
         'action: {
             match action {
@@ -93,7 +92,13 @@ impl EngineInner {
                             .get(owner)
                             .is_some_and(|entity| entity.actor_data().is_some())
                     {
-                        accepted_instruct_owners.push(owner);
+                        self.world
+                            .entities
+                            .get_mut(owner)
+                            .and_then(Entity::actor_data_mut)
+                            .expect("accepted instruction lost its actor")
+                            .continuation
+                            .motion_state = crate::sprite::MotionState::InProgress;
                     }
                 }
                 crate::sequence::SequenceAction::ExecuteImmediateOwner {
@@ -101,17 +106,17 @@ impl EngineInner {
                     sequence_id: seq_id,
                     element_index: elem_idx,
                 } => {
-                    if let Some((handle, msg, arg1, arg2)) =
-                        self.dispatch_execute_immediate_owner(sim, assets, owner, seq_id, elem_idx)
-                    {
-                        self.dispatch_sequence_messages(
-                            sim,
-                            assets,
-                            &[(handle, msg, arg1, arg2)],
-                            &[],
-                        );
-                        self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                    }
+                    self.dispatch_script_synchronous_action(
+                        sim,
+                        assets,
+                        crate::sequence::SequenceAction::ExecuteImmediateOwner {
+                            owner,
+                            sequence_id: seq_id,
+                            element_index: elem_idx,
+                        },
+                        &mut Vec::new(),
+                    )
+                    .unwrap_or_else(|error| panic!("immediate owner dispatch failed: {error:?}"));
                 }
                 crate::sequence::SequenceAction::EngineCommand {
                     sequence_id: seq_id,

@@ -180,7 +180,11 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
         Some(attacker),
         Some(target),
     );
-    let sequence = engine.launch_element(strike);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(strike);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.dispatch_sword_strike(
         &crate::sim_rng::test_context(),
         &assets,
@@ -228,7 +232,7 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         final_angle: 0.70,
     };
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)

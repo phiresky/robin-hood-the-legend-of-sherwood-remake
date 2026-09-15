@@ -114,13 +114,7 @@ impl EngineInner {
         Ok(())
     }
 
-    /// Drain effects deferred by the preceding tick before any mission,
-    /// entity, path, NPC, or sequence work observes this frame's state.
-    ///
-    /// The original game starts its simulation update with host/widget and
-    /// mission-state work.
-    /// These Rust-owned queues have no one-to-one original equivalent; their
-    /// relative placement is retained from the pre-decomposition Rust tick.
+    /// Finish sound deadlines before mission and entity work observes the frame.
     pub(in crate::engine) fn hourglass_phase_deferred_effects_start(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -129,20 +123,6 @@ impl EngineInner {
         self.hourglass_phase_sound_boundary(sim, assets)
             .unwrap_or_else(|reason| panic!("internal sound boundary rejected: {reason}"));
         let cur_frame = self.control.frame_counter;
-        // Drain deferred console-cheat / death reinforcement spawns and
-        // scroll-reveal amulet spawns. Both used to live in
-        // `Game::run_engine_tick` because they needed `&mut LevelAssets`
-        // to load sprites; the two sprite families are now preloaded at
-        // mission start (`preload_campaign_peasant_sprites`,
-        // `preload_scroll_amulet_sprite`) so the spawn paths read the
-        // scriptor cache via `&LevelAssets` and the whole flow lives
-        // inside `perform_hourglass` — keeping the "sim mutation only
-        // during perform_hourglass" invariant intact.
-        self.drain_pending_reinforcements(sim, assets);
-        self.drain_pending_scroll_amulets(sim, assets);
-        self.drain_pending_hero_speeches(assets);
-        self.drain_pending_hades_kills(sim, assets);
-
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on
         // Audio-backend playback-completion events: for each scheduled
@@ -586,12 +566,5 @@ impl EngineInner {
         for r in expired {
             self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
         }
-
-        // ── End-of-tick registration-inline drain ───────────────────
-        // Anonymous timers run after the sequence-manager tick. Preserve
-        // only work Original registration executes on that callback stack:
-        // immediately executed commands and direct waiting-priority calls.
-        // Ordinary successors stay queued for the next manager hourglass.
-        self.drain_registration_inline_actions_sync(sim, assets);
     }
 }

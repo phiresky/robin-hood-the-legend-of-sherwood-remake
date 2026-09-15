@@ -119,7 +119,8 @@ mod suite {
         route.append_element(pass);
         route.append_element(route_assert);
         route.append_element(route_move);
-        let route_id = engine.orders.sequence_manager.launch_sequence(route);
+        let route_id =
+            engine.launch_sequence(&crate::sim_rng::test_context(), &LevelAssets::new(), route);
 
         assert!(
             engine
@@ -180,7 +181,11 @@ mod suite {
         *layer = 2;
         *sector = crate::position_interface::SectorHandle::new(88);
         *tolerance = 30.0;
-        let postponed_id = engine.orders.sequence_manager.launch_element(postponed);
+        let postponed_id = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            postponed,
+        );
 
         assert!(has_deferred_post_door_route_continuation(
             &engine.orders.sequence_manager,
@@ -493,7 +498,7 @@ mod suite {
             Some(owner),
         );
         element.priority = crate::sequence::SequencePriority::Normal;
-        let sequence_id = orders.sequence_manager.launch_element(element);
+        let sequence_id = orders.sequence_manager.insert_element(element);
         let element = orders
             .sequence_manager
             .get_element_mut(sequence_id, 0)
@@ -570,7 +575,7 @@ mod suite {
                 Some(owner),
             );
             element.state = crate::sequence::SequenceState::InProgress;
-            let sequence = orders.sequence_manager.launch_element(element);
+            let sequence = orders.sequence_manager.insert_element(element);
             let element = orders
                 .sequence_manager
                 .get_element_mut(sequence, 0)
@@ -648,7 +653,7 @@ mod suite {
             Some(owner),
         );
         element.state = crate::sequence::SequenceState::InProgress;
-        let sequence_id = orders.sequence_manager.launch_element(element);
+        let sequence_id = orders.sequence_manager.insert_element(element);
         let element = orders
             .sequence_manager
             .get_element_mut(sequence_id, 0)

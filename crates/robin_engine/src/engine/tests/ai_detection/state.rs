@@ -261,7 +261,11 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
         };
         *gate_id = Some(DoorIndex::new(0).unwrap());
         *pass_direction = direction;
-        let sequence = engine.orders.sequence_manager.launch_element(pass);
+        let sequence = engine.orders.sequence_manager.insert_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

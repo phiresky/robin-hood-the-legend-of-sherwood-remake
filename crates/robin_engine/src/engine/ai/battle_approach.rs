@@ -24,7 +24,12 @@ impl EngineInner {
         }
     }
 
-    pub(in crate::engine) fn execute_ai_end_swordfight(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn execute_ai_end_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         if self
             .expect_entity(owner, "end swordfight owner")
             .human_data()
@@ -34,14 +39,23 @@ impl EngineInner {
         {
             return;
         }
-        self.launch_element(crate::sequence::SequenceElement::new(
-            1,
-            crate::element::Command::QuitSwordfight,
-            Some(owner),
-        ));
+        self.launch_element(
+            sim,
+            assets,
+            crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::QuitSwordfight,
+                Some(owner),
+            ),
+        );
     }
 
-    pub(in crate::engine) fn launch_ai_raise_sword(&mut self, owner: EntityId) {
+    pub(in crate::engine) fn launch_ai_raise_sword(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
         let mut element = crate::sequence::SequenceElement::new_generic(
             1,
             crate::element::Command::EnterSwordfight,
@@ -55,7 +69,7 @@ impl EngineInner {
             crate::sequence::Field::JumplineDestination,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.launch_element(element);
+        self.launch_element(sim, assets, element);
     }
 
     pub(in crate::engine) fn set_live_guarded_pc(
@@ -206,7 +220,7 @@ impl EngineInner {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.launch_element(element);
+        self.launch_element(sim, assets, element);
 
         self.clear_live_combat_neighbours(owner);
         self.approach_focus(sim, assets, owner, None);
@@ -898,7 +912,8 @@ mod tests {
         };
         *gate_id = Some(DoorIndex::new(0).unwrap());
         *direction = 1;
-        let id = engine.orders.sequence_manager.launch_element(pass);
+        let id = engine.orders.sequence_manager.insert_element(pass);
+        engine.orders.sequence_manager.start_sequence_level(id);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -1053,7 +1068,8 @@ mod tests {
             );
             // Path waiting retains the priority assigned before Move was translated.
             element.priority = crate::sequence::SequencePriority::Normal;
-            let id = engine.orders.sequence_manager.launch_element(element);
+            let id = engine.orders.sequence_manager.insert_element(element);
+            engine.orders.sequence_manager.start_sequence_level(id);
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
@@ -1080,7 +1096,14 @@ mod tests {
     fn failed_approach_executes_roof_wait_and_preserves_close_and_path_waiter_cases() {
         for (close, waiting) in [(false, false), (true, true), (false, true)] {
             let (mut engine, assets, owner, target, wait) = roof_fixture(close, waiting);
-            let selected_waiter = waiting.then(|| pending_moves(&engine, owner)[0].0);
+            let selected_waiter = waiting.then(|| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner)
+                    .expect("fixture has a selected path waiter")
+                    .0
+            });
             let sequences_before = engine.orders.sequence_manager.sequence_count();
             let target_position = engine.live_ai_position(target);
             engine.execute_ai_reconsider_enemy_approach(
@@ -1100,17 +1123,21 @@ mod tests {
             assert_eq!(ai.base.stop_before_end_of_path_distance, 50);
             if close {
                 assert!(ai.base.already_on_point);
-                let pending = pending_moves(&engine, owner);
+                let selected = engine
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner)
+                    .expect("already-near movement retains the current waiter");
                 assert_eq!(
-                    pending.len(),
-                    1,
+                    Some(selected.0),
+                    selected_waiter,
                     "the already-near shortcut retains the selected path waiter"
                 );
                 assert_eq!(
                     engine
                         .orders
                         .sequence_manager
-                        .get_element(pending[0].0, pending[0].1)
+                        .get_element(selected.0, selected.1)
                         .unwrap()
                         .command,
                     crate::element::Command::MoveWaiting,

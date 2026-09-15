@@ -1180,6 +1180,8 @@ impl EngineInner {
     /// Extracted so the iteration above can re-borrow `self` between steps.
     pub(super) fn launch_recorded_group_move_qa(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         pc: EntityId,
         destination: MapPoint,
         running: bool,
@@ -1245,7 +1247,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     pub(super) fn replay_macro_slot(
@@ -1260,7 +1262,7 @@ impl EngineInner {
             return;
         }
         if self
-            .replay_legacy_sequence_macro(assets, pc, slot)
+            .replay_legacy_sequence_macro(sim, assets, pc, slot)
             .is_some()
         {
             return;
@@ -1334,6 +1336,8 @@ impl EngineInner {
                     // SEEK/post-seek shape. Launch it directly rather than
                     // re-entering formation placement with a one-PC group.
                     self.launch_recorded_group_move_qa(
+                        sim,
+                        assets,
                         pc,
                         destination,
                         running,
@@ -1355,6 +1359,8 @@ impl EngineInner {
                         return false;
                     }
                     self.launch_recorded_group_move_qa(
+                        sim,
+                        assets,
                         pc,
                         destination,
                         running,
@@ -1403,6 +1409,7 @@ impl EngineInner {
                     let append_recovery = is_tail && command == Command::TakeCorpse;
                     self.apply_recorded_interaction_with_seek(
                         sim,
+                        assets,
                         pc,
                         target,
                         command,
@@ -1425,6 +1432,8 @@ impl EngineInner {
                         return false;
                     }
                     self.replay_recorded_target_interaction(
+                        sim,
+                        assets,
                         pc,
                         target,
                         command,
@@ -1445,7 +1454,7 @@ impl EngineInner {
                     // Original stores the already-resolved scroll sequence.
                     // Rebuild that sequence with its recorded gait instead
                     // of taking the live double-click fast-movement shortcut.
-                    self.apply_scroll_read_with_seek_inner(sim, pc, target, running, true);
+                    self.apply_scroll_read_with_seek_inner(sim, assets, pc, target, running, true);
                     continue;
                 }
                 crate::macro_store::QaReplayCommand::GroundTarget {
@@ -1549,7 +1558,7 @@ impl EngineInner {
                     // actor helpers instead to keep the replay scoped
                     // to a single PC.
                     if to_crouch {
-                        self.actor_make_crouched(sim, pc);
+                        self.actor_make_crouched(sim, assets, pc);
                     } else {
                         let posture = self
                             .get_entity(pc)
@@ -1557,13 +1566,13 @@ impl EngineInner {
                             .unwrap_or(crate::element::Posture::Upright);
                         match posture {
                             crate::element::Posture::Crouched => {
-                                self.actor_make_upright(sim, pc);
+                                self.actor_make_upright(sim, assets, pc);
                             }
                             crate::element::Posture::SimulatingBeggar => {
                                 let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sequence);
+                                self.launch_sequence(sim, assets, sequence);
                             }
                             crate::element::Posture::Spy
                             | crate::element::Posture::Cloaked
@@ -1571,13 +1580,13 @@ impl EngineInner {
                                 let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sequence);
+                                self.launch_sequence(sim, assets, sequence);
                             }
                             crate::element::Posture::Tree => {
                                 let elem = SequenceElement::new(1, Command::LeaveTree, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sequence);
+                                self.launch_sequence(sim, assets, sequence);
                             }
                             _ => {}
                         }
@@ -1605,6 +1614,7 @@ impl EngineInner {
             {
                 self.apply_interaction_with_seek_and_recovery(
                     sim,
+                    assets,
                     *actor,
                     *target,
                     Command::TakeCorpse,
@@ -1625,6 +1635,8 @@ impl EngineInner {
                 } = &cmd
             {
                 self.apply_drop_ale_at_with_recovery(
+                    sim,
+                    assets,
                     *actor,
                     *target_pos,
                     *running,
@@ -1662,7 +1674,7 @@ impl EngineInner {
             let mut recovery = crate::sequence::Sequence::default();
             self.append_posture_recovery(pc, &mut recovery);
             if !recovery.elements.is_empty() {
-                self.launch_sequence(recovery);
+                self.launch_sequence(sim, assets, recovery);
             }
         }
 
@@ -1723,11 +1735,11 @@ impl EngineInner {
                 panic!("legacy Quickito slot contains QuickAction::None")
             }
             crate::element_kinds::QuickAction::GoDown => {
-                self.actor_make_crouched(sim, pc);
+                self.actor_make_crouched(sim, assets, pc);
                 true
             }
             crate::element_kinds::QuickAction::GoUp => {
-                self.actor_make_upright(sim, pc);
+                self.actor_make_upright(sim, assets, pc);
                 true
             }
             crate::element_kinds::QuickAction::Interact => {
@@ -1790,13 +1802,13 @@ impl EngineInner {
             _ => false,
         };
         if has_scroll {
-            self.apply_scroll_read_with_seek(sim, pc, target, running);
+            self.apply_scroll_read_with_seek(sim, assets, pc, target, running);
             return true;
         }
         let Some(command) = determine_use_command(self, assets, pc, target) else {
             return false;
         };
-        self.apply_interaction_with_seek(sim, pc, target, command, running);
+        self.apply_interaction_with_seek(sim, assets, pc, target, command, running);
         true
     }
 
@@ -1806,6 +1818,7 @@ impl EngineInner {
     /// playback.
     pub(super) fn replay_legacy_sequence_macro(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc: EntityId,
         slot: u8,
@@ -1904,7 +1917,7 @@ impl EngineInner {
             actor.post_seek_sequence = Some(seek.into_post_seek());
         }
         self.remove_quick_action_titbits_for(pc, slot);
-        self.launch_sequence(action);
+        self.launch_sequence(sim, assets, action);
         self.players
             .macro_store
             .get_mut(pc)

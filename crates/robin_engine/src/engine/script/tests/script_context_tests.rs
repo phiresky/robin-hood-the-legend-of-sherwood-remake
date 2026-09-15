@@ -3,6 +3,213 @@ use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
+fn unlock_ai_filter_preserves_enclosing_scroll_context() {
+    use crate::engine::test_support::actors::TestActor;
+    use crate::engine::test_support::asm::*;
+    use crate::natives::{NativeFn, ScriptCallFrame, ScriptHandleCodec};
+    const A: u16 = 0xc000;
+    const B: u16 = 0xc004;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(
+        TestActor::soldier(crate::element::Posture::Upright)
+            .enemy_ai(Default::default())
+            .script_class("ScrollListener")
+            .build(),
+    );
+    let handle = ScriptHandleCodec::actor_handle(owner);
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let function = |name: &str, parameters| crate::scb::Function {
+        name: name.into(),
+        address: 0,
+        num_parameters: parameters,
+        size_of_return_value: 4,
+        size_of_parameters: parameters * 4,
+        size_of_volatile: 0,
+        size_of_temporary: 8,
+    };
+    let mut startup = empty_startup_class("scroll_context.scs".into());
+    startup.functions.push(function("Probe", 0));
+    startup.quads = vec![
+        q_begin_function(0, 2),
+        q_aff0_iconstant(A, handle),
+        q_native_param(A),
+        q_native_call(NativeFn::UnlockAI as u32),
+        q_native_call(NativeFn::ThisScroll as u32),
+        q_aff1_native_get_return(B),
+        q_aff0_iconstant(A, 2),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_return_val(A),
+        q_end_function(),
+    ];
+    let listener = ClassEntry {
+        source_file: "scroll_context.scs".into(),
+        class_name: "ScrollListener".into(),
+        size_of_member_variables: 0,
+        member_variables: vec![],
+        functions: vec![function("FilterAIEvent", 2)],
+        quads: vec![
+            q_begin_function(0, 2),
+            q_native_call(NativeFn::ThisActor as u32),
+            q_aff1_native_get_return(B),
+            q_aff0_iconstant(A, 0),
+            q_native_param(A),
+            q_native_param(B),
+            q_native_call(NativeFn::SetGlobal as u32),
+            q_native_call(NativeFn::ThisScroll as u32),
+            q_aff1_native_get_return(B),
+            q_aff0_iconstant(A, 1),
+            q_native_param(A),
+            q_native_param(B),
+            q_native_call(NativeFn::SetGlobal as u32),
+            q_aff0_iconstant(A, 0),
+            q_return_val(A),
+            q_end_function(),
+        ],
+    };
+    engine.scripts.install_mission(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![startup, listener],
+        })
+        .unwrap(),
+    );
+    engine.attach_script_bindings(&assets);
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .bind_actor(handle, "ScrollListener");
+    engine.scripts.globals = vec![0; 3];
+    let ai = engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap();
+    ai.script_locked = true;
+    ai.current_state = crate::ai::AiState::Default;
+    engine
+        .call_script_vm(
+            &crate::sim_rng::test_context(),
+            &assets,
+            ScriptVmKey::Global,
+            "Probe",
+            &[],
+            ScriptCallFrame::scroll(91),
+        )
+        .unwrap();
+    assert_eq!(engine.scripts.globals, vec![handle, 91, 91]);
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .script_locked
+    );
+    engine
+        .scripts
+        .mission
+        .as_ref()
+        .unwrap()
+        .assert_no_active_call_frames();
+}
+
+#[test]
+fn lock_ai_completion_preserves_receiver_and_scroll_for_nested_message() {
+    use crate::engine::test_support::actors::TestActor;
+    use crate::engine::test_support::asm::*;
+    use crate::natives::{NativeFn, ScriptCallFrame, ScriptHandleCodec};
+    use crate::sequence::{Sequence, SequenceElement};
+    const A: u16 = 0xc000;
+    const B: u16 = 0xc004;
+    let mut class = empty_startup_class("lock_context.scs".into());
+    class.functions.push(crate::scb::Function {
+        name: "ProcessMessage".into(),
+        address: 0,
+        num_parameters: 3,
+        size_of_return_value: 4,
+        size_of_parameters: 12,
+        size_of_volatile: 0,
+        size_of_temporary: 8,
+    });
+    class.quads = vec![
+        q_begin_function(0, 2),
+        q_native_call(NativeFn::ThisActor as u32),
+        q_aff1_native_get_return(B),
+        q_aff0_iconstant(A, 0),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_native_call(NativeFn::ThisScroll as u32),
+        q_aff1_native_get_return(B),
+        q_aff0_iconstant(A, 1),
+        q_native_param(A),
+        q_native_param(B),
+        q_native_call(NativeFn::SetGlobal as u32),
+        q_return_val(A),
+        q_end_function(),
+    ];
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(
+        TestActor::soldier(crate::element::Posture::Upright)
+            .enemy_ai(Default::default())
+            .build(),
+    );
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.scripts.install_mission(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![class],
+        })
+        .unwrap(),
+    );
+    engine.attach_script_bindings(&assets);
+    engine.scripts.globals = vec![0; 2];
+    let frame =
+        ScriptCallFrame::actor(ScriptHandleCodec::actor_handle(owner)).with_current_scroll(91);
+    let mut active = vec![ActiveScriptCall {
+        target: ScriptVmKey::Global,
+        frame,
+    }];
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new(
+        1,
+        crate::element::Command::LockAi,
+        Some(owner),
+    ));
+    let message = SequenceElement::new_send_message(
+        2,
+        None,
+        crate::element::SendMessageCommand::new(7, 0, 0),
+    );
+    sequence.append_element(message);
+    engine
+        .launch_sequence_inline(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &mut active,
+            sequence,
+        )
+        .unwrap();
+    assert_eq!(engine.scripts.globals, vec![frame.script_this(), 91]);
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .script_locked
+    );
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].frame, frame);
+}
+
+#[test]
 fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
     use crate::engine::test_support::actors::TestActor;
     use crate::engine::test_support::asm::*;
@@ -642,15 +849,11 @@ fn shipped_stare_natives_leave_view_direction_and_pending_work_untouched() {
         npc.eye_status = crate::element::EyeStatus::LookForward;
         npc.follow_target = None;
     }
-    let pending =
-        engine
-            .orders
-            .sequence_manager
-            .launch_element(crate::sequence::SequenceElement::new(
-                1,
-                crate::element::Command::Move,
-                Some(owner),
-            ));
+    let pending = engine.launch_element(
+        &sim,
+        &assets,
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(owner)),
+    );
     let actor = crate::natives::ScriptHandleCodec::actor_handle(owner);
 
     engine

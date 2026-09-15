@@ -122,7 +122,7 @@ fn drop_ammo_and_tick(
     let mut elem = SequenceElement::new_generic(1, crate::element::Command::DropAmmo, Some(pc_id));
     elem.set_property(Field::ActionId, FieldValue::Integer(Action::Bow as u32));
     elem.set_property(Field::Amount, FieldValue::Integer(amount));
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -140,11 +140,11 @@ fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
     engine.mission_domain.campaign.characters[0]
         .status
         .set_ammo(Action::Ale, 1);
-    engine.launch_element(SequenceElement::new(
-        1,
-        crate::element::Command::DropAle,
-        Some(pc_id),
-    ));
+    engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, crate::element::Command::DropAle, Some(pc_id)),
+    );
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();

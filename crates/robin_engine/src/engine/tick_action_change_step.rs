@@ -20,7 +20,6 @@ pub(super) struct ActionChangeSlotCtx<'a> {
     pub(super) sim: &'a crate::sim_rng::SimulationContext,
     pub(super) assets: &'a LevelAssets,
     pub(super) entity_id: EntityId,
-    pub(super) slot: usize,
 }
 
 /// Selected order identity latched at actor-update entry.
@@ -65,12 +64,7 @@ impl EngineInner {
         &mut self,
         ctx: ActionChangeSlotCtx<'_>,
     ) -> bool {
-        let ActionChangeSlotCtx {
-            sim,
-            assets,
-            entity_id,
-            ..
-        } = ctx;
+        let ActionChangeSlotCtx { entity_id, .. } = ctx;
         let frozen_without_order = self
             .world
             .entities
@@ -83,16 +77,6 @@ impl EngineInner {
                 .current_order_for_actor(entity_id)
                 .is_none();
         if frozen_without_order {
-            self.drain_script_synchronous_actions(
-            sim,
-            assets,
-            &mut Vec::new(),
-        )
-        .unwrap_or_else(|error| {
-            panic!(
-                "frozen actor {entity_id:?} order-advancement boundary failed to drain synchronous sequence work: {error:?}"
-            )
-        });
             // The actor update refreshes the order after applying
             // the delayed position. With no selected order it
             // clears the pointer, then an execution freeze returns
@@ -122,27 +106,18 @@ impl EngineInner {
             sim,
             assets,
             entity_id,
-            slot,
         } = ctx;
         // The engine tick updates every element regardless of
         // whether it is active. The actor update
         // then installs Wait whenever its order is empty. Active
         // controls world presence/rendering, not sequence time.
-        self.ensure_wait_element(entity_id);
+        self.ensure_wait_element(sim, assets, entity_id);
         // The original game's wait-to-sequence-launch path then
         // Sequence launch through element dispatch to instruction is
         // synchronous. A command registered for later manager or
         // deferred processing cannot suppress this transient
         // Execute: Wait may publish its START sprite row before
         // that later command interrupts it in the same frame.
-        // Preexisting Rust work is detached above, so this drain
-        // consumes only the newly launched Wait.
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-    .unwrap_or_else(|error| {
-        panic!(
-            "actor {entity_id:?} Wait initialization at legacy slot {slot} failed to drain its synchronous sequence work: {error:?}"
-        )
-    });
         observe_actor_animation_boundary(ActorAnimationBoundaryPhase::WaitReady(entity_id));
 
         // The actor update starts a move after lazy Wait
@@ -586,7 +561,6 @@ impl EngineInner {
             sim,
             assets,
             entity_id,
-            slot,
         } = ctx;
         let ActionChangeEntryOrder {
             selected_order,
@@ -632,7 +606,7 @@ impl EngineInner {
                         "ENTER_SWORDFIGHT corpse-exit Execute owner {entity_id:?} has no carried body"
                     )
                 });
-            self.force_drop_carried_corpse_instant(entity_id);
+            self.force_drop_carried_corpse_instant(sim, assets, entity_id);
             Some(super::animation::ActorExecuteResult {
                 order_type: crate::order::OrderType::TransitionCarryingCorpseWaitingUpright,
                 entry_seq_id: seq_id,
@@ -718,7 +692,7 @@ impl EngineInner {
         // its legacy slot. Preserve that ordering relative to
         // sword hits performed by later-created actors.
         if let Some(result) = execute_result.as_mut() {
-            self.tick_parry_counter_for_execute(entity_id, result);
+            self.tick_parry_counter_for_execute(sim, assets, entity_id, result);
         }
 
         // The original actor update modifies the just-produced
@@ -803,12 +777,7 @@ impl EngineInner {
         entry: ActionChangeEntryOrder,
         motion: ActionChangeSpecializedMotion,
     ) {
-        let ActionChangeSlotCtx {
-            sim,
-            assets,
-            entity_id,
-            slot,
-        } = ctx;
+        let ActionChangeSlotCtx { entity_id, .. } = ctx;
         let ActionChangeEntryOrder {
             selected_order,
             selected_order_type,
@@ -825,12 +794,7 @@ impl EngineInner {
         // Terminated to the base actor update. Only after that
         // synchronous decision tick finishes may order advancement/completion
         // promote the actor's successor order.
-        self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
-    .unwrap_or_else(|error| {
-        panic!(
-            "actor {entity_id:?} completion at legacy slot {slot} failed to drain synchronous sequence work: {error:?}"
-        )
-    });
+
         let selected_element_state = selected_order.and_then(|(entry_seq, entry_idx, _)| {
             self.orders
                 .sequence_manager
@@ -1046,17 +1010,13 @@ impl EngineInner {
         installed_tail_order_type
     }
 
-    /// Post-derived-tail cleanup: execute latch clear, corpse intersection,
-    /// and the synchronous-work leak check.
+    /// Clear the execution latch and update intersecting corpses after the derived tail.
     pub(super) fn action_change_slot_tail(
         &mut self,
         ctx: ActionChangeSlotCtx<'_>,
         entry: ActionChangeEntryOrder,
-        preexisting_sequence_work: Vec<crate::sequence::PendingSyncEntry>,
     ) {
-        let ActionChangeSlotCtx {
-            entity_id, slot, ..
-        } = ctx;
+        let ActionChangeSlotCtx { entity_id, .. } = ctx;
         let ActionChangeEntryOrder { selected_order, .. } = entry;
         if let Some(entity) = self.world.entities.get(entity_id) {
             super::animation::direction_provenance_snapshot(
@@ -1082,17 +1042,5 @@ impl EngineInner {
         // boundary before the next creation slot samples this
         // actor for anti-collision.
         self.process_corpse_intersection_update_for(entity_id);
-
-        let leaked_slot_work = self
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions();
-        assert!(
-            leaked_slot_work.is_empty(),
-            "actor {entity_id:?} leaked synchronous sequence work after ActionChange at legacy slot {slot}: {leaked_slot_work:?}"
-        );
-        self.orders
-            .sequence_manager
-            .restore_pending_synchronous_actions(preexisting_sequence_work);
     }
 }

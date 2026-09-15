@@ -243,7 +243,7 @@ impl EngineInner {
                         };
                         *destination = crate::coordinates::MapPoint::new(point.x, point.y);
                         *flags = crate::sequence::MoveFlags::MAP;
-                        self.launch_element(movement);
+                        self.launch_element(sim, assets, movement);
                     } else {
                         self.duty_go_to(sim, assets, owner, destination, GotoFlags::RUN);
                         self.observation_timer(owner, 30);

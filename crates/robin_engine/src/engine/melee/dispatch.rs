@@ -225,8 +225,8 @@ impl EngineInner {
                 self.trace_thrust_a_admission(assets, [owner, target], can_enter, seq_id, elem_idx);
             }
             if can_enter {
-                self.set_as_new_principal_opponent(assets, owner, target);
-                self.set_as_new_principal_opponent(assets, target, owner);
+                self.set_as_new_principal_opponent(sim, assets, owner, target);
+                self.set_as_new_principal_opponent(sim, assets, target, owner);
             } else {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 return OwnerActionBarrier::Skip;
@@ -362,7 +362,7 @@ impl EngineInner {
                     crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(id.get()),
                     _ => None,
                 });
-            match self.try_launch_table_swordfight_move(owner, opp, jl_idx) {
+            match self.try_launch_table_swordfight_move(sim, assets, owner, opp, jl_idx) {
                 TableFightMove::Abort => {
                     self.element_interrupted(
                         sim,
@@ -499,6 +499,8 @@ impl EngineInner {
     ///
     pub(super) fn try_launch_table_swordfight_move(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         opp: EntityId,
         jl_idx: Option<u32>,
@@ -612,7 +614,7 @@ impl EngineInner {
             *tolerance = 0.0;
         }
         move_elem.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        self.launch_element(move_elem);
+        self.launch_element(sim, assets, move_elem);
         TableFightMove::Launched
     }
 
@@ -1579,7 +1581,11 @@ mod shield_order_tests {
             Command::RaiseShield,
             Some(owner),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+        let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
 
         // The posture transition has already prepended this order. Translation
         // may append RaisingShield, but Original does not stand the actor up
@@ -1647,7 +1653,11 @@ mod shield_order_tests {
             Command::RaiseShieldInstantly,
             Some(owner),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+        let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
 
         engine.dispatch_shield_command(
             &sim,
@@ -1716,7 +1726,11 @@ mod shield_order_tests {
             Command::ParryShield,
             Some(owner),
         ));
-        let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+        let sequence_id = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
 
         engine.dispatch_shield_command(
             &sim,

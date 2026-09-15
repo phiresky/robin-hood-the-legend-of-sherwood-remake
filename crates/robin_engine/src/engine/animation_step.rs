@@ -942,7 +942,8 @@ impl ActorAnimationStepCtx<'_> {
         if owner.is_soldier() {
             match view.anim_type {
                 OrderType::WaitingUpright if owner.enemy_ai().is_some() => {
-                    self.engine.execute_waiting_upright(self.entity_id);
+                    self.engine
+                        .execute_waiting_upright(self.sim, self.assets, self.entity_id);
                 }
                 OrderType::WaitingAlerted => {
                     self.engine
@@ -1093,7 +1094,7 @@ impl ActorAnimationStepCtx<'_> {
             && anim_type == OrderType::WaitingCarryingOnShoulders
             && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
         {
-            self.engine.actor_wait(carried_id);
+            self.engine.actor_wait(self.sim, self.assets, carried_id);
         }
         let entity = self
             .engine
@@ -1972,13 +1973,17 @@ impl ActorAnimationStepCtx<'_> {
                     .execute_non_interruptable_lifts((seq_id, elem_idx));
             }
             if play_anim_freeze_completed(motion_state, cur_command, anim_type) {
-                self.engine.execute_play_anim_frozen((
-                    entity_id,
-                    cur_command_level.unwrap_or(1),
-                    requested_custom_animation.unwrap_or_else(|| {
-                        panic!("PlayAnimFreeze for {entity_id:?} has no AnimationId property")
-                    }),
-                ));
+                self.engine.execute_play_anim_frozen(
+                    self.sim,
+                    self.assets,
+                    (
+                        entity_id,
+                        cur_command_level.unwrap_or(1),
+                        requested_custom_animation.unwrap_or_else(|| {
+                            panic!("PlayAnimFreeze for {entity_id:?} has no AnimationId property")
+                        }),
+                    ),
+                );
             }
         }
     }

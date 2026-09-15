@@ -509,47 +509,16 @@ impl NativeContext<'_, '_> {
     /// the VM. The scripted thanks action launches a sequence inline; buffering the
     /// sequence until callback exit made later natives observe stale sequence
     /// state and assigned sequence IDs at the wrong command boundary.
-    fn launch_script_sequence(&mut self, mut sequence: Sequence, native_return: i32) {
-        for element in &mut sequence.elements {
-            if element.priority == crate::sequence::SequencePriority::NotYetSet {
-                element.priority = if element.executed_immediately() {
-                    crate::sequence::SequencePriority::Normal
-                } else {
-                    match element.owner.and_then(|id| self.entities.get(id)) {
-                        Some(entity) if entity.kind().is_actor() => {
-                            crate::element_priority::determine_priority(
-                                crate::element_priority::ActorPriorityContext {
-                                    kind: entity.kind(),
-                                    is_dead: entity.is_dead(),
-                                    is_unconscious: entity
-                                        .human_data()
-                                        .is_some_and(|human| human.unconscious),
-                                },
-                                element,
-                            )
-                        }
-                        _ => crate::sequence::SequencePriority::Normal,
-                    }
-                };
-            }
-        }
-        let sequence_manager = self
+    fn launch_script_sequence(&mut self, sequence: Sequence, native_return: i32) {
+        let id = self
             .sequence_manager
             .as_mut()
-            .expect("script sequence launch requires a live SequenceManager");
-        sequence_manager.launch_sequence(sequence);
-        if let Some(action) = sequence_manager.pop_pending_immediate_action() {
-            let continuation = sequence_manager.take_pending_synchronous_actions();
-            self.pending_yield = Some(crate::interp::NativeYield {
-                operation: crate::interp::NativeOperation::SequenceAction(
-                    crate::interp::SynchronousSequenceOperation {
-                        action,
-                        continuation,
-                    },
-                ),
-                resume: crate::interp::ResumePolicy::Fixed(native_return),
-            });
-        }
+            .expect("script sequence launch requires a live SequenceManager")
+            .insert_sequence(sequence);
+        self.pending_yield = Some(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::LaunchSequence(id),
+            resume: crate::interp::ResumePolicy::Fixed(native_return),
+        });
     }
 
     /// Whether this call may yield an engine-owned synchronous operation.

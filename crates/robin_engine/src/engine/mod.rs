@@ -108,7 +108,7 @@ pub use rollback_safe::{
     MinimapWidgetSetup, MissionBootstrapCompletion, ParityReplaySetup, PresentationEngine,
     SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
 };
-pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
+pub use scroll_reveal::{BeggarRemark, ScrollStatus};
 pub use seat::SeatState;
 pub use selection::Stature;
 pub use types::*;
@@ -132,7 +132,6 @@ use crate::ai::AiGlobalState;
 use crate::element::{Entity, EntityId};
 use crate::fast_find_grid::FastFindGrid;
 use crate::markers::GroundMark;
-use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::mission_stat::MissionStat;
 use crate::order::OrderType;
 use crate::pathfinder::PathFinder;
@@ -693,11 +692,6 @@ impl EngineInner {
         // entity-side half of that step.
         self.initialize_all_scrolls(sim);
 
-        // Notify UI to update stature display
-        self.orders
-            .messenger
-            .send(Message::new(MessageType::Simple(SimpleMessage::Stature)));
-
         // Initialize AI for all NPCs and global AI state. Runs here —
         // not pre-bitmap — because `init_one_ai`'s `TestIfPathIsFine`
         // reads `fast_grid.map_bbox` + motion lines, and the
@@ -916,7 +910,7 @@ impl EngineInner {
 
         let (living, dead) = self.count_soldiers_at_quit();
 
-        self.reset_all_pc_comas(assets);
+        self.reset_all_pc_comas(sim, assets);
 
         if won && self.mission_domain.campaign().current_mission_idx.is_some() {
             // The LIVING/DEAD/SCORE value additions are gated on
@@ -1049,7 +1043,11 @@ impl EngineInner {
     ///
     /// Iterates all PCs and calls ResetComa on any that are in coma
     /// (amulet death-save).
-    pub(crate) fn reset_all_pc_comas(&mut self, assets: &LevelAssets) {
+    pub(crate) fn reset_all_pc_comas(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let coma_pc_ids: Vec<EntityId> = {
             let campaign = self.mission_domain.campaign();
             self.world
@@ -1067,7 +1065,7 @@ impl EngineInner {
                 .collect()
         };
         for pc_id in coma_pc_ids {
-            self.reset_coma(assets, pc_id);
+            self.reset_coma(sim, assets, pc_id);
         }
     }
 
@@ -1943,6 +1941,8 @@ impl EngineInner {
     /// immediate command whitelist.
     pub(crate) fn launch_element(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
         let attentive_owner = elem.owner.filter(|_| {
@@ -1961,7 +1961,9 @@ impl EngineInner {
                 format_args!("attentive command registration"),
             );
         }
-        let seq_id = self.orders.sequence_manager.launch_element(elem);
+        let seq_id = self
+            .launch_element_inline(sim, assets, &mut Vec::new(), elem)
+            .unwrap_or_else(|error| panic!("sequence element launch failed: {error:?}"));
         if let Some(owner) = attentive_owner {
             self.trace_attentive_owner_handoff(
                 "launch_after",
@@ -1973,174 +1975,26 @@ impl EngineInner {
         seq_id
     }
 
-    /// Register an owned element without running its instruction boundary
-    /// inline.
-    ///
-    /// Actor execution callbacks launch sequence elements, which only
-    /// appends to the Original sequence-manager queue. The actor may still
-    /// finish its current order before the manager instructs the registered
-    /// element. Its unresolved priority is deliberately preserved here:
-    /// resolving a wait-priority element would route it through Rust's
-    /// synchronous wait queue and expose its instruction handling before the derived
-    /// Human/NPC tail. This explicit name remains at older actor-execute call
-    /// sites; the ordinary [`Self::launch_element`] wrapper now has the same
-    /// deferred semantics for every sequence-element launch.
-    pub(crate) fn register_owned_element_deferred(
-        &mut self,
-        elem: crate::sequence::SequenceElement,
-    ) -> crate::sequence::SequenceId {
-        assert!(
-            elem.owner.is_some(),
-            "register_owned_element_deferred requires an actor owner"
-        );
-        self.orders.sequence_manager.launch_element(elem)
-    }
-
-    /// Direct instruction handling for an already-admitted owned element:
-    /// resolve priority, launch via the sequence manager, stamp the actor's
-    /// current posture / action state onto the element, then arbitrate
-    /// against the actor's currently-executing element. This is not the
-    /// equivalent of the original game's sequence-element launch, which merely
-    /// registers ordinary work for the manager update; use it only when
-    /// the caller is already modelling an instruction boundary directly.
-    ///
-    /// Caller invariant: `elem.owner` is `Some`.  The returned
-    /// `SequenceId` is for the freshly-minted single-element sequence;
-    /// the element sits at index 0.
+    /// Admit an owned fixture element at an instruction boundary using the
+    /// same priority arbitration and transition stamping as scheduled work.
     #[cfg(test)]
     pub(crate) fn launch_element_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        mut elem: crate::sequence::SequenceElement,
+        elem: crate::sequence::SequenceElement,
     ) -> crate::sequence::SequenceId {
-        debug_assert!(
-            elem.owner.is_some(),
-            "launch_element_for_owner requires elem.owner"
-        );
-        let mut owner = elem.owner.expect("owner present");
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            command = ?elem.command,
-            "launch_element_for_owner enter"
-        );
-
-        // PC on a carrier's shoulders, receiving a Move-to-jump command,
-        // delegates the move to the carrier (with the TO_JUMP + SEEK
-        // flags stripped).  The net effect: the carrier walks to the
-        // jump point and the PC rides along on their shoulders.
-        self.redirect_move_to_jump_if_carried(&mut elem, &mut owner);
-
-        // Unfreeze actor on any incoming command, so a
-        // `FreezeExecution`'d actor can be resumed by dispatching
-        // a new element (e.g. scripted Wait on a held PC).
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.execution_frozen = false;
-        }
-
-        // `Command::Null` short-circuits to Terminated without running
-        // priority / transition / translate.
-        if elem.command == crate::element::Command::Null {
-            let seq_id = self.orders.sequence_manager.launch_element(elem);
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, 0);
-            return seq_id;
-        }
-
-        // Human-actor instruction retains repeated PC bow shots before
-        // delegating to actor instruction handling. Keep the registered element wholly
-        // untouched: priority resolution, transition stamps, generated
-        // orders, and ordinary arbitration all belong to the later retry.
-        if self.pc_should_hold_shoot_bow(owner, elem.command) {
-            let seq_id = self.orders.sequence_manager.launch_element(elem);
-            self.orders
-                .sequence_manager
-                .hold_deferred_element(seq_id, 0);
-            self.queue_pc_shoot_bow(owner, crate::sequence::SequenceElementRef::new(seq_id, 0));
-            return seq_id;
-        }
-
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            command = ?elem.command,
-            "before resolve priority"
-        );
-        self.resolve_element_priority(&mut elem);
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            command = ?elem.command,
-            priority = ?elem.priority,
-            "after resolve priority"
-        );
-        let seq_id = self.orders.sequence_manager.launch_element(elem);
-        let elem_idx = 0;
-        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, elem_idx, "registered");
-
-        // Stamp posture / action-state as the after-transition defaults
-        // before any priority or transition logic runs.  See
-        // `stamp_element_transition_state` for the rationale.
-        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "before stamp");
-        self.stamp_element_transition_state(owner, seq_id, elem_idx);
-        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "after stamp");
-
-        // NonInterruptable current short-circuit: postpone new (or mark
-        // IMPOSSIBLE for PASS_DOOR+MOVE) without running
-        // transition generation.
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            ?seq_id,
-            "before non_interruptable_guard"
-        );
-        if self.non_interruptable_guard(sim, assets, owner, seq_id, elem_idx) {
-            tracing::trace!(
-                target: "parity_launch",
-                ?owner,
-                ?seq_id,
-                "non_interruptable_guard accepted"
-            );
-            return seq_id;
-        }
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            ?seq_id,
-            "after non_interruptable_guard"
-        );
-
-        // Auto-insert the exit / posture / enter transition sub-orders
-        // before the command's own Translate runs.  Returning false
-        // means no valid transition exists — set the element Impossible
-        // and skip arbitration.
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            ?seq_id,
-            "before generate_transition"
-        );
-        if !self.generate_transition(sim, assets, owner, seq_id, elem_idx) {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return seq_id;
-        }
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            ?seq_id,
-            "after generate_transition"
-        );
-        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "before arbitrate");
-
-        self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-        tracing::trace!(target: "parity_launch", ?owner, ?seq_id, "after arbitrate");
-        tracing::trace!(
-            target: "parity_launch",
-            ?owner,
-            ?seq_id,
-            "launch_element_for_owner exit"
+        let owner = elem.owner.expect("instruction fixture requires an owner");
+        let seq_id = self.orders.sequence_manager.insert_element(elem);
+        self.orders.sequence_manager.start_sequence_level(seq_id);
+        self.dispatch_sequence_phase_action(
+            sim,
+            assets,
+            crate::sequence::SequenceAction::InstructOwner {
+                owner,
+                sequence_id: seq_id,
+                element_index: 0,
+            },
         );
         seq_id
     }
@@ -2404,56 +2258,6 @@ impl EngineInner {
         }
     }
 
-    /// PC-on-shoulders MoveToJump redirect.
-    ///
-    /// When a PC is riding another PC's shoulders and a Move command
-    /// with `TO_JUMP` fires, hand the element off to the carrier with
-    /// `TO_JUMP` and `SEEK` cleared — the carrier walks to the jump
-    /// point with the rider in tow.
-    #[cfg(test)]
-    fn redirect_move_to_jump_if_carried(
-        &self,
-        elem: &mut crate::sequence::SequenceElement,
-        owner: &mut EntityId,
-    ) {
-        use crate::element::{Command, Posture};
-        use crate::sequence::{MoveFlags, SequenceElementData};
-
-        if elem.command != Command::Move {
-            return;
-        }
-        let entity = match self.get_entity(*owner) {
-            Some(e) => e,
-            None => return,
-        };
-        if !entity.is_pc() {
-            return;
-        }
-        if entity.element_data().posture() != Posture::OnShoulders {
-            return;
-        }
-        let Some(carrier_id) = entity.human_data().and_then(|h| h.carrier) else {
-            // The carrier is expected to be present here; if the
-            // posture claims OnShoulders but no carrier is tracked,
-            // leave the element on the PC and log.
-            tracing::warn!(
-                ?owner,
-                "redirect_move_to_jump_if_carried: OnShoulders posture but no carrier"
-            );
-            return;
-        };
-        let SequenceElementData::Movement { flags, .. } = &mut elem.data else {
-            return;
-        };
-        if !flags.contains(MoveFlags::TO_JUMP) {
-            return;
-        }
-        // Strip TO_JUMP and SEEK before handing to the carrier.
-        *flags &= !(MoveFlags::TO_JUMP | MoveFlags::SEEK);
-        elem.owner = Some(carrier_id);
-        *owner = carrier_id;
-    }
-
     /// Apply the PC-on-shoulders movement redirect when the registered
     /// element reaches instruction, matching original-game behavior.
     fn redirect_queued_move_to_jump_if_carried(
@@ -2590,11 +2394,16 @@ impl EngineInner {
     /// a cross-entity state change (drop corpse, post-tie, post-combat)
     /// so its AI re-enters the default loop instead of continuing the
     /// pre-event command.
-    pub(crate) fn actor_wait(&mut self, owner: EntityId) -> crate::sequence::SequenceId {
+    pub(crate) fn actor_wait(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) -> crate::sequence::SequenceId {
         let mut wait_elem =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(owner));
         wait_elem.priority = crate::sequence::SequencePriority::Wait;
-        self.launch_element(wait_elem)
+        self.launch_element(sim, assets, wait_elem)
     }
 
     /// Freeze an actor's execution and cascade-interrupt the
@@ -2643,20 +2452,6 @@ impl EngineInner {
         }
     }
 
-    /// Drain deferred hero-speech triggers queued from
-    /// `arbitrate_instruct`.  The speech is fired as soon as the
-    /// Instruction handling completes for `SpeakHeroReachDestination` /
-    /// `SpeakVipsAreForRobin`, but the arbitrate path doesn't carry
-    /// `&LevelAssets`, so we accumulate and drain here (called at the
-    /// top of `perform_hourglass` alongside the other `drain_pending_*`
-    /// helpers).
-    pub(crate) fn drain_pending_hero_speeches(&mut self, assets: &crate::engine::LevelAssets) {
-        let queued = std::mem::take(&mut self.orders.pending_hero_speeches);
-        for (pc_id, expression) in queued {
-            self.hero_speaking(assets, pc_id, expression);
-        }
-    }
-
     /// Apply PC instruction handling before delegating to the base actor.
     /// Returns true when the instruction completes without delegation.
     ///
@@ -2689,11 +2484,6 @@ impl EngineInner {
                 .and_then(Entity::human_data)
                 .is_some_and(|human| !human.opponents.is_empty())
             {
-                self.orders.messenger.send(crate::messenger::Message::new(
-                    crate::messenger::MessageType::Simple(
-                        crate::messenger::SimpleMessage::StatureChangeEnd,
-                    ),
-                ));
                 self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                 return true;
             }
@@ -2727,7 +2517,7 @@ impl EngineInner {
             _ => return false,
         };
         self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-        self.orders.pending_hero_speeches.push((owner, expression));
+        self.hero_speaking(assets, owner, expression);
         true
     }
 
@@ -2740,9 +2530,12 @@ impl EngineInner {
     /// registration and dispatch.
     pub(crate) fn launch_sequence(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         seq: crate::sequence::Sequence,
     ) -> crate::sequence::SequenceId {
-        self.orders.sequence_manager.launch_sequence(seq)
+        self.launch_sequence_inline(sim, assets, &mut Vec::new(), seq)
+            .unwrap_or_else(|error| panic!("sequence launch failed: {error:?}"))
     }
 
     /// Find the actor's currently-executing sequence element.  An
@@ -2957,7 +2750,7 @@ impl EngineInner {
         // be registered after that successor. Rust defers condolence cards to
         // avoid re-entrant borrows, so explicitly close this owner's terminal
         // stack before launching the post-seek tail.
-        self.launch_sequence(post_seek.into_sequence());
+        self.launch_sequence(sim, assets, post_seek.into_sequence());
         true
     }
 
@@ -3075,13 +2868,17 @@ impl EngineInner {
     /// resolved eagerly.
     pub(crate) fn launch_damage(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         actor: EntityId,
         hp: u16,
         concussion: u16,
     ) -> crate::sequence::SequenceId {
-        self.launch_sequence(crate::sequence::Sequence::single_damage(
-            actor, hp, concussion,
-        ))
+        self.launch_sequence(
+            sim,
+            assets,
+            crate::sequence::Sequence::single_damage(actor, hp, concussion),
+        )
     }
 
     // ─── Test-only helpers ────────────────────────────────────────

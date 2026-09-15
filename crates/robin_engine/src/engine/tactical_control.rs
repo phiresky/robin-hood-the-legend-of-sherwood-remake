@@ -1701,7 +1701,7 @@ mod tests {
         let mut command =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Point, Some(soldier));
         command.priority = crate::sequence::SequencePriority::Preference;
-        let sequence = engine.launch_element(command);
+        let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, command);
         engine.prepare_tactical_player_combat_command(
             &crate::sim_rng::test_context(),
             &assets,

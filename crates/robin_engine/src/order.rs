@@ -559,18 +559,11 @@ pub struct Order {
     pub target_actor: Option<u32>,
     /// Whether to compute facing direction from movement.
     pub compute_direction: bool,
-    /// This PC distance order is the copy which finishes the unreached target
-    /// of an exhausted final-frame transition. The original game exposes its first
-    /// walking tick as in-progress motion, so the walking start action
-    /// state side effect must remain suppressed once for that booking.
+    /// Copied distance order finishing an exhausted transition's target.
+    /// Until its first execution, lazy door steps are inserted around this
+    /// marker to keep the copy immediately before its authored successor.
     #[serde(default)]
     pub transition_distance_continuation: bool,
-    /// The preceding PC transition-distance continuation deliberately hid
-    /// its first walking `START`. When this authored successor is booked,
-    /// it must establish the deferred movement action state if it remains
-    /// short of its goal, independently of the sprite/wrapper motion result.
-    #[serde(default)]
-    pub deferred_movement_state_start: bool,
     /// Tolerance for reaching the destination.
     pub tolerance: f32,
     /// Legacy serialized AI-lock value. The original game initializes this
@@ -631,7 +624,6 @@ impl Order {
             target_actor: None,
             compute_direction: true,
             transition_distance_continuation: false,
-            deferred_movement_state_start: false,
             tolerance: 0.0,
             lock_ai: false,
             apply_transition_at_this_point: false,

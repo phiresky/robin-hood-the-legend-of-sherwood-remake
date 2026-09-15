@@ -4,7 +4,7 @@ use super::*;
 
 impl EngineInner {
     /// Run mission gates, the once-per-second script, clock advancement, and
-    /// the tick's messenger drain. Returning a code short-circuits every later
+    /// reinforcement arrivals. Returning a code short-circuits every later
     /// phase exactly where the monolithic implementation did.
     ///
     /// The original game performs
@@ -235,21 +235,17 @@ impl EngineInner {
         }
 
         // ── Send reinforcement messages ──────────────────────────
-        self.tick_pc_reinforcement_arrivals();
-
-        // ── Process messenger (engine-state messages) ────────────
-        self.drain_engine_state_messages(sim, assets);
+        self.tick_pc_reinforcement_arrivals(sim, assets);
 
         None
     }
 
-    /// For every PC, decrement `time_till_reinforcement` and, the tick it
-    /// hits zero, enqueue a reinforcement spawn directly (skipping the
-    /// messenger round-trip the original used).
-    /// `drain_pending_reinforcements` already handles the
-    /// `&mut LevelAssets` needed for sprite loading, and the intermediate
-    /// message was never observed by anything else.
-    fn tick_pc_reinforcement_arrivals(&mut self) {
+    /// Advance each reinforcement timer and create its replacement at expiry.
+    fn tick_pc_reinforcement_arrivals(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) {
         let pc_ids_for_reinf: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids_for_reinf {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
@@ -267,48 +263,20 @@ impl EngineInner {
                 }
             };
             if arrived {
-                self.orders.pending_reinforcements.push(Some(pc_id));
+                self.create_reinforcement(sim, assets, Some(pc_id));
             }
         }
     }
 
-    /// Handle pending messages that mutate engine state. Other messages
-    /// (UI/mission flow) are left in the queue for their respective
-    /// consumers (UI layer, tests, etc.) to observe. We only consume the
-    /// ones that actually affect engine state.
-    fn drain_engine_state_messages(
+    /// Deliver simulation messages at the sending statement, including nested calls.
+    pub(crate) fn forward_message(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        msg: crate::messenger::Message,
     ) {
-        // Message forwarding is synchronous and recursive:
-        // a message emitted while handling another message completes
-        // before the outer call resumes.  Keep host/UI-only messages for
-        // their downstream consumer, but prepend newly emitted messages
-        // to the remaining engine work so their observable state changes
-        // happen depth-first in this frame.
-        let mut messages: std::collections::VecDeque<_> = self.orders.messenger.drain().into();
-        let mut downstream = std::collections::VecDeque::new();
-        while let Some(msg) = messages.pop_front() {
-            // The two handlers are one match split in arm order: a message
-            // reaches the second only if no arm of the first matched.
-            if let Some(msg) = self.handle_selection_and_macro_message(sim, assets, msg)
-                && let Some(msg) = self.handle_input_and_action_message(sim, assets, msg)
-            {
-                // Other messages are consumed by downstream systems
-                // (UI layer, mission flow). Re-enqueue so those
-                // consumers can still observe them.
-                downstream.push_back(msg);
-            }
-
-            // Preserve the send order of recursive calls while placing
-            // them ahead of pre-existing sibling messages.
-            for nested in self.orders.messenger.drain().into_iter().rev() {
-                messages.push_front(nested);
-            }
-        }
-        for msg in downstream {
-            self.orders.messenger.send(msg);
+        if let Some(msg) = self.handle_selection_and_macro_message(sim, assets, msg) {
+            self.handle_input_and_action_message(sim, assets, msg);
         }
     }
 
@@ -363,63 +331,24 @@ impl EngineInner {
                 let was_recording = !self.players.qa_recording_for.is_empty();
                 self.stop_recording_macro();
 
-                // Post-process: re-select the action that was
-                // armed before recording started.  Apply the
-                // saved action to each selected PC directly —
-                // we do not route MSG_SELECT_ACTION through
-                // the messenger drain.
                 if was_recording {
                     let restore = self.players.action_before_recording_macro;
-                    self.players.action_before_recording_macro = crate::profiles::Action::NoAction;
-                    self.players.seats[0].selected_action = restore;
-                    for id in self.players.seats[0].selection.clone() {
-                        if let Some(entity) = self.get_entity_mut(id)
-                            && let Some(pc) = entity.pc_data_mut()
-                        {
-                            pc.current_action = restore;
-                        }
-                    }
-                    // Emit the message for script /
-                    // edge-subscriber observation.
-                    self.orders
-                        .messenger
-                        .send(crate::messenger::Message::pc_with_value(
+                    self.forward_message(
+                        sim,
+                        assets,
+                        crate::messenger::Message::pc_with_value(
                             crate::messenger::PcMessage::SelectAction,
                             None,
                             restore as u32,
-                        ));
+                        ),
+                    );
                 }
             }
+
             MessageType::Pc(crate::messenger::PcMessage::UpdateRecordingMacro, _) => {
-                // When a recording is live, end it on PCs no
-                // longer selected and start it on any newly-
-                // selected PC — keeping the slot index stable
-                // across selection changes.
-                if !self.players.qa_recording_for.is_empty() {
-                    let slot = self.players.qa_recording_slot;
-                    let selected: Vec<crate::element::EntityId> =
-                        self.players.seats[0].selection.clone();
-                    // End on PCs that left the selection.
-                    let current = self.players.qa_recording_for.clone();
-                    for pc_id in &current {
-                        if !selected.contains(pc_id)
-                            && let Some(state) = self.players.macro_store.get_mut(*pc_id)
-                        {
-                            state.stop_recording();
-                        }
-                    }
-                    // Start on PCs newly selected.
-                    for pc_id in &selected {
-                        if !current.contains(pc_id) {
-                            self.players
-                                .macro_store
-                                .get_or_insert(*pc_id)
-                                .begin_recording(slot);
-                        }
-                    }
-                    self.players.qa_recording_for = selected;
-                }
+                self.update_recording_after_selection_change();
             }
+
             MessageType::Pc(crate::messenger::PcMessage::SendReinforcement, pc) => {
                 // `MSG_SEND_REINFORCEMENT` plays the "new peasant
                 // called" jingle and sets the PC's cooldown to
@@ -463,8 +392,6 @@ impl EngineInner {
             // all route through `select_pc` with the
             // appropriate (multi-select, speak) flags.
             MessageType::Pc(crate::messenger::PcMessage::SelectCharacter, Some(pc_id)) => {
-                // Tick messenger drains: ambient single-seat
-                // semantics; LOCAL seat for now.
                 self.select_pc(sim, assets, 0, pc_id, false, false);
                 self.emit_character_selection_followups();
             }
@@ -528,6 +455,17 @@ impl EngineInner {
             // selection-drop plus the Sherwood interface flag.
             MessageType::Pc(crate::messenger::PcMessage::DisableCharacter, pc) => {
                 if let Some(pc_id) = pc {
+                    if self.players.seats[0].selection.as_slice() == [pc_id] {
+                        self.forward_message(
+                            sim,
+                            assets,
+                            crate::messenger::Message::pc_with_value(
+                                crate::messenger::PcMessage::SelectAction,
+                                None,
+                                crate::profiles::Action::NoAction as u32,
+                            ),
+                        );
+                    }
                     self.unselect_single_pc(pc_id);
                     // Net effect: flip the interface-hidden
                     // flag only when we are NOT in Sherwood.
@@ -563,14 +501,13 @@ impl EngineInner {
     }
 
     /// Engine-state arms for input resets, user locks, action selection,
-    /// and macro QA feedback. Returns the message unchanged when no arm
-    /// matches.
+    /// and macro QA feedback.
     fn handle_input_and_action_message(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         msg: crate::messenger::Message,
-    ) -> Option<crate::messenger::Message> {
+    ) {
         match msg.msg_type {
             // After a modal (dialogue, popup, Sherwood report)
             // closes, zero the cached mouse/keyboard state,
@@ -592,6 +529,27 @@ impl EngineInner {
                 // past the reset.
                 self.players.seats[0].is_lock_alt = false;
             }
+            MessageType::Pc(crate::messenger::PcMessage::SelectAction, pc) => {
+                let action = crate::profiles::Action::try_from(msg.value)
+                    .expect("SelectAction requires a valid action");
+                if let Some(id) = pc {
+                    self.set_pc_action_from_message(sim, assets, 0, id, action);
+                } else {
+                    self.set_selected_action_from_message(sim, assets, 0, action);
+                }
+            }
+            MessageType::Pc(crate::messenger::PcMessage::UnselectAction, pc) => {
+                let action = self.get_selected_action();
+                if action == crate::profiles::Action::NoAction || action as u32 != msg.value {
+                    return;
+                }
+                self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
+                let targets =
+                    pc.map_or_else(|| self.players.seats[0].selection.clone(), |id| vec![id]);
+                for id in targets {
+                    self.unselect_action(sim, assets, id);
+                }
+            }
             // Ctrl-press saves the current action on every
             // selected PC so the follow-on move command can
             // run without the action overriding it (and the
@@ -599,7 +557,17 @@ impl EngineInner {
             // by the host input layer when
             // `GameAction::KeyControl` fires.
             MessageType::Simple(crate::messenger::SimpleMessage::KeyControl) => {
+                self.players.seats[0].action_before_control = self.get_selected_action();
                 self.save_action_for_selected_pcs(0);
+                self.forward_message(
+                    sim,
+                    assets,
+                    crate::messenger::Message::pc_with_value(
+                        crate::messenger::PcMessage::SelectAction,
+                        None,
+                        crate::profiles::Action::NoAction as u32,
+                    ),
+                );
             }
             // `LockUser` / `UnlockUser` flip `user_locked`.
             // Scripts already set it directly via
@@ -623,11 +591,13 @@ impl EngineInner {
             // task boundary.
             MessageType::Simple(crate::messenger::SimpleMessage::HideConsole)
             | MessageType::Simple(crate::messenger::SimpleMessage::SwitchTask) => {
-                self.feedback.pending_side_effects.pending_reset_input = true;
-                self.feedback.pending_side_effects.reset_input = true;
-                // Same `is_lock_alt` clear as the explicit
-                // `ResetInput` arm above.
-                self.players.seats[0].is_lock_alt = false;
+                self.forward_message(
+                    sim,
+                    assets,
+                    crate::messenger::Message::new(MessageType::Simple(
+                        crate::messenger::SimpleMessage::ResetInput,
+                    )),
+                );
             }
             // `SelectActionSimple` and `DisableAction` both
             // clear the aim-trajectory preview so a dropped /
@@ -696,16 +666,13 @@ impl EngineInner {
             // PC (`Some(pc_id)`) or every selected PC
             // (`None`).
             MessageType::Pc(crate::messenger::PcMessage::DisableAllActionsTemp, pc) => {
-                // Tick messenger drain: ambient single-seat
-                // semantics; LOCAL seat for now.
                 self.apply_disable_all_actions_temp(0, pc);
             }
             MessageType::Pc(crate::messenger::PcMessage::EnableAllActionsTemp, pc) => {
                 self.apply_enable_all_actions_temp(sim, assets, 0, pc);
             }
-            _ => return Some(msg),
+            _ => {}
         }
-        None
     }
 
     /// Promote queued NPC intents before entity refresh and sequence dispatch.
@@ -761,5 +728,33 @@ impl EngineInner {
         {
             campaign.add_value(crate::campaign::CampaignValue::MissionLength, 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_message_tests {
+    use super::*;
+    use crate::messenger::Message;
+
+    #[test]
+    fn console_hide_resets_input_before_the_next_message() {
+        let mut engine = EngineInner::new();
+        let assets = engine.test_runtime_assets();
+        let sim = engine.control.simulation_context();
+        engine.players.seats[0].is_lock_alt = true;
+        engine.forward_message(
+            &sim,
+            &assets,
+            Message::new(MessageType::Simple(SimpleMessage::HideConsole)),
+        );
+        assert!(!engine.players.seats[0].is_lock_alt);
+        assert!(engine.feedback.pending_side_effects.reset_input);
+        assert!(engine.feedback.pending_side_effects.pending_reset_input);
+        engine.forward_message(
+            &sim,
+            &assets,
+            Message::new(MessageType::Simple(SimpleMessage::LockAlt)),
+        );
+        assert!(engine.players.seats[0].is_lock_alt);
     }
 }

@@ -65,14 +65,13 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
             Some(owner),
             crate::order::OrderType::WaitingAlerted,
         );
-        let sequence = engine.orders.sequence_manager.launch_element(element);
-        // Install an already running command. Its initial instruction has
-        // finished before the periodic watchdog inspects it.
+        let sequence = engine.orders.sequence_manager.insert_element(element);
         engine
             .orders
             .sequence_manager
-            .pop_next_hourglass_action()
-            .expect("fixture command is registered for its owner");
+            .start_sequence_level(sequence);
+        // Install an already running command. Its initial instruction has
+        // finished before the periodic watchdog inspects it.
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -357,7 +356,11 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
         movement
             .orders
             .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -528,7 +531,11 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
     let assets = engine.test_runtime_assets();
     let mut wait = SequenceElement::new_generic(1, Command::Wait, Some(npc_id));
     wait.state = SequenceState::InProgress;
-    engine.orders.sequence_manager.launch_element(wait);
+    let sequence = engine.orders.sequence_manager.insert_element(wait);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ladder owner exists")
     else {
         panic!("ladder owner changed kind")
@@ -1466,7 +1473,11 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     movement
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1754,7 +1765,11 @@ fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId
     movement
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3333,7 +3348,8 @@ fn enemy_optics_reads_pc_order_from_live_creation_slot_state() {
         0.0,
         0.0,
     ));
-    let seq_id = engine.orders.sequence_manager.launch_element(element);
+    let seq_id = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     let elem_idx = 0;
 
     let observer = engine

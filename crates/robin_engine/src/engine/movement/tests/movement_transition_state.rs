@@ -72,9 +72,25 @@ mod suite {
             Some(owner),
             OrderType::WalkingWithSword,
         );
-        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
-        let registered = engine.orders.sequence_manager.hourglass();
-        assert_eq!(registered.len(), 1);
+        let movement_sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_none()
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -84,9 +100,9 @@ mod suite {
         );
 
         let reentrant =
-            engine.launch_movement_post_seek(&sim, &assets, owner, movement_sequence, 0);
+            engine.start_post_seek_sequence(&sim, &assets, owner, Some((movement_sequence, 0)));
         assert!(reentrant);
-        engine.launch_sword_movement_termination_provoke(owner);
+        engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
 
         let commands = engine
             .orders
@@ -163,7 +179,7 @@ mod suite {
         };
         *point = MapPoint::new(destination.x, destination.y);
         *flags = MoveFlags::MAP;
-        let launched = map_exit.launch_element(movement);
+        let launched = map_exit.launch_element(&sim, &assets, movement);
         let element = map_exit
             .orders
             .sequence_manager
@@ -350,7 +366,11 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, goal.x, goal.y, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -537,7 +557,11 @@ mod suite {
         let mut order = Order::new(action, destination.x, destination.y, order_id);
         order.compute_direction = false;
         movement.orders.push_back(order);
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -645,7 +669,11 @@ mod suite {
             second_destination.y,
             second_order_id,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -903,7 +931,11 @@ mod suite {
             old_goal.y,
             engine.orders.allocate_order_id(),
         ));
-        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+        let outgoing_sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            outgoing,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1204,7 +1236,11 @@ mod suite {
             867.70776,
             2471.1958,
         ));
-        let outgoing_sequence = engine.orders.sequence_manager.launch_element(outgoing);
+        let outgoing_sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            outgoing,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1221,7 +1257,11 @@ mod suite {
         waiting
             .orders
             .push_back(Order::test_new(OrderType::Freezing, 867.70776, 2471.1958));
-        let sequence = engine.orders.sequence_manager.launch_element(waiting);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            waiting,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1421,10 +1461,11 @@ mod suite {
                 OrderType::WalkingUpright,
             );
             stale_movement.state = SequenceState::Terminated;
-            let stale_sequence = engine
-                .orders
-                .sequence_manager
-                .launch_element(stale_movement);
+            let stale_sequence = engine.launch_element(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                stale_movement,
+            );
             let mut completed_callback =
                 SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
             completed_callback.state = SequenceState::Terminated;
@@ -1456,7 +1497,11 @@ mod suite {
             *destination = MapPoint::new(1381.2336, 427.18604);
             *layer = 1;
             *sector = Some(crate::position_interface::SectorHandle::new(1).unwrap());
-            let incoming_sequence = engine.orders.sequence_manager.launch_element(incoming);
+            let incoming_sequence = engine.launch_element(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
+                incoming,
+            );
             engine
                 .get_entity_mut(owner)
                 .unwrap()
@@ -1543,9 +1588,25 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, 500.0, 428.0, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
-        let registered = engine.orders.sequence_manager.hourglass();
-        assert_eq!(registered.len(), 1);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_none()
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1663,9 +1724,25 @@ mod suite {
             destination.y,
             order_id,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
-        let registered = engine.orders.sequence_manager.hourglass();
-        assert_eq!(registered.len(), 1);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_none()
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1746,60 +1823,6 @@ mod suite {
         assert_ne!(
             crossing_increment, origin_increment,
             "crossing must not rebuild the trajectory from the cleared (0, 0) sentinel"
-        );
-    }
-
-    #[test]
-    fn stationary_door_transition_completion_recovers_eligible_midpoint_crossing_once() {
-        let owner = EntityId::Pc(crate::entity_id::PcId(317));
-        let old_pos = MapPoint::new(763.6506, 770.8065);
-        let midpoint = MapPoint::new(759.0, 715.0);
-
-        assert_eq!(
-            door_transition_completion_crossing_candidate(
-                owner,
-                old_pos,
-                midpoint,
-                1,
-                Posture::Crouched,
-                false,
-                true,
-                false,
-            ),
-            Some((owner, old_pos, 1)),
-        );
-        for (posture, carried, in_bounds, already_recorded) in [
-            (Posture::Flying, false, true, false),
-            (Posture::Crouched, true, true, false),
-            (Posture::Crouched, false, false, false),
-            (Posture::Crouched, false, true, true),
-        ] {
-            assert_eq!(
-                door_transition_completion_crossing_candidate(
-                    owner,
-                    old_pos,
-                    midpoint,
-                    1,
-                    posture,
-                    carried,
-                    in_bounds,
-                    already_recorded,
-                ),
-                None,
-            );
-        }
-        assert_eq!(
-            door_transition_completion_crossing_candidate(
-                owner,
-                old_pos,
-                old_pos,
-                1,
-                Posture::Crouched,
-                false,
-                true,
-                false,
-            ),
-            None,
         );
     }
 
@@ -1950,12 +1973,24 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, 100.0, 100.0, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
-        let registered = engine.orders.sequence_manager.hourglass();
-        assert_eq!(
-            registered.len(),
-            1,
-            "fixture must consume its launch registration"
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_none()
         );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -2443,7 +2478,8 @@ mod suite {
         *layer = seek_layer;
         *post_seek_sequence = Some(post_seek.into_post_seek());
 
-        let transient = engine.orders.sequence_manager.launch_element(seek);
+        let transient =
+            engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), seek);
         engine.hourglass_phase_sequences(
             &crate::sim_rng::test_context(),
             &mut crate::engine::HostDisplayState::default(),

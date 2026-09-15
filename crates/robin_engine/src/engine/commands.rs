@@ -221,32 +221,34 @@ impl EngineInner {
 
             // ── Sequence-based interactions ──────────────────────
             LaunchInteraction { .. } => self.apply_launch_interaction_command(sim, assets, cmd),
-            LaunchGroundTarget { .. } => self.apply_launch_ground_target_command(cmd),
+            LaunchGroundTarget { .. } => self.apply_launch_ground_target_command(sim, assets, cmd),
             LaunchSelfAbility { actor, command } => {
-                self.dispatch_self_ability(assets, actor, command)
+                self.dispatch_self_ability(sim, assets, actor, command)
             }
-            LaunchScrollRead { .. } => self.apply_launch_scroll_read_command(sim, cmd),
+            LaunchScrollRead { .. } => self.apply_launch_scroll_read_command(sim, assets, cmd),
 
             // ── Swordfight ──────────────────────────────────────
             EnterSwordfight { .. } => self.apply_enter_swordfight_command(sim, assets, cmd),
             SwordStrikeCmd { .. } => self.apply_sword_strike_command(sim, assets, cmd),
             SetPrincipalOpponent { actor, opponent_id } => {
-                self.set_as_new_principal_opponent(assets, *actor, *opponent_id)
+                self.set_as_new_principal_opponent(sim, assets, *actor, *opponent_id)
             }
 
             ClearShootList { pc_id } => {
                 self.clear_pc_shoot_list(*pc_id);
             }
-            DropAmmo { .. } => self.apply_drop_ammo_command(cmd),
-            DropAleAt { .. } => self.apply_drop_ale_at_command(cmd),
+            DropAmmo { .. } => self.apply_drop_ammo_command(sim, assets, cmd),
+            DropAleAt { .. } => self.apply_drop_ale_at_command(sim, assets, cmd),
             ShieldSelectProtected { protected_pc, .. } => {
                 self.apply_shield_select_protected_command(*protected_pc)
             }
-            RaiseShieldWithDanger { .. } => self.apply_raise_shield_with_danger_command(cmd),
+            RaiseShieldWithDanger { .. } => {
+                self.apply_raise_shield_with_danger_command(sim, assets, cmd)
+            }
 
             // ── Posture ─────────────────────────────────────────
-            CrouchDown => self.apply_crouch_down(sim, seat),
-            StandUp => self.apply_stand_up(sim, seat),
+            CrouchDown => self.apply_crouch_down(sim, assets, seat),
+            StandUp => self.apply_stand_up(sim, assets, seat),
 
             // ── Action bar / selection / modifier keys ──────────
             SelectAction { .. }
@@ -299,7 +301,7 @@ impl EngineInner {
             ReleaseTacticalControl => self.release_tactical_control(sim, assets),
 
             // ── Special ─────────────────────────────────────────
-            ResetComa { pc_id } => self.reset_coma(assets, *pc_id),
+            ResetComa { pc_id } => self.reset_coma(sim, assets, *pc_id),
             SendReinforcement { pc_id } => self.request_reinforcement(*pc_id),
             // Use actor-level fast-movement conversion so the pathfinder + queued
             // transitions get rewritten, not just the element-level
@@ -307,8 +309,8 @@ impl EngineInner {
             MakePcFast { pc_id } => self.actor_make_fast(sim, *pc_id),
             BeggarDontTalkStamp { beggar_id } => self.stamp_beggar_dont_talk_counter(*beggar_id),
             MakePcSlow { pc_id } => self.actor_make_slow(sim, *pc_id),
-            MakePcUpright { pc_id } => self.actor_make_upright(sim, *pc_id),
-            MakePcCrouched { pc_id } => self.actor_make_crouched(sim, *pc_id),
+            MakePcUpright { pc_id } => self.actor_make_upright(sim, assets, *pc_id),
+            MakePcCrouched { pc_id } => self.actor_make_crouched(sim, assets, *pc_id),
 
             ChangeState(req) => {
                 self.change_state(display, seat, *req);
@@ -329,9 +331,9 @@ impl EngineInner {
             }
 
             // ── Per-frame aim orientation ──────────────────────
-            PerformOrientation { mouse_map } => self.perform_orientation(assets, *mouse_map),
+            PerformOrientation { mouse_map } => self.perform_orientation(sim, assets, *mouse_map),
             PerformResolvedOrientation { .. } => {
-                self.apply_perform_resolved_orientation_command(assets, seat, cmd)
+                self.apply_perform_resolved_orientation_command(sim, assets, seat, cmd)
             }
 
             // ── Cheats ──────────────────────────────────────────
@@ -363,7 +365,9 @@ impl EngineInner {
                 self.apply_quit_mission_updates_command(sim, assets, cmd)
             }
             QuitMissionRequested => self.apply_quit_mission_requested_command(),
-            TeleportSelectedToPoint { .. } => self.apply_teleport_selected_to_point_command(cmd),
+            TeleportSelectedToPoint { .. } => {
+                self.apply_teleport_selected_to_point_command(sim, assets, cmd)
+            }
 
             // ── Minimap ─────────────────────────────────────────
             MinimapResize { .. }
@@ -390,7 +394,7 @@ impl EngineInner {
             | SetDiplomacyEnabled { .. }
             | SetNpcFactionWars { .. }
             | SetDiplomacyRelationship { .. } => {
-                self.dispatch_camera_control_command(assets, seat, cmd);
+                self.dispatch_camera_control_command(sim, assets, seat, cmd);
             }
 
             HeroSpeak { pc_id, expression } => self.hero_speaking(assets, *pc_id, *expression),
@@ -697,6 +701,7 @@ impl EngineInner {
     /// The exhaustive outer dispatcher selects this family after macro recording.
     fn dispatch_camera_control_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
@@ -733,11 +738,13 @@ impl EngineInner {
                 // The host resolves this before dispatch. Do not infer an
                 // engine message from rollback-local minimap scratch.
                 if *continuing_drag {
-                    self.orders.messenger.send(crate::messenger::Message::new(
-                        crate::messenger::MessageType::Simple(
+                    self.forward_message(
+                        sim,
+                        assets,
+                        crate::messenger::Message::new(crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
-                        ),
-                    ));
+                        )),
+                    );
                     self.feedback
                         .pending_side_effects
                         .host_events
@@ -765,11 +772,13 @@ impl EngineInner {
                     // Continuing-drag focus is command-derived. The host
                     // presentation mutation above may legitimately differ
                     // on a rollback scratch display.
-                    self.orders.messenger.send(crate::messenger::Message::new(
-                        crate::messenger::MessageType::Simple(
+                    self.forward_message(
+                        sim,
+                        assets,
+                        crate::messenger::Message::new(crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
-                        ),
-                    ));
+                        )),
+                    );
                     self.feedback
                         .pending_side_effects
                         .host_events
@@ -898,7 +907,7 @@ impl EngineInner {
                     .expect("achievement results changed after mission finalization");
             }
             SetReusableCloaks { enabled } => {
-                self.set_reusable_cloaks_enabled(*enabled);
+                self.set_reusable_cloaks_enabled(sim, assets, *enabled);
             }
             SetItemGameplayConfig { config } => {
                 if self.control.rng.original_replay_cursor().is_some() {
@@ -1163,7 +1172,12 @@ impl EngineInner {
         self.dispatch_target_interaction(sim, assets, actor, target, command, running);
     }
 
-    fn apply_launch_ground_target_command(&mut self, cmd: &PlayerCommand) {
+    fn apply_launch_ground_target_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::LaunchGroundTarget {
             actor,
             target_pos,
@@ -1174,12 +1188,21 @@ impl EngineInner {
         else {
             unreachable!("apply_launch_ground_target_command called for {cmd:?}")
         };
-        self.dispatch_ground_target(actor, target_pos, command, target_field, titbit_layer);
+        self.dispatch_ground_target(
+            sim,
+            assets,
+            actor,
+            target_pos,
+            command,
+            target_field,
+            titbit_layer,
+        );
     }
 
     fn apply_launch_scroll_read_command(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         cmd: &PlayerCommand,
     ) {
         let PlayerCommand::LaunchScrollRead {
@@ -1190,7 +1213,7 @@ impl EngineInner {
         else {
             unreachable!("apply_launch_scroll_read_command called for {cmd:?}")
         };
-        self.dispatch_scroll_read(sim, actor, target, running);
+        self.dispatch_scroll_read(sim, assets, actor, target, running);
     }
 
     fn apply_enter_swordfight_command(
@@ -1241,7 +1264,12 @@ impl EngineInner {
         );
     }
 
-    fn apply_drop_ammo_command(&mut self, cmd: &PlayerCommand) {
+    fn apply_drop_ammo_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::DropAmmo {
             pc_id,
             action_id,
@@ -1250,10 +1278,15 @@ impl EngineInner {
         else {
             unreachable!("apply_drop_ammo_command called for {cmd:?}")
         };
-        self.dispatch_drop_ammo(pc_id, action_id, amount);
+        self.dispatch_drop_ammo(sim, assets, pc_id, action_id, amount);
     }
 
-    fn apply_drop_ale_at_command(&mut self, cmd: &PlayerCommand) {
+    fn apply_drop_ale_at_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::DropAleAt {
             actor,
             target_pos,
@@ -1267,6 +1300,8 @@ impl EngineInner {
             unreachable!("apply_drop_ale_at_command called for {cmd:?}")
         };
         self.dispatch_drop_ale(
+            sim,
+            assets,
             actor,
             target_pos,
             running,
@@ -1285,7 +1320,12 @@ impl EngineInner {
         self.world.shield.is_protected = false;
     }
 
-    fn apply_raise_shield_with_danger_command(&mut self, cmd: &PlayerCommand) {
+    fn apply_raise_shield_with_danger_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::RaiseShieldWithDanger {
             actor,
             protected_pc,
@@ -1295,7 +1335,14 @@ impl EngineInner {
         else {
             unreachable!("apply_raise_shield_with_danger_command called for {cmd:?}")
         };
-        self.dispatch_player_raise_shield(actor, protected_pc, danger_point, danger_point_layer);
+        self.dispatch_player_raise_shield(
+            sim,
+            assets,
+            actor,
+            protected_pc,
+            danger_point,
+            danger_point_layer,
+        );
     }
 
     fn apply_move_tactical_units_command(
@@ -1373,6 +1420,7 @@ impl EngineInner {
 
     fn apply_perform_resolved_orientation_command(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         seat: usize,
         cmd: &PlayerCommand,
@@ -1393,7 +1441,7 @@ impl EngineInner {
         // before the pre-update mission script can query
         // HasAnyActionSelected.
         self.players.seats[seat].selected_action = *action;
-        self.perform_resolved_orientation(assets, *pc_id, *action, *mouse_map, *target);
+        self.perform_resolved_orientation(sim, assets, *pc_id, *action, *mouse_map, *target);
     }
 
     fn apply_campaign_sell_production_item_command(
@@ -1449,7 +1497,12 @@ impl EngineInner {
         }
     }
 
-    fn apply_teleport_selected_to_point_command(&mut self, cmd: &PlayerCommand) {
+    fn apply_teleport_selected_to_point_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
         let PlayerCommand::TeleportSelectedToPoint {
             dest,
             layer,
@@ -1458,7 +1511,7 @@ impl EngineInner {
         else {
             unreachable!("apply_teleport_selected_to_point_command called for {cmd:?}")
         };
-        self.manage_input_process_teleport(*dest, *layer, *sector);
+        self.manage_input_process_teleport(sim, assets, *dest, *layer, *sector);
     }
 }
 

@@ -202,21 +202,21 @@ impl EngineInner {
             }
 
             // ── Commands needing features not yet implemented ────
-            Nuke => self.console_nuke(),
+            Nuke => self.console_nuke(sim, assets),
             Wakeup => self.console_wake_npcs(sim, assets),
             BudSpencer => self.console_knock_out_enemy_soldiers(sim, assets),
             Honolulu => self.console_honolulu(dev.as_deref_mut(), selected_view_element),
             Morpheus => self.console_morpheus(sim, assets, selected_view_element),
-            Hades => self.console_hades(selected_view_element),
+            Hades => self.console_hades(sim, assets, selected_view_element),
             LastManStanding => self.console_last_man_standing(selected_view_element),
-            RoterAlarm => self.console_alert_soldiers(),
-            MisterSandman => self.console_mister_sandman(),
-            Coma => self.console_coma(),
-            Reinforcement => self.console_reinforcement(),
-            SanPetrus => self.console_san_petrus(assets),
+            RoterAlarm => self.console_alert_soldiers(sim, assets),
+            MisterSandman => self.console_mister_sandman(sim, assets),
+            Coma => self.console_coma(sim, assets),
+            Reinforcement => self.console_reinforcement(sim, assets),
+            SanPetrus => self.console_san_petrus(sim, assets),
             WaspMaster | GiveArrows => self.console_force_ammo_cheat(assets, cmd),
             GiveAmmo => self.console_give_ammo(assets),
-            Lukas { pcs } => self.console_lukas(assets, pcs.as_deref()),
+            Lukas { pcs } => self.console_lukas(sim, assets, pcs.as_deref()),
             Call { actor, method } => self.console_call_actor(assets, actor, method),
             StatusFramecache | StatusShadow | StatusHardware | StatusPc | Optimize | Forget
             | Sarkozy | Fps => self.console_status_report(&mut dev, cmd),
@@ -401,23 +401,28 @@ impl EngineInner {
         ConsoleResponse::Ok(reply.to_string())
     }
 
-    fn console_mister_sandman(&mut self) -> ConsoleResponse {
+    fn console_mister_sandman(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
         // For every PC, launch a damage(100, 0) sequence —
         // hp=100, concussion=0, *not* the reverse.  Swapping
         // the two would change a death roll into a concussion
         // roll.
         let pcs = self.world.pc_ids.clone();
         for id in pcs {
-            self.launch_damage(id, 100, 0);
+            self.launch_damage(sim, assets, id, 100, 0);
         }
         ConsoleResponse::Ok("Sweet dreams !".to_string())
     }
 
-    fn console_reinforcement(&mut self) -> ConsoleResponse {
-        // Silent cheat: queue a reinforcement request here,
-        // and let `drain_pending_reinforcements` perform the
-        // actual PC spawn during `perform_hourglass`.
-        self.orders.pending_reinforcements.push(None);
+    fn console_reinforcement(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
+        self.create_reinforcement(sim, assets, None);
         ConsoleResponse::Ok(String::new())
     }
 
@@ -456,7 +461,12 @@ impl EngineInner {
         }
     }
 
-    fn console_lukas(&mut self, assets: &LevelAssets, pcs: Option<&str>) -> ConsoleResponse {
+    fn console_lukas(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        pcs: Option<&str>,
+    ) -> ConsoleResponse {
         // Resolve each single-letter initial (R/J/T/S/W/M/A/B/C)
         // to a PC via the character profile index, then inflict
         // pain — funnels to an hp=100 / concussion=100 damage
@@ -464,7 +474,7 @@ impl EngineInner {
         if let Some(pcs) = pcs {
             let ids = self.resolve_pcs_by_initials(assets, pcs);
             for id in ids {
-                self.launch_damage(id, 100, 100);
+                self.launch_damage(sim, assets, id, 100, 100);
             }
         }
         ConsoleResponse::Ok("PCs knocked out !".to_string())
@@ -843,7 +853,11 @@ impl EngineInner {
         ConsoleResponse::Ok("Mission won !".to_string())
     }
 
-    fn console_nuke(&mut self) -> ConsoleResponse {
+    fn console_nuke(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
         // Prints "Nuking ..." before walking every soldier,
         // launches a damage(1000, 1000) sequence per victim,
         // then prints "Nuked N soldiers".
@@ -855,7 +869,7 @@ impl EngineInner {
             .collect();
         let count = victims.len();
         for id in victims {
-            self.launch_damage(id, 1000, 1000);
+            self.launch_damage(sim, assets, id, 1000, 1000);
         }
         ConsoleResponse::Ok(format!("Nuking ...\nNuked {count} soldiers"))
     }
@@ -912,7 +926,11 @@ impl EngineInner {
             if let Some(entity) = self.get_entity_mut(id) {
                 entity.set_posture(Posture::Lying);
             }
-            self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
+            self.launch_element(
+                sim,
+                assets,
+                SequenceElement::new(1, Command::Wait, Some(id)),
+            );
         }
         ConsoleResponse::Ok("NPCs knocked out !".to_string())
     }
@@ -1020,20 +1038,21 @@ impl EngineInner {
         if let Some(entity) = self.get_entity_mut(id) {
             entity.set_posture(Posture::Lying);
         }
-        self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
+        self.launch_element(
+            sim,
+            assets,
+            SequenceElement::new(1, Command::Wait, Some(id)),
+        );
         *selected_view_element = None;
         ConsoleResponse::Ok("MORPHEUS\nSleep well...".to_string())
     }
 
-    fn console_hades(&mut self, selected_view_element: &mut Option<EntityId>) -> ConsoleResponse {
-        // Always prints "HADES" first, gates on selected NPC.
-        // On success: zero life points (alert green, sleeping
-        // state with the "forever" substate, close eyes,
-        // detectable cleanup, dying animation) + clear selection
-        // + "Sleep well... forever!".  The full cascade lives
-        // in `EngineInner::handle_death`, which needs
-        // `&LevelAssets`, so we queue the victim on
-        // `pending_hades_kills` and `perform_hourglass` drains.
+    fn console_hades(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        selected_view_element: &mut Option<EntityId>,
+    ) -> ConsoleResponse {
         let is_npc = selected_view_element
             .and_then(|id| self.get_entity(id).map(|e| e.is_npc()))
             .unwrap_or(false);
@@ -1045,7 +1064,14 @@ impl EngineInner {
             );
         }
         let id = selected_view_element.expect("NPC-selected implies id present");
-        self.orders.pending_hades_kills.push(id);
+        self.kill_npc_directly(sim, assets, id);
+        self.expect_entity_mut(id, "Hades selected NPC")
+            .set_posture(Posture::Dead);
+        self.launch_element(
+            sim,
+            assets,
+            SequenceElement::new(1, Command::Wait, Some(id)),
+        );
         *selected_view_element = None;
         ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
     }
@@ -1082,7 +1108,11 @@ impl EngineInner {
         ConsoleResponse::Ok("Last man standing\nLonely hero...".to_string())
     }
 
-    fn console_alert_soldiers(&mut self) -> ConsoleResponse {
+    fn console_alert_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
         // Sets attentive mode on every soldier — silent cheat,
         // emits no console output.
         let soldier_ids: Vec<EntityId> = self
@@ -1093,6 +1123,8 @@ impl EngineInner {
             .collect();
         for id in soldier_ids {
             self.set_soldier_attentive_mode_from(
+                sim,
+                assets,
                 id,
                 true,
                 false,
@@ -1102,7 +1134,11 @@ impl EngineInner {
         ConsoleResponse::Ok(String::new())
     }
 
-    fn console_coma(&mut self) -> ConsoleResponse {
+    fn console_coma(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
         // Needs a selected PC and at least one amulet, then
         // launches hp=10000 / concussion=0 damage on the first
         // selected PC.
@@ -1116,13 +1152,17 @@ impl EngineInner {
                 "There not enough amulets left to put the selected PC in the coma.".to_string(),
             ),
             (Some(id), _) => {
-                self.launch_damage(id, 10000, 0);
+                self.launch_damage(sim, assets, id, 10000, 0);
                 ConsoleResponse::Ok("Coma !".to_string())
             }
         }
     }
 
-    fn console_san_petrus(&mut self, assets: &LevelAssets) -> ConsoleResponse {
+    fn console_san_petrus(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
         // Unconditionally prints "San Petrus", then either the
         // no-selection error or — per selected PC — launches a
         // hp=10000 / concussion=0 damage sequence and prints
@@ -1152,7 +1192,7 @@ impl EngineInner {
             })
             .collect();
         for (id, name) in selected.iter().zip(names.iter()) {
-            self.launch_damage(*id, 10000, 0);
+            self.launch_damage(sim, assets, *id, 10000, 0);
             out.push_str(&format!("\n{name} has been recalled by San Petrus."));
         }
         ConsoleResponse::Ok(out)
@@ -1503,6 +1543,65 @@ mod tests {
     }
 
     #[test]
+    fn hades_completes_death_and_registers_wait_before_returning() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let id = engine.add_test_entity(soldier(false));
+        let assets = engine.test_runtime_assets();
+        let mut selected = Some(id);
+
+        engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &ConsoleCommand::Hades);
+
+        let victim = engine.expect_entity(id, "Hades victim");
+        assert_eq!(victim.npc_data().unwrap().life_points, 0);
+        assert_eq!(victim.element_data().posture(), Posture::Dead);
+        assert_eq!(
+            victim.ai_controller().unwrap().current_substate,
+            crate::ai::Substate::SleepingForever
+        );
+        assert_eq!(selected, None);
+        assert_eq!(
+            engine
+                .mission_domain
+                .campaign
+                .get_value(CampaignValue::Score),
+            0,
+            "direct life updates do not award combat score"
+        );
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let command = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap()
+            .elements[0]
+            .command;
+        assert_eq!(
+            command,
+            Command::Wait,
+            "direct life update must not synthesize a damage instruction"
+        );
+    }
+
+    #[test]
+    fn hades_keeps_invulnerability_but_still_sets_dead_posture_and_wait() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let mut victim = soldier(false);
+        victim.human_data_mut().unwrap().invulnerable = true;
+        let id = engine.add_test_entity(victim);
+        let assets = engine.test_runtime_assets();
+        let mut selected = Some(id);
+        engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &ConsoleCommand::Hades);
+        let victim = engine.expect_entity(id, "invulnerable Hades victim");
+        assert_eq!(victim.npc_data().unwrap().life_points, 100);
+        assert_eq!(victim.element_data().posture(), Posture::Dead);
+        assert_eq!(selected, None);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+    }
+
+    #[test]
     fn unknown_input_returns_unknown() {
         let sim_context = crate::sim_rng::test_context();
         let sim = &sim_context;
@@ -1789,7 +1888,6 @@ mod tests {
                 engine.mission_domain.cheat_used_flags,
                 CHEAT_CONSOLE_COMMAND
             );
-            assert!(engine.orders.pending_hades_kills.is_empty());
             assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
         }
     }

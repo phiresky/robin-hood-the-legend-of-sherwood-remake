@@ -272,7 +272,7 @@ impl EngineInner {
                                 }
                             }
                         }
-                        self.launch_element(sting);
+                        self.launch_element(sim, assets, sting);
                     }
                 }
                 self.kill_wasp(wasp_id);

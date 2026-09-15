@@ -172,7 +172,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.launch_ai_raise_sword(owner);
+        self.launch_ai_raise_sword(sim, assets, owner);
     }
     fn combat_event_command(
         &mut self,
@@ -181,11 +181,11 @@ impl EngineInner {
         owner: EntityId,
         command: crate::element::Command,
     ) {
-        self.launch_element(crate::sequence::SequenceElement::new(
-            1,
-            command,
-            Some(owner),
-        ));
+        self.launch_element(
+            sim,
+            assets,
+            crate::sequence::SequenceElement::new(1, command, Some(owner)),
+        );
     }
     fn combat_event_stop(
         &mut self,
@@ -353,7 +353,7 @@ impl EngineInner {
                                 element.command == crate::element::Command::QuitSwordfight
                             });
                         if !already_quitting {
-                            self.execute_ai_end_swordfight(owner);
+                            self.execute_ai_end_swordfight(sim, assets, owner);
                         }
                     }
                     self.combat_event_timer(owner, 3);
@@ -369,7 +369,7 @@ impl EngineInner {
                     AiState::Attacking,
                     AttackingOverviewLookRight,
                 );
-                self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::Right);
+                self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::Right);
             }
             (AttackingOverviewLookRight, EventDone) => self.combat_event_timer(owner, 10),
             (
@@ -553,7 +553,12 @@ impl EngineInner {
                     AttackingTooProudToAttackOverview,
                 );
                 if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::TooProudLook, 0..16) == 0 {
-                    self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
+                    self.execute_ai_look_sidewards(
+                        sim,
+                        assets,
+                        owner,
+                        crate::ai::LookDirection::LeftRight,
+                    );
                 } else {
                     self.combat_event_timer(owner, 20);
                 }
@@ -824,7 +829,7 @@ impl EngineInner {
                 Some(owner),
                 Some(target),
             ));
-            self.launch_sequence(sequence);
+            self.launch_sequence(sim, assets, sequence);
         }
     }
     fn combat_event_distance(&self, owner: EntityId, target: EntityId) -> f32 {
@@ -880,7 +885,7 @@ impl EngineInner {
         let target = self.combat_event_ai(owner).base.primary_target;
         if let Some(target) = target {
             let target = self.expect_human_id_for_ai_handle(target.get(), "combat principal");
-            self.set_as_new_principal_opponent(assets, owner, target);
+            self.set_as_new_principal_opponent(sim, assets, owner, target);
         }
     }
     fn combat_event_reserve(

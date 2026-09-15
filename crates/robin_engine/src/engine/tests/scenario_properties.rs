@@ -23,7 +23,7 @@ fn operation(engine: &mut EngineInner, assets: &LevelAssets, operation: usize) {
                 timer.set_property(Field::Timer, FieldValue::Integer(operation as u32));
                 sequence.append_element(timer);
             }
-            engine.orders.sequence_manager.launch_sequence(sequence);
+            engine.launch_sequence(&crate::sim_rng::test_context(), assets, sequence);
         }
         _ => unreachable!("bounded operation alphabet"),
     }

@@ -1114,7 +1114,6 @@ impl EngineInner {
                 sim,
                 assets,
                 active_scripts,
-                owner,
                 root,
                 stop_priority,
                 &resolver,

@@ -2547,11 +2547,15 @@ mod tests {
             engine
                 .orders
                 .sequence_manager
-                .launch_element(crate::sequence::SequenceElement::new(
+                .insert_element(crate::sequence::SequenceElement::new(
                     1,
                     crate::element::Command::PassDoor,
                     Some(target),
                 ));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),

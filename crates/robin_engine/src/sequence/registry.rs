@@ -52,8 +52,7 @@ impl SequenceManager {
         Vec<(SequenceId, usize)>,
         Vec<(EntityId, SequenceElementRef)>,
     ) {
-        if !self.pending_synchronous_actions.is_empty()
-            || !self.actor_instructing.is_empty()
+        if !self.actor_instructing.is_empty()
             || self.actor_translating.is_some()
             || self.halt_pending
         {
@@ -97,7 +96,6 @@ impl SequenceManager {
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
             elements_to_go: VecDeque::new(),
-            pending_synchronous_actions: VecDeque::new(),
             next_sequence_id: 1,
             next_element_id: 1,
             halt_pending: false,
@@ -120,7 +118,6 @@ impl SequenceManager {
             actor_instructing: BTreeMap::new(),
             actor_translating: None,
             elements_to_go: state.elements_to_go,
-            pending_synchronous_actions: VecDeque::new(),
             next_sequence_id: state.next_sequence_id,
             next_element_id: state.next_element_id,
             halt_pending: false,

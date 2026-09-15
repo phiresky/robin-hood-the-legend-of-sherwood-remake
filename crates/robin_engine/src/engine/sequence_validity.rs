@@ -1491,7 +1491,7 @@ impl EngineInner {
             ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
                 if needs_drop {
                     // Instant drop.
-                    self.force_drop_carried_corpse_instant(entity_id);
+                    self.force_drop_carried_corpse_instant(sim, assets, entity_id);
                 }
                 self.do_next_order(sim, assets, seq_id, elem_idx);
             }
@@ -2107,7 +2107,11 @@ mod tests {
         element
             .orders
             .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
-        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let sequence = {
+            let id = engine.orders.sequence_manager.insert_element(element);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -2259,7 +2263,11 @@ mod tests {
             0.0,
             0.0,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let sequence = {
+            let id = engine.orders.sequence_manager.insert_element(element);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
@@ -2386,7 +2394,11 @@ mod tests {
                 0.0,
                 0.0,
             ));
-            let sequence = engine.orders.sequence_manager.launch_element(element);
+            let sequence = {
+                let id = engine.orders.sequence_manager.insert_element(element);
+                engine.orders.sequence_manager.start_sequence_level(id);
+                id
+            };
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
@@ -2539,15 +2551,18 @@ mod tests {
         );
 
         let next_sequence =
-            engine
-                .orders
-                .sequence_manager
-                .launch_element(SequenceElement::new_interaction(
-                    1,
-                    Command::ShootBow,
-                    Some(shooter),
-                    Some(target),
-                ));
+            {
+                let id = engine.orders.sequence_manager.insert_element(
+                    SequenceElement::new_interaction(
+                        1,
+                        Command::ShootBow,
+                        Some(shooter),
+                        Some(target),
+                    ),
+                );
+                engine.orders.sequence_manager.start_sequence_level(id);
+                id
+            };
         let result = begin_bow_shot(
             &mut engine.world.entities,
             &mut engine.orders.sequence_manager,

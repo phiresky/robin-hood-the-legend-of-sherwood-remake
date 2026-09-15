@@ -359,7 +359,11 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     } else {
         unreachable!("PassDoor fixture must be a movement element")
     }
-    let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+    let pass_sequence = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(pass_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -527,7 +531,11 @@ fn enemy_tick_data_uses_patrol_chiefs_committed_pass_door_side() {
     }
     {
         // AI position resolves the chief from live committed PassDoor state.
-        let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+        let pass_sequence = engine.orders.sequence_manager.insert_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(pass_sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -746,7 +754,11 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         movement
             .orders
             .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-        let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+        let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(movement_sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1011,7 +1023,11 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     movement
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

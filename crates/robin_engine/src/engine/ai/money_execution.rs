@@ -641,7 +641,7 @@ impl EngineInner {
                 AiState::Wondering,
                 Substate::WonderingWatchingForMoreMoney,
             );
-            self.execute_ai_look_sidewards(owner, crate::ai::LookDirection::LeftRight);
+            self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::LeftRight);
         }
     }
 

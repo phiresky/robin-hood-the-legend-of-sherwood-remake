@@ -401,11 +401,11 @@ impl EngineInner {
             } else {
                 crate::element::Command::EquipBow
             };
-            self.launch_element(crate::sequence::SequenceElement::new(
-                1,
-                command,
-                Some(owner),
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new(1, command, Some(owner)),
+            );
 
             self.duty_set_state(
                 sim,

@@ -34,7 +34,11 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
         unreachable!("new_movement must produce movement data")
     };
     *destination = crate::coordinates::MapPoint::new(100.0, 200.0);
-    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::default(),
+        movement,
+    );
 
     engine.hourglass_phase_sequences(
         &crate::sim_rng::test_context(),
@@ -103,12 +107,12 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let mut engine = EngineInner::new();
-    let pending_victim =
-        engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let assets = engine.test_runtime_assets();
     engine.set_engine_locked(true);
     let pending_owner = EntityId::Pc(crate::entity_id::PcId(319));
-    let pending_sequence = engine.orders.sequence_manager.launch_element(
+    let pending_sequence = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
         crate::sequence::SequenceElement::new_movement(
             1,
             crate::element::Command::AssertPosition,
@@ -116,7 +120,6 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
             crate::order::OrderType::WalkingUpright,
         ),
     );
-    engine.orders.pending_hades_kills.push(pending_victim);
 
     let (result, phases) = capture_hourglass_phases(|| {
         engine
@@ -128,10 +131,6 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     assert_eq!(
         engine.control.frame_counter, 1,
         "the lock gate follows clock advance"
-    );
-    assert!(
-        engine.orders.pending_hades_kills.is_empty(),
-        "deferred order work must drain before the locked mission gate"
     );
     assert_eq!(
         engine
@@ -199,7 +198,11 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     selected
         .orders
         .push_back(Order::test_new(transition, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(selected);
+    let sequence = engine.orders.sequence_manager.insert_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -405,7 +408,11 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         old_goal.y,
         NonZeroU32::new(778).unwrap(),
     ));
-    let old_sequence = engine.orders.sequence_manager.launch_element(movement);
+    let old_sequence = engine.orders.sequence_manager.insert_element(movement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(old_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -428,7 +435,11 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     );
     replacement.priority = SequencePriority::Normal;
     replacement.retained_movement_goal = Some(old_goal);
-    let replacement_sequence = engine.orders.sequence_manager.launch_element(replacement);
+    let replacement_sequence = engine.orders.sequence_manager.insert_element(replacement);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(replacement_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -487,7 +498,11 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         OrderType::RunningUpright,
     );
     waiting.priority = SequencePriority::Normal;
-    let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
+    let waiting_sequence = engine.orders.sequence_manager.insert_element(waiting);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(waiting_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -542,7 +557,11 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         OrderType::RunningUpright,
     );
     waiting.priority = SequencePriority::Normal;
-    let waiting_sequence = engine.orders.sequence_manager.launch_element(waiting);
+    let waiting_sequence = engine.orders.sequence_manager.insert_element(waiting);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(waiting_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),

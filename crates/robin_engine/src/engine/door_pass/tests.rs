@@ -118,7 +118,8 @@ fn dispatch_pass_with_element_mutation(
     *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
     *element_flags = flags;
     mutate_element(&mut element);
-    let seq_id = engine.orders.sequence_manager.launch_element(element);
+    let seq_id = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     engine.script_domains.interactables.doors = doors.to_vec();
     let barrier = engine.instruct_pass_door(
         &crate::sim_rng::test_context(),
@@ -348,7 +349,8 @@ fn fallback_wait_on_ladder_preserves_inherited_facing() {
         entity.element_data_mut().set_direction_instantly(1);
     }
 
-    engine.ensure_wait_element(owner);
+    let assets = engine.test_runtime_assets();
+    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, owner);
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(entity.element_data().direction(), 1);
@@ -376,7 +378,8 @@ fn fallback_wait_preserves_unconscious_posture_inside_ladder_sector() {
         entity.human_data_mut().unwrap().unconscious = true;
     }
 
-    engine.ensure_wait_element(owner);
+    let assets = engine.test_runtime_assets();
+    engine.ensure_wait_element(&crate::sim_rng::test_context(), &assets, owner);
 
     assert_eq!(
         engine
@@ -2153,11 +2156,12 @@ fn non_movement_pass_door_is_an_invariant_failure() {
     let seq_id = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .insert_element(SequenceElement::new(
             1,
             crate::element::Command::PassDoor,
             Some(owner),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
 
     engine.script_domains.interactables.doors = vec![default_door()];
     engine.instruct_pass_door(

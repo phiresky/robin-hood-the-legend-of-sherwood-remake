@@ -223,45 +223,6 @@ mod suite {
         );
     }
 
-    #[test]
-    fn transition_distance_first_execute_is_consumed_once() {
-        let mut continuation = true;
-
-        assert!(take_transition_distance_first_execute(&mut continuation));
-        assert!(!continuation);
-        assert!(!take_transition_distance_first_execute(&mut continuation));
-
-        let mut continuation = true;
-        assert!(take_transition_distance_first_execute(&mut continuation));
-        assert!(
-            !continuation,
-            "the marker belongs to the first Execute slot, even when that slot hides START"
-        );
-        assert!(!take_transition_distance_first_execute(&mut continuation));
-    }
-
-    #[test]
-    fn deferred_movement_state_start_promotes_only_the_successor_handoff() {
-        let mut deferred = true;
-
-        assert!(take_deferred_movement_state_start(&mut deferred));
-        assert!(!deferred);
-        assert!(
-            !take_deferred_movement_state_start(&mut deferred),
-            "the synthetic START is a one-shot order handoff"
-        );
-    }
-
-    #[test]
-    fn entity_target_seek_does_not_synthesize_deferred_pc_movement_start() {
-        assert!(should_defer_pc_movement_state_start(true, false));
-        assert!(
-            !should_defer_pc_movement_state_start(true, true),
-            "entity-target seeking hides the start result from original-game execution"
-        );
-        assert!(!should_defer_pc_movement_state_start(false, false));
-    }
-
     fn run_fast_wall_anti_collision_fixture(
         first_distance: u16,
     ) -> (MapPoint, crate::movement_diagnostics::ParityMovementStep) {
@@ -354,7 +315,11 @@ mod suite {
             goal.x,
             goal.y,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -478,7 +443,11 @@ mod suite {
         movement
             .orders
             .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -599,7 +568,11 @@ mod suite {
             goal.x - 20.0,
             goal.y + 20.0,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -963,7 +936,11 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, position.x, position.y, order_id));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1337,7 +1314,11 @@ mod suite {
         } else {
             *flags |= MoveFlags::MAP;
         }
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.launch_element(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            movement,
+        );
 
         let before = engine
             .get_entity(owner)

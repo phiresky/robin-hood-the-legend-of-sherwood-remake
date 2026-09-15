@@ -43,7 +43,11 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
         20,
         0,
     );
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
 
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
@@ -94,7 +98,11 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
 
     let damage =
         SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
 
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
@@ -280,7 +288,11 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
 
         let element =
             SequenceElement::new_interaction(1, Command::HealCmd, Some(healer), Some(target));
-        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         assert!(engine.get_entity(healer).unwrap().is_pc());
         assert!(!engine.get_entity(healer).unwrap().is_dead());
         assert!(
@@ -444,15 +456,11 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .unwrap()
         .action_state = ActionState::Moving;
 
-    let seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
-            1,
-            Command::StrangleCmd,
-            Some(attacker),
-            Some(victim),
-        ));
+    let seq = engine.launch_element(
+        &sim,
+        &assets,
+        SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
+    );
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
@@ -641,15 +649,11 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
     });
 
     let assets = engine.test_runtime_assets();
-    let seq = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
-            1,
-            Command::HitCmd,
-            Some(attacker),
-            Some(victim),
-        ));
+    let seq = engine.launch_element(
+        &sim,
+        &assets,
+        SequenceElement::new_interaction(1, Command::HitCmd, Some(attacker), Some(victim)),
+    );
     engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
 
     let hit = engine
@@ -756,12 +760,13 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
+        .insert_element(SequenceElement::new_interaction(
             1,
             Command::HitCmd,
             Some(attacker),
             Some(victim),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq);
     assert_eq!(
         crate::abilities::begin_hit(
             &mut engine.world.entities,
@@ -896,10 +901,7 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
         victim.set_layer(3);
         victim.set_sector(crate::position_interface::SectorHandle::new(2));
     }
-    let old_wait = engine.actor_wait(victim);
-    engine
-        .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
-        .unwrap();
+    let old_wait = engine.actor_wait(&sim, &assets, victim);
     let strangle = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
     engine
         .get_entity_mut(victim)
@@ -908,7 +910,11 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
         .unwrap()
         .non_script_lock(AiLockFlags::FREEZE);
     let unrelated = engine.entity_id_for_index(0).unwrap();
-    let outer_wait = engine.actor_wait(unrelated);
+    let outer_wait = engine.launch_element(
+        &sim,
+        &assets,
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(unrelated)),
+    );
     let observed = std::rc::Rc::new(std::cell::Cell::new(false));
     let callback_observed = observed.clone();
 
@@ -1152,12 +1158,13 @@ fn launch_initialized_strangle(
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new_interaction(
+        .insert_element(SequenceElement::new_interaction(
             1,
             Command::StrangleCmd,
             Some(attacker),
             Some(victim),
         ));
+    engine.orders.sequence_manager.start_sequence_level(seq);
     assert_eq!(
         crate::abilities::begin_strangle(
             &mut engine.world.entities,
@@ -1358,7 +1365,8 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
     let seq = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::StrangleCmd, Some(owner)));
+        .insert_element(SequenceElement::new(1, Command::StrangleCmd, Some(owner)));
+    engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_impossible(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1474,12 +1482,16 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
     let movement = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new_movement(
+        .insert_element(SequenceElement::new_movement(
             1,
             Command::Move,
             Some(owner),
             OrderType::RunningWithSword,
         ));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(movement);
     engine
         .orders
         .sequence_manager
@@ -1490,11 +1502,12 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
     let quit = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(
+        .insert_element(SequenceElement::new(
             1,
             Command::QuitSwordfight,
             Some(owner),
         ));
+    engine.orders.sequence_manager.start_sequence_level(quit);
     engine
         .orders
         .sequence_manager
@@ -1548,7 +1561,11 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
 
     let mut damage = SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data = SequenceElementData::new_sword_damage(attacker, SwordStrike::E, 0);
-    let damage_sequence = engine.orders.sequence_manager.launch_element(damage);
+    let damage_sequence = engine.orders.sequence_manager.insert_element(damage);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(damage_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1608,7 +1625,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     );
     assert_eq!(engine.actor_command(victim), Command::Wait);
 
-    engine.ensure_wait_element(victim);
+    engine.ensure_wait_element(&sim, &assets, victim);
     let wait_sequence = engine
         .orders
         .sequence_manager

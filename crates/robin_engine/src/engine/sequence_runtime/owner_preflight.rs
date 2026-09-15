@@ -217,48 +217,19 @@ impl EngineInner {
                     // resolves low headroom without replacing
                     // the climber's live idle element; only the
                     // helper receives the compensating leave.
-                    self.launch_element(crate::sequence::SequenceElement::new(
-                        1,
-                        Command::LeaveHelpingClimb,
-                        Some(helper_id),
-                    ));
+                    self.launch_element(
+                        sim,
+                        assets,
+                        crate::sequence::SequenceElement::new(
+                            1,
+                            Command::LeaveHelpingClimb,
+                            Some(helper_id),
+                        ),
+                    );
                     self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
                     return None;
                 }
             }
-        }
-        // A cross-sector player route can reach this FIFO
-        // immediately after the preceding movement published
-        // its bow-equipping recovery. The original game translates the movement
-        // first, then lets the fresh recovery postpone it. Its
-        // queued path is therefore cancelled as the retained
-        // head and reports an invalid completion next frame
-        // through normal path processing. Preserve that
-        // real request lifecycle instead of postponing an
-        // untranslated Move and fabricating a recorder event.
-        if let Some((blocker_seq, blocker_idx)) =
-            self.fresh_recovery_blocker_after_route_assert(owner, seq_id, elem_idx)
-        {
-            self.orders.sequence_manager.set_translating_element(Some((
-                owner,
-                crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
-            )));
-            let barrier =
-                self.dispatch_ordered_move_seek_instruct(sim, assets, owner, seq_id, elem_idx);
-            self.orders.sequence_manager.set_translating_element(None);
-            if barrier == OwnerActionBarrier::Reach {
-                self.engine_postpone(
-                    sim,
-                    assets,
-                    &mut Vec::new(),
-                    blocker_seq,
-                    blocker_idx,
-                    seq_id,
-                    elem_idx,
-                );
-            }
-
-            return None;
         }
         // A redundant EnterSwordfight still replaces and
         // terminates the selected Wait element, but Original's

@@ -240,7 +240,7 @@ impl EngineInner {
         } else {
             LookDirection::RightLeft
         };
-        self.execute_ai_look_sidewards(owner, direction);
+        self.execute_ai_look_sidewards(sim, assets, owner, direction);
     }
 
     fn friend_check_owner_mut(&mut self, owner: EntityId) -> &mut AiController {

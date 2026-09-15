@@ -89,14 +89,18 @@ impl EngineInner {
             }
         }
         for (human_id, mobile_child, amount) in impacts {
-            self.launch_element(crate::sequence::SequenceElement::new_damage(
-                1,
-                Command::ReceiveMobileDamage,
-                Some(human_id),
-                Some(mobile_child),
-                amount,
-                amount,
-            ));
+            self.launch_element(
+                sim,
+                assets,
+                crate::sequence::SequenceElement::new_damage(
+                    1,
+                    Command::ReceiveMobileDamage,
+                    Some(human_id),
+                    Some(mobile_child),
+                    amount,
+                    amount,
+                ),
+            );
         }
     }
 }

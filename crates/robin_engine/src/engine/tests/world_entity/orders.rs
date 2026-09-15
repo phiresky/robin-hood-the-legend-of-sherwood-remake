@@ -379,7 +379,11 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
             let sequence = engine
                 .orders
                 .sequence_manager
-                .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+                .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
             engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
             engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence, 0);
             assert_eq!(

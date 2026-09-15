@@ -865,7 +865,7 @@ pub(super) fn apply_pc_target_interaction_side_effect(
         OrderType::Searching => Command::ActivateSearch,
         _ => return,
     };
-    engine.execute_pc_target_activations((entity_id, target, activation));
+    engine.execute_pc_target_activations(sim, assets, (entity_id, target, activation));
 }
 
 /// Stage the exact post-sprite `TakingNet` tail. The original does not remove
@@ -1668,7 +1668,7 @@ fn apply_striking_down_sword_side_effect(
                 );
                 return;
             };
-            engine.execute_killed_at_bottom((target, entity_id));
+            engine.execute_killed_at_bottom(sim, assets, (target, entity_id));
         }
         _ => {}
     }
@@ -2567,7 +2567,7 @@ impl ActorMotionPhase {
             && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
             && motion_state == MotionState::Terminated
         {
-            engine.execute_corpse_drop_done(assets, entity_id);
+            engine.execute_corpse_drop_done(sim, assets, entity_id);
         }
         apply_soldier_execute_side_effects(
             engine,
@@ -2648,9 +2648,7 @@ impl ActorMotionPhase {
                 OrderType::TransitionCrouchingUp | OrderType::TransitionCrouchingDown
             )
             && matches!(motion_state, MotionState::Done | MotionState::Terminated)
-        {
-            engine.execute_stature_change_end(entity_id);
-        }
+        {}
         apply_taking_net_side_effect(
             engine,
             sim,
@@ -2756,6 +2754,7 @@ impl ActorMotionPhase {
             };
             if let Some(strike) = strike {
                 engine.execute_smalltalk_strikes(
+                    sim,
                     assets,
                     (
                         entity_id,
@@ -3383,7 +3382,11 @@ mod shoulder_idle_initialization_tests {
             0.0,
             0.0,
         ));
-        let helper_wait = engine.orders.sequence_manager.launch_element(wait);
+        let helper_wait = engine.orders.sequence_manager.insert_element(wait);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(helper_wait);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3393,9 +3396,6 @@ mod shoulder_idle_initialization_tests {
         );
 
         engine.tick_actor_animation_for(&sim, &assets, helper_id);
-        engine
-            .drain_script_synchronous_actions(&sim, &assets, &mut Vec::new())
-            .expect("carried Wait should install synchronously");
 
         let (_, _, order) = engine
             .orders
@@ -3491,7 +3491,8 @@ mod shoulder_idle_initialization_tests {
         let mut wait = SequenceElement::new(1, Command::Wait, Some(climber_id));
         wait.orders
             .push_back(Order::test_new(OrderType::WaitingOnShoulders, 0.0, 0.0));
-        let wait_id = engine.orders.sequence_manager.launch_element(wait);
+        let wait_id = engine.orders.sequence_manager.insert_element(wait);
+        engine.orders.sequence_manager.start_sequence_level(wait_id);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

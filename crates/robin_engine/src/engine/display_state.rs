@@ -3,7 +3,6 @@
 use super::*;
 use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint, ScreenVec};
 use crate::element::EntityId;
-use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::shadow_polygon::ViewParameters;
 use std::collections::HashMap;
 
@@ -201,10 +200,6 @@ impl EngineInner {
                     display.background_transform.zoom_to = new_factor;
                     display.background_transform.view_from = view_from;
                     display.background_transform.view_to = view_to;
-
-                    self.orders.messenger.send(Message::new(MessageType::Simple(
-                        SimpleMessage::ZoomUpStart,
-                    )));
                 } else {
                     // Zoom OUT: `current_zoom_level` was already decremented.
                     let zoom_level = display.background_transform.current_zoom_level;
@@ -249,10 +244,6 @@ impl EngineInner {
                     display.background_transform.zoom_to = new_factor;
                     display.background_transform.view_from = view_from;
                     display.background_transform.view_to = target;
-
-                    self.orders.messenger.send(Message::new(MessageType::Simple(
-                        SimpleMessage::ZoomDownStart,
-                    )));
                 }
 
                 // Leave the camera at the source state; `perform_zoom_step`
@@ -306,13 +297,18 @@ impl EngineInner {
     }
 
     /// Apply one admitted `DIES IRAE` action.
-    pub(crate) fn try_ezekiel_instakill(&mut self, id: EntityId) -> bool {
+    pub(crate) fn try_ezekiel_instakill(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        id: EntityId,
+    ) -> bool {
         if !self.can_ezekiel_instakill(id) {
             return false;
         }
         // damage=10000 is a one-shot kill.
         let seq = crate::sequence::Sequence::single_damage(id, 10000, 0);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
         true
     }
 

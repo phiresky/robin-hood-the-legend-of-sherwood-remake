@@ -308,17 +308,18 @@ impl EngineInner {
         }
     }
 
-    /// Enqueue a `SimpleMessage` onto the engine's messenger.
-    ///
-    /// Host-side producers of messenger events (console overlay,
-    /// switch-task handler, alt-tab watchdog) use this instead of
-    /// touching `self.orders.messenger` directly — the field is `pub(crate)`
-    /// to keep the drain loop authoritative over which variants are
-    /// observed.
-    pub(crate) fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
-        self.orders.messenger.send(crate::messenger::Message::new(
-            crate::messenger::MessageType::Simple(msg),
-        ));
+    /// Deliver a host-originated simulation message immediately.
+    pub(crate) fn send_simple_message(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        msg: crate::messenger::SimpleMessage,
+    ) {
+        self.forward_message(
+            sim,
+            assets,
+            crate::messenger::Message::new(crate::messenger::MessageType::Simple(msg)),
+        );
     }
 
     /// Stop the in-progress quick-action macro recording (host-side
@@ -356,30 +357,9 @@ impl EngineInner {
         self.players.qa_recording_for.clear();
     }
 
-    /// Re-target the in-flight macro recording after the selection has
-    /// changed.  Forwarded on every
-    /// MSG_SELECT_CHARACTER / MSG_SELECT_ADD_CHARACTER /
-    /// MSG_UNSELECT_CHARACTER.
-    ///
-    /// End recording on PCs that left the selection and start it on PCs
-    /// that entered the selection, keeping the slot index stable.  If
-    /// no recording is in flight this is a no-op.
-    ///
-    /// Post-process emitter for the `MSG_SELECT_CHARACTER[_WITH_ECHO]`,
-    /// `MSG_SELECT_ADD_CHARACTER[_WITH_ECHO]`, and
-    /// `MSG_UNSELECT_CHARACTER` arms: broadcast `MSG_STATURE`, nudge any
-    /// in-flight macro recording to re-target the current selection via
-    /// `MSG_UPDATE_RECORDING_MACRO`, and drop the
-    /// "restore-on-stop-recording" snapshot so a later
-    /// `MSG_STOP_RECORDING_MACRO` doesn't rearm a stale action.
+    /// Complete selection notifications before clearing the recorded action.
     pub(crate) fn emit_character_selection_followups(&mut self) {
-        self.orders.messenger.send(crate::messenger::Message::new(
-            crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
-        ));
-        self.orders.messenger.send(crate::messenger::Message::pc(
-            crate::messenger::PcMessage::UpdateRecordingMacro,
-            None,
-        ));
+        self.update_recording_after_selection_change();
         self.players.action_before_recording_macro = crate::profiles::Action::NoAction;
     }
 
@@ -690,7 +670,12 @@ impl EngineInner {
     /// Exhausting the final order does not call this again in the same slot:
     /// The original game leaves the actor order empty through ActionChange and creates the
     /// fallback Wait on the actor's next frame.
-    pub(crate) fn ensure_wait_element(&mut self, entity_id: EntityId) {
+    pub(crate) fn ensure_wait_element(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
         use crate::sequence::{SequenceElement, SequencePriority};
 
         // The original actor update installs Wait whenever the actor has no
@@ -715,7 +700,7 @@ impl EngineInner {
         // Bypassing it made a freshly loaded upright NPC jump straight from
         // its authored WAITING_UPRIGHT pose to WAITING_UPRIGHT_BORED on the
         // first frame.
-        self.launch_element(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     /// Consume the typed motion-stage input and feed it into
@@ -1142,16 +1127,6 @@ impl EngineInner {
         // clean zoom state, rather than relying on a host-driven
         // cache-validity hook.
         if self.is_zooming() {
-            let zoom_up = self.is_zoom_up_possible() as u32;
-            let zoom_down = self.is_zoom_down_possible() as u32;
-            self.orders
-                .messenger
-                .send(crate::messenger::Message::with_value(
-                    crate::messenger::MessageType::Simple(
-                        crate::messenger::SimpleMessage::ZoomUpEnd,
-                    ),
-                    (zoom_up << 16) | zoom_down,
-                ));
             let bg = &mut self.feedback.cutscene_camera.display.background_transform;
             bg.zoom_to_up = false;
             bg.zoom_to_down = false;
@@ -1193,26 +1168,5 @@ impl EngineInner {
                 }
                 _ => false,
             });
-
-        // Re-broadcast `MSG_STATURE(0)` and a `MSG_SELECT_ACTION`
-        // trailer for the currently-cached selected action so any
-        // script / HUD consumer listening on the messenger queue
-        // resynchronises its view of posture + action after a
-        // save-load.  The immediate-mode HUD already re-derives from
-        // engine state each frame so these are belt-and-braces —
-        // needed for script subscribers that only react to message
-        // edges rather than polling.
-        self.orders.messenger.send(crate::messenger::Message::new(
-            crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
-        ));
-        let action = self.get_selected_action();
-        let pc_id = self.players.seats[0].selection.first().copied();
-        self.orders
-            .messenger
-            .send(crate::messenger::Message::pc_with_value(
-                crate::messenger::PcMessage::SelectAction,
-                pc_id,
-                action as u32,
-            ));
     }
 }

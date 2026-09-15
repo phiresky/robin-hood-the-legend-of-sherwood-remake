@@ -727,9 +727,9 @@ impl crate::engine::EngineInner {
         // Pass 2: mark each target Impossible (cascading next/postponed
         // chains and queuing the owner's condolation card).
         for (seq_id, elem_idx) in &targets {
-            let Some(seq) = self.orders.sequence_manager.sequences.get_mut(seq_id) else {
+            if !self.orders.sequence_manager.sequences.contains_key(seq_id) {
                 continue;
-            };
+            }
             let effects = self.prepare_live_sequence_state(
                 sim,
                 assets,
@@ -814,7 +814,6 @@ impl crate::engine::EngineInner {
             sim,
             assets,
             active_scripts,
-            owner,
             root,
             stop_priority,
             resolver,
@@ -835,7 +834,6 @@ impl crate::engine::EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        owner: EntityId,
         root: Option<(SequenceId, usize)>,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,

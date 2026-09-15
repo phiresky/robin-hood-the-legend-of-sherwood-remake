@@ -28,7 +28,8 @@ fn launch(engine: &mut EngineInner, owner: EntityId, command: Command) -> (Seque
         elem.action_state_after_transition =
             ent.actor_data().map(|a| a.action_state).unwrap_or_default();
     }
-    let seq_id = engine.orders.sequence_manager.launch_element(elem);
+    let seq_id = engine.orders.sequence_manager.insert_element(elem);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     (seq_id, 0)
 }
 
@@ -45,7 +46,8 @@ fn launch_movement(
         elem.action_state_after_transition =
             ent.actor_data().map(|a| a.action_state).unwrap_or_default();
     }
-    let seq_id = engine.orders.sequence_manager.launch_element(elem);
+    let seq_id = engine.orders.sequence_manager.insert_element(elem);
+    engine.orders.sequence_manager.start_sequence_level(seq_id);
     (seq_id, 0)
 }
 
@@ -573,7 +575,8 @@ fn crouched_pc_takes_bonus_net_without_landed_net_standup() {
     elem.priority = SequencePriority::Preference;
     elem.posture_after_transition = P::Crouched;
     elem.action_state_after_transition = AS::Waiting;
-    let seq = engine.orders.sequence_manager.launch_element(elem);
+    let seq = engine.orders.sequence_manager.insert_element(elem);
+    engine.orders.sequence_manager.start_sequence_level(seq);
 
     assert!(generate_transition(&mut engine, owner, seq, 0));
     assert!(
@@ -985,11 +988,11 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     // sequence-manager update; that boundary resolves priorities and
     // arbitrates, so drive it instead of manually staging states.
     let mut display = crate::engine::HostDisplayState::default();
-    let enter = engine.launch_element(SequenceElement::new(
-        1,
-        Command::EnterAttentiveMode,
-        Some(owner),
-    ));
+    let enter = engine.launch_element(
+        &sim,
+        &assets,
+        SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
+    );
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
     assert_eq!(
         engine
@@ -1004,11 +1007,11 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     if let Some(enemy) = engine.get_entity_mut(owner).and_then(Entity::enemy_ai_mut) {
         enemy.will_be_attentive = false;
     }
-    let leave = engine.launch_element(SequenceElement::new(
-        1,
-        Command::LeaveAttentiveMode,
-        Some(owner),
-    ));
+    let leave = engine.launch_element(
+        &sim,
+        &assets,
+        SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
+    );
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let leave_element = engine
@@ -1090,6 +1093,11 @@ fn postponed_sword_entry_rebuilds_exit_from_live_moving_state() {
         .unwrap()
         .action_state = AS::Moving;
 
+    // The transition-only fixture starts graph accounting without admitting
+    // work. Resume this postponed instruction through the live manager FIFO.
+    engine
+        .register_sequence_element(&sim, &assets, &mut Vec::new(), sequence, index, true)
+        .unwrap();
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 

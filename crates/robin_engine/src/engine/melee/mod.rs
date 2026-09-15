@@ -1092,25 +1092,6 @@ impl EngineInner {
             }
         }
     }
-
-    /// Drain the deferred `HADES` cheat queue.  Each queued id gets
-    /// the full NPC-kill cascade via [`EngineInner::handle_death`]:
-    /// alert-green, sleeping-forever state, eye close, friend /
-    /// missed-friend detectable removal, emoticon clear, and the
-    /// dying animation.
-    pub(crate) fn drain_pending_hades_kills(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        if self.orders.pending_hades_kills.is_empty() {
-            return;
-        }
-        let victims: Vec<EntityId> = std::mem::take(&mut self.orders.pending_hades_kills);
-        for victim_id in victims {
-            self.handle_death(sim, assets, victim_id);
-        }
-    }
 }
 
 /// Build a `ConcussionContext` with PC in-coma lookup.  The PC

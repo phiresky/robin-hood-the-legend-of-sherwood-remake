@@ -1323,15 +1323,8 @@ fn make_posture_transition_actor(
             Posture::Crouched => {
                 if !flags.contains(CP::CAN_BE_CROUCHED) {
                     if command == Command::CrouchDown {
-                        // Do not crouch down twice!  Forward
-                        // `MSG_STATURE_CHANGE_END` so stature-HUD
-                        // listeners clear their latch.
+                        // The live stature display already reflects this posture.
                         tracing::debug!("posture transition: CROUCH_DOWN from Crouched — refused");
-                        engine.orders.messenger.send(crate::messenger::Message::new(
-                            crate::messenger::MessageType::Simple(
-                                crate::messenger::SimpleMessage::StatureChangeEnd,
-                            ),
-                        ));
                         return false;
                     }
                     push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingUp);
@@ -1401,17 +1394,10 @@ fn make_posture_transition_actor(
         return match posture_after {
             Posture::Upright => {
                 if command == Command::CrouchUp {
-                    // Do not crouch up twice!  Forward
-                    // `MSG_STATURE_CHANGE_END` so stature-HUD
-                    // listeners clear their latch.
+                    // The live stature display already reflects this posture.
                     tracing::debug!(
                         "posture transition: CROUCH_UP from Upright — refused (double-crouch)"
                     );
-                    engine.orders.messenger.send(crate::messenger::Message::new(
-                        crate::messenger::MessageType::Simple(
-                            crate::messenger::SimpleMessage::StatureChangeEnd,
-                        ),
-                    ));
                     return false;
                 }
                 push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingDown);

@@ -174,7 +174,7 @@ impl EngineInner {
                     } else {
                         LookDirection::LeftRight
                     };
-                self.execute_ai_look_sidewards(owner, direction);
+                self.execute_ai_look_sidewards(sim, assets, owner, direction);
             }
             (
                 SeekingOfficerLookingForSoldiers1Sidewards

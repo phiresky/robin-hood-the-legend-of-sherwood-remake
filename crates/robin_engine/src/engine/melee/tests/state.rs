@@ -21,17 +21,17 @@ fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal()
     actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
 
     // A second net translates to an accepted instruction with no orders.
-    let sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new_damage(
-            1,
-            Command::ReceiveNet,
-            Some(victim),
-            None,
-            0,
-            0,
-        ));
+    let mut damage = crate::sequence::Sequence::new();
+    damage.append_element(SequenceElement::new_damage(
+        1,
+        Command::ReceiveNet,
+        Some(victim),
+        None,
+        0,
+        0,
+    ));
+    let sequence = engine.orders.sequence_manager.insert_sequence(damage);
+    engine.orders.sequence_manager.start_sequence_level(sequence);
     engine
         .orders
         .sequence_manager
@@ -192,7 +192,11 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
         0.0,
         selected_order_id,
     ));
-    let sequence_id = engine.orders.sequence_manager.launch_element(element);
+    let sequence_id = {
+        let id = engine.orders.sequence_manager.insert_element(element);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -317,7 +321,11 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
         crate::position_interface::SectorHandle::new(42),
     ));
     let damage = crate::sequence::SequenceElement::new(1, Command::ReceiveHitDamage, Some(victim));
-    let sequence = engine.launch_element(damage);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
 
     engine.translate_ladder_wall_fall(&LevelAssets::default(), victim, (sequence, 0));
 
@@ -383,7 +391,11 @@ fn purse_brawl_knocks_out_allied_soldier_independently_of_diplomacy() {
                 0,
                 40,
             );
-            let sequence = engine.launch_element(damage);
+            let sequence = {
+                let id = engine.orders.sequence_manager.insert_element(damage);
+                engine.orders.sequence_manager.start_sequence_level(id);
+                id
+            };
             engine.apply_hit_damage(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -434,7 +446,11 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
             Some(attacker),
             Some(target),
         );
-        let sequence = engine.launch_element(element);
+        let sequence = {
+            let id = engine.orders.sequence_manager.insert_element(element);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         engine.dispatch_sword_strike(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
@@ -463,7 +479,11 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
         Some(attacker),
         Some(target),
     );
-    let sequence = engine.launch_element(thrust_a);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(thrust_a);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.dispatch_sword_strike(
         &crate::sim_rng::test_context(),
         &LevelAssets::default(),
@@ -601,14 +621,13 @@ fn reactive_counterstrike_fixture() -> (
     // interrupted element's condolence as coming from Halt; otherwise its
     // later EventDone immediately leaves the new SpecialStrike substate.
     let old_parry =
-        engine
-            .orders
-            .sequence_manager
-            .launch_element(crate::sequence::SequenceElement::new(
-                1,
-                Command::ParrySmalltalkLeft,
-                Some(victim),
-            ));
+        {
+            let id = engine.orders.sequence_manager.insert_element(
+                crate::sequence::SequenceElement::new(1, Command::ParrySmalltalkLeft, Some(victim)),
+            );
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -836,7 +855,11 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
             OrderType::WalkingWithSword,
         );
         old_movement.priority = crate::sequence::SequencePriority::Normal;
-        let old_sequence = engine.launch_element(old_movement);
+        let old_sequence = {
+            let id = engine.orders.sequence_manager.insert_element(old_movement);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         let old_order =
             engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
         engine.element_in_progress(
@@ -966,7 +989,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
         current_angle: 0.0,
         final_angle: std::f32::consts::TAU,
     };
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         engine
             .get_entity(attacker)
@@ -977,7 +1000,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
             .current_angle,
         std::f32::consts::PI
     );
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         engine
             .get_entity(attacker)
@@ -988,7 +1011,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
             .current_angle,
         std::f32::consts::TAU
     );
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     let attacker = engine.get_entity(attacker).unwrap();
     assert_eq!(attacker.element_data().direction(), 0);
     assert_eq!(
@@ -1219,7 +1242,7 @@ fn interrupted_lateral_sweep_uses_the_replacement_strike() {
     assert_eq!(retained_on_start.final_angle, replacement_direction_angle);
     assert_eq!(soldier_life(&engine, victim), 50);
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
 
     let retained_after_hit = &engine
         .get_entity(attacker)
@@ -1442,7 +1465,12 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         );
         assert_ne!(sprite.current_frame, sprite.action_done_frame);
     }
-    engine.tick_selected_sweep_phase(&assets, attacker, strikes::SweepTickPhase::InProgress);
+    engine.tick_selected_sweep_phase(
+        &crate::sim_rng::test_context(),
+        &assets,
+        attacker,
+        strikes::SweepTickPhase::InProgress,
+    );
 
     let queued_damage: Vec<&crate::sequence::SequenceElement> = engine
         .orders
@@ -1717,7 +1745,7 @@ fn saved_empty_true_circle_sweep_rotates_from_persistent_angles() {
     assert!(sweep.victims.is_empty());
     assert_eq!(sweep.current_angle.to_bits(), current_angle.to_bits());
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         engine
             .get_entity(attacker)
@@ -1826,7 +1854,7 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
     );
 
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -1885,7 +1913,7 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
             .count()
     };
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         queued_damage_count(&engine),
         0,
@@ -1899,7 +1927,7 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         .sword_sweep;
     assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
         queued_damage_count(&engine),
         1,
@@ -1930,7 +1958,7 @@ fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
         final_angle: 0.70,
     };
 
-    engine.tick_sweep_for(&assets, attacker, false);
+    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)
@@ -2080,7 +2108,11 @@ fn push_strike_does_not_inform_soldier_of_good_strike() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::H, 1);
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2154,7 +2186,11 @@ fn ordinary_cutting_strike_still_informs_soldier_of_good_strike() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2254,7 +2290,11 @@ fn non_pc_helping_to_climb_still_informs_soldier_of_good_strike() {
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
     damage.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
-    let sequence_id = engine.orders.sequence_manager.launch_element(damage);
+    let sequence_id = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2324,7 +2364,11 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
     let assets = assets_with_sword_profile(1, 50);
     let damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
 
     assert!(engine.apply_push_effect(
         &sim,
@@ -2433,10 +2477,14 @@ fn parried_true_circle_still_queues_push_fall() {
     damage_element.data =
         crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::H, 1);
     damage_sequence.append_element(damage_element);
-    let damage_sequence_id = engine
-        .orders
-        .sequence_manager
-        .launch_sequence(damage_sequence);
+    let damage_sequence_id = {
+        let id = engine
+            .orders
+            .sequence_manager
+            .insert_sequence(damage_sequence);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2525,10 +2573,14 @@ fn parried_true_circle_still_queues_push_fall() {
         engine.orders.allocate_order_id(),
     ));
     parry_sequence.append_element(parry_element);
-    let parry_sequence_id = engine
-        .orders
-        .sequence_manager
-        .launch_sequence(parry_sequence);
+    let parry_sequence_id = {
+        let id = engine
+            .orders
+            .sequence_manager
+            .insert_sequence(parry_sequence);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2813,7 +2865,11 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = {
+        let id = engine.orders.sequence_manager.insert_element(damage);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -2909,7 +2965,11 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
         Some(pc),
         Some(clicked),
     ));
-    let seq_id = engine.launch_sequence(sequence);
+    let seq_id = {
+        let id = engine.orders.sequence_manager.insert_sequence(sequence);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     let action_state_before_dispatch = engine
         .get_entity(pc)
         .unwrap()
@@ -3023,7 +3083,11 @@ fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
         Command::Point,
         Some(opponent),
     ));
-    let selected_id = engine.launch_sequence(selected);
+    let selected_id = {
+        let id = engine.orders.sequence_manager.insert_sequence(selected);
+        engine.orders.sequence_manager.start_sequence_level(id);
+        id
+    };
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3422,7 +3486,13 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
         .unwrap()
         .last_motion_was_step_back_in_combat = false;
 
-    engine.launch_evaluated_step_back(owner, crate::coordinates::MapPoint::new(12.0, 0.0), 0);
+    engine.launch_evaluated_step_back(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        crate::coordinates::MapPoint::new(12.0, 0.0),
+        0,
+    );
     let (sequence_id, element_index) = engine
         .orders
         .sequence_manager

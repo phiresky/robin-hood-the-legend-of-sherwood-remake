@@ -1,10 +1,6 @@
 //! In-game message/event system.
 //!
-//! This module provides the data model (message types, message struct) and a
-//! simple queue-based [`Messenger`] that replaces the original pub/sub
-//! singleton.
-
-use std::collections::VecDeque;
+//! Typed messages delivered synchronously by the engine.
 
 use serde::{Deserialize, Serialize};
 
@@ -234,10 +230,10 @@ pub enum MessageType {
 // Message
 // ---------------------------------------------------------------------------
 
-/// A single message in the queue.
+/// A single synchronous message.
 ///
 /// `value` is the generic parameter; `arg1`/`arg2` carry additional
-/// context passed via `send_with_args`.
+/// context supplied by the sender.
 #[derive(
     Debug,
     Clone,
@@ -295,143 +291,5 @@ impl Message {
             arg1: 0,
             arg2: 0,
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Messenger
-// ---------------------------------------------------------------------------
-
-/// Queue-based message dispatcher.
-///
-/// A simple FIFO queue that consumers poll, replacing the original
-/// pub/sub singleton's forwarding model.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct Messenger {
-    queue: VecDeque<Message>,
-}
-
-impl Default for Messenger {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Messenger {
-    pub fn new() -> Self {
-        Self {
-            queue: VecDeque::new(),
-        }
-    }
-
-    /// Push a message onto the back of the queue.
-    pub fn send(&mut self, msg: Message) {
-        self.queue.push_back(msg);
-    }
-
-    /// Build and enqueue a message with extra arguments.
-    pub fn send_with_args(&mut self, msg_type: MessageType, arg1: u32, arg2: u32) {
-        self.queue.push_back(Message {
-            msg_type,
-            value: 0,
-            arg1,
-            arg2,
-        });
-    }
-
-    /// Pop the next message from the front of the queue.
-    pub fn poll(&mut self) -> Option<Message> {
-        self.queue.pop_front()
-    }
-
-    /// Drain all pending messages, returning them as a Vec.
-    pub fn drain(&mut self) -> Vec<Message> {
-        self.queue.drain(..).collect()
-    }
-
-    /// Discard all pending messages.
-    pub fn clear(&mut self) {
-        self.queue.clear();
-    }
-
-    /// Number of messages currently queued.
-    pub fn count(&self) -> usize {
-        self.queue.len()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn send_and_poll_fifo_order() {
-        let mut m = Messenger::new();
-
-        let msg1 = Message::new(MessageType::Simple(SimpleMessage::Pause));
-        let msg2 = Message::pc(
-            PcMessage::SelectCharacter,
-            Some(EntityId::Pc(crate::entity_id::PcId(42))),
-        );
-
-        m.send(msg1.clone());
-        m.send(msg2.clone());
-
-        assert_eq!(m.count(), 2);
-        assert_eq!(m.poll(), Some(msg1));
-        assert_eq!(m.poll(), Some(msg2));
-        assert_eq!(m.poll(), None);
-        assert_eq!(m.count(), 0);
-    }
-
-    #[test]
-    fn send_with_args() {
-        let mut m = Messenger::new();
-        m.send_with_args(MessageType::Mouse(MouseMessage::Button), 10, 20);
-
-        let msg = m.poll().unwrap();
-        assert_eq!(msg.msg_type, MessageType::Mouse(MouseMessage::Button));
-        assert_eq!(msg.arg1, 10);
-        assert_eq!(msg.arg2, 20);
-    }
-
-    #[test]
-    fn clear_removes_all() {
-        let mut m = Messenger::new();
-        m.send(Message::new(MessageType::Simple(SimpleMessage::ScrollUp)));
-        m.send(Message::new(MessageType::Simple(SimpleMessage::ScrollDown)));
-        assert_eq!(m.count(), 2);
-
-        m.clear();
-        assert_eq!(m.count(), 0);
-        assert_eq!(m.poll(), None);
-    }
-
-    #[test]
-    fn serde_roundtrip() {
-        let msg = Message {
-            msg_type: MessageType::Pc(
-                PcMessage::StartMacro,
-                Some(EntityId::Pc(crate::entity_id::PcId(7))),
-            ),
-            value: 99,
-            arg1: 1,
-            arg2: 2,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let back: Message = serde_json::from_str(&json).unwrap();
-        assert_eq!(msg, back);
     }
 }

@@ -20,8 +20,80 @@
 use serde::{Deserialize, Serialize};
 
 use super::{EngineInner, LevelAssets};
-use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reveal_returns_published_replacement_identity_and_preserves_placement() {
+        let sim = crate::sim_rng::SimulationContext::with_seed_and_config(
+            1,
+            crate::engine::SimConfig {
+                difficulty: crate::player_profile::DifficultyLevel::Easy,
+                ..Default::default()
+            },
+        );
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.sprite_scriptor).insert(
+            "BONUS_FourLeavedClover/BONUS Trefle",
+            crate::sprite_script::SpriteInfo {
+                scripts: std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+                    action_id: crate::order::OrderType::BonusOne as u16,
+                    frame_ids: vec![1],
+                    delays: vec![1],
+                    distances: vec![0],
+                    offsets: vec![Default::default()],
+                    sound_ids: vec![0],
+                    ..Default::default()
+                }]),
+                conversion: std::sync::Arc::new({
+                    let mut conversion = crate::engine::test_support::unmapped_conversion();
+                    conversion[crate::order::OrderType::BonusOne as usize] = 0;
+                    conversion
+                }),
+                size: crate::coordinates::SpriteSize::new(12.0, 8.0),
+                center: crate::coordinates::SpriteAnchor::new(2.0, 3.0),
+            },
+        );
+        let mut scroll = crate::element::ElementScroll::default();
+        scroll.element.kind = crate::element::ElementKind::ObjectScroll;
+        scroll.element.active = true;
+        scroll.presence = [false; 3];
+        let position = crate::coordinates::MapPoint::new(27.0, 51.0);
+        scroll.element.sprite.apply_placement(
+            position,
+            2,
+            None,
+            13,
+            crate::element::GameMaterial::default(),
+            None,
+            None,
+        );
+        let scroll_id = engine.add_test_entity(Entity::Scroll(scroll));
+        assets.entities.scroll_entity_ids.push(scroll_id);
+
+        let revealed = engine
+            .reveal_scroll(&sim, &assets, 0)
+            .expect("scroll is revealable");
+
+        assert_ne!(revealed, scroll_id);
+        let Entity::Bonus(amulet) = engine.expect_entity(revealed, "revealed amulet") else {
+            panic!("replacement must be an amulet");
+        };
+        assert_eq!(
+            amulet.object.object_type,
+            crate::element::ObjectType::BonusAmulet
+        );
+        assert_eq!(amulet.element.position_map(), position);
+        assert_eq!(amulet.element.layer(), 2);
+        assert_eq!(amulet.element.direction(), 13);
+        assert_eq!(engine.scroll_status(scroll_id), ScrollStatus::Taken);
+        assert_eq!(engine.reveal_scroll(&sim, &assets, 0), None);
+    }
+}
 
 /// Scroll reveal status. Persisted in the canonical script-domain scroll state
 /// (keyed by actor script handle); the script natives
@@ -57,37 +129,6 @@ impl ScrollStatus {
             _ => 0,                            // CUSTOM_DOT_INVISIBLE
         }
     }
-}
-
-/// A scroll that needs to be replaced by an amulet at its next
-/// `&mut LevelAssets` opportunity.  Captured at reveal time because
-/// amulet entities need sprite loading that the sim tick can't do.
-///
-/// Drained by [`EngineInner::drain_pending_scroll_amulets`].  The
-/// scroll's position, layer, sector, direction, obstacle, and material
-/// are copied onto the spawned amulet.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct PendingScrollAmulet {
-    pub position_map: MapPoint,
-    pub layer: u16,
-    pub sector: Option<crate::position_interface::SectorHandle>,
-    pub direction: i16,
-    pub obstacle_index: Option<crate::position_interface::ObstacleHandle>,
-    /// Footstep material captured from the scroll's `PositionInterface`.
-    /// Without it the amulet would inherit the `GameMaterial::default()`
-    /// sentinel instead of the scroll's plane material.
-    pub material: crate::element::GameMaterial,
-    /// The scroll whose reveal triggered this spawn.  Stays in the
-    /// entity list with status `Taken`.
-    pub replaces: EntityId,
 }
 
 /// What remark the beggar should say after a reveal attempt.  Fired
@@ -304,17 +345,13 @@ impl EngineInner {
     /// Reveal a scroll by its global scroll ID (index into
     /// [`EngineInner::scroll_entity_ids`]).
     ///
-    /// * On Easy difficulty with `presence[Easy] == false`, queues a
-    ///   pending amulet to spawn later (needs `&mut LevelAssets` for
-    ///   sprite loading — see [`EngineInner::drain_pending_scroll_amulets`])
-    ///   and marks the original scroll `Taken`.
+    /// * On Easy difficulty with `presence[Easy] == false`, creates an
+    ///   amulet before marking the scroll `Taken`.
     /// * Otherwise sets the scroll to `Visible` so it draws on the
     ///   world and on the minimap.
     ///
-    /// Returns the entity that the minimap should highlight — the
-    /// original scroll in both branches, since the amulet (when
-    /// spawned) inherits its `position_map` via
-    /// [`PendingScrollAmulet::position_map`].  Returns `None` if the
+    /// Returns the revealed scroll or replacement amulet for highlighting.
+    /// Returns `None` if the
     /// scroll is not revealable.
     pub(crate) fn reveal_scroll(
         &mut self,
@@ -328,35 +365,13 @@ impl EngineInner {
         let eid = *assets.entities.scroll_entity_ids.get(scroll_id as usize)?;
 
         if self.is_scroll_to_be_replaced_by_amulet(sim, eid) {
-            let (pos, layer, sector, direction, obstacle_index, material) = {
-                let e = self.get_entity(eid)?;
-                let ed = e.element_data();
-                (
-                    ed.position_map(),
-                    ed.layer(),
-                    ed.sector(),
-                    ed.direction(),
-                    ed.obstacle_index(),
-                    ed.material(),
-                )
-            };
-            self.orders
-                .pending_scroll_amulets
-                .push(PendingScrollAmulet {
-                    position_map: pos,
-                    layer,
-                    sector,
-                    direction,
-                    obstacle_index,
-                    material,
-                    replaces: eid,
-                });
+            let amulet = self.spawn_scroll_amulet(sim, assets, eid);
             self.set_scroll_status(eid, ScrollStatus::Taken);
+            Some(amulet)
         } else {
             self.set_scroll_status(eid, ScrollStatus::Visible);
+            Some(eid)
         }
-
-        Some(eid)
     }
 
     // ─── Beggar flow ─────────────────────────────────────────────
@@ -487,35 +502,12 @@ impl EngineInner {
         );
     }
 
-    // ─── Deferred amulet spawn ───────────────────────────────────
-
-    /// Drain amulet-spawn requests queued by [`Self::reveal_scroll`].
-    /// Runs from `perform_hourglass` so sim-state mutation stays in
-    /// the replayed tick. The amulet sprite
-    /// (`BONUS_FourLeavedClover` / `"BONUS Trefle"`) is preloaded at
-    /// level-load by [`EngineInner::preload_scroll_amulet_sprite`],
-    /// so this path only reads the scriptor cache (`&LevelAssets`).
-    pub(crate) fn drain_pending_scroll_amulets(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        if self.orders.pending_scroll_amulets.is_empty() {
-            return;
-        }
-        let requests: Vec<PendingScrollAmulet> =
-            std::mem::take(&mut self.orders.pending_scroll_amulets);
-        for req in requests {
-            self.spawn_scroll_amulet(sim, assets, req);
-        }
-    }
-
     fn spawn_scroll_amulet(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        req: PendingScrollAmulet,
-    ) {
+        scroll_id: EntityId,
+    ) -> EntityId {
         // Resolve the amulet sprite from the preloaded scriptor cache
         // (`BONUS_FourLeavedClover` / "BONUS Trefle"). A miss here
         // means `preload_scroll_amulet_sprite` didn't run — treat as
@@ -527,11 +519,7 @@ impl EngineInner {
             "BONUS_FourLeavedClover",
             "BONUS Trefle",
         ) {
-            tracing::error!(
-                "Scroll-reveal amulet sprite cache lookup failed (scroll {:?}): {e}",
-                req.replaces,
-            );
-            return;
+            panic!("Scroll-reveal amulet sprite cache lookup failed (scroll {scroll_id:?}): {e}");
         }
         sprite.force_random_sprite_frame(sim, crate::sim_rng::RngSite::ScrollRevealFrame);
 
@@ -548,17 +536,20 @@ impl EngineInner {
         // and material onto the spawned amulet. `apply_placement` is
         // the shared helper that wraps these six fields plus the
         // pre-resolved plane.
+        let scroll = self
+            .expect_entity(scroll_id, "scroll replacement placement")
+            .element_data();
         let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-            req.obstacle_index,
+            scroll.obstacle_index(),
             assets.environment.static_sight_obstacles.as_slice(),
         );
         element.sprite.apply_placement(
-            req.position_map,
-            req.layer,
-            req.sector,
-            req.direction,
-            req.material,
-            req.obstacle_index,
+            scroll.position_map(),
+            scroll.layer(),
+            scroll.sector(),
+            scroll.direction(),
+            scroll.material(),
+            scroll.obstacle_index(),
             plane,
         );
         let entity = Entity::Bonus(crate::element::ElementBonus {
@@ -572,6 +563,6 @@ impl EngineInner {
                 ..Default::default()
             },
         });
-        self.add_entity(entity);
+        self.add_entity(entity)
     }
 }

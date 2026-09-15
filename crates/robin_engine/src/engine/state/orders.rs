@@ -1,14 +1,9 @@
 use crate::element::EntityId;
-use crate::messenger::Messenger;
 use crate::sequence::SequenceManager;
 
-use super::super::{PendingScrollAmulet, TimerEntry, movement};
+use super::super::{TimerEntry, movement};
 
-/// Deterministic scheduled gameplay work and its existing drain barriers.
-///
-/// Owning these values together does not make their effects asynchronous:
-/// every queue is still drained at its pre-existing point in the ten-phase
-/// tick, and sequence/script callbacks remain same-call operations.
+/// Sequence graphs, timed work, and ordered path requests.
 #[derive(
     Clone,
     serde::Serialize,
@@ -19,15 +14,10 @@ use super::super::{PendingScrollAmulet, TimerEntry, movement};
 )]
 pub(crate) struct OrderRuntime {
     pub(crate) next_order_id: u32,
-    pub(crate) messenger: Messenger,
     pub(crate) pending_path_requests: movement::PendingPathRequestQueue,
     pub(crate) failed_path_requests: Vec<movement::FailedPathRequest>,
     pub(crate) timer_elements: Vec<TimerEntry>,
     pub(crate) sequence_manager: SequenceManager,
-    pub(crate) pending_reinforcements: Vec<Option<EntityId>>,
-    pub(crate) pending_scroll_amulets: Vec<PendingScrollAmulet>,
-    pub(crate) pending_hero_speeches: Vec<(EntityId, u16)>,
-    pub(crate) pending_hades_kills: Vec<EntityId>,
 }
 
 impl OrderRuntime {
@@ -35,27 +25,17 @@ impl OrderRuntime {
         let value = self;
         let OrderRuntime {
             next_order_id: _,
-            messenger: _,
             pending_path_requests: _,
             failed_path_requests: _,
             timer_elements: _,
             sequence_manager: _,
-            pending_reinforcements: _,
-            pending_scroll_amulets: _,
-            pending_hero_speeches: _,
-            pending_hades_kills: _,
         } = value;
         Self {
             next_order_id: value.next_order_id,
-            messenger: value.messenger.clone(),
             pending_path_requests: value.pending_path_requests.clone(),
             failed_path_requests: value.failed_path_requests.clone(),
             timer_elements: value.timer_elements.clone(),
             sequence_manager: value.sequence_manager.persisted_clone(),
-            pending_reinforcements: value.pending_reinforcements.clone(),
-            pending_scroll_amulets: value.pending_scroll_amulets.clone(),
-            pending_hero_speeches: value.pending_hero_speeches.clone(),
-            pending_hades_kills: value.pending_hades_kills.clone(),
         }
     }
 }
@@ -72,15 +52,10 @@ impl OrderRuntime {
     pub(crate) fn new() -> Self {
         Self {
             next_order_id: 1,
-            messenger: Messenger::new(),
             pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
             timer_elements: Vec::new(),
             sequence_manager: SequenceManager::new(),
-            pending_reinforcements: Vec::new(),
-            pending_scroll_amulets: Vec::new(),
-            pending_hero_speeches: Vec::new(),
-            pending_hades_kills: Vec::new(),
         }
     }
 
@@ -147,42 +122,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn persisted_messenger_contains_only_the_live_queue() {
-        use crate::messenger::{Message, MessageType, SimpleMessage};
-
-        let mut orders = OrderRuntime::new();
-        let message = Message::new(MessageType::Simple(SimpleMessage::Pause));
-        orders.messenger.send(message.clone());
-        let json = serde_json::to_value(orders.persisted_clone()).unwrap();
-        assert_eq!(
-            json["messenger"],
-            serde_json::json!({ "queue": [message.clone()] })
-        );
-        let mut restored: OrderRuntime = serde_json::from_value(json).unwrap();
-        let mut snapshot: Messenger = bitcode::decode(&bitcode::encode(&orders.messenger)).unwrap();
-        for messenger in [&mut restored.messenger, &mut snapshot] {
-            assert_eq!(
-                robin_util::state_hash::compute(messenger),
-                robin_util::state_hash::compute(&orders.messenger)
-            );
-            assert_eq!(messenger.poll(), Some(message.clone()));
-            assert_eq!(messenger.poll(), None);
-        }
-    }
-
-    #[test]
     fn new_runtime_starts_with_empty_barrier_queues() {
         let mut orders = OrderRuntime::new();
 
         assert_eq!(orders.next_order_id, 1);
         assert_eq!(orders.allocate_order_id().get(), 1);
         assert_eq!(orders.next_order_id, 2);
-        assert_eq!(orders.messenger.count(), 0);
         assert!(orders.failed_path_requests.is_empty());
         assert!(orders.timer_elements.is_empty());
-        assert!(orders.pending_reinforcements.is_empty());
-        assert!(orders.pending_scroll_amulets.is_empty());
-        assert!(orders.pending_hero_speeches.is_empty());
-        assert!(orders.pending_hades_kills.is_empty());
     }
 }

@@ -421,9 +421,8 @@ mod tests {
             .expect("zoom command admission");
         assert!(engine.is_zoom_up_in_progress());
 
-        // LockAlt is handled after the zoom gate in the simulation tick. It
-        // therefore remains pending throughout these active transition
-        // frames, making an incorrectly defaulted replay display observable.
+        // Modifier messages complete at admission, including during a camera
+        // transition. Rewind must retain that state and the active zoom gate.
         engine
             .advance_frame(
                 &assets,
@@ -434,6 +433,7 @@ mod tests {
                 ),
             )
             .expect("LockAlt message admission");
+        assert!(engine.is_lock_alt());
 
         let mut rewind = RewindBuffer::new();
         let application_context = host.application_context().clone();
@@ -479,7 +479,7 @@ mod tests {
         }
 
         assert!(engine.is_zoom_up_in_progress());
-        assert!(!engine.is_lock_alt());
+        assert!(engine.is_lock_alt());
 
         let rewound = rewind
             .rewind_to(&assets, 3)
@@ -488,7 +488,8 @@ mod tests {
             robin_engine::replay::state_hash(&rewound),
             robin_engine::replay::state_hash(&engine)
         );
-        assert!(!rewound.is_lock_alt());
+        assert!(rewound.is_zoom_up_in_progress());
+        assert!(rewound.is_lock_alt());
     }
 
     #[test]

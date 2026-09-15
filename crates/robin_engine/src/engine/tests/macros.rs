@@ -494,22 +494,10 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
         assert!(!running);
         assert_eq!(route.goal_sector_index, exact_sector);
     }
-    let stop_count = engine
-        .orders
-        .messenger
-        .drain()
-        .into_iter()
-        .filter(|message| {
-            matches!(
-                message.msg_type,
-                crate::messenger::MessageType::Pc(
-                    crate::messenger::PcMessage::StopRecordingMacro,
-                    None
-                )
-            )
-        })
-        .count();
-    assert_eq!(stop_count, 1, "one global stop follows every recorded PC");
+    assert!(
+        !engine.is_recording_macro(),
+        "recording stops after every PC is captured"
+    );
 }
 
 #[test]
@@ -545,7 +533,11 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
             crate::element::Command::EnterListen,
             Some(pc),
         );
-        let sequence = engine.orders.sequence_manager.launch_element(busy);
+        let sequence = engine.orders.sequence_manager.insert_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -636,10 +628,6 @@ fn queued_multi_pc_group_move_records_resolved_formation_without_touching_manual
     assert_eq!(engine.players.macro_store.get(pc_a), Some(&manual_a));
     assert_eq!(engine.players.macro_store.get(pc_b), Some(&manual_b));
     assert_eq!(engine.players.qa_recording_for, vec![pc_a, pc_b]);
-    assert!(
-        engine.orders.messenger.drain().is_empty(),
-        "automatic capture must not stop or otherwise drive manual recording"
-    );
 }
 
 #[test]
@@ -673,7 +661,11 @@ fn queued_multi_pc_group_move_replays_each_recorded_formation_seek() {
             crate::element::Command::EnterListen,
             Some(pc),
         );
-        let sequence = engine.orders.sequence_manager.launch_element(busy);
+        let sequence = engine.orders.sequence_manager.insert_element(busy);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

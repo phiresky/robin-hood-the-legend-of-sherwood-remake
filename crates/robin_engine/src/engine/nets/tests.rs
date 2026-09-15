@@ -1006,7 +1006,7 @@ fn taking_net_animation_dispatched_for_pc() {
 
     // Launch Take(antagonist=net) targeting the PC.
     let elem = SequenceElement::new_interaction(1, Command::Take, Some(pc_id), Some(net_id));
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
     // Process the pending element so the dispatcher runs.
     let mut dev = crate::engine::DevState::default();
     let mut display = crate::engine::HostDisplayState::default();

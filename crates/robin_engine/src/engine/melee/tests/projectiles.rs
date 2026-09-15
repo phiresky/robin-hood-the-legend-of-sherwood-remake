@@ -44,7 +44,11 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             1,
             0,
         );
-        let sequence = engine.launch_element(damage);
+        let sequence = {
+            let id = engine.orders.sequence_manager.insert_element(damage);
+            engine.orders.sequence_manager.start_sequence_level(id);
+            id
+        };
         engine.dispatch_receive_damage(&sim, &assets, &mut Vec::new(), victim, sequence, 0);
     }
 
@@ -157,7 +161,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.orders.sequence_manager.launch_element(damage);
+    engine.launch_element(&sim, &assets, damage);
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -197,7 +201,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         0,
     );
     engine.resolve_element_priority(&mut second_damage);
-    engine.orders.sequence_manager.launch_element(second_damage);
+    engine.launch_element(&sim, &assets, second_damage);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let victim_entity = engine.get_entity(victim).unwrap();
@@ -271,7 +275,7 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
         20,
     );
     engine.resolve_element_priority(&mut damage);
-    engine.orders.sequence_manager.launch_element(damage);
+    engine.launch_element(&sim, &assets, damage);
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -334,7 +338,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        launched.push(engine.orders.sequence_manager.launch_element(damage));
+        launched.push(engine.launch_element(&sim, &assets, damage));
     }
 
     let mut display = crate::engine::HostDisplayState::default();
@@ -416,7 +420,7 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
             0,
         );
         engine.resolve_element_priority(&mut damage);
-        let sequence = engine.orders.sequence_manager.launch_element(damage);
+        let sequence = engine.launch_element(&sim, &assets, damage);
 
         let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
@@ -471,7 +475,7 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         0,
     );
     engine.resolve_element_priority(&mut damage);
-    let sequence = engine.orders.sequence_manager.launch_element(damage);
+    let sequence = engine.launch_element(&sim, &assets, damage);
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 

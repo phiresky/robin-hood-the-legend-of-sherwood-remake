@@ -257,6 +257,7 @@ impl EngineInner {
     /// shooter and returns its sequence id.
     pub(crate) fn shoot_bow_at(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         shooter: EntityId,
         target: EntityId,
@@ -352,7 +353,11 @@ impl EngineInner {
             }
         }
 
-        Some(self.launch_element(bow_shot::build_shoot_bow_element(shooter, target)))
+        Some(self.launch_element(
+            sim,
+            assets,
+            bow_shot::build_shoot_bow_element(shooter, target),
+        ))
     }
 
     /// Look up the bow profile index and shooting ability for an entity.
@@ -2446,7 +2451,7 @@ impl EngineInner {
                         Command::ParryShield,
                         Some(holder),
                     );
-                    self.launch_element(seq_elem);
+                    self.launch_element(sim, assets, seq_elem);
                 }
                 if result.despawn {
                     self.deactivate_projectile_tombstone(result.arrow, false);
@@ -2468,7 +2473,7 @@ impl EngineInner {
                 seq_elem.data = crate::sequence::SequenceElementData::Interaction {
                     antagonist: shooter,
                 };
-                self.launch_element(seq_elem);
+                self.launch_element(sim, assets, seq_elem);
                 tracing::debug!(
                     projectile = ?result.arrow,
                     target = ?target_id,
@@ -2603,6 +2608,8 @@ impl EngineInner {
                             continue;
                         }
                         self.queue_projectile_damage(
+                            sim,
+                            assets,
                             victim,
                             shooter,
                             Command::ReceiveArrowDamage,
@@ -2889,6 +2896,8 @@ impl EngineInner {
                 return;
             }
             self.queue_projectile_damage(
+                sim,
+                assets,
                 victim,
                 _shooter,
                 Command::ReceiveStoneDamage,
@@ -3276,6 +3285,8 @@ impl EngineInner {
     /// transition's own terminal edge.
     pub(super) fn apply_completed_corpse_drop(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         carrier_id: EntityId,
         target_id: EntityId,
         drop_posture: crate::element::Posture,
@@ -3411,7 +3422,7 @@ impl EngineInner {
         // tested against the body's old current position, not against the
         // delayed drop destination applied at its later owner slot.
         self.process_corpse_intersection_update_for(target_id);
-        self.actor_wait(target_id);
+        self.actor_wait(sim, assets, target_id);
 
         if in_building && let Some(target) = self.get_entity_mut(target_id) {
             let is_dead = target.is_dead();
@@ -3449,13 +3460,6 @@ impl EngineInner {
             // Listen completion must not clear that newer action.
             if self.players.seats[0].selected_action == crate::profiles::Action::Listen {
                 self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
-                self.orders
-                    .messenger
-                    .send(crate::messenger::Message::pc_with_value(
-                        crate::messenger::PcMessage::UnselectAction,
-                        Some(actor_id),
-                        crate::profiles::Action::Listen as u32,
-                    ));
                 self.unselect_action(sim, assets, actor_id);
             }
         } else if let Some(pc) = self
@@ -3601,6 +3605,8 @@ impl EngineInner {
                 ..
             } => {
                 self.apply_completed_corpse_drop(
+                    sim,
+                    assets,
                     carrier_id,
                     target_id,
                     drop_posture,
@@ -3617,17 +3623,18 @@ impl EngineInner {
                 actor_id,
                 target_id,
                 ..
-            } => self.apply_ability_untie_done(actor_id, target_id),
+            } => self.apply_ability_untie_done(sim, assets, actor_id, target_id),
             AbilityTickResult::ClimbOnShouldersDone {
                 climber_id,
                 helper_id,
                 ..
-            } => self.apply_ability_climb_on_shoulders_done(climber_id, helper_id),
+            } => self.apply_ability_climb_on_shoulders_done(sim, assets, climber_id, helper_id),
             AbilityTickResult::ClimbDownFromShouldersDone {
                 climber_id,
                 helper_id,
                 ..
-            } => self.apply_ability_climb_down_from_shoulders_done(climber_id, helper_id),
+            } => self
+                .apply_ability_climb_down_from_shoulders_done(sim, assets, climber_id, helper_id),
             AbilityTickResult::HealDone {
                 healer_id,
                 target_id,
@@ -3859,7 +3866,7 @@ impl EngineInner {
         }
         // Player-character ability execution refreshes the victim
         // with Wait after applying the tied posture and remark.
-        self.actor_wait(target_id);
+        self.actor_wait(sim, assets, target_id);
         tracing::debug!(
             actor = ?actor_id,
             target = ?target_id,
@@ -3868,7 +3875,13 @@ impl EngineInner {
         self.record_achievement_tactical_effect(actor_id, target_id);
     }
 
-    fn apply_ability_untie_done(&mut self, actor_id: EntityId, target_id: EntityId) {
+    fn apply_ability_untie_done(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        target_id: EntityId,
+    ) {
         let target = self
             .get_entity_mut(target_id)
             .unwrap_or_else(|| panic!("untie target {target_id:?} vanished at Done"));
@@ -3878,7 +3891,7 @@ impl EngineInner {
         target.untie_human();
         // Preserve unconsciousness and concussion. The regular
         // human recovery tick remains the sole wake-up authority.
-        self.actor_wait(target_id);
+        self.actor_wait(sim, assets, target_id);
         tracing::debug!(
             actor = ?actor_id,
             target = ?target_id,
@@ -3886,7 +3899,13 @@ impl EngineInner {
         );
     }
 
-    fn apply_ability_climb_on_shoulders_done(&mut self, climber_id: EntityId, helper_id: EntityId) {
+    fn apply_ability_climb_on_shoulders_done(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        climber_id: EntityId,
+        helper_id: EntityId,
+    ) {
         // Postures were latched on init by
         // `begin_climb_on_shoulders`.  Terminate the
         // climber's sequence element so the post-seek
@@ -3894,7 +3913,7 @@ impl EngineInner {
         // low-priority Wait so its frozen-execution can
         // re-enter the idle loop while still
         // `CarryingOnShoulders`.
-        self.actor_wait(helper_id);
+        self.actor_wait(sim, assets, helper_id);
         tracing::debug!(
             climber = ?climber_id,
             helper = ?helper_id,
@@ -3904,6 +3923,8 @@ impl EngineInner {
 
     fn apply_ability_climb_down_from_shoulders_done(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         climber_id: EntityId,
         helper_id: EntityId,
     ) {
@@ -4025,7 +4046,7 @@ impl EngineInner {
         // Park the helper on a low-priority idle so it
         // doesn't immediately re-acquire its previous
         // element.
-        self.actor_wait(helper_id);
+        self.actor_wait(sim, assets, helper_id);
 
         tracing::debug!(
             climber = ?climber_id,
@@ -4105,7 +4126,7 @@ impl EngineInner {
             activation.data = crate::sequence::SequenceElementData::Interaction {
                 antagonist: Some(healer_id),
             };
-            self.launch_element(activation);
+            self.launch_element(sim, assets, activation);
         } else if let Some(target) = self.get_entity_mut(target_id) {
             // Heal the target PC via the shared helper that
             // applies the heal + life-point clamp guards.
@@ -4232,13 +4253,6 @@ impl EngineInner {
         // ListenPhase::CountingDown.  Forward
         // PcMessage::SelectAction(Listen) so HUD/UI
         // reflects the active listen.
-        self.orders
-            .messenger
-            .send(crate::messenger::Message::pc_with_value(
-                crate::messenger::PcMessage::SelectAction,
-                Some(actor_id),
-                crate::profiles::Action::Listen as u32,
-            ));
         // The message's gameplay half runs inline, the same way
         // the beggar entry handoff applies it: for a selected PC
         // the action reselection stops the group at Normal
@@ -4267,7 +4281,7 @@ impl EngineInner {
         // fallback installed at the start of the next actor
         // update: it must already be available when the exit
         // transition terminates and sends its consolation card.
-        self.actor_wait(actor_id);
+        self.actor_wait(sim, assets, actor_id);
         // The original game branches immediately after waiting: an
         // unselected PC only stores NOACTION, while a selected PC
         // synchronously forwards MSG_UNSELECT_ACTION(Listen).
@@ -4479,7 +4493,7 @@ impl EngineInner {
             activation.data = crate::sequence::SequenceElementData::Interaction {
                 antagonist: Some(pc_id),
             };
-            self.launch_element(activation);
+            self.launch_element(sim, assets, activation);
         } else {
             let mut receive = crate::sequence::SequenceElement::new(
                 1,
@@ -4487,7 +4501,7 @@ impl EngineInner {
                 Some(beggar_id),
             );
             receive.priority = crate::sequence::SequencePriority::Normal;
-            self.launch_element(receive);
+            self.launch_element(sim, assets, receive);
         }
         self.add_campaign_value(
             crate::campaign::CampaignValue::Ransom,
@@ -4652,7 +4666,7 @@ impl EngineInner {
         {
             *ih = is_harder_hit;
         }
-        self.launch_element(dmg);
+        self.launch_element(sim, assets, dmg);
 
         tracing::debug!(
             attacker = ?actor_id,
@@ -4735,7 +4749,7 @@ impl EngineInner {
             life,
             0,
         );
-        self.launch_element(dmg);
+        self.launch_element(sim, assets, dmg);
 
         tracing::debug!(
             attacker = ?actor_id,
@@ -5376,6 +5390,7 @@ impl EngineInner {
     /// run this check.
     pub(super) fn tick_shouldered_carry_ceiling(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         executed_actions: &[(EntityId, crate::order::OrderType)],
     ) {
@@ -5442,7 +5457,7 @@ impl EngineInner {
                 0,
                 0,
             );
-            self.launch_element(dmg);
+            self.launch_element(sim, assets, dmg);
             tracing::debug!(
                 ?carrier_id,
                 ?victim_id,
@@ -5964,11 +5979,12 @@ mod tests {
         let lower = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(
+            .insert_element(SequenceElement::new(
                 1,
                 Command::LowerShield,
                 Some(target_id),
             ));
+        engine.orders.sequence_manager.start_sequence_level(lower);
         engine.dispatch_shield_command(
             &crate::sim_rng::test_context(),
             &assets,
@@ -6194,7 +6210,16 @@ mod tests {
             elem.set_obstacle_index(Some(obstacle), Some(plane));
         }
 
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
+        let assets = engine.test_runtime_assets();
+        engine.apply_completed_corpse_drop(
+            &crate::sim_rng::test_context(),
+            &assets,
+            carrier_id,
+            target_id,
+            Posture::Lying,
+            carrier_pos,
+            15,
+        );
 
         let target = engine.get_entity(target_id).unwrap();
         assert!(target.element_data().position_map_delayed);
@@ -6240,7 +6265,10 @@ mod tests {
             .element_data()
             .position_map();
 
+        let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
+            &crate::sim_rng::test_context(),
+            &assets,
             carrier_id,
             target_id,
             Posture::DeadBack,
@@ -6298,7 +6326,16 @@ mod tests {
             .last_is_lying_for_corpse_intersection = Some(true);
         let neighbour_id = engine.add_test_entity(neighbour);
 
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
+        let assets = engine.test_runtime_assets();
+        engine.apply_completed_corpse_drop(
+            &crate::sim_rng::test_context(),
+            &assets,
+            carrier_id,
+            target_id,
+            Posture::Tied,
+            drop_position,
+            0,
+        );
 
         let target = engine.get_entity(target_id).unwrap();
         assert!(target.element_data().position_map_delayed);
@@ -6354,7 +6391,16 @@ mod tests {
             elem.set_obstacle_index(Some(obstacle), Some(plane));
         }
 
-        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
+        let assets = engine.test_runtime_assets();
+        engine.apply_completed_corpse_drop(
+            &crate::sim_rng::test_context(),
+            &assets,
+            carrier_id,
+            target_id,
+            Posture::Lying,
+            carrier_pos,
+            4,
+        );
 
         let target = engine.get_entity(target_id).unwrap();
         assert!(!target.element_data().position_map_delayed);
@@ -6586,6 +6632,7 @@ mod tests {
         let (mut engine, assets, carrier_id, _) = blocked_shoulder_pair();
 
         engine.tick_shouldered_carry_ceiling(
+            &crate::sim_rng::test_context(),
             &assets,
             &[(carrier_id, OrderType::WaitingCarryingOnShoulders)],
         );
@@ -6722,6 +6769,7 @@ mod tests {
         assert!(shoulder_drop_elements(&engine).is_empty());
 
         engine.tick_shouldered_carry_ceiling(
+            &crate::sim_rng::test_context(),
             &assets,
             &[(carrier_id, OrderType::WalkingCarryingOnShoulders)],
         );
@@ -6763,6 +6811,8 @@ mod tests {
         let victim = engine.add_test_entity(victim);
 
         engine.queue_projectile_damage(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
             victim,
             shooter,
             crate::element::Command::ReceiveArrowDamage,

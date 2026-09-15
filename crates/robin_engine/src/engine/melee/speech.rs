@@ -592,13 +592,18 @@ impl EngineInner {
     /// Launch a provoke (taunt) sequence element on an entity.  The
     /// dispatcher in `tick.rs` wires the Provoking animation through
     /// `active_ai_anim` + `do_next_order`.
-    pub(super) fn launch_provoke(&mut self, entity_id: EntityId) {
+    pub(super) fn launch_provoke(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
         let elem = crate::sequence::SequenceElement::new(
             1,
             crate::element::Command::Provoke,
             Some(entity_id),
         );
-        self.launch_element(elem);
+        self.launch_element(sim, assets, elem);
     }
 
     pub(crate) fn dispatch_provoke(

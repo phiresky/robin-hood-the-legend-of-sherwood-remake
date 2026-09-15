@@ -209,7 +209,7 @@ fn launch_activation(engine: &mut EngineInner, target: EntityId, pc: EntityId, c
     elem.data = SequenceElementData::Interaction {
         antagonist: Some(pc),
     };
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ fn hit_target_fires_activated_by_sword_when_defined() {
     elem.data = SequenceElementData::Interaction {
         antagonist: Some(target_id),
     };
-    engine.launch_element(elem);
+    engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
 
     let assets = LevelAssets::new();
     let mut dev = DevState::default();
@@ -361,7 +361,7 @@ fn handle_target_and_take_target_both_route_to_activated_by_hand() {
         elem.data = SequenceElementData::Interaction {
             antagonist: Some(target_id),
         };
-        engine.launch_element(elem);
+        engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), elem);
     }
 
     let assets = LevelAssets::new();

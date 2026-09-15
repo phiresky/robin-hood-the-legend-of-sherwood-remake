@@ -78,7 +78,7 @@ impl EngineInner {
                 } else {
                     crate::ai::LookDirection::RightLeft
                 };
-                self.execute_ai_look_sidewards(owner, direction);
+                self.execute_ai_look_sidewards(sim, assets, owner, direction);
             }
             (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
                 if let Some(&direction) = self.seek_enemy(owner).seek_point_view_directions.first()
@@ -120,6 +120,8 @@ impl EngineInner {
                     SeekingSeekpointCheckingAmbushPoint,
                 );
                 self.execute_ai_look_sidewards(
+                    sim,
+                    assets,
                     owner,
                     if substate == SeekingSeekpointPassedAmbushPointLeft {
                         crate::ai::LookDirection::Left
@@ -379,7 +381,7 @@ impl EngineInner {
                     Some(owner),
                     Some(net),
                 ));
-                self.launch_sequence(sequence);
+                self.launch_sequence(sim, assets, sequence);
 
                 self.seek_enemy_mut(owner)
                     .base

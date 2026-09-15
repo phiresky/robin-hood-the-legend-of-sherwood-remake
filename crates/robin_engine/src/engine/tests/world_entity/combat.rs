@@ -113,14 +113,14 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         "the promoted reciprocal opponent is inside the Provoke band"
     );
 
-    engine.launch_sword_movement_termination_provoke(owner);
+    engine.launch_sword_movement_termination_provoke(&sim, &assets, owner);
     let mut post_seek = Sequence::new();
     post_seek.append_element(SequenceElement::new(
         2,
         Command::SpeakHeroReachDestination,
         Some(owner),
     ));
-    engine.launch_sequence(post_seek);
+    engine.launch_sequence(&sim, &assets, post_seek);
     let owner_registrations = engine
         .orders
         .sequence_manager

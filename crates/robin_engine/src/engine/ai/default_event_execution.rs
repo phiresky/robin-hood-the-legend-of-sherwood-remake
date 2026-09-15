@@ -82,7 +82,7 @@ impl EngineInner {
                 2 => LookDirection::LeftRight,
                 _ => LookDirection::RightLeft,
             };
-        self.execute_ai_look_sidewards(owner, direction);
+        self.execute_ai_look_sidewards(sim, assets, owner, direction);
 
         true
     }
@@ -1014,7 +1014,11 @@ mod movement_tests {
         };
         *gate_id = Some(gate);
         *direction = 1;
-        let sequence = engine.orders.sequence_manager.launch_element(pass);
+        let sequence = engine.orders.sequence_manager.insert_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),

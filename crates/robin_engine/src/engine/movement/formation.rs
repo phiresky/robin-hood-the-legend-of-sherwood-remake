@@ -485,7 +485,7 @@ impl EngineInner {
                 continue;
             }
             if self
-                .group_move_pc_simple_route(assets, &ctx, &pc)
+                .group_move_pc_simple_route(sim, assets, &ctx, &pc)
                 .is_break()
             {
                 continue;
@@ -502,10 +502,14 @@ impl EngineInner {
         // bookkeeping (QA HUD reset, macro-slot commit) consistent
         // with other stop points.
         if self.is_recording_macro() {
-            self.orders.messenger.send(crate::messenger::Message::pc(
-                crate::messenger::PcMessage::StopRecordingMacro,
-                None,
-            ));
+            self.forward_message(
+                sim,
+                assets,
+                crate::messenger::Message::pc(
+                    crate::messenger::PcMessage::StopRecordingMacro,
+                    None,
+                ),
+            );
         }
     }
 
@@ -1121,6 +1125,7 @@ impl EngineInner {
             };
             self.launch_gate_movement_sequence(
                 sim,
+                assets,
                 crate::engine::movement::GateRouteRequest {
                     entity_id: approach_owner,
                     source_sector: (!source_and_line_are_same_sector).then_some(*src_sector),
@@ -1191,6 +1196,7 @@ impl EngineInner {
     /// routing.
     fn group_move_pc_simple_route(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         ctx: &GroupMoveRouteCtx<'_>,
         pc: &GroupMovePcRoute,
@@ -1335,7 +1341,7 @@ impl EngineInner {
                 append_arrival_speech(&mut seq, *pc_id);
             }
             self.append_posture_recovery(*pc_id, &mut seq);
-            self.launch_sequence(seq);
+            self.launch_sequence(sim, assets, seq);
             if show_marker && !is_door_click {
                 self.feedback
                     .ground_mark
@@ -1685,6 +1691,7 @@ impl EngineInner {
                 };
                 self.launch_gate_movement_order(
                     sim,
+                    assets,
                     crate::engine::movement::GateRouteRequest {
                         entity_id: *pc_id,
                         source_sector: Some(path_src_sector),

@@ -281,7 +281,7 @@ impl EngineInner {
                 0,
                 0,
             );
-            self.launch_element(elem);
+            self.launch_element(sim, assets, elem);
 
             // Set the victim's sprite to draw behind the net so the
             // net visually covers them. The display-order pipeline is
@@ -387,7 +387,7 @@ impl EngineInner {
             );
 
             // ── 3. Park the victim with a Wait element ──────────────
-            self.actor_wait(victim_id);
+            self.actor_wait(sim, assets, victim_id);
 
             // Clear the "behind net" sprite reference so the victim
             // goes back to normal Y-sorting.

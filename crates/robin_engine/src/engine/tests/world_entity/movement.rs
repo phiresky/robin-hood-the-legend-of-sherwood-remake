@@ -122,7 +122,7 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(owner, false, false);
+    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
     let mut destination = engine.live_ai_position(owner);
     destination.x = 100.0;
     destination.y = 90.0;
@@ -415,7 +415,11 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
         };
         *gate_id = Some(gate);
         *movement_direction = direction;
-        let sequence_id = engine.orders.sequence_manager.launch_element(element);
+        let sequence_id = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence_id);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -574,7 +578,11 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
     };
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
-    let sequence_id = engine.orders.sequence_manager.launch_element(pass_door);
+    let sequence_id = engine.orders.sequence_manager.insert_element(pass_door);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -705,7 +713,11 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     };
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 1;
-    let sequence_id = engine.orders.sequence_manager.launch_element(pass);
+    let sequence_id = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -869,7 +881,11 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     };
     *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
     *direction = 0;
-    let sequence_id = engine.orders.sequence_manager.launch_element(pass);
+    let sequence_id = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

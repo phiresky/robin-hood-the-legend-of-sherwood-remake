@@ -94,7 +94,11 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     let order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
     let order_id = order.order_id;
     shot_element.orders.push_back(order);
-    let shot_sequence = engine.orders.sequence_manager.launch_element(shot_element);
+    let shot_sequence = engine.orders.sequence_manager.insert_element(shot_element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(shot_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -724,7 +728,11 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
     let order_id = order.order_id;
     selected.orders.push_back(order);
-    let selected_seq = engine.orders.sequence_manager.launch_element(selected);
+    let selected_seq = engine.orders.sequence_manager.insert_element(selected);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(selected_seq);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -834,7 +842,11 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     let order = Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -902,7 +914,11 @@ fn unbound_bow_transition_still_uses_generic_execute() {
     element
         .orders
         .push_back(Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -946,7 +962,11 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
     element
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1050,7 +1070,11 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     order.antagonist = Some(target);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
@@ -1166,7 +1190,11 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     );
     let element =
         SequenceElement::new_interaction(1, Command::ThrowApple, Some(owner), Some(target));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     assert_eq!(
         crate::abilities::begin_throw_apple(
             &mut engine.world.entities,

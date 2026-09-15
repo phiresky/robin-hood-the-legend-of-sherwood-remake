@@ -26,11 +26,16 @@ fn live_waiter_preparation_cancels_only_its_owner() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let waiter = engine.orders.sequence_manager.launch_element(element);
+    let waiter = engine.orders.sequence_manager.insert_element(element);
+    engine.orders.sequence_manager.start_sequence_level(waiter);
     let other_sequence = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::Wait, Some(other)));
+        .insert_element(SequenceElement::new(1, Command::Wait, Some(other)));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(other_sequence);
     engine.orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
         PendingPathRequest::test_request(owner, waiter, 0),
         PendingPathRequest::test_request(other, other_sequence, 0),
@@ -91,7 +96,11 @@ fn mechanics_stop_clears_only_the_selected_elements_ability_mirror() {
         let selected = engine
             .orders
             .sequence_manager
-            .launch_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+            .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(selected);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,

@@ -149,7 +149,8 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 43;
+/// Version 44 removes deferred gameplay and message queues from engine state.
+pub const REPLAY_SCHEMA_VERSION: u32 = 44;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

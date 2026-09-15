@@ -487,7 +487,7 @@ impl EngineInner {
                 if let Some(entity) = self.get_entity_mut(id) {
                     entity.element_data_mut().unreachable = true;
                 }
-                self.launch_damage(id, 1000, 1000);
+                self.launch_damage(sim, assets, id, 1000, 1000);
             }
         }
     }
@@ -832,7 +832,11 @@ mod tests {
             destination.y,
             order_id,
         ));
-        let sequence = engine.orders.sequence_manager.launch_element(movement);
+        let sequence = engine.orders.sequence_manager.insert_element(movement);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine
             .orders
             .sequence_manager

@@ -168,17 +168,20 @@ impl EngineInner {
         {
             if *running {
                 self.actor_make_fast(sim, *actor);
-            } else if self.apply_target_interaction_route(sim, *actor, *target, *command, *running)
+            } else if self
+                .apply_target_interaction_route(sim, assets, *actor, *target, *command, *running)
             {
                 self.hero_speaking(assets, *actor, crate::engine::melee::HERO_ACCEPT_COMMAND);
             }
         } else {
-            self.apply_interaction_with_seek(sim, *actor, *target, *command, *running);
+            self.apply_interaction_with_seek(sim, assets, *actor, *target, *command, *running);
         }
     }
 
     pub(super) fn dispatch_ground_target(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
         actor: &EntityId,
         target_pos: &crate::coordinates::WorldPoint3D,
         command: &Command,
@@ -254,6 +257,6 @@ impl EngineInner {
         // instruction at the post-entity manager boundary.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(seq);
+        self.launch_sequence(sim, assets, seq);
     }
 }

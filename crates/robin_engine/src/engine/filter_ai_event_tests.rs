@@ -1765,22 +1765,17 @@ fn install_test_action(
     element
         .orders
         .push_back(crate::order::Order::test_new(action, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
         &mut Vec::new(),
         sequence,
         0,
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions()
-            .len(),
-        1,
-        "the fixture consumes the synthetic wait element's initial Instruct"
     );
 }
 
@@ -1798,7 +1793,11 @@ fn install_test_wait_timer(
         Some(actor),
     );
     element.set_property(Field::Timer, FieldValue::Integer(frames));
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.dispatch_wait_command(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1808,10 +1807,6 @@ fn install_test_wait_timer(
         sequence,
         0,
     );
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
     sequence
 }
 
@@ -1861,7 +1856,11 @@ fn install_test_order_queue(
     for order in orders {
         element.orders.push_back(order);
     }
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -1869,10 +1868,6 @@ fn install_test_order_queue(
         sequence,
         0,
     );
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
     sequence
 }
 
@@ -1918,7 +1913,11 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         let order_id = order.order_id;
         let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(unlocker));
         element.orders.push_back(order);
-        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1926,10 +1925,6 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             sequence,
             0,
         );
-        let _ = engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions();
 
         {
             let entity = engine
@@ -2231,10 +2226,7 @@ fn sequence_launch_dispatches_immediate_engine_elements() {
     let mut timer = SequenceElement::new_generic(1, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(12));
     sequence.append_element(timer);
-    engine.launch_sequence(sequence);
-    engine
-        .drain_script_synchronous_actions(&crate::sim_rng::test_context(), &assets, &mut Vec::new())
-        .unwrap();
+    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
 
     assert_eq!(engine.orders.timer_elements.len(), 1);
     let timer_ref = engine.orders.timer_elements[0].element_ref;
@@ -2245,14 +2237,6 @@ fn sequence_launch_dispatches_immediate_engine_elements() {
         .expect("AI-launched timer remains inspectable");
     assert_eq!(timer.command, Command::Timer);
     assert_eq!(timer.state, SequenceState::Todo);
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions()
-            .is_empty(),
-        "all immediate sequence elements must complete before the caller continues"
-    );
 }
 
 #[test]
@@ -2470,7 +2454,11 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
             movement_order,
         );
         element.orders.push_back(order);
-        let sequence = engine.orders.sequence_manager.launch_element(element);
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
             &assets,
@@ -2478,10 +2466,6 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
             sequence,
             0,
         );
-        let _ = engine
-            .orders
-            .sequence_manager
-            .take_pending_synchronous_actions();
 
         let executed =
             engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
@@ -2842,7 +2826,11 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
             element
                 .orders
                 .push_back(Order::test_new(OrderType::Taking, 0.0, 0.0));
-            let sequence = engine.orders.sequence_manager.launch_element(element);
+            let sequence = engine.orders.sequence_manager.insert_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -2850,10 +2838,6 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
                 sequence,
                 0,
             );
-            let _ = engine
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
             installed = Some(sequence);
         },
     );
@@ -3053,7 +3037,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
         0.0,
         engine.orders.allocate_order_id(),
     ));
-    let successor = engine.orders.sequence_manager.launch_element(element);
+    let successor = engine.launch_element(&crate::sim_rng::test_context(), &assets, element);
     engine.hourglass_phase_sequences(
         &crate::sim_rng::test_context(),
         &mut crate::engine::HostDisplayState::default(),
@@ -3094,10 +3078,11 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         .continuation
         .motion_state = crate::sprite::MotionState::Terminated;
 
-    let sequence = engine
-        .orders
-        .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::Generic, Some(actor)));
+    let sequence = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(actor)),
+    );
     engine.hourglass_phase_sequences(
         &crate::sim_rng::test_context(),
         &mut crate::engine::HostDisplayState::default(),
@@ -3154,7 +3139,11 @@ fn turning_selects_sprite_row_after_the_direction_step() {
     let order_id = order.order_id;
     let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3162,10 +3151,6 @@ fn turning_selects_sprite_row_after_the_direction_step() {
         sequence,
         0,
     );
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
 
     {
         let entity = engine
@@ -3215,7 +3200,11 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
     let order_id = order.order_id;
     let mut element = SequenceElement::new(1, Command::Turn, Some(actor));
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3223,10 +3212,6 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         sequence,
         0,
     );
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
 
     {
         let entity = engine
@@ -3419,7 +3404,11 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
     );
     element.set_property(Field::Timer, FieldValue::Integer(0));
     element.orders.extend([first, second]);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -3427,10 +3416,6 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
         sequence,
         0,
     );
-    let _ = engine
-        .orders
-        .sequence_manager
-        .take_pending_synchronous_actions();
     {
         let sprite = &mut engine
             .get_entity_mut(actor)
@@ -3534,7 +3519,11 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
                 Some(actor),
             );
             timer.set_property(Field::Timer, FieldValue::Integer(0));
-            let sequence = engine.orders.sequence_manager.launch_element(timer);
+            let sequence = engine.orders.sequence_manager.insert_element(timer);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
             engine.dispatch_wait_command(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -3544,10 +3533,6 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
                 sequence,
                 0,
             );
-            let _ = engine
-                .orders
-                .sequence_manager
-                .take_pending_synchronous_actions();
             replacement_sequence = Some(sequence);
         },
         |_, _, _| {},
@@ -3619,7 +3604,11 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                     Some(target),
                 );
                 timer.set_property(Field::Timer, FieldValue::Integer(1));
-                let sequence = engine.launch_element(timer);
+                let sequence = engine.orders.sequence_manager.insert_element(timer);
+                engine
+                    .orders
+                    .sequence_manager
+                    .start_sequence_level(sequence);
                 engine.dispatch_wait_command(
                     &crate::sim_rng::test_context(),
                     &assets,
@@ -3629,10 +3618,6 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                     sequence,
                     0,
                 );
-                let _ = engine
-                    .orders
-                    .sequence_manager
-                    .take_pending_synchronous_actions();
                 timer_sequence = Some(sequence);
             },
         );
@@ -3910,7 +3895,11 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     order.antagonist = Some(bottle);
     let order_id = order.order_id;
     element.orders.push_back(order);
-    let sequence = engine.orders.sequence_manager.launch_element(element);
+    let sequence = engine.orders.sequence_manager.insert_element(element);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
     let assets = LevelAssets::new();
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
@@ -5637,7 +5626,11 @@ fn select_unrelated_pass_door_fixture(
     } else {
         unreachable!("PassDoor fixture must be a movement element")
     }
-    let pass_sequence = engine.orders.sequence_manager.launch_element(pass);
+    let pass_sequence = engine.orders.sequence_manager.insert_element(pass);
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(pass_sequence);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -5757,7 +5750,11 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
     let sequence_id = engine
         .orders
         .sequence_manager
-        .launch_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
+        .insert_element(SequenceElement::new(1, Command::PassDoor, Some(owner)));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence_id);
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,
@@ -6067,7 +6064,8 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         unreachable!("new_movement must construct movement data")
     };
     *destination = deferred_destination;
-    let deferred_sequence = engine.orders.sequence_manager.launch_element(deferred);
+    let deferred_sequence =
+        engine.launch_element(&crate::sim_rng::test_context(), &assets, deferred);
 
     run_ai_state_native_probe(&mut engine, &assets, actor);
 
@@ -6132,17 +6130,10 @@ fn pre_existing_same_owner_moves_are_stopped_without_being_dispatched_as_causal_
         !engine
             .orders
             .sequence_manager
-            .hourglass()
+            .v48_elements_to_go()
             .iter()
-            .any(|action| {
-                matches!(
-                    action,
-                    crate::sequence::SequenceAction::InstructOwner {
-                        owner,
-                        sequence_id,
-                        element_index: 0,
-                    } if *owner == actor && *sequence_id == deferred_sequence
-                )
+            .any(|&(sequence_id, element_index)| {
+                sequence_id == deferred_sequence && element_index == 0
             }),
         "the stopped old Move must not be mistaken for the exact causal sequence ID"
     );
@@ -7236,12 +7227,16 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
     ai.current_state = AiState::Default;
     ai.current_substate = Substate::DefaultGotoRoute;
     ai.patrol_path = Some(path);
-    let selected = engine.launch_element(SequenceElement::new_movement(
-        1,
-        Command::Move,
-        Some(owner),
-        crate::order::OrderType::WalkingUpright,
-    ));
+    let selected = engine.launch_element(
+        &crate::sim_rng::test_context(),
+        &assets,
+        SequenceElement::new_movement(
+            1,
+            Command::Move,
+            Some(owner),
+            crate::order::OrderType::WalkingUpright,
+        ),
+    );
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
         &assets,

@@ -270,7 +270,11 @@ mod tests {
             };
             *gate_id = Some(crate::gate::DoorIndex::new(0).unwrap());
             *direction = 1;
-            let sequence = engine.orders.sequence_manager.launch_element(pass);
+            let sequence = engine.orders.sequence_manager.insert_element(pass);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
             engine.element_in_progress(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
@@ -1040,7 +1044,7 @@ impl EngineInner {
         let mut sequence = Sequence::new();
         sequence.append_element(turn);
         sequence.append_element(point);
-        self.launch_sequence(sequence);
+        self.launch_sequence(sim, assets, sequence);
     }
 
     pub(in crate::engine) fn duty_go_to(
