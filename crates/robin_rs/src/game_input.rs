@@ -14,7 +14,7 @@ use robin_engine::campaign as engine_campaign;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
-use robin_engine::element::{ActionState, Command, Entity, EntityId, Focus, ListenPhase, Posture};
+use robin_engine::element::{ActionState, Command, Entity, EntityId, Focus, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::{

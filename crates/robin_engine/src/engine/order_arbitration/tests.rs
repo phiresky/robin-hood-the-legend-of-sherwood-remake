@@ -1,5 +1,5 @@
 use super::*;
-use crate::element::{Command, ListenPhase, Posture};
+use crate::element::{Command, Posture};
 use crate::engine::movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
 use crate::engine::test_support::actors::make_test_soldier;
 use crate::order::{Order, OrderType};
@@ -82,64 +82,4 @@ fn live_waiter_preparation_cancels_only_its_owner() {
     );
     assert_eq!(engine.orders.failed_path_requests.len(), 1);
     assert_eq!(engine.orders.failed_path_requests[0].owner, other);
-}
-
-#[test]
-fn mechanics_stop_clears_only_the_selected_elements_ability_mirror() {
-    for mirror_matches_selected in [false, true] {
-        let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
-        let mut assets = LevelAssets::new();
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let selected = engine
-            .orders
-            .sequence_manager
-            .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-        engine
-            .orders
-            .sequence_manager
-            .start_sequence_level(selected);
-        engine.select_sequence_element(owner, Some((selected, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            selected,
-            0,
-        );
-        let actor = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
-        actor.active_ability.sequence_id = Some(selected);
-        actor.active_ability.element_index = usize::from(!mirror_matches_selected);
-        actor.active_ability.kind = Some(crate::movement::AbilityKind::Listen);
-        actor.listen_phase = ListenPhase::CountingDown;
-        actor.listen_wait_time = 12;
-
-        stop_owner_active_mechanics(&mut engine.world, &mut engine.orders, owner);
-
-        let actor = engine
-            .world
-            .entities
-            .get(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap();
-        if mirror_matches_selected {
-            assert_eq!(actor.active_ability.kind, None);
-            assert_eq!(actor.listen_phase, ListenPhase::Inactive);
-            assert_eq!(actor.listen_wait_time, 0);
-        } else {
-            assert_eq!(
-                actor.active_ability.kind,
-                Some(crate::movement::AbilityKind::Listen)
-            );
-            assert_eq!(actor.listen_phase, ListenPhase::CountingDown);
-            assert_eq!(actor.listen_wait_time, 12);
-        }
-    }
 }

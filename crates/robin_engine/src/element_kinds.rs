@@ -409,57 +409,6 @@ pub fn direction_vector_16(sector: i16) -> (f32, f32) {
     (X[index], Y[index])
 }
 
-/// Phase of the Listen hero ability.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    Default,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum ListenPhase {
-    #[default]
-    Inactive,
-    EnterTransition,
-    CountingDown,
-    ExitTransition,
-}
-
-/// Phase of a beggar civilian's `ReceivePurse` animation chain.  The
-/// chain queues three orders
-/// (`ReceivingPurse` → `WaitingWithPurse` → `TransitionWaitingWithPurseWaitingUpright`)
-/// and plays them back-to-back.  The phase is tracked explicitly so the
-/// ability system can fire `EngineInner::reveal_scrolls` at the end of
-/// `Waiting`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    Default,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum ReceivePursePhase {
-    #[default]
-    Inactive,
-    Receiving,
-    Waiting,
-    Transition,
-}
-
 /// Action state for actors.
 #[derive(
     Debug,

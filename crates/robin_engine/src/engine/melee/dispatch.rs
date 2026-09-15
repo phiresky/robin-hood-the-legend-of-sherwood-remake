@@ -235,12 +235,6 @@ impl EngineInner {
                 )
             });
 
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.clear_path();
-        }
-
         // Original-game actor translation stores the target as the order's
         // antagonist. Execution derives both the target and strike type from
         // this selected order; there is no parallel melee state object.
@@ -995,7 +989,7 @@ impl EngineInner {
                 // tick will set it when the raising animation
                 // completes (on MotionState::Done →
                 // upright posture with the holding-shield action state).
-                actor.clear_path();
+
                 actor.shield_face_point = danger_pt;
                 started = true;
             }
@@ -1036,7 +1030,6 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
-                actor.clear_path();
             }
             entity.set_posture(Posture::Upright);
         }

@@ -2459,7 +2459,6 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
 #[test]
 fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
 
@@ -2492,8 +2491,7 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.actor_data_mut().unwrap().active_movement =
-            ActiveMovement::new(outgoing_sequence, 0);
+
         let position = entity.position_iface_mut();
         position.set_move_box(crate::coordinates::MoveBox::from_coords(
             -5.0, -5.0, 5.0, 5.0,
@@ -2556,7 +2554,6 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
 #[test]
 fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_empty() {
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
@@ -2602,7 +2599,7 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.position_iface_mut().set_map_goal(retained_goal);
         let actor = entity.actor_data_mut().unwrap();
-        actor.active_movement = ActiveMovement::new(outgoing_sequence, 0);
+
         actor.continuation.motion_state = MotionState::Terminated;
     }
 
@@ -2648,7 +2645,6 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
 #[test]
 fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
     use crate::element::{ActionState, Command, InstalledActorOrder, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
@@ -2721,12 +2717,7 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
         pass_sequence,
         0,
     );
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_movement = ActiveMovement::new(pass_sequence, 0);
+    engine.select_sequence_element(target, Some((pass_sequence, 0)));
 
     let transition = OrderType::TransitionWaitingUprightBoredWaitingUpright;
     let transition_order_id = engine.orders.allocate_order_id();

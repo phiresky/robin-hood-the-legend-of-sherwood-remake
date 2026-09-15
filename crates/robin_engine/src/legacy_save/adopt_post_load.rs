@@ -163,12 +163,6 @@ impl LegacyPostLoadAdoptionPlan {
         assets: &LevelAssets,
     ) -> LegacyPostLoadHostOutput {
         engine.complete_legacy_loaded_remarks(&self.active_remark_completions, assets);
-        engine.restore_loaded_active_movements();
-        engine.restore_loaded_active_shots();
-        crate::abilities::restore_loaded_active_abilities(
-            &mut engine.world.entities,
-            &engine.orders.sequence_manager,
-        );
 
         if self.rng_policy == LegacyRngRestorePolicy::RestoreSavedSeed {
             engine.restore_rng_from_seed(self.saved_rng_seed);

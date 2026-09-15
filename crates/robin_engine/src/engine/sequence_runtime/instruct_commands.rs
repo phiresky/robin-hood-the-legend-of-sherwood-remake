@@ -17,18 +17,6 @@ impl EngineInner {
             .get_element(seq_id, elem_idx)
             .expect("instructed sequence element disappeared");
         let shoot_once = cmd == Command::ShootBowOnce;
-        // Postponed elements are instructed and translated again
-        // when their injury successor releases them. A cross-sequence
-        // resume refreshes that element to Todo before this dispatch,
-        // so the exact execution ownership is the stable discriminator:
-        // clear Rust's matching latch so the shot cannot reject its own
-        // retranslation as a second concurrent shot.
-        bow_shot::clear_matching_retranslated_shot(
-            &mut self.world.entities,
-            owner,
-            seq_id,
-            elem_idx,
-        );
         let antagonist = match &elem.data {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
             _ => None,
@@ -351,11 +339,7 @@ impl EngineInner {
                 return;
             }
         };
-        if let Some(entity) = self.world.entities.get_mut(owner)
-            && let Some(actor) = entity.actor_data_mut()
-        {
-            actor.clear_path();
-        }
+
         let mut order = crate::order::Order::new(
             crate::order::OrderType::StrikingDownSword,
             tx,

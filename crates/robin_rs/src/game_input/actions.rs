@@ -640,24 +640,10 @@ fn click_listen(
         return vec![]; // consumed but no command
     }
 
-    let listen_phase = engine
-        .get_entity(pc_id)
-        .and_then(|e| e.actor_data())
-        .map(|a| a.listen_phase)
-        .unwrap_or(ListenPhase::Inactive);
-    // A click while EnterListen owns its non-interruptable chain emits
-    // LeaveListen. Sequence arbitration postpones it until EnterListen
-    // finishes; after the actor returns to Waiting, the restamped
-    // LeaveListen fails MUST_BE_LISTENING and becomes Impossible.
-    let cmd = match listen_phase {
-        ListenPhase::Inactive => Command::EnterListen,
-        ListenPhase::EnterTransition | ListenPhase::CountingDown => Command::LeaveListen,
-        ListenPhase::ExitTransition => return vec![],
-    };
     vec![
         PlayerCommand::LaunchSelfAbility {
             actor: pc_id,
-            command: cmd,
+            command: Command::EnterListen,
         },
         context.commit_tail(),
     ]

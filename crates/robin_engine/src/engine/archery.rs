@@ -3569,8 +3569,7 @@ impl EngineInner {
                     &self.orders.sequence_manager,
                     actor_id,
                 )?;
-                (ability.kind == crate::movement::AbilityKind::Strangle
-                    && ability.done_effect_applied)
+                (ability.kind == crate::movement::AbilityKind::Strangle && ability.order_done)
                     .then_some(ability.target)
                     .flatten()
             })
@@ -6626,13 +6625,17 @@ mod tests {
             target.actor_data().unwrap().action_state,
             ActionState::Waiting
         );
-        assert!(
+        assert_eq!(engine.orders.sequence_manager.sequences_iter().count(), 1);
+        assert_eq!(
             engine
                 .orders
                 .sequence_manager
-                .sequences_iter()
-                .next()
-                .is_none()
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::TransitionWaitingUprightCarryingCorpse,
         );
     }
 

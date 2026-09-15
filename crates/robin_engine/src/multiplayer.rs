@@ -86,7 +86,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// state as their producers now execute synchronously (save 85 / replay 44).
 /// Protocol 53 removes retained instruction handoff fields from authoritative
 /// state (save 86 / replay 45).
-pub const NET_PROTOCOL_VERSION: u32 = 53;
+/// Protocol 54 carries actor execution without duplicated movement, shot, and
+/// ability trackers (save 87 / replay 46).
+pub const NET_PROTOCOL_VERSION: u32 = 54;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

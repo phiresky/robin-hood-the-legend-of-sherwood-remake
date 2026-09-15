@@ -918,7 +918,7 @@ impl EngineInner {
         // successful release into an Impossible sequence.
         let finishing_successful_release = victim.element_data().posture() == Posture::Lying
             && owns_active_release
-            && selected_ability.is_some_and(|ability| ability.done_effect_applied);
+            && selected_ability.is_some_and(|ability| ability.order_done);
         if !target_is_tied && !finishing_successful_release {
             return false;
         }

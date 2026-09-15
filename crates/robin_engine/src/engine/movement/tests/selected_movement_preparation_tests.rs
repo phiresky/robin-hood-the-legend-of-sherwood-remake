@@ -15,8 +15,6 @@ fn stale_selected_order_repairs_moving_state_without_clearing_sword_stance() {
         order_id: std::num::NonZeroU32::new(1).unwrap(),
     };
     entity.actor_data_mut().unwrap().action_state = ActionState::MovingSword;
-    entity.actor_data_mut().unwrap().active_movement =
-        ActiveMovement::new(selected.seq_id, selected.elem_idx);
 
     assert!(
         EngineInner::prepare_selected_movement_order(
@@ -30,7 +28,6 @@ fn stale_selected_order_repairs_moving_state_without_clearing_sword_stance() {
     );
     let actor = entity.actor_data().unwrap();
     assert_eq!(actor.action_state, ActionState::WaitingSword);
-    assert_eq!(actor.active_movement.sequence_id, None);
 }
 
 #[test]

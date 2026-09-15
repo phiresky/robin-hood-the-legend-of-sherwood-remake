@@ -254,9 +254,8 @@ impl EngineInner {
             // Player-character execution owns this initialization,
             // not the DROP_CORPSE command builder. Posture
             // transitions inserted for another PC command enter
-            // the same animation arm without an ActiveAbility.
-            // The original game aligns the carried actor after validity and before
-            // starting the action.
+            // the same animation arm. Align the carried actor after validity
+            // and before starting the action.
             let (carried, carried_direction) = {
                 let carrier = self.world.entities.get(entity_id).unwrap_or_else(|| {
                     panic!(
@@ -365,26 +364,16 @@ impl EngineInner {
         let ability_selection = selected_order.filter(|(seq, elem, order_id)| {
             !validity_short_circuited
                 && selected_owner_family == Some(ExecuteOwnerFamily::Ability)
-                && self
-                    .world
-                    .entities
-                    .get(entity_id)
-                    .and_then(Entity::actor_data)
-                    .is_some_and(|actor| {
-                        let Some(expected_type) = active_ability_order_type(actor) else {
-                            return false;
-                        };
-                        actor.active_ability.is_active()
-                            && actor.active_ability.sequence_id == Some(*seq)
-                            && actor.active_ability.element_index == *elem
-                            && actor.active_ability.order_id == Some(*order_id)
-                            && self
-                                .orders
-                                .sequence_manager
-                                .get_element(*seq, *elem)
-                                .and_then(|element| element.current_order())
-                                .is_some_and(|order| order.order_type == expected_type)
-                    })
+                && crate::abilities::selected_ability(
+                    &self.world.entities,
+                    &self.orders.sequence_manager,
+                    entity_id,
+                )
+                .is_some_and(|ability| {
+                    ability.sequence_id == *seq
+                        && ability.element_index == *elem
+                        && ability.order_id == *order_id
+                })
         });
         let beggar_selection = selected_order.and_then(|(seq, elem, order_id)| {
             if validity_short_circuited || selected_owner_family != Some(ExecuteOwnerFamily::Beggar)

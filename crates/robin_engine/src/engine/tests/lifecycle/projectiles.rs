@@ -20,13 +20,11 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     use crate::coordinates::{WorldPoint3D, WorldVec3D};
     use crate::element::{ActionState, Command, Posture, TrajectoryPoint};
     use crate::entity_id::{PcId, ProjectileId, SoldierId};
-    use crate::movement::ActiveShot;
     use crate::order::{Order, OrderType};
     use crate::profiles::{
         BowProfile, BowShootMode, CharacterProfile, ProfileManager, SoldierProfile,
     };
     use crate::sequence::SequenceElement;
-    use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
     let mut target = make_test_soldier(Posture::Upright);
@@ -91,7 +89,8 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
 
     let mut shot_element =
         SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter_id), Some(target_id));
-    let order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    let mut order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    order.antagonist = Some(target_id);
     let order_id = order.order_id;
     shot_element.orders.push_back(order);
     let shot_sequence = engine.orders.sequence_manager.insert_element(shot_element);
@@ -113,14 +112,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
             .expect("bow shooter present");
         let actor = shooter.actor_data_mut().expect("bow shooter actor data");
         actor.action_state = ActionState::AimingWithBow;
-        actor.active_shot = ActiveShot {
-            sequence_id: Some(shot_sequence),
-            element_index: 0,
-            target: Some(target_id),
-            order_id: Some(order_id),
-            released: false,
-            shoot_mode: Some(ShootMode::Normal),
-        };
+
         // This fixture primes the shooting sprite below before entering the
         // production owner loop. Mirror the actor's last-order identity so that an already-
         // running row is not mistaken for human action initialization.
@@ -190,17 +182,6 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
         capture_ordered_gameplay_entities(|| engine.tick_actor_owner_envelopes(sim, &assets))
     });
-
-    let shot_after = engine
-        .get_entity(shooter_id)
-        .expect("bow shooter remains")
-        .actor_data()
-        .expect("bow shooter actor data")
-        .active_shot;
-    assert!(
-        shot_after.released,
-        "prepared shooting action did not reach its release pulse: {shot_after:?}"
-    );
 
     let spawned_arrow_id = EntityId::Projectile(ProjectileId(3));
     assert_eq!(
@@ -716,18 +697,15 @@ fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
 }
 
 #[test]
-fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
+fn pending_bow_element_does_not_block_selected_nonbow_execution() {
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveShot;
     use crate::order::Order;
     use crate::sequence::SequenceElement;
-    use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut selected = SequenceElement::new(1, Command::Wait, Some(owner));
     let order = Order::test_new(OrderType::WaitingUpright, 0.0, 0.0);
-    let order_id = order.order_id;
     selected.orders.push_back(order);
     let selected_seq = engine.orders.sequence_manager.insert_element(selected);
     engine
@@ -742,19 +720,17 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
         selected_seq,
         0,
     );
+
+    let mut pending_shot =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), Some(owner));
+    let mut pending_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    pending_order.antagonist = Some(owner);
+    pending_shot.orders.push_back(pending_order);
+    let pending_sequence = engine.orders.sequence_manager.insert_element(pending_shot);
     engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_shot = ActiveShot {
-        sequence_id: Some(selected_seq),
-        element_index: 0,
-        target: Some(owner),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(ShootMode::Normal),
-    };
+        .orders
+        .sequence_manager
+        .start_sequence_level(pending_sequence);
 
     assert!(engine.selected_bow_order(owner).is_none());
     let executed = engine.tick_actor_animation_for(
@@ -764,7 +740,7 @@ fn latent_active_shot_does_not_block_higher_selected_nonbow_order() {
     );
     assert!(
         executed.is_some(),
-        "latent active_shot must not suppress the exact selected nonbow Execute arm"
+        "the selected nonbow order must reach its Execute arm"
     );
 }
 
@@ -773,15 +749,14 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
     use crate::movement::AbilityKind;
 
     let (mut engine, carrier, body, _) =
-        corpse_exit_initialization_fixture(true, crate::element::Command::WhistleCmd);
+        corpse_exit_initialization_fixture(crate::element::Command::WhistleCmd);
     assert_eq!(
-        engine
-            .get_entity(carrier)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .kind,
+        crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            carrier
+        )
+        .map(|ability| ability.kind),
         Some(AbilityKind::Drop)
     );
 
@@ -810,11 +785,9 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
 #[test]
 fn bound_bow_transition_advances_through_production_owner_coordinator() {
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveShot;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
-    use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -842,7 +815,6 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     );
     let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
     let order = Order::test_new(OrderType::TransitionEquipBow, 0.0, 0.0);
-    let order_id = order.order_id;
     element.orders.push_back(order);
     let sequence = engine.orders.sequence_manager.insert_element(element);
     engine
@@ -863,14 +835,6 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         .actor_data_mut()
         .unwrap();
     actor.action_state = ActionState::Waiting;
-    actor.active_shot = ActiveShot {
-        sequence_id: Some(sequence),
-        element_index: 0,
-        target: Some(owner),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(ShootMode::Normal),
-    };
 
     engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
@@ -937,30 +901,20 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         engine.get_entity(owner).unwrap().sprite().last_action,
         OrderType::TransitionEquipBow
     );
-    assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot
-            .is_active()
-    );
 }
 
 #[test]
 fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass() {
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveShot;
     use crate::order::Order;
     use crate::sequence::SequenceElement;
-    use crate::weapons::ShootMode;
 
     let sim_context = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
-    let bow_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    let mut bow_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    bow_order.antagonist = Some(owner);
     let bow_order_id = bow_order.order_id;
     element.orders.push_back(bow_order);
     element
@@ -984,14 +938,7 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
         .unwrap()
         .actor_data_mut()
         .unwrap();
-    actor.active_shot = ActiveShot {
-        sequence_id: Some(sequence),
-        element_index: 0,
-        target: Some(owner),
-        order_id: Some(bow_order_id),
-        released: false,
-        shoot_mode: Some(ShootMode::Normal),
-    };
+
     // The hook models terminal work from an already-entered specialized bow
     // Execute arm. Preserve its selected-order history just as a live prior
     // actor update would have done.
@@ -1019,12 +966,6 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
                 .get_element_mut(sequence, 0)
                 .unwrap()
                 .pop_current_order();
-            engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap()
-                .active_shot = ActiveShot::default();
         },
         |_, _, _| {},
     );
@@ -1061,10 +1002,8 @@ fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass(
 #[test]
 fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     use crate::element::{Command, Posture};
-    use crate::movement::ActiveShot;
     use crate::order::Order;
     use crate::sequence::SequenceElement;
-    use crate::weapons::ShootMode;
 
     let mut engine = EngineInner::new();
     let shooter = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -1094,20 +1033,15 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         .actor_data_mut()
         .unwrap();
     actor.execution_frozen = true;
-    actor.active_shot = ActiveShot {
-        sequence_id: Some(sequence),
-        element_index: 0,
-        target: Some(target),
-        order_id: Some(order_id),
-        released: false,
-        shoot_mode: Some(ShootMode::Normal),
-    };
+
     let before = engine
-        .get_entity(shooter)
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
         .unwrap()
-        .actor_data()
+        .current_order()
         .unwrap()
-        .active_shot;
+        .clone();
 
     assert!(
         engine
@@ -1120,13 +1054,16 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
             .is_empty()
     );
     assert_eq!(
-        engine
-            .get_entity(shooter)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_shot,
-        before
+        bitcode::encode(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+        ),
+        bitcode::encode(&before)
     );
     assert_eq!(
         engine

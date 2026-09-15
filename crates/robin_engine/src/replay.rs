@@ -151,7 +151,8 @@ pub struct ReplayHeader {
 /// header.
 /// Version 44 removes deferred gameplay and message queues from engine state.
 /// Version 45 removes retained instruction handoff fields from actor state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 45;
+/// Version 46 removes duplicated movement, shot, and ability execution trackers.
+pub const REPLAY_SCHEMA_VERSION: u32 = 46;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

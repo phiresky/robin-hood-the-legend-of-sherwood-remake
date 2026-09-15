@@ -1574,11 +1574,11 @@ impl EngineInner {
             return data.wait_time;
         }
 
-        if let Some(sequence_id) = data.active_movement.sequence_id
+        if let Some(selected) = data.selected_sequence_element
             && let Some(element) = self
                 .orders
                 .sequence_manager
-                .get_element(sequence_id, data.active_movement.element_index)
+                .get_element(selected.sequence_id, selected.element_index)
             && let crate::sequence::SequenceElementData::Movement { flags, element, .. } =
                 &element.data
             && flags.contains(crate::sequence::MoveFlags::SEEK)
@@ -1587,12 +1587,9 @@ impl EngineInner {
             return data.seek_refresh_wait;
         }
 
-        // Original leaves the overloaded seek countdown untouched when the
-        // post-seek interaction takes over. Rust has already cleared
-        // `active_movement` at that boundary, but the retained post-seek
-        // sequence identifies the seek copy as the isomorphic value. This
-        // explicit ownership test also handles loaded saves, where adoption
-        // seeds both split fields from the serialized scalar.
+        // The seek countdown survives the transition to the post-seek
+        // interaction. Its retained continuation identifies the timer,
+        // including after loading both timer fields from one saved scalar.
         if data.post_seek_sequence.is_some() && data.seek_target.is_some() {
             return data.seek_refresh_wait;
         }

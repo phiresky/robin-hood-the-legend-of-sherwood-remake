@@ -5,7 +5,6 @@
 //! items at this level so those imports keep resolving unchanged.
 use super::*;
 
-mod active_ability_owner_selection_tests;
 mod bow_command_body_parity_tests;
 mod drop_ammo_merge_tests;
 mod drunken_path_deviation_tests;

@@ -382,7 +382,6 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
 fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
     use std::num::NonZeroU32;
@@ -423,7 +422,6 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
-        entity.actor_data_mut().unwrap().active_movement = ActiveMovement::new(old_sequence, 0);
         entity.position_iface_mut().set_map_goal(old_goal);
     }
 

@@ -1098,7 +1098,6 @@ impl EngineInner {
                 "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
             )
         });
-        actor.active_movement = crate::movement::ActiveMovement::new(seq_id, elem_idx);
         if sets_passing_door_directly {
             actor.passing_door_directly = active_door_pass.position_direct;
         }

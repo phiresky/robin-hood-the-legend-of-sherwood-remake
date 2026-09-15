@@ -198,7 +198,6 @@ fn inactive_unsupported_net_mapping_panics_before_owner_slot_retention() {
 #[test]
 fn carried_corpse_transition_drops_before_following_whistle_order() {
     use crate::element::{Command, Posture};
-    use crate::movement::AbilityKind;
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
@@ -294,22 +293,11 @@ fn carried_corpse_transition_drops_before_following_whistle_order() {
         sequence,
         0,
     );
-    {
-        let actor = engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
-        actor.active_ability.kind = Some(AbilityKind::Whistle);
-        actor.active_ability.sequence_id = Some(sequence);
-        actor.active_ability.element_index = 0;
-        actor.active_ability.order_id = Some(whistle_id);
-    }
 
     let sim = crate::sim_rng::test_context();
     let assets = assets_with_test_pc_profile();
     for _ in 0..8 {
-        engine.tick_actor_animation_action_change_slots(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
         if engine.get_entity(carrier).unwrap().posture() == Posture::Upright {
             break;
         }
@@ -642,7 +630,6 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
 fn face_to_waits_for_manager_after_live_halt() {
     use crate::coordinates::MapPoint;
     use crate::element::{ActionState, Command, Posture};
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
     use std::num::NonZeroU32;
@@ -680,7 +667,6 @@ fn face_to_waits_for_manager_after_live_halt() {
         let entity = engine.get_entity_mut(owner).unwrap();
         let actor = entity.actor_data_mut().unwrap();
         actor.action_state = ActionState::Moving;
-        actor.active_movement = ActiveMovement::new(movement_sequence, 0);
         entity
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
@@ -1039,8 +1025,7 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
 
 #[test]
 fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
-    use crate::element::{Command, Posture, ReceivePursePhase};
-    use crate::movement::{AbilityKind, ActiveAbility};
+    use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
@@ -1094,21 +1079,6 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         seq,
         0,
     );
-    let actor = engine
-        .get_entity_mut(beggar)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
-    actor.receive_purse_phase = ReceivePursePhase::Waiting;
-    actor.active_ability = ActiveAbility {
-        kind: Some(AbilityKind::ReceivePurse),
-        sequence_id: Some(seq),
-        element_index: 0,
-        target: None,
-        order_id: Some(waiting_id),
-        done_effect_applied: false,
-        strangle_initialized: false,
-    };
 
     let mut assets = LevelAssets::new();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -1143,12 +1113,13 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     );
     assert_eq!(
         engine
-            .get_entity(beggar)
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, beggar)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .receive_purse_phase,
-        ReceivePursePhase::Transition
+            .2
+            .order_type,
+        OrderType::TransitionWaitingWithPurseWaitingUpright
     );
 }
 
@@ -1312,8 +1283,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .active_ability
-        .strangle_initialized = true;
+        .execute_order_initialising = false;
     engine.select_sequence_element(attacker, Some((seq, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
@@ -1326,25 +1296,23 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 
     for _ in 0..10 {
         engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-        if engine
+        if (engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .done_effect_applied
+            .sprite()
+            .last_motion_state
+            == Some(crate::sprite::MotionState::Done))
         {
             break;
         }
     }
     assert!(
-        engine
+        (engine
             .get_entity(attacker)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .done_effect_applied
+            .sprite()
+            .last_motion_state
+            == Some(crate::sprite::MotionState::Done))
     );
     assert_eq!(
         engine
@@ -1395,13 +1363,12 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
                 engine.tick_ability_for(&sim, &mut display, &assets, attacker);
-                if !engine
-                    .get_entity(attacker)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .active_ability
-                    .is_active()
+                if !crate::abilities::selected_ability(
+                    &engine.world.entities,
+                    &engine.orders.sequence_manager,
+                    attacker,
+                )
+                .is_some()
                 {
                     break;
                 }
@@ -1419,13 +1386,12 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "both original EventGotHit handler boundaries must complete synchronously in order"
     );
     assert!(
-        !engine
-            .get_entity(attacker)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active(),
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            attacker
+        )
+        .is_some(),
         "non-stranglable retaliation must not return before the following Terminated cleanup"
     );
     assert_ne!(
@@ -1512,19 +1478,14 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
         0,
     );
     engine
-        .get_entity_mut(owner)
+        .orders
+        .sequence_manager
+        .get_element_mut(seq, 0)
         .unwrap()
-        .actor_data_mut()
+        .orders
+        .front_mut()
         .unwrap()
-        .active_ability = crate::movement::ActiveAbility {
-        kind: Some(crate::movement::AbilityKind::ThrowApple),
-        sequence_id: Some(seq),
-        element_index: 0,
-        target: None,
-        order_id: Some(ability_id),
-        done_effect_applied: true,
-        strangle_initialized: false,
-    };
+        .done = true;
     let initial = engine
         .get_entity(owner)
         .unwrap()
@@ -1548,13 +1509,6 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
                 .get_element_mut(seq, 0)
                 .unwrap()
                 .pop_current_order();
-            engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap()
-                .active_ability
-                .clear();
         },
         |_, _, _| {},
     );
@@ -1580,7 +1534,7 @@ fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass(
 }
 
 #[test]
-fn unbound_ability_catalog_order_still_uses_generic_execute() {
+fn selected_ability_catalog_order_executes_without_separate_binding() {
     let assets = LevelAssets::default();
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -1625,23 +1579,19 @@ fn unbound_ability_catalog_order_still_uses_generic_execute() {
         0,
     );
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     assert_eq!(
         engine.get_entity(owner).unwrap().sprite().last_action,
         OrderType::ThrowingApple
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .is_some()
     );
 }
 
@@ -1717,13 +1667,12 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
         .unwrap()
         .orders
         .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let order_id = engine
-        .get_entity(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_ability
-        .order_id;
+    let order_id = crate::abilities::selected_ability(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        owner,
+    )
+    .map(|ability| ability.order_id);
     let assets = engine.test_runtime_assets();
 
     let mut done_count = 0;
@@ -1739,21 +1688,40 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
             .iter()
             .filter(|result| matches!(result, crate::abilities::AbilityTickResult::EatDone { .. }))
             .count();
-        if engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .done_effect_applied
+        if results
+            .iter()
+            .any(|result| matches!(result, crate::abilities::AbilityTickResult::EatDone { .. }))
+        {
+            // A consumed Done result marks the selected order before its tail advances.
+            engine
+                .orders
+                .sequence_manager
+                .get_element_mut(seq, 0)
+                .unwrap()
+                .orders
+                .front_mut()
+                .unwrap()
+                .done = true;
+        }
+        if crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner,
+        )
+        .is_some_and(|ability| ability.order_done)
         {
             break;
         }
     }
     assert_eq!(done_count, 1);
-    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-    assert_eq!(actor.active_ability.order_id, order_id);
-    assert!(actor.active_ability.done_effect_applied);
+    let ability = crate::abilities::selected_ability(
+        &engine.world.entities,
+        &engine.orders.sequence_manager,
+        owner,
+    )
+    .unwrap();
+    assert_eq!(Some(ability.order_id), order_id);
+    assert!(ability.order_done);
     assert_eq!(
         engine
             .orders
@@ -1768,25 +1736,23 @@ fn ability_done_emits_once_retains_owner_and_only_terminated_releases() {
     let mut display = CameraDisplayState::default();
     for _ in 0..10 {
         engine.tick_ability_for(&sim, &mut display, &assets, owner);
-        if !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        if !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner,
+        )
+        .is_some()
         {
             break;
         }
     }
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_ability
-            .is_active()
+        !crate::abilities::selected_ability(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            owner
+        )
+        .is_some()
     );
     assert_eq!(
         engine

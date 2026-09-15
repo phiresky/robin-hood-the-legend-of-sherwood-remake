@@ -396,9 +396,7 @@ impl EngineInner {
 
             if let Some((seq_id, elem_idx, dest, action)) = retranslate {
                 crate::movement_diagnostics::record_parity_late_movement_retranslation(id);
-                // Clear orders and the actor's active-movement link
-                // so `try_dispatch_move_path` can re-establish them
-                // from a clean slate.
+                // Rebuild the selected movement's orders from a clean slate.
                 if let Some(elem) = self
                     .orders
                     .sequence_manager
@@ -406,11 +404,6 @@ impl EngineInner {
                 {
                     elem.command = crate::element::Command::Move;
                     elem.orders.clear();
-                }
-                if let Some(entity) = self.get_entity_mut(id)
-                    && let Some(actor) = entity.actor_data_mut()
-                {
-                    actor.active_movement.clear();
                 }
                 // The original game retranslates the
                 // selected movement. The
@@ -637,7 +630,6 @@ mod tests {
         Posture,
     };
     use crate::fast_find_grid::GridLine;
-    use crate::movement::ActiveMovement;
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequencePriority};
@@ -983,12 +975,6 @@ mod tests {
             .unwrap()
             .state = crate::sequence::SequenceState::InProgress;
         engine.orders.sequence_manager.rebuild_indices();
-        engine
-            .get_entity_mut(owner)
-            .expect("test PC exists")
-            .actor_data_mut()
-            .expect("test entity is an actor")
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         engine.select_sequence_element(owner, Some((sequence, 0)));
 

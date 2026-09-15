@@ -870,7 +870,6 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
                 order_id: old_order,
                 order_type: OrderType::WalkingWithSword,
             });
-            actor.active_movement = crate::movement::ActiveMovement::new(old_sequence, 0);
         }
         let profiles = std::sync::Arc::get_mut(&mut assets.profile_manager).unwrap();
         profiles.soldiers[0].fighting = 50;

@@ -403,12 +403,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
@@ -604,12 +598,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         let _ = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
@@ -726,12 +714,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
         let first_tick_forecast = engine
@@ -1000,8 +982,6 @@ mod suite {
         );
         {
             let entity = engine.get_entity_mut(owner).unwrap();
-            entity.actor_data_mut().unwrap().active_movement =
-                ActiveMovement::new(outgoing_sequence, 0);
             entity.position_iface_mut().set_map_goal(old_goal);
         }
         outgoing_sequence
@@ -1653,12 +1633,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         let sim = crate::sim_rng::test_context();
         engine.tick_entity_movement(&sim, &assets);
@@ -1799,12 +1773,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
 
         engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
 
@@ -2058,12 +2026,6 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_movement = ActiveMovement::new(sequence, 0);
         (engine, owner, target)
     }
 
@@ -2109,7 +2071,6 @@ mod suite {
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
         assert!(actor.post_seek_sequence.is_none());
         assert!(actor.seek_target.is_none());
-        assert!(actor.active_movement.sequence_id.is_none());
         let expected = vector_to_sector_0_to_15(
             engine.get_entity(target).unwrap().ground_position().x
                 - engine.get_entity(owner).unwrap().ground_position().x,
@@ -2140,10 +2101,8 @@ mod suite {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 16.0);
         let (seq_id, elem_idx) = {
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         let SequenceElementData::Movement { flags, .. } = &mut engine
             .orders
@@ -2166,20 +2125,23 @@ mod suite {
                 &assets,
             );
             if engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .active_movement
-                .sequence_id
-                .is_none()
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
             {
                 break;
             }
         }
 
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
+        );
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-        assert!(actor.active_movement.sequence_id.is_none());
         assert!(
             actor.post_seek_sequence.is_some(),
             "ordinary Move must not consume stale actor-owned post-seek state"
@@ -2192,10 +2154,8 @@ mod suite {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         let (seq_id, elem_idx) = {
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         let transition = OrderType::TransitionWalkingUprightWaitingUpright;
         let order_ids = [
@@ -2247,10 +2207,8 @@ mod suite {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HealCmd, 70.0);
         let (seq_id, elem_idx) = {
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         let stale_target = MapPoint::new(140.0, 100.0);
         {
@@ -2338,10 +2296,8 @@ mod suite {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 20.0);
         let (seq_id, elem_idx) = {
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         let target_position = engine
             .get_entity(target)
@@ -2406,7 +2362,6 @@ mod suite {
         let actor = entity.actor_data().unwrap();
         assert!(actor.post_seek_sequence.is_none());
         assert!(actor.seek_target.is_none());
-        assert!(actor.active_movement.sequence_id.is_none());
         assert_eq!(
             i16::from(entity.position_iface().get_direction_goal()),
             7,
@@ -2439,10 +2394,8 @@ mod suite {
             let mut post_seek = Sequence::new();
             post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
             actor.post_seek_sequence = Some(post_seek.into_post_seek());
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         let movement = engine
             .orders
@@ -2464,20 +2417,23 @@ mod suite {
                 &assets,
             );
             if engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .active_movement
-                .sequence_id
-                .is_none()
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
             {
                 break;
             }
         }
 
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
+        );
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-        assert!(actor.active_movement.sequence_id.is_none());
         assert!(
             actor.post_seek_sequence.is_some(),
             "a stop transition ending outside the point seek's sector must not launch its stale post-seek"
@@ -2491,10 +2447,8 @@ mod suite {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         let (old_sequence, old_index) = {
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-            (
-                actor.active_movement.sequence_id.unwrap(),
-                actor.active_movement.element_index,
-            )
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
         };
         engine.element_interrupted(
             &crate::sim_rng::test_context(),
@@ -2510,7 +2464,6 @@ mod suite {
                 .unwrap()
                 .actor_data_mut()
                 .unwrap();
-            actor.active_movement.clear();
             actor.post_seek_sequence = None;
         }
 
@@ -2610,15 +2563,12 @@ mod suite {
             .append_element(SequenceElement::new(2, Command::Wait, Some(owner)));
         {
             let entity = engine.get_entity_mut(owner).unwrap();
-            entity.actor_data_mut().unwrap().active_movement =
-                ActiveMovement::new(movement_sequence, movement_index);
             entity.position_iface_mut().set_map_goal(destination);
         }
 
         finish_terminal_seek_tick(&mut engine, owner);
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
         assert!(actor.post_seek_sequence.is_none());
-        assert!(actor.active_movement.sequence_id.is_none());
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
     }
 }

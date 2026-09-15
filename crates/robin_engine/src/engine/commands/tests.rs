@@ -4932,19 +4932,17 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
         .get_entity_mut(target_id)
         .expect("test target remains present")
         .set_posture(Posture::Lying);
+    let mut selected = untie.clone();
+    let mut order = crate::order::Order::test_new(crate::order::OrderType::Tying, 0.0, 0.0);
+    order.antagonist = Some(target_id);
+    order.done = true;
+    selected.orders.push_back(order);
+    let sequence = engine.orders.sequence_manager.insert_element(selected);
     engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::actor_data_mut)
-        .expect("test owner remains a PC")
-        .active_ability = crate::movement::ActiveAbility {
-        kind: Some(crate::movement::AbilityKind::Untie),
-        done_effect_applied: true,
-        strangle_initialized: false,
-        sequence_id: Some(crate::sequence::SequenceId(9)),
-        element_index: 0,
-        target: Some(target_id),
-        order_id: std::num::NonZeroU32::new(91),
-    };
+        .orders
+        .sequence_manager
+        .start_sequence_level(sequence);
+    engine.select_sequence_element(pc_id, Some((sequence, 0)));
     assert!(
         engine.check_sequence_element_validity(&assets, pc_id, &untie, true),
         "remaining reversed frames must stay valid after DONE releases the target"
@@ -4955,12 +4953,7 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
         engine.check_sequence_element_validity(&assets, pc_id, &untie, true),
         "a setting edit must not cancel an already accepted release"
     );
-    engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::actor_data_mut)
-        .expect("test owner remains a PC")
-        .active_ability
-        .clear();
+    engine.select_sequence_element(pc_id, None);
     engine
         .get_entity_mut(target_id)
         .expect("test target remains present")

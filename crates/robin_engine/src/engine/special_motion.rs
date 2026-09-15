@@ -10,7 +10,6 @@
 use super::{EngineInner, LevelAssets};
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{ActiveDoorPass, EntityId};
-use crate::movement::ActiveMovement;
 use crate::order::{Order, OrderType};
 use crate::sequence::SequenceId;
 
@@ -278,7 +277,6 @@ impl EngineInner {
 
         if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(actor) = entity.actor_data_mut() {
-                actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
                 if let Some(dp) = active_door_pass {
                     actor.passing_door_directly = dp.position_direct;
                     actor.active_door_pass = Some(dp);

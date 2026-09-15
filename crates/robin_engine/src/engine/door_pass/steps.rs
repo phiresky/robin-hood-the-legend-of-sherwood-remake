@@ -291,7 +291,6 @@ impl EngineInner {
                 // it yet: Original does not execute the transition until its
                 // own update slot starts on the following tick.
                 let saved = actor.action_state;
-                actor.clear_path();
                 if let Some(dp) = actor.active_door_pass.as_mut() {
                     dp.saved_action_state = Some(saved);
                     dp.current_action = action;

@@ -18,12 +18,11 @@
 //! defaults for action-state-only callers.
 
 use crate::coordinates::{MapPoint, MapVec};
-use crate::element::{ActionState, EntityId};
+use crate::element::ActionState;
 use crate::fast_find_grid::FastFindGrid;
 use crate::order::{Order, OrderType};
 use crate::position_interface::{PositionInterface, TargetInfo};
-use crate::sequence::{SequenceElement, SequenceId};
-use crate::weapons::ShootMode;
+use crate::sequence::SequenceElement;
 
 // ═══════════════════════════════════════════════════════════════════
 //  Constants
@@ -61,114 +60,7 @@ pub enum MovementResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Active movement tracking
-// ═══════════════════════════════════════════════════════════════════
-
-/// Tracks the sequence element that initiated the current movement,
-/// so we can notify the sequence manager when movement completes.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveMovement {
-    pub sequence_id: Option<SequenceId>,
-    pub element_index: usize,
-}
-
-impl ActiveMovement {
-    pub fn none() -> Self {
-        Self {
-            sequence_id: None,
-            element_index: 0,
-        }
-    }
-
-    pub fn new(seq_id: SequenceId, elem_idx: usize) -> Self {
-        Self {
-            sequence_id: Some(seq_id),
-            element_index: elem_idx,
-        }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.sequence_id.is_some()
-    }
-
-    pub fn clear(&mut self) {
-        self.sequence_id = None;
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Active shot tracking (bow / thrown items)
-// ═══════════════════════════════════════════════════════════════════
-
-/// Tracks an in-progress ranged action (currently: bow shot) on an actor.
-///
-/// When a [`Command::ShootBow`][crate::element::Command::ShootBow] sequence
-/// element is dispatched to an actor, the engine sets `ActiveShot` with the
-/// target entity and the sequence element that initiated the shot. The
-/// per-frame animation tick then drives the `SHOOTING_WITH_BOW` animation;
-/// when it reaches the `MotionState::Done` frame, the engine spawns an
-/// arrow projectile aimed at the target and notifies the sequence manager
-/// that the element is terminated.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveShot {
-    pub sequence_id: Option<SequenceId>,
-    pub element_index: usize,
-    /// Target entity the shooter is aiming at.
-    pub target: Option<EntityId>,
-    /// Order ID used by the sprite state machine to detect "new order"
-    /// transitions inside `Sprite::perform_action`.  `None` while the
-    /// shot is inactive / cleared.
-    pub order_id: Option<std::num::NonZeroU32>,
-    /// Whether the arrow has already been released for the current
-    /// shoot animation. The original game fires on the sprite's action-done pulse,
-    /// then lets the animation continue to termination.
-    pub released: bool,
-    /// Shoot mode resolved when the `ShootBow` command was translated.
-    /// The original game keeps this as the selected shoot animation/order instead of
-    /// forcing the actor's action state ahead of queued aim transitions.
-    pub shoot_mode: Option<ShootMode>,
-}
-
-impl ActiveShot {
-    pub fn none() -> Self {
-        Self::default()
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.sequence_id.is_some() && self.target.is_some()
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Active ability tracking
+//  Ability kinds
 // ═══════════════════════════════════════════════════════════════════
 
 /// Which hero ability is currently being performed.
@@ -292,49 +184,6 @@ impl AbilityKind {
         Self::ClimbDownFromShoulders,
         Self::Untie,
     ];
-}
-
-/// Tracks an in-progress ability animation on an actor.
-///
-/// Similar to [`ActiveShot`] for bow shots. Set by `abilities::begin_*`
-/// functions and consumed by owner-local `abilities::tick_ability`.
-#[derive(
-    Debug,
-    Clone,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveAbility {
-    /// Which ability is playing, or `None` if idle.
-    pub kind: Option<AbilityKind>,
-    /// Sequence element that initiated this ability.
-    pub sequence_id: Option<SequenceId>,
-    pub element_index: usize,
-    /// Target entity (antagonist) for the ability, if any.
-    pub target: Option<EntityId>,
-    /// Order ID for the sprite animation state machine.  `None` while
-    /// the ability slot is idle.
-    pub order_id: Option<std::num::NonZeroU32>,
-    /// Whether the legacy completed-motion side effect has fired. The
-    /// selected order remains owned by the actor until `TERMINATED`.
-    pub done_effect_applied: bool,
-    /// Whether a Strangle order has crossed its first owner-Execute
-    /// initialization boundary. Ignored by every other ability kind.
-    pub strangle_initialized: bool,
-}
-
-impl ActiveAbility {
-    pub fn is_active(&self) -> bool {
-        self.kind.is_some()
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default();
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -819,20 +668,6 @@ mod tests {
             speed_for_order_type(OrderType::WalkingCrouched),
             DEFAULT_WALK_SPEED
         );
-    }
-
-    #[test]
-    fn active_movement_tracking() {
-        let mut am = ActiveMovement::none();
-        assert!(!am.is_active());
-
-        am = ActiveMovement::new(SequenceId(42), 3);
-        assert!(am.is_active());
-        assert_eq!(am.sequence_id, Some(SequenceId(42)));
-        assert_eq!(am.element_index, 3);
-
-        am.clear();
-        assert!(!am.is_active());
     }
 
     #[test]
