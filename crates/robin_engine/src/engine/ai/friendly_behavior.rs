@@ -331,15 +331,7 @@ impl EngineInner {
             .expect_entity(target, "civilian facing human")
             .position_iface()
             .get_elevation() as i16;
-        let body = self
-            .expect_entity(owner, "civilian facing owner")
-            .element_data()
-            .position();
-        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-            position.x - body.x,
-            (position.y - (body.y - body.z)) + (elevation as f32 - body.z),
-        );
-        self.duty_face_direction(sim, assets, owner, direction as u16);
+        self.duty_face_position_at_elevation(sim, assets, owner, position, f32::from(elevation));
     }
 
     fn civilian_panic_from_human(
@@ -900,6 +892,70 @@ mod tests {
         ai.base.initial_position = position;
         ai.base.special_action = true;
         (engine, assets, owner, soldier)
+    }
+
+    #[test]
+    fn civilian_facing_a_human_uses_its_selected_door_destination() {
+        let (mut engine, assets, owner, target) = fixture();
+        let sector = engine.live_ai_position(owner).sector.unwrap();
+        let door_index = engine.script_domains.interactables.doors.len();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_in: crate::coordinates::MapPoint::new(600.0, 500.0),
+                sector_in: crate::sector::SectorNumber::new(sector.get() as i16),
+                sector_in_index: sector.arena_index(),
+                ..Default::default()
+            });
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(600.0, 600.0, 0.0));
+        let mut pass = crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::PassDoor,
+            Some(owner),
+            crate::order::OrderType::WalkingUpright,
+        );
+        let crate::sequence::SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut pass.data
+        else {
+            unreachable!();
+        };
+        *gate_id = Some(crate::gate::DoorIndex::new(door_index as u32).unwrap());
+        *direction = 1;
+        let mut door_sequence = crate::sequence::Sequence::new();
+        door_sequence.append_element(pass);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .insert_sequence(door_sequence);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
+        let sim = crate::sim_rng::test_context();
+        engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+
+        engine.civilian_face_human(&sim, &assets, owner, target);
+
+        let turn = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| &sequence.elements)
+            .find(|element| {
+                element.owner == Some(owner) && element.command == crate::element::Command::Turn
+            })
+            .expect("human facing must register a turn while the door passage completes");
+        assert!(matches!(
+            turn.get_property(crate::sequence::Field::Direction),
+            Some(crate::sequence::FieldValue::Integer(8))
+        ));
     }
 
     #[test]
