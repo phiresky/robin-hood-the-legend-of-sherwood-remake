@@ -521,13 +521,9 @@ impl EngineInner {
         let mut cleared_selected_goal = false;
         if let Some(provenance) = &goal_owner_provenance {
             let actor_state = self.world.entities.get(owner).and_then(|entity| {
-                entity.actor_data().map(|actor| {
-                    (
-                        actor.action_state,
-                        actor.active_movement,
-                        actor.installed_order,
-                    )
-                })
+                entity
+                    .actor_data()
+                    .map(|actor| (actor.action_state, actor.installed_order))
             });
             let position_state = self.world.entities.get(owner).map(|entity| {
                 (
@@ -541,11 +537,6 @@ impl EngineInner {
             );
         }
         if let Some(entity) = self.world.entities.get_mut(owner) {
-            let active_movement_matches = entity.actor_data().is_some_and(|actor| {
-                actor.active_movement.sequence_id == Some(seq_id)
-                    && actor.active_movement.element_index == elem_idx as usize
-            });
-
             let clears_goal = was_selected;
             tracing::trace!(
                 target: "parity_owner_handoff",
@@ -557,7 +548,6 @@ impl EngineInner {
                 ?terminal_state,
                 was_selected,
                 ?selected_element,
-                active_movement_matches,
                 clears_goal,
                 detaches_selected_order,
                 goal = ?entity.position_iface().map_goal(),
@@ -587,59 +577,13 @@ impl EngineInner {
                 actor.installed_order = None;
                 actor.selected_sequence_element = None;
             }
-
-            // Rust's movement tracker is separate from Original's selected
-            // element pointer. Detach it only when this card names that
-            // movement, even if an incoming element is already selected.
-            if active_movement_matches && let Some(actor) = entity.actor_data_mut() {
-                actor.active_movement.clear();
-            }
-
-            // Bow execution is tracked separately from the selected element
-            // so its animation phase can release the projectile. Original has
-            // no independent tracker: interrupting/impossibilizing the
-            // sequence deletes its orders, and the actor has already selected
-            // any incoming replacement before this condolence callback. Clear
-            // the Rust handle by exact element identity even when the old bow
-            // element is no longer selected, or a later valid shot will be
-            // rejected as though the cancelled shot were still active.
-            if let Some(actor) = entity.actor_data_mut()
-                && actor.active_shot.sequence_id == Some(seq_id)
-                && actor.active_shot.element_index == elem_idx as usize
-            {
-                actor.active_shot.clear();
-            }
-
-            // Ability execution is likewise an implementation-side mirror of
-            // the selected original-game element/order. Once that exact element sends
-            // its condolence card, no independent ability may survive to
-            // reject a later valid command. This is especially observable
-            // when an ability is interrupted after its DONE effect but before
-            // the sprite's TERMINATED edge.
-            if let Some(actor) = entity.actor_data_mut()
-                && actor.active_ability.sequence_id == Some(seq_id)
-                && actor.active_ability.element_index == elem_idx as usize
-            {
-                let kind = actor.active_ability.kind;
-                actor.active_ability.clear();
-                if kind == Some(crate::movement::AbilityKind::Listen) {
-                    actor.listen_phase = crate::element::ListenPhase::Inactive;
-                    actor.listen_wait_time = 0;
-                } else if kind == Some(crate::movement::AbilityKind::ReceivePurse) {
-                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-                }
-            }
         }
         if let Some(provenance) = &goal_owner_provenance {
             let selected = self.world.entities.current_element_for_actor(owner);
             let actor_state = self.world.entities.get(owner).and_then(|entity| {
-                entity.actor_data().map(|actor| {
-                    (
-                        actor.action_state,
-                        actor.active_movement,
-                        actor.installed_order,
-                    )
-                })
+                entity
+                    .actor_data()
+                    .map(|actor| (actor.action_state, actor.installed_order))
             });
             let position_state = self.world.entities.get(owner).map(|entity| {
                 (
@@ -1010,9 +954,7 @@ impl EngineInner {
 
                 // Instantaneous drop (already implemented as
                 // `force_drop_carried_corpse_instant` in
-                // `engine/melee.rs`).  Also clear the actor's
-                // `active_ability` so a stale Carry slot can't drive a
-                // bogus `CarryDone` after the element is gone.
+                // `engine/melee.rs`).
                 //
                 // `DropCorpse(12, true)` immediately calls the body's
                 // priority-WAIT `Wait()`, so close only the synchronous
@@ -1024,12 +966,6 @@ impl EngineInner {
                 // body whose slot already passed start its new sprite one
                 // frame early.
                 self.force_drop_carried_corpse_instant(sim, assets, owner);
-                if let Some(carrier) = self.world.entities.get_mut(owner)
-                    && let Some(actor) = carrier.actor_data_mut()
-                    && actor.active_ability.kind == Some(crate::movement::AbilityKind::Carry)
-                {
-                    actor.active_ability.clear();
-                }
 
                 tracing::debug!(
                     pc = owner.index(),

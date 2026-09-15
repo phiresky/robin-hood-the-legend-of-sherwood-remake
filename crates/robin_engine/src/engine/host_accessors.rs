@@ -524,19 +524,10 @@ impl EngineInner {
                 .and_then(|(owner, _, _, _, _, _)| owner)
                 .map(|owner| {
                     let selected = self.world.entities.current_element_for_actor(owner);
-                    let (active_movement, goal) = self
+                    let goal = self
                         .get_entity(owner)
-                        .map(|entity| {
-                            let active_movement = entity.actor_data().map(|actor| {
-                                (
-                                    actor.active_movement.sequence_id,
-                                    actor.active_movement.element_index,
-                                )
-                            });
-                            (active_movement, entity.position_iface().map_goal())
-                        })
-                        .unwrap_or_default();
-                    (selected, active_movement, goal)
+                        .map(|entity| entity.position_iface().map_goal());
+                    (selected, goal)
                 });
             tracing::trace!(
                 target: "parity_owner_handoff",

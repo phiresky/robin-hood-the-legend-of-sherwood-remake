@@ -325,9 +325,14 @@ impl EngineInner {
     ) -> Option<Vec<crate::coordinates::MapPoint>> {
         let entity = self.get_entity(actor)?;
         let actor_data = entity.actor_data()?;
-        let seq_id = actor_data.active_movement.sequence_id?;
-        let elem_idx = actor_data.active_movement.element_index;
-        let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+        let selected = actor_data.selected_sequence_element?;
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(selected.sequence_id, selected.element_index)?;
+        if !elem.data.is_movement() {
+            return None;
+        }
         Some(
             elem.orders
                 .iter()

@@ -202,10 +202,9 @@ impl EngineInner {
         else {
             return None;
         };
-        let exact_selected_bow = actor.active_shot.is_active()
-            && actor.active_shot.sequence_id == Some(seq_id)
-            && actor.active_shot.element_index == elem_idx
-            && crate::bow_shot::is_active_bow_order(order.order_type);
+        let exact_selected_bow = self
+            .selected_bow_order(entity_id)
+            .is_some_and(|(sequence, index, _)| (sequence, index) == (seq_id, elem_idx));
         if exact_selected_bow {
             return None;
         }
@@ -800,10 +799,10 @@ impl ActorAnimationStepCtx<'_> {
             )
         };
         if let Some((seq_id, elem_idx)) = order_seq_elem
-            && actor.active_shot.is_active()
-            && actor.active_shot.sequence_id == Some(seq_id)
-            && actor.active_shot.element_index == elem_idx
-            && crate::bow_shot::is_active_bow_order(anim_type)
+            && self
+                .engine
+                .selected_bow_order(self.entity_id)
+                .is_some_and(|(sequence, index, _)| (sequence, index) == (seq_id, elem_idx))
         {
             return ControlFlow::Break(());
         }

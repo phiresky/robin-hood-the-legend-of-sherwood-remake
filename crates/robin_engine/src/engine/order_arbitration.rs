@@ -797,17 +797,13 @@ impl EngineInner {
         self.postpone_element(sim, assets, active_scripts, waiter_seq, waiter_idx);
     }
 }
-/// Cancel any active pathfinder request / active-movement / active-
-/// melee on `owner`, used when arbitration interrupts or postpones
-/// the actor's current element. Subset of movement stopping /
-/// path-request cancellation cleanup we need before a state
-/// transition.
+/// Cancel pending and failed path requests before interrupting or postponing
+/// the actor's selected element.
 pub(super) fn stop_owner_active_mechanics(
     world: &mut WorldState,
     orders: &mut OrderRuntime,
     owner: EntityId,
 ) {
-    let selected_element = world.entities.current_element_for_actor(owner);
     world.pathfinder.cancel_requests_for(owner);
     orders.pending_path_requests.cancel_for_owner(owner);
     // Path-request cancellation fires from both
@@ -817,45 +813,6 @@ pub(super) fn stop_owner_active_mechanics(
     // failed-path retries — otherwise the entry would stay in the
     // queue until the element resumes or times out.
     orders.failed_path_requests.retain(|r| r.owner != owner);
-    if let Some(entity) = world.entities.get_mut(owner)
-        && let Some(actor) = entity.actor_data_mut()
-    {
-        actor.active_movement.clear();
-        // `active_ability` is a Rust-only mirror of the selected original-game
-        // element/order. Postpone deletes the outgoing element's orders,
-        // and the original game rebuilds them by translating again when the
-        // element resumes. Drop only the mirror belonging to that exact
-        // selected element so the resumed Translate can install its fresh
-        // order identity without being rejected as a concurrent ability.
-        if selected_element.is_some_and(|(seq_id, elem_idx)| {
-            actor.active_ability.sequence_id == Some(seq_id)
-                && actor.active_ability.element_index == elem_idx
-        }) {
-            let kind = actor.active_ability.kind;
-            actor.active_ability.clear();
-            if kind == Some(crate::movement::AbilityKind::Listen) {
-                actor.listen_phase = crate::element::ListenPhase::Inactive;
-                actor.listen_wait_time = 0;
-            } else if kind == Some(crate::movement::AbilityKind::ReceivePurse) {
-                actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
-            }
-        }
-        // Original's lateral/circle victim list and angles are
-        // human-owned members, not sequence-owned state. They survive an
-        // interrupted strike and are cleared only when a sweep genuinely
-        // terminates or a later action-done point reinitializes them.
-        // Push sword-strike execution stores its victims in the same
-        // human-owned sword-strike victim list used by lateral/circle
-        // strikes. Interrupting the push does not clear that list; a
-        // later sweep can consume the retained victims before its own
-        // action-done point.
-        // Order-chain cleanup happens implicitly: interrupted
-        // elements drop their `orders` in `Sequence::set_element_state`,
-        // which invalidates `current_order_for_actor`.  Non-
-        // interruptable elements (dying / corpse idle / rolling)
-        // keep running — arbitration prevents the interrupt
-        // dispatch from reaching them.
-    }
 }
 
 impl EngineInner {
@@ -898,20 +855,11 @@ impl EngineInner {
                         )
                     })
             });
-            let (active_movement, goal) = self
+            let goal = self
                 .world
                 .entities
                 .get(owner)
-                .map(|entity| {
-                    let active_movement = entity.actor_data().map(|actor| {
-                        (
-                            actor.active_movement.sequence_id,
-                            actor.active_movement.element_index,
-                        )
-                    });
-                    (active_movement, entity.position_iface().map_goal())
-                })
-                .unwrap_or_default();
+                .map(|entity| entity.position_iface().map_goal());
             tracing::trace!(
                 target: "parity_owner_handoff",
                 frame = self.control.frame_counter,
@@ -919,7 +867,6 @@ impl EngineInner {
                 ?stop_priority,
                 ?selected,
                 ?selected_state,
-                ?active_movement,
                 ?goal,
                 "stop_owner before movement and sequence stop"
             );
