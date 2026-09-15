@@ -11,6 +11,14 @@ use robin_run_protocol::{
 
 pub struct NativeSigner;
 
+impl NativeSigner {
+    pub(crate) fn sign_username_update(
+        request: robin_run_protocol::UsernameUpdateV2,
+    ) -> Result<robin_run_protocol::SignedUsernameUpdateV2, LeaderboardSigningError> {
+        sign_with_key(request, &native_key()?)
+    }
+}
+
 fn native_key() -> Result<SigningKey, LeaderboardSigningError> {
     let seed = crate::native_game_identity::durable_game_identity_seed()
         .map_err(LeaderboardSigningError::Identity)?;
@@ -63,6 +71,25 @@ mod tests {
     use crate::leaderboard::signing::verify_signed_request_for_tests;
     use crate::leaderboard::test_fixtures::submission;
     use robin_run_protocol::{OpaqueId, SCHEMA_VERSION_V2};
+
+    #[test]
+    fn username_registration_is_signed_by_the_same_native_identity() {
+        let key = SigningKey::from_bytes(&[0x43; 32]);
+        let request = robin_run_protocol::UsernameUpdateV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            public_key: public_key(&key),
+            signed_at_unix_ms: 1,
+            username: "Robin".into(),
+        };
+        let mut signed = sign_with_key(request.clone(), &key).unwrap();
+        verify_signed_request_for_tests(&signed).unwrap();
+        signed.request.username = "Another name".into();
+        assert!(verify_signed_request_for_tests(&signed).is_err());
+        assert_eq!(
+            sign_with_key(request, &SigningKey::from_bytes(&[0x44; 32])),
+            Err(LeaderboardSigningError::WrongIdentity)
+        );
+    }
 
     #[test]
     fn native_submission_signature_binds_the_exact_v2_submission() {

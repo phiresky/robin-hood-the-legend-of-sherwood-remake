@@ -4,6 +4,12 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **In-game leaderboard registration.** Submitting from Previous Plays checks
+  the native identity's server profile first. New identities get a username
+  prompt with Register and submit and Cancel actions. Registration uses the
+  same durable identity as the replay upload and resumes that selected upload
+  on success. Invalid names and network errors remain in the prompt for retry.
+
 - **Replay hash upgrades.** `robin --upgrade-replay INPUT --upgraded-replay OUTPUT`
   runs the recording twice on the current engine, compares every frame, and
   atomically publishes a new JSONL replay with current hashes and save markers.

@@ -59,6 +59,30 @@ pub struct LeaderboardApi {
 }
 
 impl LeaderboardApi {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn player_profile(
+        &self,
+        key: robin_run_protocol::PublicKey32,
+    ) -> Result<HttpTask, LeaderboardServiceError> {
+        self.spawn(HttpRequest::get_json(
+            self.route(&format!("players/{key}"))?,
+        ))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn update_username(
+        &self,
+        request: &robin_run_protocol::SignedUsernameUpdateV2,
+    ) -> Result<HttpTask, LeaderboardServiceError> {
+        request.validate().map_err(invalid_protocol)?;
+        let json = serde_json::to_vec(request)
+            .map_err(|e| LeaderboardServiceError::RequestEncoding(e.to_string()))?;
+        self.spawn(HttpRequest::json(
+            reqwest::Method::PUT,
+            self.route(&format!("players/{}/username", request.request.public_key))?,
+            json,
+        ))
+    }
     pub fn from_preferences(
         preferences: &LeaderboardPreferences,
     ) -> Result<Self, LeaderboardServiceError> {
@@ -265,7 +289,7 @@ fn validate_canonical_replay_bytes(bytes: &[u8]) -> Result<String, LeaderboardSe
     Ok(engine_hash)
 }
 
-fn decode_validated_json<T>(
+pub(crate) fn decode_validated_json<T>(
     result: Result<HttpResponse, HttpTransportError>,
 ) -> Result<T, LeaderboardServiceError>
 where
