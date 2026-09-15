@@ -19,7 +19,6 @@ fn live_waiter_preparation_cancels_only_its_owner() {
         Some(owner),
         OrderType::WalkingUpright,
     );
-    element.retained_movement_goal = Some(crate::coordinates::MapPoint::new(12.0, 34.0));
     element.orders.push_back(Order::new(
         OrderType::Freezing,
         0.0,
@@ -65,7 +64,6 @@ fn live_waiter_preparation_cancels_only_its_owner() {
     assert_eq!(element.command, Command::Move);
     assert_eq!(element.state, SequenceState::Postponed);
     assert!(element.orders.is_empty());
-    assert_eq!(element.retained_movement_goal, None);
     assert!(
         !engine
             .orders

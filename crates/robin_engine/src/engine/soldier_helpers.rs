@@ -630,16 +630,6 @@ impl EngineInner {
                 }
             }
         }
-        if cleared_selected_goal {
-            // A queued replacement may carry the outgoing movement's goal
-            // across Rust's eager halt. Once a later selected element has
-            // performed Original's actor-base goal cleanup, that snapshot is
-            // stale and must not be resurrected when the replacement finally
-            // reaches its MoveWaiting/path-request instruction.
-            self.orders
-                .sequence_manager
-                .clear_retained_movement_goals_for_actor(owner);
-        }
         if let Some(provenance) = &goal_owner_provenance {
             let selected = self.world.entities.current_element_for_actor(owner);
             let actor_state = self.world.entities.get(owner).and_then(|entity| {

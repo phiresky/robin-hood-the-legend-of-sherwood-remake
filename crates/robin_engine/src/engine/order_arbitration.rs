@@ -214,14 +214,6 @@ impl EngineInner {
                 // `current.Postpone(new)` — postpone current behind new.
                 // Current is in-progress, so we first tear down its
                 // active machinery before flipping it to Postponed.
-                self.preserve_selected_movement_goal_for_replacement(
-                    owner,
-                    cur_seq,
-                    cur_idx,
-                    new_seq,
-                    new_idx,
-                    new_command,
-                );
                 // human action execution's WAITING_SWORD branch and base actor execution's
                 // bored upright-waiting arms always return an in-progress result
                 // after driving their nested work. If that work
@@ -277,24 +269,6 @@ impl EngineInner {
                         .sequence_manager
                         .can_interrupt_now(cur_seq, cur_idx),
                     "interruption eligibility is unconditional"
-                );
-                // In the original game, instruction handling installs the incoming element as
-                // selected sequence element before interrupting the outgoing
-                // movement. Its synchronous condolence therefore sees
-                // that it is no longer selected and leaves the sprite's
-                // movement goal intact. Rust clears active mechanics
-                // before the incoming element begins executing. Carry that
-                // selected-owner fact on every replacement element: its
-                // generated movement-to-waiting transition is the same live
-                // transition that Original still drives from the rewritten
-                // outgoing order, regardless of the incoming command.
-                self.preserve_selected_movement_goal_for_replacement(
-                    owner,
-                    cur_seq,
-                    cur_idx,
-                    new_seq,
-                    new_idx,
-                    new_command,
                 );
                 // New takes over current's postponed chain, current
                 // becomes Interrupted.
@@ -819,16 +793,6 @@ impl EngineInner {
             .get_element_mut(waiter_seq, waiter_idx)
         {
             w.orders.clear();
-            // The cached movement goal only bridges Rust's staged handoff
-            // from an outgoing movement straight into its replacement. Once
-            // this element is queued behind a blocker instead of taking the
-            // actor, the blocker owns the sprite goal and will publish or
-            // clear it before the waiter is ever instructed. The original game's turn
-            // simply observes whatever goal it finds, so reviving this
-            // snapshot afterwards would resurrect a destination the blocker's
-            // own condolence card legitimately erased.
-            w.retained_movement_goal = None;
-            w.remove_property(crate::sequence::Field::RetainedMovementGoal);
         }
         self.postpone_element(sim, assets, active_scripts, waiter_seq, waiter_idx);
     }

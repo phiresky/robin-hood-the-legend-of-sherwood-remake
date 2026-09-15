@@ -466,6 +466,11 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         .unwrap()
         .action_state = ActionState::MovingFast;
     let retained_goal = MapPoint::new(321.0, 654.0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .position_iface_mut()
+        .set_map_goal(retained_goal);
 
     let sequence = engine.launch_turn_sequence_deferred_no_transitions(
         owner,
@@ -473,7 +478,6 @@ fn deferred_face_to_generates_live_exit_transition_and_keeps_resolved_direction(
         Some(9),
         0.0,
         0.0,
-        Some(retained_goal),
     );
     let deferred = engine
         .orders

@@ -6403,13 +6403,11 @@ impl EngineInner {
         // immediately, but converts only A*-requiring moves to MOVE_WAITING
         // and queues a path request.
         if !straight_ok {
-            let mut retained_movement_goal = None;
             if let Some(elem) = self
                 .orders
                 .sequence_manager
                 .get_element_mut(seq_id, elem_idx)
             {
-                retained_movement_goal = elem.retained_movement_goal;
                 elem.command = crate::element::Command::MoveWaiting;
                 elem.push_order(crate::order::Order::new(
                     OrderType::Freezing,
@@ -6417,22 +6415,6 @@ impl EngineInner {
                     source.y,
                     crate::order::alloc_order_id(&mut self.orders.next_order_id),
                 ));
-            }
-            self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            if let Some(goal) = retained_movement_goal
-                && let Some(entity) = self.world.entities.get_mut(owner)
-                && entity.position_iface().map_goal() == MapPoint::ZERO
-            {
-                // A pending replacement owns the actor now, but has no
-                // concrete waypoint with which to initialize the sprite.
-                // Restore the outgoing movement's cached goal only when
-                // eager Rust cleanup already erased it. The replacement can
-                // be queued before the outgoing actor slot and instructed
-                // afterward; in that interval the live movement may advance
-                // to another waypoint. Original leaves that newer sprite
-                // goal untouched because the interrupted element is no
-                // longer selected.
-                entity.position_iface_mut().set_map_goal(goal);
             }
             let parity_request = crate::pathfinder::parity_path_capture_is_active()
                 .then(|| parity_path_request_state(&self.world.fast_grid, &request));
@@ -6447,14 +6429,13 @@ impl EngineInner {
             return MovePathOutcome::Pending;
         }
 
-        self.finish_move_path(sim, assets, request, vec![source, dest]);
+        self.finish_move_path(sim, request, vec![source, dest]);
         MovePathOutcome::Success
     }
 
     pub(super) fn finish_move_path(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
         request: PendingPathRequest,
         mut waypoints: Vec<MapPoint>,
     ) {
@@ -6674,13 +6655,7 @@ impl EngineInner {
             // creates one or more concrete MOVE|SEEK elements without
             // resampling either value, so a route through a door retains the
             // original target reference and accumulated countdown.
-            // Mirror the original actor lifecycle flag once the movement
-            // element promotes to InProgress.
-            actor.sequence_element_started = true;
         }
-
-        // Transition element to InProgress.
-        self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
     }
 }
 
@@ -6745,16 +6720,6 @@ impl EngineInner {
                     self.control.frame_counter,
                     (seq_id, elem_idx),
                 );
-            }
-            if self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| element.data.is_movement() && element.orders.len() == 1)
-            {
-                self.orders
-                    .sequence_manager
-                    .clear_retained_movement_goals_for_actor(owner);
             }
             self.do_next_order(sim, assets, seq_id, elem_idx);
         } else if debug_post_seek_handoff_enabled() {

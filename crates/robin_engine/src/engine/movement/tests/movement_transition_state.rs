@@ -834,7 +834,7 @@ mod suite {
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
         let (replacement_sequence, replacement_index) =
-            seed_stale_goal_on_replacement(&mut engine, owner, outgoing_sequence, old_goal);
+            find_queued_replacement(&engine, owner, outgoing_sequence);
         assert_replacement_waits_behind_stop_transition(
             &engine,
             owner,
@@ -1071,16 +1071,11 @@ mod suite {
         );
     }
 
-    fn seed_stale_goal_on_replacement(
-        engine: &mut EngineInner,
+    fn find_queued_replacement(
+        engine: &EngineInner,
         owner: crate::element::EntityId,
         outgoing_sequence: crate::sequence::SequenceId,
-        old_goal: MapPoint,
     ) -> (crate::sequence::SequenceId, usize) {
-        // `engine_postpone` intentionally drops the ordinary handoff cache;
-        // model the later queue-time replacement snapshot that exposed the
-        // replay bug only after the real movement has passed through instruction handling and
-        // become the outgoing transition's postponed successor.
         let outgoing_element_id = engine
             .orders
             .sequence_manager
@@ -1114,12 +1109,6 @@ mod suite {
                 (id == replacement_handle).then_some((sequence, index))
             })
             .expect("replacement movement handle must remain registered");
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(replacement_sequence, replacement_index)
-            .unwrap()
-            .retained_movement_goal = Some(old_goal);
         (replacement_sequence, replacement_index)
     }
 
@@ -1146,11 +1135,6 @@ mod suite {
                     && element.data.is_movement()
             })
             .expect("queued point movement must register a replacement movement");
-        assert_eq!(
-            replacement.retained_movement_goal,
-            Some(old_goal),
-            "the regression must carry the stale snapshot that could resurrect the exhausted goal"
-        );
         assert_eq!(
             replacement.state,
             crate::sequence::SequenceState::Postponed,

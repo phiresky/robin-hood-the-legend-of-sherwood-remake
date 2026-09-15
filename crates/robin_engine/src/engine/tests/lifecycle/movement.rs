@@ -264,7 +264,6 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
         .unwrap()
         .action_state = ActionState::Moving;
 
-    let stale_retained_goal = MapPoint::new(70.0, 80.0);
     let live_goal = MapPoint::new(90.0, 100.0);
     engine.launch_turn_sequence_deferred_no_transitions(
         owner,
@@ -272,7 +271,6 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
         Some(9),
         0.0,
         0.0,
-        Some(stale_retained_goal),
     );
 
     // The outgoing actor slot may run after facing registers its deferred
@@ -436,7 +434,6 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         OrderType::RunningUpright,
     );
     replacement.priority = SequencePriority::Normal;
-    replacement.retained_movement_goal = Some(old_goal);
     let replacement_sequence = engine.orders.sequence_manager.insert_element(replacement);
     engine
         .orders

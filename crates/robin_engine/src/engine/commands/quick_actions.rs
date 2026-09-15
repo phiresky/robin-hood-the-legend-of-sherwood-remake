@@ -1893,7 +1893,6 @@ impl EngineInner {
             element.script_driven = true;
             element.orders.clear();
             element.num_transition_orders = 0;
-            element.retained_movement_goal = None;
             element.cross_postponed = None;
         }
         if let Some(sequence) = &mut seek {
@@ -1901,7 +1900,6 @@ impl EngineInner {
                 element.script_driven = true;
                 element.orders.clear();
                 element.num_transition_orders = 0;
-                element.retained_movement_goal = None;
                 element.cross_postponed = None;
             }
             self.append_posture_recovery(pc, sequence);
