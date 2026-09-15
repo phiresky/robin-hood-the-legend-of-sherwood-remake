@@ -167,6 +167,20 @@ pub struct ReplayArtifactV1 {
     pub replay_schema_version: u32,
 }
 
+impl ReplayArtifactV1 {
+    /// Admission check for new uploads and verifier jobs. Stored runs keep
+    /// their recorded schema and only need [`Validate`].
+    pub fn validate_current_schema(&self) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.replay_schema_version != crate::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1 {
+            return Err(ValidationError::ClaimMismatch {
+                field: "replay.replay_schema_version",
+            });
+        }
+        Ok(())
+    }
+}
+
 impl Validate for ReplayArtifactV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.artifact.validate()?;
@@ -175,7 +189,7 @@ impl Validate for ReplayArtifactV1 {
                 field: "replay.artifact.media_type",
             });
         }
-        if self.replay_schema_version != crate::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1 {
+        if self.replay_schema_version == 0 {
             return Err(ValidationError::ClaimMismatch {
                 field: "replay.replay_schema_version",
             });
@@ -222,7 +236,7 @@ impl Validate for SubmissionV2 {
         self.upload_challenge.validate()?;
         crate::validation::nonzero("submission.uploader_public_key", &self.uploader_public_key)?;
         crate::validation::text("submission.mission_id", &self.mission_id, 256)?;
-        self.replay.validate()?;
+        self.replay.validate_current_schema()?;
         if self.requested_metrics.is_empty()
             || !crate::validation::strictly_sorted(&self.requested_metrics)
         {
@@ -421,6 +435,9 @@ mod tests {
         let mut stale = submission();
         stale.replay.replay_schema_version -= 1;
         assert!(stale.validate().is_err());
+        // Stored runs keep their recorded schema; only admission requires the current one.
+        assert!(stale.replay.validate().is_ok());
+        assert!(stale.replay.validate_current_schema().is_err());
         let mut unsorted = submission();
         unsorted.requested_metrics.reverse();
         assert!(unsorted.validate().is_err());

@@ -89,7 +89,7 @@ impl Validate for VerifierJobV2 {
         )?;
         crate::validation::text("verifier_job.mission_id", &self.mission_id, 256)?;
         self.simulation_policy.validate()?;
-        self.replay.validate()?;
+        self.replay.validate_current_schema()?;
         if self.resource_locale_root.is_empty()
             || self.resource_locale_root.len() > 8
             || !self

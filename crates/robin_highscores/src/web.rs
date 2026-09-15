@@ -1288,9 +1288,6 @@ async fn run_detail(
             runtime_build: run.recorded_engine_version,
         },
     };
-    // TODO: RunDetailV2 validation requires the replay to carry the *current*
-    // replay schema, so runs recorded before a future schema bump would fail
-    // here. Revisit together with the protocol owner before the next bump.
     detail.validate().map_err(|_error| {
         tracing::error!(
             error_code = "stored_public_run_invalid",
