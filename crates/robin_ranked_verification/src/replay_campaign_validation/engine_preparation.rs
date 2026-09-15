@@ -53,10 +53,17 @@ impl ApprovedReplayCampaignContent {
             self.into_playback_parts();
         let starting_campaign_score =
             campaign.get_value(robin_engine::campaign::CampaignValue::Score);
-        let engine = robin_engine::engine::Engine::new_ranked(
+        let assets = level.assets;
+        let mut engine = robin_engine::engine::Engine::new_ranked(
             robin_engine::engine::EngineArgs {
                 campaign,
-                level,
+                level: robin_engine::engine::LevelLoadArgs {
+                    assets: &mut *assets,
+                    level_directory: level.level_directory,
+                    progress: &mut *level.progress,
+                    loaded: level.loaded,
+                    bg_pixel_dims: level.bg_pixel_dims,
+                },
                 ground_mark_sprite,
                 titbit_row_frame_counts,
                 rng_seed,
@@ -65,6 +72,24 @@ impl ApprovedReplayCampaignContent {
             },
             simulation_policy,
         )?;
+        // Frame-zero hashes follow client startup: register campaign names,
+        // connect the host, and consume the pending startup effects.
+        let mut names = std::array::from_fn(|_| None);
+        engine
+            .register_mission_peasant_names(assets, &mut names)
+            .and_then(|()| {
+                engine.connect_initial_seat(
+                    assets,
+                    robin_engine::player_command::PlayerId::HOST,
+                    String::new(),
+                )
+            })
+            .map_err(
+                |error| robin_engine::engine::EngineError::MissionLevelStage {
+                    stage: "ranked mission startup",
+                    reason: error.to_string(),
+                },
+            )?;
         Ok(ApprovedReplayEngine {
             engine,
             mission_index,

@@ -40,7 +40,6 @@ use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::ScreenSize;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::resource_ids;
@@ -795,60 +794,9 @@ pub(super) fn register_mission_peasant_names(
     engine: &mut Engine,
     assets: &engine_api::LevelAssets,
 ) {
-    use robin_engine::character_kind::CharacterKind;
-    use robin_engine::sim_rng::{self, AuxiliaryRngSite};
-
-    const MAX_ATTEMPTS: usize = 10;
-    let firstnames = &assets.peasant_firstnames;
-    let surnames = &assets.peasant_surnames;
-    if firstnames.is_empty() || surnames.is_empty() {
-        tracing::warn!(
-            "Peasant name generation: no firstname/surname strings found ({}/{})",
-            firstnames.len(),
-            surnames.len(),
-        );
-        return;
-    }
-    let seed = engine.rng_seed();
-    sim_rng::with_auxiliary_seed(AuxiliaryRngSite::PeasantNames, seed, |rng| {
-        for kind in [
-            CharacterKind::MerryManA,
-            CharacterKind::MerryManB,
-            CharacterKind::MerryManC,
-        ] {
-            let slot = kind.as_index();
-            if localized_names[slot].is_some() {
-                continue;
-            }
-            let mut generated = None;
-            for _ in 0..MAX_ATTEMPTS {
-                // Campaign identity must use the same draws on native and wasm32.
-                let first = &firstnames[rng.u64(0..firstnames.len() as u64) as usize];
-                let last = &surnames[rng.u64(0..surnames.len() as u64) as usize];
-                let full = format!("{first} {last}");
-                if !engine.is_peasant_name_registered(&full) {
-                    engine
-                        .advance_frame(
-                            assets,
-                            engine_api::SimulationFrameInput::new(vec![
-                                engine_api::SimCommand::from(PlayerCommand::RegisterPeasantName {
-                                    name: full.clone(),
-                                }),
-                            ])
-                            .with_hourglass(false),
-                        )
-                        .expect("peasant-name registration admission");
-                    generated = Some(full);
-                    break;
-                }
-            }
-            // Preserve the existing display-only exhausted-pool label. It is
-            // never registered as a substitute for missing authored names.
-            let display_name = generated.unwrap_or_else(|| "Misteryman".to_owned());
-            tracing::info!("Peasant {kind:?} → {display_name:?}");
-            localized_names[slot] = Some(display_name);
-        }
-    });
+    engine
+        .register_mission_peasant_names(assets, localized_names)
+        .expect("peasant-name registration admission");
 }
 
 /// Run the CPU-only loading phase: sprite bank, campaign install +
@@ -1587,16 +1535,7 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
 
     let nickname = args.config.cli.mp_nickname.clone();
     engine
-        .advance_frame(
-            assets,
-            engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
-                PlayerCommand::ConnectSeat {
-                    player_id: host.transport.local_seat(),
-                    nickname,
-                },
-            )])
-            .with_hourglass(false),
-        )
+        .connect_initial_seat(assets, host.transport.local_seat(), nickname)
         .expect("bootstrap ConnectSeat admission");
     tracing::info!(
         seat = ?host.transport.local_seat(),
