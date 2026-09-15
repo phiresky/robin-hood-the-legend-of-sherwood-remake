@@ -3,10 +3,10 @@
 //! Native requests run on short-lived worker threads; browser requests run as
 //! local fetch futures. The caller only polls a capacity-one completion
 //! channel. Redirects are refused on both platforms, especially for the
-//! signed multipart body containing the canonical replay and campaign.
+//! signed multipart body containing the canonical replay.
 
 use crate::leaderboard::task::PollTask;
-use robin_run_protocol::{RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1};
+use robin_run_protocol::RANKED_REPLAY_MEDIA_TYPE_V1;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -35,8 +35,6 @@ pub enum HttpTransportError {
     TooManyInFlight,
     #[error("HTTP worker closed without a result")]
     WorkerClosed,
-    #[error("starting campaign is mandatory")]
-    MissingStartingCampaign,
     #[error("replay body is mandatory")]
     MissingReplay,
 }
@@ -90,7 +88,6 @@ pub enum HttpRequestBody {
     SubmissionMultipart {
         submission_json: Arc<[u8]>,
         replay_bytes: Arc<[u8]>,
-        starting_campaign_bytes: Arc<[u8]>,
     },
 }
 
@@ -150,13 +147,9 @@ impl HttpRequest {
         url: String,
         submission_json: Arc<[u8]>,
         replay_bytes: Arc<[u8]>,
-        starting_campaign_bytes: Arc<[u8]>,
     ) -> Result<Self, HttpTransportError> {
         if replay_bytes.is_empty() {
             return Err(HttpTransportError::MissingReplay);
-        }
-        if starting_campaign_bytes.is_empty() {
-            return Err(HttpTransportError::MissingStartingCampaign);
         }
         Ok(Self {
             method: reqwest::Method::POST,
@@ -164,7 +157,6 @@ impl HttpRequest {
             body: HttpRequestBody::SubmissionMultipart {
                 submission_json,
                 replay_bytes,
-                starting_campaign_bytes,
             },
             no_store: true,
             max_response_bytes: MAX_JSON_RESPONSE_BYTES,
@@ -289,7 +281,6 @@ fn attach_native_body(
         HttpRequestBody::SubmissionMultipart {
             submission_json,
             replay_bytes,
-            starting_campaign_bytes,
         } => {
             let submission = reqwest::blocking::multipart::Part::bytes(submission_json.to_vec())
                 .file_name("submission.json")
@@ -299,16 +290,10 @@ fn attach_native_body(
                 .file_name("replay.rhrec")
                 .mime_str(RANKED_REPLAY_MEDIA_TYPE_V1)
                 .map_err(request_error)?;
-            let starting_campaign =
-                reqwest::blocking::multipart::Part::bytes(starting_campaign_bytes.to_vec())
-                    .file_name("starting-campaign.bin")
-                    .mime_str(RANKED_CAMPAIGN_MEDIA_TYPE_V1)
-                    .map_err(request_error)?;
             builder.multipart(
                 reqwest::blocking::multipart::Form::new()
                     .part("submission", submission)
-                    .part("replay", replay)
-                    .part("starting_campaign", starting_campaign),
+                    .part("replay", replay),
             )
         }
     })
@@ -518,7 +503,6 @@ fn build_browser_request(
         HttpRequestBody::SubmissionMultipart {
             submission_json,
             replay_bytes,
-            starting_campaign_bytes,
         } => {
             let form = web_sys::FormData::new().map_err(browser_js_error)?;
             let submission = browser_blob(&submission_json, "application/json")?;
@@ -527,14 +511,6 @@ fn build_browser_request(
             let replay = browser_blob(&replay_bytes, RANKED_REPLAY_MEDIA_TYPE_V1)?;
             form.append_with_blob_and_filename("replay", &replay, "replay.rhrec")
                 .map_err(browser_js_error)?;
-            let starting_campaign =
-                browser_blob(&starting_campaign_bytes, RANKED_CAMPAIGN_MEDIA_TYPE_V1)?;
-            form.append_with_blob_and_filename(
-                "starting_campaign",
-                &starting_campaign,
-                "starting-campaign.bin",
-            )
-            .map_err(browser_js_error)?;
             // Fetch must author the multipart boundary.
             init.set_body(&form.into());
         }
@@ -586,24 +562,14 @@ mod tests {
     }
 
     #[test]
-    fn request_builder_requires_both_exact_artifacts() {
+    fn request_builder_requires_the_exact_replay() {
         assert!(matches!(
             HttpRequest::submission_multipart(
                 "http://127.0.0.1:9/api/v1/submissions".to_owned(),
                 Arc::from(&b"{}"[..]),
                 Arc::from(&b""[..]),
-                Arc::from(&b"campaign"[..]),
             ),
             Err(HttpTransportError::MissingReplay)
-        ));
-        assert!(matches!(
-            HttpRequest::submission_multipart(
-                "http://127.0.0.1:9/api/v1/submissions".to_owned(),
-                Arc::from(&b"{}"[..]),
-                Arc::from(&b"replay"[..]),
-                Arc::from(&b""[..]),
-            ),
-            Err(HttpTransportError::MissingStartingCampaign)
         ));
     }
 
@@ -658,9 +624,7 @@ mod tests {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let address = server.server_addr().to_ip().unwrap();
         let exact_replay: Arc<[u8]> = Arc::from(&b"header\n\0canonical\r\nreplay\xffbytes"[..]);
-        let exact_campaign: Arc<[u8]> = Arc::from(&b"\0full campaign\xffbytes"[..]);
         let expected_replay = exact_replay.clone();
-        let expected_campaign = exact_campaign.clone();
         let server_thread = std::thread::spawn(move || {
             let mut request = server.recv().unwrap();
             let mut body = Vec::new();
@@ -668,17 +632,12 @@ mod tests {
             let text = String::from_utf8_lossy(&body);
             let submission_at = text.find("name=\"submission\"").unwrap();
             let replay_at = text.find("name=\"replay\"").unwrap();
-            let campaign_at = text.find("name=\"starting_campaign\"").unwrap();
-            assert!(submission_at < replay_at && replay_at < campaign_at);
+            assert!(submission_at < replay_at);
+            assert!(!text.contains("starting_campaign"));
             assert!(text.contains(RANKED_REPLAY_MEDIA_TYPE_V1));
-            assert!(text.contains(RANKED_CAMPAIGN_MEDIA_TYPE_V1));
             assert!(
                 body.windows(expected_replay.len())
                     .any(|window| window == expected_replay.as_ref())
-            );
-            assert!(
-                body.windows(expected_campaign.len())
-                    .any(|window| window == expected_campaign.as_ref())
             );
             request
                 .respond(
@@ -699,9 +658,8 @@ mod tests {
             .spawn(
                 HttpRequest::submission_multipart(
                     format!("http://{address}/api/v1/submissions"),
-                    Arc::from(&b"{\"schema_version\":1}"[..]),
+                    Arc::from(&b"{\"schema_version\":2}"[..]),
                     exact_replay,
-                    exact_campaign,
                 )
                 .unwrap(),
             )
@@ -735,7 +693,6 @@ mod tests {
                     format!("http://{redirect_address}/api/v1/submissions"),
                     Arc::from(&b"{}"[..]),
                     Arc::from(&b"canonical replay"[..]),
-                    Arc::from(&b"starting campaign"[..]),
                 )
                 .unwrap(),
             )
@@ -822,7 +779,6 @@ mod tests {
                 "/api/v1/submissions".to_owned(),
                 Arc::from(&b"{}"[..]),
                 Arc::from(&b"canonical replay"[..]),
-                Arc::from(&b"starting campaign"[..]),
             )
             .unwrap(),
         ];

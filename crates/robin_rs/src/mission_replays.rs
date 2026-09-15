@@ -66,14 +66,15 @@ impl RecordingIndex {
             robin_engine::campaign_history::MissionAttemptKey,
             Option<i64>,
         ),
+        edition: robin_run_protocol::OfficialContentEditionV1,
     ) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            robin_util::sync::lock(&self.submissions).submit(path, expected)
+            robin_util::sync::lock(&self.submissions).submit(path, expected, edition)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _ = (path, expected);
+            let _ = (path, expected, edition);
             Err("Local replay submission is unavailable in this browser".into())
         }
     }
