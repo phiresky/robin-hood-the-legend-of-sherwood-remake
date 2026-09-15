@@ -328,7 +328,9 @@ fn special_strike_selected_snapshot(
                 element.command,
                 element.state,
                 element.priority,
-                element.cross_postponed,
+                element
+                    .postponed
+                    .map(|reference| (reference.sequence_id, reference.element_index)),
                 element.orders.len(),
             )
         })
@@ -620,25 +622,20 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
-    ) {
+    ) -> Option<crate::sprite::MotionState> {
         let execution_frozen = self
             .get_entity(attacker_id)
             .and_then(Entity::actor_data)
             .unwrap_or_else(|| panic!("selected melee owner {attacker_id:?} is missing actor data"))
             .execution_frozen;
-        if execution_frozen || !self.selected_melee_identity_is_live(attacker_id, selected) {
-            return;
+        if execution_frozen {
+            return Some(crate::sprite::MotionState::InProgress);
         }
-
-        self.tick_straight_melee_for(sim, assets, attacker_id, selected);
-        let sweep_phase = if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_nonstraight_melee_for(sim, assets, attacker_id, selected)
-        } else {
-            SweepTickPhase::Dormant
-        };
-        if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_selected_sweep_phase(sim, assets, attacker_id, sweep_phase);
+        if !self.selected_melee_identity_is_live(attacker_id, selected) {
+            return None;
         }
+        self.tick_straight_melee_for(sim, assets, attacker_id, selected)
+            .or_else(|| self.tick_nonstraight_melee_for(sim, assets, attacker_id, selected))
     }
 
     // ─── Per-frame melee tick ───────────────────────────────────────
@@ -706,9 +703,10 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        result: &mut crate::engine::animation::ActorExecuteResult,
+        order_type: crate::order::OrderType,
+        motion: &mut crate::sprite::MotionState,
     ) {
-        let low = match result.order_type {
+        let low = match order_type {
             crate::order::OrderType::ParryingSword => false,
             crate::order::OrderType::ParryingLowSword => true,
             _ => return,
@@ -727,7 +725,7 @@ impl EngineInner {
         // 16-bit cast, so zero wraps to -1 and still expires immediately.
         if (counter.parry_counter as i16) <= 0 {
             if low {
-                result.motion = crate::sprite::MotionState::Terminated;
+                *motion = crate::sprite::MotionState::Terminated;
             } else {
                 let elem =
                     crate::sequence::SequenceElement::new(1, Command::StopParrySword, Some(owner));
@@ -831,13 +829,13 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
-    ) {
+    ) -> Option<crate::sprite::MotionState> {
         if self
             .get_entity(attacker_id)
             .and_then(Entity::actor_data)
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return;
+            return None;
         }
 
         let Some((strike, target_id, animation)) = self
@@ -860,7 +858,7 @@ impl EngineInner {
                 Some((strike, target, order.order_type))
             })
         else {
-            return;
+            return None;
         };
         let gesture_quality = self
             .orders
@@ -885,7 +883,7 @@ impl EngineInner {
             strike_kind,
             WeaponThrustKind::Straight | WeaponThrustKind::Assault
         ) {
-            return;
+            return None;
         }
 
         let direction = direction_to(&self.world.entities, attacker_id, target_id);
@@ -897,7 +895,7 @@ impl EngineInner {
             position.turn();
         }
         if self.actors_frozen() {
-            return;
+            return Some(crate::sprite::MotionState::InProgress);
         }
 
         let entity = self.expect_entity_mut(attacker_id, "selected melee attacker");
@@ -964,17 +962,10 @@ impl EngineInner {
                 gesture_quality,
             );
         }
-        if completed {
-            self.complete_melee_strike(
-                sim,
-                assets,
-                attacker_id,
-                Some(selected.seq_id),
-                selected.elem_idx,
-                strike,
-                profile_idx,
-            );
+        if motion == crate::sprite::MotionState::Terminated {
+            self.complete_melee_strike(sim, assets, attacker_id, strike, profile_idx);
         }
+        Some(motion)
     }
 
     fn resolve_straight_melee_hit(
@@ -1046,8 +1037,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
-        sequence_id: Option<crate::sequence::SequenceId>,
-        element_index: usize,
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
@@ -1144,33 +1133,6 @@ impl EngineInner {
                 "completed sword strike has no attacker weapon profile; tiredness unchanged"
             ),
         }
-
-        if let Some(sequence_id) = sequence_id {
-            let stale = self
-                .orders
-                .sequence_manager
-                .get_element(sequence_id, element_index)
-                .is_some_and(|element| {
-                    use crate::sequence::SequenceState;
-                    matches!(
-                        element.state,
-                        SequenceState::Interrupted
-                            | SequenceState::Impossible
-                            | SequenceState::Terminated
-                            | SequenceState::Done
-                    )
-                });
-            if stale {
-                tracing::debug!(
-                    ?sequence_id,
-                    elem_idx = element_index,
-                    actor = ?actor_id,
-                    "tick_melee_strikes: skipping stale completed strike callback"
-                );
-            } else {
-                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
-            }
-        }
     }
 
     /// Advance every sequence-driven melee strike.
@@ -1207,9 +1169,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            self.tick_straight_melee_for(sim, assets, actor_id, selected);
-            let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id, selected);
-            self.tick_selected_sweep_phase(sim, assets, actor_id, sweep_phase);
+            self.tick_selected_melee_owner(sim, assets, actor_id, selected);
         }
     }
 
@@ -1221,16 +1181,16 @@ impl EngineInner {
         assets: &LevelAssets,
         attacker_id: EntityId,
         selected: super::tick::MeleeOwnerSelection,
-    ) -> SweepTickPhase {
+    ) -> Option<crate::sprite::MotionState> {
         if self
             .get_entity(attacker_id)
             .and_then(Entity::actor_data)
             .is_some_and(|actor| actor.execution_frozen)
         {
-            return SweepTickPhase::Dormant;
+            return None;
         }
         if self.actors_frozen() {
-            return SweepTickPhase::Dormant;
+            return Some(crate::sprite::MotionState::InProgress);
         }
 
         let Some((strike, target_id, animation)) = self
@@ -1253,7 +1213,7 @@ impl EngineInner {
                 Some((strike, target, order.order_type))
             })
         else {
-            return SweepTickPhase::Dormant;
+            return None;
         };
         let gesture_quality = self
             .orders
@@ -1284,30 +1244,13 @@ impl EngineInner {
             strike_kind,
             WeaponThrustKind::Straight | WeaponThrustKind::Assault
         ) {
-            return SweepTickPhase::Dormant;
+            return None;
         }
 
-        // Collect strike results to avoid borrow conflicts
-        struct StrikeHit {
-            attacker_id: EntityId,
-            victim_id: EntityId,
-            strike: SwordStrike,
-            attacker_profile_idx: Option<u32>,
-            gesture_quality: crate::player_command::GestureQuality,
-        }
-        struct CompletedStrike {
-            actor_id: EntityId,
-            sequence_id: Option<crate::sequence::SequenceId>,
-            element_index: usize,
-            strike: SwordStrike,
-            profile_idx: Option<u32>,
-        }
-
-        let mut hits: Vec<StrikeHit> = Vec::new();
-        let mut completed: Vec<CompletedStrike> = Vec::new();
         let mut initialized_sweep = false;
         let mut started = false;
         let mut sweep_phase;
+        let motion;
 
         // Phase 1: execute the selected order. Original derives strike and
         // target from this order and applies the hit on the sprite's one-shot
@@ -1315,7 +1258,7 @@ impl EngineInner {
         {
             let entity_id = attacker_id;
             let Some(entity) = self.world.entities.get_mut(attacker_id) else {
-                return SweepTickPhase::Dormant;
+                return None;
             };
             sweep_phase = SweepTickPhase::InProgress;
             let true_sweep_at_action_point = matches!(
@@ -1343,12 +1286,9 @@ impl EngineInner {
             let hold_true_sweep =
                 true_sweep_at_action_point.is_some_and(|(_, still_rotating)| still_rotating);
             if hold_true_sweep {
-                // The rotation phase runs no Sprite method and reports
-                // IN_PROGRESS outright. Latch that here: without it the arm
-                // leaves the previous tick's one-shot DONE as the actor's
-                // motion state for every frame of the sweep.
-                entity.element_data_mut().sprite.last_motion_state =
-                    Some(crate::sprite::MotionState::InProgress);
+                // Rotation holds the sprite at its action point and returns
+                // in-progress motion until the sweep finishes.
+                motion = crate::sprite::MotionState::InProgress;
                 tracing::trace!(
                     "tick_melee_strikes: entity={} order_id={} strike={:?} holding true-circle sweep",
                     entity_id.index(),
@@ -1369,7 +1309,7 @@ impl EngineInner {
                         .force_action_direction(animation, new_dir.into());
                 }
                 let direction = entity.element_data().direction() as u16;
-                let motion = entity.element_data_mut().sprite.perform_action(
+                motion = entity.element_data_mut().sprite.perform_action(
                     sim,
                     Some(selected.order_id),
                     animation,
@@ -1396,28 +1336,6 @@ impl EngineInner {
                     | crate::sprite::MotionState::Aborted
                     | crate::sprite::MotionState::Error => SweepTickPhase::Dormant,
                 };
-                if matches!(motion, crate::sprite::MotionState::Done) {
-                    let attacker_id = entity_id;
-                    hits.push(StrikeHit {
-                        attacker_id,
-                        victim_id: target_id,
-                        strike,
-                        attacker_profile_idx: profile_idx,
-                        gesture_quality,
-                    });
-                }
-                if matches!(
-                    motion,
-                    crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
-                ) {
-                    completed.push(CompletedStrike {
-                        actor_id: attacker_id,
-                        sequence_id: Some(selected.seq_id),
-                        element_index: selected.elem_idx,
-                        strike,
-                        profile_idx,
-                    });
-                }
             }
         }
 
@@ -1425,16 +1343,8 @@ impl EngineInner {
             self.begin_selected_melee_motion(sim, assets, attacker_id);
         }
 
-        // Phase 2: apply this attacker's hit synchronously. Multi-target
-        // victim vectors retain the original actor-list FIFO.
-        for hit in hits {
-            // Determine the strike kind
-            let strike_kind = hit
-                .attacker_profile_idx
-                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                .map(|profile| profile.thrusts[hit.strike as usize].kind)
-                .unwrap_or(WeaponThrustKind::Straight);
-
+        // Apply the hit before returning to the actor update.
+        if motion == crate::sprite::MotionState::Done {
             let is_sweep = matches!(
                 strike_kind,
                 WeaponThrustKind::Lateral
@@ -1453,47 +1363,39 @@ impl EngineInner {
                 // interaction antagonist is not recovered when that scan
                 // rejects it (for example, a lateral target outside the
                 // strike arc).
-                let all_victims = self.execute_multi_target_strike(
-                    assets,
-                    hit.attacker_id,
-                    hit.strike,
-                    hit.attacker_profile_idx,
-                );
+                let all_victims =
+                    self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx);
                 self.initialize_sweep(
                     assets,
-                    hit.attacker_id,
-                    hit.strike,
-                    hit.attacker_profile_idx,
+                    attacker_id,
+                    strike,
+                    profile_idx,
                     strike_kind,
                     all_victims,
-                    hit.gesture_quality,
+                    gesture_quality,
                 );
-                initialized_sweep = hit.attacker_profile_idx.is_some();
+                initialized_sweep = profile_idx.is_some();
             } else if is_push {
                 // Push strike: apply damage to all victims at the
                 // hit frame (no AI warn tolerance), but defer the
                 // EnterSwordfight command to the strike's completion
                 // by stashing victim IDs on the actor.
-                let all_victims = self.execute_multi_target_strike(
-                    assets,
-                    hit.attacker_id,
-                    hit.strike,
-                    hit.attacker_profile_idx,
-                );
+                let all_victims =
+                    self.execute_multi_target_strike(assets, attacker_id, strike, profile_idx);
                 for victim_id in &all_victims {
-                    if let Some(profile_idx) = hit.attacker_profile_idx {
+                    if let Some(profile_idx) = profile_idx {
                         self.queue_scaled_sword_damage(
                             sim,
                             assets,
                             *victim_id,
-                            hit.attacker_id,
-                            hit.strike,
+                            attacker_id,
+                            strike,
                             profile_idx,
-                            hit.gesture_quality,
+                            gesture_quality,
                         );
                     }
                 }
-                if let Some(entity) = self.world.entities.get_mut(hit.attacker_id)
+                if let Some(entity) = self.world.entities.get_mut(attacker_id)
                     && let Some(human) = entity.human_data_mut()
                 {
                     human.sword_sweep.victims = all_victims;
@@ -1502,32 +1404,27 @@ impl EngineInner {
                 self.resolve_straight_melee_hit(
                     sim,
                     assets,
-                    hit.attacker_id,
-                    hit.victim_id,
-                    hit.strike,
-                    hit.attacker_profile_idx,
-                    hit.gesture_quality,
+                    attacker_id,
+                    target_id,
+                    strike,
+                    profile_idx,
+                    gesture_quality,
                 );
             }
         }
 
-        // Phase 3: notify the sequence manager before the next creation slot.
-        for completed_strike in completed {
-            self.complete_melee_strike(
-                sim,
-                assets,
-                completed_strike.actor_id,
-                completed_strike.sequence_id,
-                completed_strike.element_index,
-                completed_strike.strike,
-                completed_strike.profile_idx,
-            );
+        if motion == crate::sprite::MotionState::Terminated {
+            self.complete_melee_strike(sim, assets, attacker_id, strike, profile_idx);
         }
-        if initialized_sweep {
-            SweepTickPhase::Initialized
-        } else {
-            sweep_phase
+        if self.selected_melee_identity_is_live(attacker_id, selected) {
+            let phase = if initialized_sweep {
+                SweepTickPhase::Initialized
+            } else {
+                sweep_phase
+            };
+            self.tick_selected_sweep_phase(sim, assets, attacker_id, phase);
         }
+        Some(motion)
     }
 
     pub(super) fn tick_selected_sweep_phase(
@@ -2556,10 +2453,8 @@ impl EngineInner {
             }
         }
 
-        // Ladder/wall fall landings: knock the faller about the head,
-        // put them on their back, and retire the fall order — the
-        // fall action performs all of this on the
-        // tick its countdown reaches zero.
+        // Ladder/wall fall landings apply concussion and lying posture before
+        // returning the terminal motion to the actor update.
         let ladder_arrived = !ladder_arrivals.is_empty();
         for victim_id in ladder_arrivals {
             let (concussion, life_points) = {
@@ -2590,36 +2485,6 @@ impl EngineInner {
                 entity.set_posture(posture);
                 if let Some(actor) = entity.actor_data_mut() {
                     actor.action_state = ActionState::Waiting;
-                }
-            }
-
-            if let Some((seq_id, elem_idx, order)) = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(&self.world.entities, victim_id)
-                && order.order_type == crate::order::OrderType::FallingLadderWall
-            {
-                // The fall's Execute arm reports Terminated on the
-                // arrival tick; a synchronously exposed successor
-                // order downgrades that to InProgress like the
-                // original's next-order handling.
-                if let Some(actor) = self
-                    .get_entity_mut(victim_id)
-                    .and_then(crate::element::Entity::actor_data_mut)
-                {
-                    actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
-                }
-                self.do_next_order(sim, assets, seq_id, elem_idx);
-                if self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, victim_id)
-                    .is_some()
-                    && let Some(actor) = self
-                        .get_entity_mut(victim_id)
-                        .and_then(crate::element::Entity::actor_data_mut)
-                {
-                    actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
                 }
             }
         }
@@ -4127,9 +3992,13 @@ mod tests {
         let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
         assert_eq!(
             actor.continuation.motion_state,
-            crate::sprite::MotionState::Terminated
+            crate::sprite::MotionState::Start,
+            "the flight arm returns motion for the actor update to publish"
         );
-        assert_eq!(actor.installed_order, None);
+        assert_eq!(
+            actor.installed_order.map(|order| order.order_id),
+            Some(order_id)
+        );
         let entity = engine.get_entity(victim).unwrap();
         assert_eq!(entity.element_data().layer(), 3);
         assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
@@ -4384,8 +4253,6 @@ mod tests {
             &crate::sim_rng::test_context(),
             &assets,
             attacker_id,
-            None,
-            0,
             SwordStrike::A,
             Some(1),
         );
@@ -4405,8 +4272,6 @@ mod tests {
             &crate::sim_rng::test_context(),
             &assets,
             attacker_id,
-            None,
-            0,
             SwordStrike::A,
             Some(1),
         );

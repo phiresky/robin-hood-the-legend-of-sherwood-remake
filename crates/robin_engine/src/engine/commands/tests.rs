@@ -4411,7 +4411,8 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
             .sequence_manager
             .get_element(injury_seq, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((old_strike_seq, 0)),
         "the injury keeps its original postponed successor"
     );

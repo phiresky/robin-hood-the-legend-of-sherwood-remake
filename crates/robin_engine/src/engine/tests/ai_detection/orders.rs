@@ -263,7 +263,10 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     }
 
     for invocation in 1..25 {
-        assert!(!engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener));
+        assert_eq!(
+            engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+            Some(crate::sprite::MotionState::InProgress)
+        );
         assert_eq!(
             engine
                 .get_entity(listener)
@@ -275,7 +278,10 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         );
         assert!(engine.get_entity(near).unwrap().element_data().blipped);
     }
-    assert!(engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener));
+    assert_eq!(
+        engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        Some(crate::sprite::MotionState::Terminated)
+    );
     assert!(
         !engine.get_entity(near).unwrap().element_data().blipped,
         "450-100 strictly-near 3D cross-layer target reveals"
@@ -300,7 +306,8 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             .sequence_manager
             .current_order_for_actor(&engine.world.entities, listener)
             .map(|(_, _, order)| order.order_type),
-        Some(OrderType::TransitionListeningWaitingUpright)
+        Some(OrderType::Listening),
+        "the returned terminal motion is advanced by the owner coordinator"
     );
 }
 

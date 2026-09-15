@@ -13,4 +13,3 @@ mod generic_actor_line_crossing_tests;
 mod mobile_owner_boundary_tests;
 mod restored_pass_door_completion_tests;
 mod soldier_take_drink_parity_tests;
-mod specialized_execute_motion_tests;

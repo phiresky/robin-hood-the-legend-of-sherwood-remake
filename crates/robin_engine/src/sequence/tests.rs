@@ -29,7 +29,7 @@ fn interruption_reads_following_link_after_owner_callback() {
                     .sequence_manager
                     .get_element_mut(id, 0)
                     .unwrap()
-                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(id, 2))));
+                    .next = Some(SequenceElementRef::new(id, 2));
             }
         },
         || {
@@ -88,7 +88,7 @@ fn termination_starts_postponed_link_selected_by_owner_callback() {
         .sequence_manager
         .get_element_mut(root, 0)
         .unwrap()
-        .cross_postponed = Some((old, 0));
+        .postponed = Some(SequenceElementRef::new(old, 0));
     EngineInner::with_condolation_callback(
         move |engine, card| {
             if card.seq_id == root {
@@ -98,11 +98,13 @@ fn termination_starts_postponed_link_selected_by_owner_callback() {
                     .get_element_mut(root, 0)
                     .unwrap();
                 assert_eq!(
-                    element.cross_postponed,
+                    element
+                        .postponed
+                        .map(|link| (link.sequence_id, link.element_index)),
                     Some((old, 0)),
                     "the callback sees the current postponed pointer"
                 );
-                element.cross_postponed = Some((replacement, 0));
+                element.postponed = Some(SequenceElementRef::new(replacement, 0));
             }
         },
         || engine.element_terminated(&test_context(), &assets, &mut Vec::new(), root, 0),
@@ -138,7 +140,8 @@ fn termination_starts_postponed_link_selected_by_owner_callback() {
             .sequence_manager
             .get_element(root, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None
     );
 }
@@ -163,7 +166,7 @@ fn next_level_cascade_reads_callback_replaced_cross_sequence_chain() {
                     .sequence_manager
                     .get_element_mut(root, 0)
                     .unwrap()
-                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(tail, 0))));
+                    .next = Some(SequenceElementRef::new(tail, 0));
             }
         },
         || {
@@ -216,7 +219,7 @@ fn stop_preserves_live_replacement_following_link_after_nested_callback() {
         .sequence_manager
         .get_element_mut(id, 1)
         .unwrap()
-        .legacy_v48 = Some(loaded_v48_state(None));
+        .next = None;
     EngineInner::with_condolation_callback(
         move |engine, card| {
             if card.elem_idx == 1 {
@@ -225,7 +228,7 @@ fn stop_preserves_live_replacement_following_link_after_nested_callback() {
                     .sequence_manager
                     .get_element_mut(id, 0)
                     .unwrap()
-                    .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(id, 2))));
+                    .next = Some(SequenceElementRef::new(id, 2));
             }
         },
         || {
@@ -842,13 +845,15 @@ fn state_change_interrupted_does_not_resume_postponed_elements() {
         Command::Wait,
         Some(EntityId::Pc(crate::entity_id::PcId(0))),
     ));
-    seq.elements[0].postponed_element_index = Some(1);
+    seq.elements[0].postponed = Some(SequenceElementRef::new(seq.id, 1));
 
     let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::empty());
 
     assert_eq!(effects.start_postponed, None);
-    assert_eq!(seq.elements[0].postponed_element_index, Some(1));
-    assert_eq!(seq.elements[0].cross_postponed, None);
+    assert_eq!(
+        seq.elements[0].postponed,
+        Some(SequenceElementRef::new(seq.id, 1))
+    );
     assert_eq!(seq.elements[1].state, SequenceState::Todo);
 }
 
@@ -1138,7 +1143,7 @@ fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
         .sequence_manager
         .get_element_mut(old_id, 0)
         .unwrap()
-        .cross_postponed = Some((replacement_id, 0));
+        .postponed = Some(SequenceElementRef::new(replacement_id, 0));
 
     engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
@@ -1189,7 +1194,7 @@ fn released_cross_postponed_assertions_keep_ready_before_postponed_fifo() {
         .sequence_manager
         .get_element_mut(old_id, 0)
         .unwrap()
-        .cross_postponed = Some((replacement_id, 0));
+        .postponed = Some(SequenceElementRef::new(replacement_id, 0));
 
     engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
@@ -1264,7 +1269,7 @@ fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
         .sequence_manager
         .get_element_mut(old_id, 0)
         .unwrap()
-        .cross_postponed = Some((replacement_id, 0));
+        .postponed = Some(SequenceElementRef::new(replacement_id, 0));
 
     engine.element_terminated(&sim, &assets, &mut Vec::new(), old_id, 0);
 
@@ -1307,7 +1312,7 @@ fn released_same_sequence_postponed_action_clears_blocker_edge() {
         .sequence_manager
         .get_element_mut(sequence_id, 0)
         .unwrap()
-        .postponed_element_index = Some(1);
+        .postponed = Some(SequenceElementRef::new(sequence_id, 1));
 
     engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence_id, 0);
 
@@ -1317,7 +1322,7 @@ fn released_same_sequence_postponed_action_clears_blocker_edge() {
             .sequence_manager
             .get_element(sequence_id, 0)
             .unwrap()
-            .postponed_element_index,
+            .postponed,
         None,
         "starting a postponed sequence element must detach the released edge"
     );
@@ -1426,7 +1431,7 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
         .sequence_manager
         .get_element_mut(injury_seq, 0)
         .unwrap()
-        .cross_postponed = Some((parry_seq, 0));
+        .postponed = Some(SequenceElementRef::new(parry_seq, 0));
 
     engine.stop_owner(
         &sim,
@@ -1463,7 +1468,8 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
             .sequence_manager
             .get_element(injury_seq, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None,
         "the injury must not retain a resumable link to stopped actor work"
     );
@@ -1607,7 +1613,7 @@ fn stop_owner_completes_deep_cross_postponed_chain() {
                 .sequence_manager
                 .get_element_mut(previous, 0)
                 .unwrap()
-                .cross_postponed = Some((sequence, 0));
+                .postponed = Some(SequenceElementRef::new(sequence, 0));
         }
         chain.push(sequence);
     }
@@ -1628,7 +1634,12 @@ fn stop_owner_completes_deep_cross_postponed_chain() {
             .get_element(sequence, 0)
             .unwrap();
         assert_eq!(element.state, SequenceState::Interrupted);
-        assert_eq!(element.cross_postponed, None);
+        assert_eq!(
+            element
+                .postponed
+                .map(|link| (link.sequence_id, link.element_index)),
+            None
+        );
     }
 }
 
@@ -1658,7 +1669,7 @@ fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
             .sequence_manager
             .get_element_mut(tail, 0)
             .unwrap()
-            .cross_postponed = Some((sequence, 0));
+            .postponed = Some(SequenceElementRef::new(sequence, 0));
         tail = sequence;
         chain.push(sequence);
     }
@@ -1701,7 +1712,7 @@ fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
         .sequence_manager
         .get_element_mut(tail, 0)
         .unwrap()
-        .cross_postponed = Some((weak, 0));
+        .postponed = Some(SequenceElementRef::new(weak, 0));
     engine.stop_owner_current_from_root(
         &sim,
         &assets,
@@ -1899,7 +1910,7 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
         .sequence_manager
         .get_element_mut(middle_seq, 0)
         .unwrap()
-        .cross_postponed = Some((deepest_seq, 0));
+        .postponed = Some(SequenceElementRef::new(deepest_seq, 0));
 
     let mut injury = make_simple_element(1, Command::ReceiveSwordDamage, Some(owner));
     injury.priority = SequencePriority::Injury;
@@ -1920,7 +1931,7 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
         .sequence_manager
         .get_element_mut(injury_seq, 0)
         .unwrap()
-        .cross_postponed = Some((middle_seq, 0));
+        .postponed = Some(SequenceElementRef::new(middle_seq, 0));
 
     engine.stop_owner(
         &sim,
@@ -1958,7 +1969,8 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
             .sequence_manager
             .get_element(injury_seq, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None
     );
     assert_eq!(
@@ -1967,7 +1979,8 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
             .sequence_manager
             .get_element(middle_seq, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None
     );
 }
@@ -1993,7 +2006,7 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
         .sequence_manager
         .get_element_mut(attentive_seq, 0)
         .unwrap()
-        .cross_postponed = Some((turn_seq, 0));
+        .postponed = Some(SequenceElementRef::new(turn_seq, 0));
 
     let mut leave_attentive = make_simple_element(1, Command::LeaveAttentiveMode, Some(owner));
     leave_attentive.priority = SequencePriority::PostponeEverythingButInjuries;
@@ -2003,7 +2016,7 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
         .sequence_manager
         .get_element_mut(leave_seq, 0)
         .unwrap()
-        .cross_postponed = Some((attentive_seq, 0));
+        .postponed = Some(SequenceElementRef::new(attentive_seq, 0));
 
     assert_eq!(
         engine.world.entities.current_element_for_actor(owner),
@@ -2048,7 +2061,8 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
             .sequence_manager
             .get_element(attentive_seq, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None
     );
 }
@@ -2197,8 +2211,8 @@ fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
         .sequence_manager
         .get_element_mut(blocker, 0)
         .unwrap();
-    element.cross_postponed = Some((target, 0));
-    element.legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(target, 0))));
+    element.postponed = Some(SequenceElementRef::new(target, 0));
+    element.next = Some(SequenceElementRef::new(target, 0));
     engine.element_interrupted(
         &sim,
         &assets,
@@ -2217,11 +2231,13 @@ fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
         .sequence_manager
         .get_element(blocker, 0)
         .unwrap();
-    assert_eq!(element.cross_postponed, Some((target, 0)));
     assert_eq!(
-        element.legacy_v48.as_ref().unwrap().next,
-        Some(SequenceElementRef::new(target, 0))
+        element
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
+        Some((target, 0))
     );
+    assert_eq!(element.next, Some(SequenceElementRef::new(target, 0)));
 
     engine.orders.sequence_manager.friday_evening_cleanup();
     assert!(
@@ -2236,9 +2252,13 @@ fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
         .sequence_manager
         .get_element(blocker, 0)
         .unwrap();
-    assert_eq!(element.cross_postponed, None);
-    assert_eq!(element.legacy_v48.as_ref().unwrap().next, None);
-    assert!(element.next_link_severed);
+    assert_eq!(
+        element
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
+        None
+    );
+    assert_eq!(element.next, None);
 
     // Finishing the blocker must not try to restart the destroyed successor.
     engine.element_terminated(&sim, &assets, &mut Vec::new(), blocker, 0);
@@ -2582,7 +2602,7 @@ fn pending_command_query_follows_only_current_elements_postponed_successor() {
         .sequence_manager
         .get_element_mut(current_seq_id, 0)
         .unwrap()
-        .cross_postponed = Some((postponed_seq_id, 0));
+        .postponed = Some(SequenceElementRef::new(postponed_seq_id, 0));
     assert!(
         engine
             .orders
@@ -2658,14 +2678,12 @@ fn movement_action(element: &SequenceElement) -> OrderType {
     *action
 }
 
-fn loaded_v48_state(next: Option<SequenceElementRef>) -> LegacyV48SequenceElementState {
+fn loaded_v48_state() -> LegacyV48SequenceElementState {
     LegacyV48SequenceElementState {
         deleted: false,
         script_driven: false,
         raw_dormant_posture_after_transition: None,
         raw_dormant_action_state_after_transition: None,
-        next,
-        postponed: None,
         mummy: None,
         linked_seek: None,
         damage_arrow: None,
@@ -3005,7 +3023,7 @@ fn set_action_recursive_honors_loaded_null_and_nonadjacent_next() {
     null_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     null_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     let null_id = null_mgr.insert_sequence(null_sequence);
-    null_mgr.get_element_mut(null_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(None));
+    null_mgr.get_element_mut(null_id, 0).unwrap().next = None;
     null_mgr.set_action_recursive(null_id, 0, OrderType::WalkingCrouched);
     assert_eq!(
         movement_action(null_mgr.get_element(null_id, 0).unwrap()),
@@ -3022,9 +3040,8 @@ fn set_action_recursive_honors_loaded_null_and_nonadjacent_next() {
         linked_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     }
     let linked_id = linked_mgr.insert_sequence(linked_sequence);
-    linked_mgr.get_element_mut(linked_id, 0).unwrap().legacy_v48 = Some(loaded_v48_state(Some(
-        SequenceElementRef::new(linked_id, 2),
-    )));
+    linked_mgr.get_element_mut(linked_id, 0).unwrap().next =
+        Some(SequenceElementRef::new(linked_id, 2));
     linked_mgr.set_action_recursive(linked_id, 0, OrderType::WalkingCrouched);
     assert_eq!(
         movement_action(linked_mgr.get_element(linked_id, 0).unwrap()),
@@ -3046,7 +3063,7 @@ fn set_action_recursive_follows_cross_postponed_link() {
     let mut mgr = SequenceManager::new();
     let root = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
     let postponed = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
-    mgr.get_element_mut(root, 0).unwrap().cross_postponed = Some((postponed, 0));
+    mgr.get_element_mut(root, 0).unwrap().postponed = Some(SequenceElementRef::new(postponed, 0));
 
     mgr.set_action_recursive(root, 0, OrderType::WalkingCrouched);
 
@@ -3069,10 +3086,7 @@ fn loaded_nonadjacent_next_controls_interruption_cascade() {
         .sequence_manager
         .get_element_mut(sequence_id, 0)
         .unwrap()
-        .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
-        sequence_id,
-        2,
-    ))));
+        .next = Some(SequenceElementRef::new(sequence_id, 2));
     EngineInner::with_condolation_callback(
         move |engine, card| {
             if card.elem_idx == 0 {
@@ -3136,7 +3150,7 @@ fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
         .unwrap()
         .legacy_v48 = Some(LegacyV48SequenceElementState {
         linked_seek: Some(Some(SequenceElementRef::new(linked_id, 0))),
-        ..loaded_v48_state(None)
+        ..loaded_v48_state()
     });
     let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let observed = cards.clone();
@@ -3208,10 +3222,7 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
         .sequence_manager
         .get_element_mut(sequence_id, 0)
         .unwrap()
-        .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
-        sequence_id,
-        2,
-    ))));
+        .next = Some(SequenceElementRef::new(sequence_id, 2));
     engine.stop_owner_current_from_root(
         &test_context(),
         &assets,
@@ -3243,9 +3254,6 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
             .orders
             .sequence_manager
             .get_element(sequence_id, 0)
-            .unwrap()
-            .legacy_v48
-            .as_ref()
             .unwrap()
             .next,
         None
@@ -3670,8 +3678,7 @@ fn following_queries_preserve_cross_sequence_and_owner_policies() {
     let mut mgr = SequenceManager::new();
     let root = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
     let next = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
-    mgr.get_element_mut(root, 0).unwrap().legacy_v48 =
-        Some(loaded_v48_state(Some(SequenceElementRef::new(next, 0))));
+    mgr.get_element_mut(root, 0).unwrap().next = Some(SequenceElementRef::new(next, 0));
 
     assert_eq!(mgr.next_element_in_chain(root, 0), Some((next, 0)));
     assert!(!mgr.is_last_real_action(root, 0));
@@ -3692,23 +3699,23 @@ fn following_queries_preserve_cross_sequence_and_owner_policies() {
 }
 
 #[test]
-fn graph_rewrites_preserve_stored_edges_hidden_from_live_queries() {
+fn severed_following_edge_stops_recursive_action_rewrite() {
     let owner = EntityId::Pc(crate::entity_id::PcId(1));
     let mut sequence = Sequence::new();
     sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     let mut mgr = SequenceManager::new();
     let id = mgr.insert_sequence(sequence);
-    mgr.get_element_mut(id, 0).unwrap().next_link_severed = true;
+    mgr.get_element_mut(id, 0).unwrap().next = None;
 
     assert_eq!(mgr.unsevered_following_ref(id, 0), None);
     assert_eq!(mgr.next_element_in_chain(id, 0), None);
     assert!(mgr.is_last_real_action(id, 0));
-    assert_eq!(mgr.rewrite_following_ref(id, 0), Some((id, 1)));
+    assert_eq!(mgr.rewrite_following_ref(id, 0), None);
     mgr.set_action_recursive(id, 0, OrderType::WalkingCrouched);
     assert_eq!(
         movement_action(mgr.get_element(id, 1).unwrap()),
-        OrderType::WalkingCrouched
+        OrderType::RunningUpright
     );
 }
 
@@ -3722,7 +3729,7 @@ fn loaded_v48_null_next_overrides_physical_adjacency() {
     let sequence_id = mgr.insert_sequence(sequence);
     mgr.get_element_mut(sequence_id, 0)
         .expect("loaded first element exists")
-        .legacy_v48 = Some(loaded_v48_state(None));
+        .next = None;
 
     assert!(!mgr.is_next_movement(sequence_id, 0));
     assert!(mgr.is_last_real_action(sequence_id, 0));
@@ -3744,10 +3751,7 @@ fn loaded_v48_nonadjacent_next_is_authoritative() {
     let sequence_id = mgr.insert_sequence(sequence);
     mgr.get_element_mut(sequence_id, 0)
         .expect("loaded first element exists")
-        .legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
-        sequence_id,
-        2,
-    ))));
+        .next = Some(SequenceElementRef::new(sequence_id, 2));
 
     assert!(mgr.is_next_movement(sequence_id, 0));
     assert!(!mgr.is_last_real_action(sequence_id, 0));
@@ -3767,7 +3771,7 @@ fn last_real_action_checks_postponed_on_each_skipped_follower() {
             mgr.insert_element(SequenceElement::new(1, Command::Generic, Some(owner)));
         mgr.get_element_mut(primary_id, 1)
             .expect("skipped follower exists")
-            .cross_postponed = Some((postponed_id, 0));
+            .postponed = Some(SequenceElementRef::new(postponed_id, 0));
 
         assert!(
             !mgr.is_last_real_action(primary_id, 0),
@@ -3811,7 +3815,7 @@ fn last_real_action_stops_at_halt_severed_following_edge() {
     );
     mgr.get_element_mut(sequence_id, 0)
         .expect("PassDoor exists")
-        .next_link_severed = true;
+        .next = None;
     assert!(
         mgr.is_last_real_action(sequence_id, 0),
         "Halt's nulled following pointer must hide physically adjacent dead elements"
@@ -3953,7 +3957,7 @@ fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
         .sequence_manager
         .get_element_mut(damage, 0)
         .unwrap()
-        .cross_postponed = Some((wait, 0));
+        .postponed = Some(SequenceElementRef::new(wait, 0));
 
     let rejected = engine.launch_element(
         &test_context(),
@@ -3980,7 +3984,8 @@ fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
             .sequence_manager
             .get_element(damage, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((wait, 0)),
         "death cleanup must preserve the replacement's transferred postponed chain"
     );

@@ -38,7 +38,7 @@ pub struct SpawnArrowParams {
 ///
 /// Unlike the previous straight-line version, this takes a precomputed
 /// ballistic trajectory and stores it on the projectile for per-frame
-/// advancement in [`tick_arrows`].
+/// advancement during its entity update.
 pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     let SpawnArrowParams {
         shooter,
@@ -888,41 +888,6 @@ pub fn spawn_coin(
 //  Per-frame arrow tick
 // ═══════════════════════════════════════════════════════════════════
 
-/// Outcome of an arrow tick — the engine applies damage and despawn
-/// decisions after the mutable-borrow loop releases.
-pub struct ArrowTickResult {
-    pub arrow: EntityId,
-    pub hit_target: Option<EntityId>,
-    /// Entity whose shield blocked the arrow (mutually exclusive with
-    /// `hit_target`).  When set, the engine should trigger a parry-shield
-    /// animation instead of applying damage.
-    pub shield_hit: Option<EntityId>,
-    /// FX-target the projectile connected with (mutually exclusive
-    /// with `hit_target`/`shield_hit`), paired with the activation
-    /// command to dispatch.  Different projectile types launch
-    /// different activation commands: arrows → `Command::ActivateArrow`,
-    /// apples → `Command::ActivateApple`, stones →
-    /// `Command::ActivateStone`.
-    pub fx_target_hit: Option<(EntityId, Command)>,
-    pub despawn: bool,
-    /// Damage to apply if there's a hit.  Precomputed at spawn time
-    /// from the shooter's bow profile.
-    pub damage: u16,
-    /// Impact sound to play at [`Self::impact_pos`] on this tick.  Set
-    /// on the tick a projectile first stops flying; the engine routes
-    /// it through `pending_side_effects.sounds`.  Per-type FX ids:
-    /// arrow 510, apple 509, stone 508.
-    pub impact_fx: Option<u32>,
-    /// Map-space position of the projectile at impact, for locating
-    /// the impact FX sound.  Only meaningful when `impact_fx.is_some()`.
-    pub impact_pos: MapPoint,
-    /// Previous 3D projectile position restored on
-    /// human hits whose impact handler returns true. Arrows only
-    /// use this in the damage branch; pass-through and ricochet keep
-    /// their current position/falling trajectory.
-    pub human_hit_old_position: Option<WorldPoint3D>,
-}
-
 /// Original-game arrow orientation points from the arrow's current
 /// position to the *next queued trajectory point*. The current per-frame
 /// increment is not equivalent: the update has already removed the point
@@ -1024,7 +989,7 @@ pub(crate) fn make_arrow_falling_down(
     proj: &mut ElementProjectile,
     thrown_away_by_shield: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-) {
+) -> bool {
     let (sector, _) = current_arrow_orientation(proj);
     proj.projectile.falling = true;
     proj.projectile.flying = true;
@@ -1142,25 +1107,7 @@ pub(crate) fn make_arrow_falling_down(
     // opens with its own movement step, which re-anchors the old position onto
     // the impact point before the deflection step is applied.
     proj.element.sprite.position_iface.new_move();
-    let exhausted = proj.advance_trajectory_one_frame();
-    if exhausted
-        && !proj.projectile.dive
-        && !proj.projectile.disappear
-        && proj.element.obstacle_index().is_none()
-    {
-        // A shield can throw an arrow away from an impact point which is
-        // already fractionally below the ground plane.  Original's nested
-        // The update does not stop at the empty replacement trajectory: it
-        // continues into obstacle impact, whose bare-ground branch snaps the
-        // elevation to +0.001 and recomputes the map position.  The shared
-        // trajectory helper deliberately leaves impact handling to callers,
-        // so perform that terminal branch here as part of the nested call.
-        let mut position = proj.element.position();
-        position.z = 0.001;
-        proj.element.set_position(position);
-        proj.element
-            .set_position_map_preserving_3d(position.to_map());
-    }
+    proj.advance_trajectory_one_frame()
 }
 
 pub(super) fn preserve_falling_hole_disappearance(
@@ -1180,7 +1127,7 @@ pub(super) fn preserve_falling_hole_disappearance(
 /// purse update, before that purse has an entity-array slot of its own.
 pub(crate) fn projectile_shield_holder(
     entities: &Entities,
-    _shooter: Option<EntityId>,
+    actor_order: &[EntityId],
     old: WorldPoint3D,
     new: WorldPoint3D,
     increment: WorldVec3D,
@@ -1190,12 +1137,14 @@ pub(crate) fn projectile_shield_holder(
     // The original game scans the complete actor registry for humans holding
     // shields. Active, alive, and shooter identity are not filters
     // during projectile setup.
-    for (actor_id, actor) in entities.actors() {
-        let holder: EntityId = actor_id.into();
+    for &holder in actor_order {
+        let actor = entities
+            .get(holder)
+            .expect("projectile actor registry contains missing entity");
         let Some(actor_data) = actor.actor_data() else {
             continue;
         };
-        if !actor_data.action_state.is_shield() {
+        if !actor.is_human() || !actor_data.action_state.is_shield() {
             continue;
         }
         let Some(obstacle) = actor_data.shield_obstacle.as_ref() else {
@@ -1213,1004 +1162,180 @@ pub(crate) fn projectile_shield_holder(
     None
 }
 
-/// Advance every arrow projectile by one frame along its precomputed
-/// ballistic trajectory.
-///
-/// Pops waypoints from the trajectory list, interpolates position
-/// between them, and checks for victim proximity each frame.
-///
-/// When the arrow comes within [`HIT_DISTANCE`] of any living human,
-/// or the trajectory runs out, the arrow is flagged for despawn and
-/// the engine applies damage.
-pub fn tick_arrows(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        None,
-        ArrowTickOptions {
-            only_arrow_id: None,
-            primed_segment_already_advanced: false,
-        },
-        None,
-        None,
-    )
+fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> WorldVec3D {
+    let abx = b.x - a.x;
+    let aby = b.y - a.y;
+    let abz = b.z - a.z;
+    let ab_len_sq = abx * abx + aby * aby + abz * abz;
+    if ab_len_sq < 1e-6 {
+        return WorldVec3D {
+            x: f32::MAX,
+            y: f32::MAX,
+            z: f32::MAX,
+        };
+    }
+    let apx = p.x - a.x;
+    let apy = p.y - a.y;
+    let apz = p.z - a.z;
+    let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
+    WorldVec3D {
+        x: p.x - (a.x + t * abx),
+        y: p.y - (a.y + t * aby),
+        z: p.z - (a.z + t * abz),
+    }
 }
 
-/// Advance and resolve collision for one active projectile.
-///
-/// Used immediately after spawning a bow arrow to match the original game,
-/// which advances it before the
-/// arrow enters the engine element list.
-#[cfg(test)]
-pub(crate) fn tick_arrow(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    arrow_id: EntityId,
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        obstacle_check,
-        ArrowTickOptions {
-            only_arrow_id: Some(arrow_id),
-            primed_segment_already_advanced: true,
-        },
-        None,
-        None,
-    )
+fn point_to_line_distance(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> f32 {
+    let delta = point_to_line_delta(p, a, b);
+    (delta.x * delta.x + delta.y * delta.y + delta.z * delta.z).sqrt()
 }
 
-/// Test adapter for actor-order collision scans with default diplomacy.
-#[cfg(test)]
-pub(crate) fn tick_arrow_in_actor_order(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    arrow_id: EntityId,
-    actor_order: &[EntityId],
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        obstacle_check,
-        ArrowTickOptions {
-            only_arrow_id: Some(arrow_id),
-            primed_segment_already_advanced: true,
-        },
-        Some(actor_order),
-        None,
-    )
+fn distance(a: WorldPoint3D, b: WorldPoint3D) -> f32 {
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let dz = b.z - a.z;
+    (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    arrow_id: EntityId,
+pub(crate) fn projectile_human_victim(
+    entities: &Entities,
     actor_order: &[EntityId],
     diplomacy: &crate::diplomacy::DiplomacyState,
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        obstacle_check,
-        ArrowTickOptions {
-            only_arrow_id: Some(arrow_id),
-            primed_segment_already_advanced: true,
-        },
-        Some(actor_order),
-        Some(diplomacy),
-    )
-}
-
-/// Advance one projectile already present in the engine element array.
-///
-/// Unlike a spawn-time projectile tick, this does not treat the projectile's spawn-time
-/// priming step as its current-frame advancement. It is used by the engine's
-/// creation-ordered entity pass so projectile and PC hourglasses can retain
-/// their relative element-array order.
-pub fn tick_existing_projectile(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
     projectile_id: EntityId,
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        obstacle_check,
-        ArrowTickOptions {
-            only_arrow_id: Some(projectile_id),
-            primed_segment_already_advanced: false,
-        },
-        None,
-        None,
-    )
-}
-
-/// Production variant of [`tick_existing_projectile`] whose actor collision
-/// scans follow the original game's combined actor order.
-pub(crate) fn tick_existing_projectile_in_actor_order(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    projectile_id: EntityId,
-    actor_order: &[EntityId],
-    diplomacy: &crate::diplomacy::DiplomacyState,
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        obstacle_check,
-        ArrowTickOptions {
-            only_arrow_id: Some(projectile_id),
-            primed_segment_already_advanced: false,
-        },
-        Some(actor_order),
-        Some(diplomacy),
-    )
-}
-
-#[derive(Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
-struct ArrowTickOptions {
-    only_arrow_id: Option<EntityId>,
-    primed_segment_already_advanced: bool,
-}
-
-fn tick_arrows_matching(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    options: ArrowTickOptions,
-    actor_order: Option<&[EntityId]>,
-    diplomacy: Option<&crate::diplomacy::DiplomacyState>,
-) -> Vec<ArrowTickResult> {
-    let ArrowTickOptions {
-        only_arrow_id,
-        primed_segment_already_advanced,
-    } = options;
-    let mut results = Vec::new();
-
-    // Snapshot living humans for line-segment hit detection.  Computes
-    // the perpendicular distance from the target's 3D belt (or eyes
-    // for stones) to the arrow's movement line, and filters by posture.
-    //
-    // Excluded postures: `Lying`, `Carried`, `Dead`, `DeadBack`,
-    // `StuckUnderNet`, `Tied`, `Tree` — targets in these states are
-    // un-hittable (on the ground, restrained, or camouflaged).
-    // `LeaningOut` falls through to the default branch but gets a
-    // second belt→eyes pass for arrows.
-    struct HumanSnapshot {
-        id: EntityId,
-        /// Belt point (arrows + apples) and eyes point (stones) in 3D.
-        /// Pre-computed so the per-projectile loop stays cheap.
-        belt: WorldPoint3D,
-        eyes: WorldPoint3D,
-        /// True when posture == LeaningOut — arrows get an eye-level
-        /// re-check after the belt miss.
-        leaning_out: bool,
-        is_pc: bool,
-        is_civilian: bool,
-        camp: Option<crate::element::Camp>,
-        holding_shield: bool,
-        position_map: MapPoint,
+    old: WorldPoint3D,
+) -> Option<EntityId> {
+    let Entity::Projectile(projectile) = entities
+        .get(projectile_id)
+        .expect("human collision query lost its projectile")
+    else {
+        panic!("human collision query requires a projectile");
+    };
+    let shooter_id = projectile.projectile.shooter?;
+    let shooter = entities
+        .get(shooter_id)
+        .expect("projectile shooter reference is missing");
+    let new = projectile.element.position();
+    let range = distance(old, new);
+    if range == 0.0 {
+        return None;
     }
-    let actor_ids: Vec<EntityId> = actor_order.map_or_else(
-        || {
-            entities
-                .actors()
-                .map(|(actor_id, _)| actor_id.into())
-                .collect()
-        },
-        <[EntityId]>::to_vec,
-    );
-    let human_snapshots: Vec<HumanSnapshot> = actor_ids
-        .iter()
-        .filter_map(|&entity_id| {
-            let e = entities.get(entity_id).unwrap_or_else(|| {
-                panic!("projectile actor registry contains missing entity {entity_id}")
-            });
-            if !e.is_human() || !e.is_active() {
-                return None;
-            }
-            // Posture filter: skip targets that can't be hit by
-            // arrows (lying on ground, carried, dead, netted, tied,
-            // hiding in a tree).
-            let posture = e.element_data().posture();
-            use crate::element::Posture::*;
-            if matches!(
-                posture,
-                Lying | Carried | Dead | DeadBack | StuckUnderNet | Tied | Tree
-            ) {
-                return None;
-            }
-            let Some(belt) = e.compute_belt_point() else {
-                tracing::warn!(
-                    entity = entity_id.index(),
-                    "Projectile hit snapshot skipped: human missing belt hotspot"
-                );
-                return None;
-            };
-            let Some(eyes) = e.compute_eyes_point(None) else {
-                tracing::warn!(
-                    entity = entity_id.index(),
-                    "Projectile hit snapshot skipped: human missing eyes hotspot"
-                );
-                return None;
-            };
-            let camp = Some(e.camp());
-            let Some(actor) = e.actor_data() else {
-                tracing::warn!(
-                    entity = entity_id.index(),
-                    "Projectile hit snapshot skipped: human missing actor data"
-                );
-                return None;
-            };
-            let holding_shield = actor.action_state.is_shield();
-            Some(HumanSnapshot {
-                id: entity_id,
-                belt,
-                eyes,
-                leaning_out: posture == crate::element::Posture::LeaningOut,
-                is_pc: e.is_pc(),
-                is_civilian: e.is_civilian(),
-                camp,
-                holding_shield,
-                position_map: e.element_data().position_map(),
-            })
-        })
-        .collect();
-
-    // Projectile victim selection reads its shooter through the
-    // shooter reference captured at construction, which nothing but
-    // deserialization ever rewrites. The scan aborts when it is absent
-    // alone and otherwise only checks whether the shooter is a soldier or PC
-    // and reads their camp, no matter what has happened
-    // to him since the shot. Those answers stay valid for a shooter who has
-    // since been killed, knocked down, netted or tied, so his arrows keep
-    // hunting victims for the rest of their flight. The hittable-victim
-    // snapshot above deliberately drops exactly those states, so the
-    // shooter's prefilter traits are collected separately over every human
-    // actor.
-    struct ShooterTraits {
-        id: EntityId,
-        is_pc: bool,
-        is_soldier: bool,
-        camp: Option<crate::element::Camp>,
-    }
-    let shooter_traits: Vec<ShooterTraits> = actor_ids
-        .iter()
-        .filter_map(|&entity_id| {
-            let e = entities.get(entity_id).unwrap_or_else(|| {
-                panic!("projectile actor registry contains missing entity {entity_id}")
-            });
-            if !e.is_human() {
-                return None;
-            }
-            let camp = Some(e.camp());
-            Some(ShooterTraits {
-                id: entity_id,
-                is_pc: e.is_pc(),
-                is_soldier: e.is_soldier(),
-                camp,
-            })
-        })
-        .collect();
-
-    // Snapshot FX targets that can be activated by a passing
-    // projectile.  Each projectile type checks a specific filter bit
-    // and launches a dedicated activation command — the per-projectile
-    // loop below matches the projectile's `ObjectType` against the
-    // target's filter bits.  The hit test uses the target's 3D center
-    // and the perpendicular distance to the arrow's movement line.
-    struct FxTargetSnapshot {
-        id: EntityId,
-        center: WorldPoint3D,
-        position_map: MapPoint,
-        action_filter: crate::element::TargetFilter,
-    }
-    let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
-        .targets()
-        .filter_map(|(target_id, e)| {
-            let entity_id = EntityId::Target(target_id);
-            if !e.element.active {
-                return None;
-            }
-            let filter = e.target.action_filter;
-            // Projectile-activation filters only — keeps the per-tick
-            // inner loop small.
-            if !filter.intersects(
-                crate::element::TargetFilter::ARROW
-                    | crate::element::TargetFilter::APPLE
-                    | crate::element::TargetFilter::STONE,
-            ) {
-                return None;
-            }
-            let Some(center) = Entity::Target(e.clone()).compute_target_center() else {
-                tracing::warn!(
-                    entity = entity_id.index(),
-                    "Projectile hit snapshot skipped: FX target missing center hotspot"
-                );
-                return None;
-            };
-            Some(FxTargetSnapshot {
-                id: entity_id,
-                center,
-                position_map: e.element.position_map(),
-                action_filter: filter,
-            })
-        })
-        .collect();
-
-    // Snapshot shield holders for arrow-shield intersection — iterates
-    // all actors holding a shield and checks their shield obstacle
-    // geometry against each projectile's path.
-    struct ShieldSnapshot {
-        holder_id: EntityId,
-        /// Look direction with Y un-compressed by inverse aspect ratio,
-        /// for the dot-product "arrow from front" check.
-        look_dir: (f32, f32),
-        obstacle: crate::sight_obstacle::SightObstacle,
-    }
-    let shield_snapshots: Vec<ShieldSnapshot> = actor_ids
-        .iter()
-        .filter_map(|&entity_id| {
-            let e = entities.get(entity_id).unwrap_or_else(|| {
-                panic!("projectile actor registry contains missing entity {entity_id}")
-            });
-            // Engine actor lookup includes inactive actors here. The original game's
-            // only eligibility test is a human holding a shield; the embedded
-            // serialized shield remains collision geometry while inactive.
-            let actor = e.actor_data()?;
-            if !actor.action_state.is_shield() {
-                return None;
-            }
-            let obstacle = actor.shield_obstacle.as_ref()?.clone();
-            let (dx, dy) = crate::element::direction_vector_16(e.element_data().direction());
-            // Original starts with the facing vector (Y compressed by
-            // ASPECT_RATIO), then un-compresses it for this dot product. The
-            // two factors cancel back to the raw 16-sector direction.
-            let look_dir = (dx, dy);
-            Some(ShieldSnapshot {
-                holder_id: entity_id,
-                look_dir,
-                obstacle,
-            })
-        })
-        .collect();
-
-    tracing::trace!(
-        holders = ?shield_snapshots.iter().map(|s| s.holder_id).collect::<Vec<_>>(),
-        "Projectile tick shield-holder snapshot"
-    );
-
-    for (projectile_id, entity) in entities.projectiles_mut() {
-        let idx = projectile_id.0 as usize;
-        let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(idx as u32));
-        if let Some(only_arrow_id) = only_arrow_id
-            && only_arrow_id != arrow_id
-        {
+    let mut victim = None;
+    for &id in actor_order {
+        if id == shooter_id {
             continue;
         }
-        if !entity.element.active {
+        let human = entities
+            .get(id)
+            .expect("projectile actor registry contains missing entity");
+        if !human.is_human() || !human.is_active() {
             continue;
         }
-        let proj = entity;
-        // `Entity::Projectile` is shared by arrows, apples, stones,
-        // purses, coins, nets, wasp nests, and wasps.  Purses, coins,
-        // wasp nests, and wasps follow their own per-tick update paths
-        // (`EngineInner::tick_purses_and_coins`, `EngineInner::tick_wasp_nests`)
-        // — skip them here so the proximity / shield / FX-target paths
-        // below don't misfire.
+        let posture = human.element_data().posture();
         if matches!(
-            proj.object.object_type,
-            ObjectType::Purse
-                | ObjectType::Coin
-                | ObjectType::WaspNest
-                | ObjectType::BonusWaspNest
-                | ObjectType::Wasp
+            posture,
+            Posture::Lying
+                | Posture::Carried
+                | Posture::Dead
+                | Posture::DeadBack
+                | Posture::StuckUnderNet
+                | Posture::Tied
+                | Posture::Tree
         ) {
             continue;
         }
-
-        let is_burster = matches!(
-            proj.object.object_type,
-            ObjectType::Apple | ObjectType::Stone
-        );
-
-        // Grounded apple/stone work belongs to the concrete entity owner
-        // path. Projectile ticking returns without advancing or removing
-        // them; the caller must run the landed sprite tail before applying
-        // that saved base result.
-        if !proj.projectile.flying {
+        let protected_relationship = !diplomacy.is_hostile(shooter.camp(), human.camp())
+            || (!diplomacy.npc_faction_wars() && !shooter.is_pc() && !human.is_pc());
+        if (diplomacy.enabled() && protected_relationship)
+            || (shooter.is_soldier() && (human.is_civilian() || protected_relationship))
+            || (shooter.is_pc()
+                && human.is_pc()
+                && human
+                    .actor_data()
+                    .expect("human has no actor data")
+                    .action_state
+                    .is_shield())
+        {
             continue;
         }
-        // The projectile update starts a move before advancing its
-        // trajectory. Spawned projectiles have already consumed their primer
-        // step, so this snapshots that primer position exactly as Original's
-        // explicit pre-add update does.
-        proj.element.sprite.position_iface.new_move();
-        let hourglass_old_position = proj.element.position();
-
-        // Distinct impact FX ids per projectile type.  Arrows play
-        // their 510 only on shield deflection (which has its own
-        // path), so non-shield arrow impacts stay silent.
-        let impact_fx = match proj.object.object_type {
-            ObjectType::Apple => Some(509u32),
-            ObjectType::Stone => Some(508u32),
-            _ => None,
-        };
-
-        let _target_id = proj.object.reference;
-        let damage = proj.projectile.damage;
-        let shooter_id = proj.projectile.shooter;
-        let primed_segment_start = proj.projectile.launch_segment_start.take();
-        let has_primed_segment = primed_segment_start.is_some();
-        let already_advanced_this_segment = has_primed_segment && primed_segment_already_advanced;
-
-        // ── Trajectory advancement ────────────────────────────────
-
-        if has_primed_segment {
-            // Spawn primed the first segment. The immediate single-arrow
-            // path has already advanced it to match the original game;
-            // the general tick path keeps the old public behavior and applies
-            // the stored increment below. Both paths still run collision
-            // against `primed_segment_start -> current/new`.
-        } else if proj.projectile.trajectory_frame_count == 0 {
-            if !proj.projectile.trajectory.is_empty() {
-                // Pop the next trajectory waypoint.
-                let point = proj.projectile.trajectory.remove(0);
-                let time = point.time.max(1);
-                proj.projectile.trajectory_frame_count = time - 1;
-
-                // Compute per-frame increment toward this waypoint.
-                let current = proj.element.position();
-                let factor = 1.0 / time as f32;
-                proj.projectile.velocity_increment = WorldVec3D {
-                    x: (point.position.x - current.x) * factor,
-                    y: (point.position.y - current.y) * factor,
-                    z: (point.position.z - current.z) * factor,
-                };
-
-                // Update end position.
-                proj.projectile.end = point.position;
-            } else {
-                // Trajectory exhausted — projectile lands / impacts
-                // terrain.  Apples and stones force the burst
-                // animation and keep the sprite alive for a few
-                // frames; arrows just despawn.
-                //
-                // Elevation snap on landing.  Branch on the obstacle
-                // at the landing point:
-                //   * No obstacle → snap elevation to 0.001 (absolute
-                //     ground), unconditionally.
-                //   * Obstacle present → snap elevation to
-                //     `top_plane_z + 0.001`, gated on
-                //     `layer != 0xFFFF && object_type != Arrow`
-                //     (arrows stuck in walls and unassigned-layer
-                //     projectiles keep their trajectory-end elevation).
-                //
-                // The obstacle is the one the trajectory builder struck
-                // when it terminated the arc, bound onto the projectile at
-                // launch and carried through the flight. It is emphatically
-                // not "whichever projection polygon happens to cover the
-                // landing point on screen": an arrow that lands on open
-                // ground in front of a building is under that building's
-                // projection polygon yet hit no obstacle at all, and gets
-                // the flat 0.001 ground snap.
-                let pos = proj.element.position();
-                let (top_plane_z, new_z) = if proj.projectile.disappear || proj.projectile.dive {
-                    // The original game tests dive and disappear flags before
-                    // obstacle impact. Reaching water or a hole therefore
-                    // preserves the trajectory-end elevation instead of
-                    // applying the ordinary +0.001 ground/obstacle snap.
-                    (None, None)
-                } else {
-                    let top_plane_z = proj.element.obstacle_index().map(|handle| {
-                        let index = usize::from(handle);
-                        let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
-                            panic!(
-                                "landed projectile obstacle {index} is absent from its source list"
-                            )
-                        });
-                        crate::position_interface::PlaneZCoeffs::from_plane_points(
-                            &obstacle.top_plane_points,
-                        )
-                        .compute_z(pos.x, pos.y)
-                    });
-
-                    let new_z = match top_plane_z {
-                        None => Some(0.001),
-                        Some(z) => {
-                            if !matches!(proj.object.object_type, ObjectType::Arrow)
-                                && proj.element.optional_layer().is_some()
-                            {
-                                Some(z + 0.001)
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    (top_plane_z, new_z)
-                };
-                tracing::trace!(
-                    target: "arrow_landing",
-                    arrow = arrow_id.index(),
-                    object_type = ?proj.object.object_type,
-                    obstacle = ?proj.element.obstacle_index().map(u32::from),
-                    layer = proj.element.layer(),
-                    ?pos,
-                    ?top_plane_z,
-                    ?new_z,
-                    "projectile landing elevation snap"
-                );
-                if let Some(z) = new_z {
-                    let mut p = proj.element.position();
-                    p.z = z;
-                    proj.element.set_position(p);
-                    proj.element.set_position_map_preserving_3d(p.to_map());
-                }
-                let impact_pos = proj.element.position_map();
-                proj.projectile.flying = false;
-                if proj.projectile.dive {
-                    // Projectile updates return false for a dive and the
-                    // engine retires the arrow on this same boundary. Keep
-                    // the tombstone so parity can still observe its settled
-                    // terminal state.
-                    proj.element.active = false;
-                }
-                let despawn = if is_burster {
-                    set_projectile_animation(proj, Animation::ObjectBursting);
-                    false
-                } else {
-                    true
-                };
-                results.push(ArrowTickResult {
-                    arrow: arrow_id,
-                    hit_target: None,
-                    shield_hit: None,
-                    fx_target_hit: None,
-                    despawn,
-                    damage,
-                    impact_fx,
-                    impact_pos,
-                    human_hit_old_position: None,
-                });
-                continue;
-            }
+        let anchor = if projectile.object.object_type == ObjectType::Stone {
+            human.compute_eyes_point(None)
         } else {
-            proj.projectile.trajectory_frame_count -= 1;
-        }
-
-        if !already_advanced_this_segment {
-            // Apply the per-frame increment to position.
-            let mut p = proj.element.position();
-            p.x += proj.projectile.velocity_increment.x;
-            p.y += proj.projectile.velocity_increment.y;
-            p.z += proj.projectile.velocity_increment.z;
-            proj.element.set_position(p);
-
-            // Update the 2D map position from 3D (project Z onto Y for
-            // isometric display: map.y = pos.y - pos.z).
-            proj.element
-                .set_position_map_preserving_3d(MapPoint::from_world_xyz(
-                    proj.element.position().x,
-                    proj.element.position().y,
-                    proj.element.position().z,
-                ));
-            proj.element
-                .finish_projectile_position_update(proj.projectile.velocity_increment);
-        }
-        // Increment lifetime counter for diagnostics/replay state. Original-game
-        // projectile lifetime is governed by trajectory exhaustion and
-        // impact side effects; it has no hard timeout.
-        if !already_advanced_this_segment {
-            proj.projectile.frame_count = proj.projectile.frame_count.saturating_add(1);
-        }
-
-        // ── Falling arrows skip all collision checks ──────────────
-        // Once an arrow is deflected (by a shield or target), it
-        // tumbles to the ground without hitting anything.  It
-        // continues advancing along its deflected trajectory until it
-        // runs out (handled by the trajectory advancement code above).
-        if proj.projectile.falling {
-            continue;
-        }
-
-        let arrow_new = proj.element.position();
-        // Human-victim selection reads the sprite's old position, which movement update
-        // saved before position updates. Do not reconstruct that point as
-        // `arrow_new - increment`: f32 addition/subtraction is not reversible
-        // at large map coordinates, and a one-bit shift can reject a target
-        // exactly at the segment endpoint through the strict range gate.
-        let arrow_old = primed_segment_start.unwrap_or(hourglass_old_position);
-
-        // ── Shield intersection check ─────────────────────────────
-        // Before checking victim proximity, check if any shield blocks
-        // the projectile path.  This check runs for **every**
-        // projectile type, but only arrows are deflected into the
-        // falling state on a shield hit.  Apples and stones keep
-        // flying along their existing trajectory; the caller plays
-        // the per-type impact FX and launches a `ParryShield` on the
-        // holder, then this frame terminates early — the apple/stone
-        // carries on its trajectory next tick.
-        let vx = proj.projectile.velocity_increment.x;
-        let vy = proj.projectile.velocity_increment.y;
-
-        let mut shield_blocker = None;
-        if already_advanced_this_segment
-            || !proj.projectile.trajectory.is_empty()
-            || proj.projectile.trajectory_frame_count > 0
-            || vx != 0.0
-            || vy != 0.0
-        {
-            // Shield obstacle geometry lives in ground/world space, the same
-            // space every other 3D sight-ray query uses, so the projectile
-            // endpoints go in as world XYZ rather than screen-projected map
-            // coordinates.
-            let old_pos = [arrow_old.x, arrow_old.y, arrow_old.z];
-            let new_pos = [arrow_new.x, arrow_new.y, arrow_new.z];
-            // The original game enables ground testing for each reachability check
-            // candidate shield.  That routine reports a strict Z=0 crossing
-            // before it inspects the supplied obstacle list, so a ground-
-            // crossing projectile is attributed to the first front-facing
-            // shield even when the retained shield geometry is far away.
-            let crosses_ground = (arrow_new.z > 0.0 && arrow_old.z < 0.0)
-                || (arrow_new.z < 0.0 && arrow_old.z > 0.0);
-
-            // Flight direction with Y un-compressed.
-            let flight_dir = (vx, vy * INVERSE_ASPECT_RATIO);
-
-            for shield in &shield_snapshots {
-                // (a) Arrow from front: dot(look_dir, flight_dir) < 0.
-                let dot = shield.look_dir.0 * flight_dir.0 + shield.look_dir.1 * flight_dir.1;
-                // (b) The shared reachability call reports either its
-                // ground-plane test or an intersection with shield geometry.
-                let blocking = dot < 0.0
-                    && (crosses_ground || shield.obstacle.is_blocking_ray_3d(new_pos, old_pos));
-                tracing::trace!(
-                    ?arrow_id,
-                    holder = ?shield.holder_id,
-                    ?dot,
-                    ?old_pos,
-                    ?new_pos,
-                    obstacle_id = shield.obstacle.id,
-                    obstacle_points = ?shield.obstacle.obstacle_points,
-                    blocking,
-                    "Projectile shield-holder intersection test"
-                );
-                if blocking {
-                    shield_blocker = Some(shield.holder_id);
-                    break;
-                }
-            }
-        }
-
-        if let Some(holder) = shield_blocker {
-            // Arrow path: deflect 90° right, set falling=true,
-            // recompute trajectory.
-            //
-            // Apple/Stone path: keep flying along the existing
-            // trajectory.  The per-type FX (509/508) plays at the
-            // shield holder's position.  This frame terminates early
-            // (no human / FX-target check), so `continue` after
-            // reporting.
-            if matches!(proj.object.object_type, ObjectType::Arrow) {
-                make_arrow_falling_down(proj, true, obstacle_check);
-
-                results.push(ArrowTickResult {
-                    arrow: arrow_id,
-                    hit_target: None,
-                    shield_hit: Some(holder),
-                    fx_target_hit: None,
-                    despawn: false, // Don't despawn — arrow falls to ground.
-                    damage,
-                    // Silent — see note above.
-                    impact_fx: None,
-                    impact_pos: proj.element.position_map(),
-                    human_hit_old_position: None,
-                });
-            } else {
-                // Apple / stone: keep flying on current trajectory; the
-                // engine plays the per-type FX at the holder's position
-                // and launches ParryShield.  `impact_pos` is the
-                // projectile's current position — the engine caller
-                // replaces it with the holder's position using
-                // `shield_hit` as the anchor.
-                results.push(ArrowTickResult {
-                    arrow: arrow_id,
-                    hit_target: None,
-                    shield_hit: Some(holder),
-                    fx_target_hit: None,
-                    despawn: false,
-                    damage,
-                    impact_fx,
-                    impact_pos: proj.element.position_map(),
-                    human_hit_old_position: None,
-                });
-            }
-            continue;
-        }
-
-        // ── Victim / FX-target hit detection ──────────────────────
-        // For each living human / FX target, compute the perpendicular
-        // distance from the target's 3D anchor point to the arrow's
-        // movement line (old_pos → new_pos).  A target is hit when
-        //   (a) perpendicular distance ≤ HIT_DISTANCE, and
-        //   (b) the segment is long enough to reach it from old_pos
-        //       (so a slow-moving arrow doesn't "teleport" onto a
-        //       distant target that happens to be near its final line).
-        // This catches fast arrows that would otherwise tunnel past a
-        // target between frames, which the old 2D point check missed.
-        /// Perpendicular offset from `p` to the line through `a→b`.
-        ///
-        /// The original game uses the same point-to-line distance for both the
-        /// hit-radius norm and the leaning-out arrow retry's coarse
-        /// maximum-norm gate. Return an infinite vector when the segment
-        /// has zero length so callers naturally reject the line test.
-        fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> WorldVec3D {
-            let abx = b.x - a.x;
-            let aby = b.y - a.y;
-            let abz = b.z - a.z;
-            let ab_len_sq = abx * abx + aby * aby + abz * abz;
-            if ab_len_sq < 1e-6 {
-                return WorldVec3D {
-                    x: f32::MAX,
-                    y: f32::MAX,
-                    z: f32::MAX,
-                };
-            }
-            let apx = p.x - a.x;
-            let apy = p.y - a.y;
-            let apz = p.z - a.z;
-            let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
-            WorldVec3D {
-                x: p.x - (a.x + t * abx),
-                y: p.y - (a.y + t * aby),
-                z: p.z - (a.z + t * abz),
-            }
-        }
-        fn point_to_line_distance(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> f32 {
-            let delta = point_to_line_delta(p, a, b);
-            (delta.x * delta.x + delta.y * delta.y + delta.z * delta.z).sqrt()
-        }
-        fn distance(a: WorldPoint3D, b: WorldPoint3D) -> f32 {
-            let dx = b.x - a.x;
-            let dy = b.y - a.y;
-            let dz = b.z - a.z;
-            (dx * dx + dy * dy + dz * dz).sqrt()
-        }
-        fn projectile_victim_prefilter_allows(
-            shooter: Option<&ShooterTraits>,
-            victim: &HumanSnapshot,
-            diplomacy: Option<&crate::diplomacy::DiplomacyState>,
-        ) -> bool {
-            let Some(shooter) = shooter else {
-                return true;
-            };
-            let protected_relationship = matches!(
-                (shooter.camp, victim.camp),
-                (Some(shooter_camp), Some(victim_camp)) if diplomacy.map_or_else(
-                    || shooter_camp == victim_camp,
-                    |matrix| {
-                        !matrix.is_hostile(shooter_camp, victim_camp)
-                            || (!matrix.npc_faction_wars()
-                                && !shooter.is_pc
-                                && !victim.is_pc)
-                    },
-                )
-            );
-            let diplomacy_protects =
-                diplomacy.is_some_and(|matrix| matrix.enabled()) && protected_relationship;
-
-            // The original game filters these candidates
-            // before geometric hit selection:
-            //   - soldier projectiles do not hit civilians
-            //   - soldier projectiles do not hit same-camp humans
-            //   - PC projectiles do not hit shield-holding PCs
-            // The separate forest GoodSoldier rule is covered by the
-            // same-camp soldier branch for Royalist soldiers.
-            // Enabled mission diplomacy additionally protects every
-            // non-hostile relationship from PC projectiles. Disabling the
-            // extension retains Original's PC-friendly-fire behavior.
-            !(diplomacy_protects
-                || shooter.is_soldier && (victim.is_civilian || protected_relationship)
-                || shooter.is_pc && victim.is_pc && victim.holding_shield)
-        }
-
-        // Segment length (range of this frame's movement).
-        let range = distance(arrow_old, arrow_new);
-        // The original game compares floating-point segment endpoint distances exactly
-        // (`vtRange.Norm() <= range`).  Rust's f32 integration can land
-        // a target a tiny fraction past the nominal endpoint on flat
-        // shots, so allow a sub-pixel tolerance while keeping the same
-        // old/current range gate.
-
-        // Pick the aim anchor by projectile type — arrows and apples
-        // aim for the belt, stones aim for the eyes.
-        let uses_eyes_anchor = matches!(proj.object.object_type, ObjectType::Stone);
-
-        // The original game returns no human victim when the
-        // projectile is not moving. FX target selection is separate
-        // and keeps the point fallback below.
-        let use_range_gate = range > 0.0;
-
-        let mut hit_victim = None;
-        let shooter_snapshot =
-            shooter_id.and_then(|id| shooter_traits.iter().find(|traits| traits.id == id));
-        if let Some(id) = shooter_id
-            && shooter_snapshot.is_none()
-        {
-            tracing::warn!(
-                arrow = arrow_id.index(),
-                shooter = %id,
-                "projectile shooter is not a human actor; the original game always \
-                 has a human shooter here, so no camp prefilter can be applied"
-            );
-        }
-        // The original game returns no human victim when the shooter is absent;
-        // only FX target collision still runs.
-        if let Some(shooter_snapshot) = shooter_snapshot {
-            for snap in &human_snapshots {
-                if Some(snap.id) == shooter_id {
-                    continue;
-                }
-                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap, diplomacy) {
-                    continue;
-                }
-                let anchor = if uses_eyes_anchor {
-                    snap.eyes
-                } else {
-                    snap.belt
-                };
-                let hit = if use_range_gate {
-                    // Range gate: the old_pos→target distance must be
-                    // within this frame's reach (segment length).
-                    let old_to_target = distance(arrow_old, anchor);
-                    let line_distance = point_to_line_distance(anchor, arrow_old, arrow_new);
-                    old_to_target <= range && line_distance <= HIT_DISTANCE
-                } else {
-                    false
-                };
-                if hit {
-                    hit_victim = Some((snap.id, snap.position_map));
-                    // The original game's branch exit leaves only the posture selection, not
-                    // the surrounding actor scan. A later eligible
-                    // human therefore replaces the current candidate.
-                    continue;
-                }
-
-                // Leaning-out re-check for arrows only.  If the belt's
-                // perpendicular distance-to-flight-line has max component
-                // <= 100, try again at eye level. This matches the original
-                // game's maximum-norm gate after the belt check.
-                if snap.leaning_out
-                    && matches!(proj.object.object_type, ObjectType::Arrow)
-                    && use_range_gate
-                {
-                    let belt_line_delta = point_to_line_delta(anchor, arrow_old, arrow_new);
-                    let max_norm = belt_line_delta
-                        .x
-                        .abs()
-                        .max(belt_line_delta.y.abs())
-                        .max(belt_line_delta.z.abs());
-                    if max_norm <= 100.0 {
-                        let eyes = snap.eyes;
-                        // The original game uses the arrow's current position for the
-                        // leaning-out eye retry, unlike the primary human
-                        // belt check's "deguillaumized" old-position gate.
-                        let new_to_eyes = distance(arrow_new, eyes);
-                        if new_to_eyes <= range
-                            && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
-                        {
-                            hit_victim = Some((snap.id, snap.position_map));
-                            // As with the belt hit above, Original continues
-                            // the actor scan and ultimately returns the last
-                            // eligible human.
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        // FX-target segment/point check (same semantics). The original game
-        // only returns FX targets whose action
-        // filter matches the projectile type, so nonmatching targets
-        // are ignored before `HitTarget` can run.
-        let (required_filter, activation_command) = match proj.object.object_type {
-            ObjectType::Arrow => (crate::element::TargetFilter::ARROW, Command::ActivateArrow),
-            ObjectType::Apple => (crate::element::TargetFilter::APPLE, Command::ActivateApple),
-            ObjectType::Stone => (crate::element::TargetFilter::STONE, Command::ActivateStone),
-            _ => (
-                crate::element::TargetFilter::empty(),
-                Command::ActivateArrow,
-            ),
+            human.compute_belt_point()
         };
-        let mut fx_target_hit: Option<(EntityId, Command, MapPoint)> = None;
-        if !required_filter.is_empty() {
-            for snap in &fx_target_snapshots {
-                if !snap.action_filter.contains(required_filter) {
+        let Some(anchor) = anchor else {
+            tracing::warn!(?id, "projectile candidate is missing its body hotspot");
+            continue;
+        };
+        if distance(old, anchor) <= range
+            && point_to_line_distance(anchor, old, new) <= HIT_DISTANCE
+        {
+            victim = Some(id);
+            continue;
+        }
+        if posture == Posture::LeaningOut && projectile.object.object_type == ObjectType::Arrow {
+            let delta = point_to_line_delta(anchor, old, new);
+            if delta.x.abs().max(delta.y.abs()).max(delta.z.abs()) <= 100.0 {
+                let Some(eyes) = human.compute_eyes_point(None) else {
+                    tracing::warn!(
+                        ?id,
+                        "leaning projectile candidate is missing its eye hotspot"
+                    );
                     continue;
-                }
-                let hit = if use_range_gate {
-                    // The original game gates FX targets by
-                    // distance from the projectile's current position
-                    // to target center, not by old position.  This
-                    // catches the scripted-target case where the
-                    // current frame reaches the center exactly.
-                    let new_to_target = distance(arrow_new, snap.center);
-                    new_to_target <= range
-                        && point_to_line_distance(snap.center, arrow_old, arrow_new) <= HIT_DISTANCE
-                } else {
-                    // With no movement the original game still evaluates
-                    // `vtRange.Norm() <= range`, so only an exact center
-                    // overlap can activate the target. Do not use the
-                    // normal hit-radius fallback here.
-                    distance(arrow_new, snap.center) <= 0.01
                 };
-                if hit {
-                    fx_target_hit = Some((snap.id, activation_command, snap.position_map));
-                    break;
+                if distance(new, eyes) <= range
+                    && point_to_line_distance(eyes, old, new) <= HIT_DISTANCE
+                {
+                    victim = Some(id);
                 }
             }
-        }
-
-        if let Some((victim, victim_position_map)) = hit_victim {
-            let impact_pos = victim_position_map;
-            proj.projectile.flying = false;
-            let despawn = if is_burster {
-                set_projectile_animation(proj, Animation::ObjectBursting);
-                false
-            } else {
-                true
-            };
-            results.push(ArrowTickResult {
-                arrow: arrow_id,
-                hit_target: Some(victim),
-                shield_hit: None,
-                fx_target_hit: None,
-                despawn,
-                damage,
-                impact_fx,
-                impact_pos,
-                human_hit_old_position: Some(arrow_old),
-            });
-        } else if let Some((fx_id, fx_command, fx_position_map)) = fx_target_hit {
-            let impact_pos = fx_position_map;
-            proj.projectile.flying = false;
-            // The projectile update handles a successful HitTarget
-            // synchronously: stop flight and delete the trajectory before the
-            // frame snapshot. Unlike human impact it does not rewind to the old
-            // position, so the following Refresh keeps the arrow for this
-            // moving frame; the next update starts a new move and the subsequent
-            // Refresh retires the now-stationary empty arrow.
-            proj.projectile.trajectory.clear();
-            let despawn = if is_burster {
-                set_projectile_animation(proj, Animation::ObjectBursting);
-                false
-            } else {
-                true
-            };
-            results.push(ArrowTickResult {
-                arrow: arrow_id,
-                hit_target: None,
-                shield_hit: None,
-                fx_target_hit: Some((fx_id, fx_command)),
-                despawn,
-                damage,
-                impact_fx,
-                impact_pos,
-                human_hit_old_position: None,
-            });
         }
     }
+    victim
+}
 
-    results
+pub(crate) fn projectile_target_victim(
+    entities: &Entities,
+    projectile_id: EntityId,
+    old: WorldPoint3D,
+) -> Option<(EntityId, Command)> {
+    let Entity::Projectile(projectile) = entities
+        .get(projectile_id)
+        .expect("target collision query lost its projectile")
+    else {
+        panic!("target collision query requires a projectile");
+    };
+    let (filter, command) = match projectile.object.object_type {
+        ObjectType::Arrow => (TargetFilter::ARROW, Command::ActivateArrow),
+        ObjectType::Apple => (TargetFilter::APPLE, Command::ActivateApple),
+        ObjectType::Stone => (TargetFilter::STONE, Command::ActivateStone),
+        _ => return None,
+    };
+    let new = projectile.element.position();
+    let range = distance(old, new);
+    for (target_id, target) in entities.targets() {
+        if !target.element.active || !target.target.action_filter.contains(filter) {
+            continue;
+        }
+        let id = EntityId::Target(target_id);
+        let Some(center) = entities
+            .get(id)
+            .expect("target iterator lost entity")
+            .compute_target_center()
+        else {
+            tracing::warn!(?id, "projectile target is missing its center hotspot");
+            continue;
+        };
+        let hit = if range > 0.0 {
+            distance(new, center) <= range
+                && point_to_line_distance(center, old, new) <= HIT_DISTANCE
+        } else {
+            distance(new, center) <= 0.01
+        };
+        if hit {
+            return Some((id, command));
+        }
+    }
+    None
 }
 
 // ═══════════════════════════════════════════════════════════════════

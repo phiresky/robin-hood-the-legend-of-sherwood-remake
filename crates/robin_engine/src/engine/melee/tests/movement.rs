@@ -152,12 +152,7 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
             door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: true,
             position_direct: true,
-            steps: std::collections::VecDeque::new(),
-            preallocated_order_ids: Default::default(),
             triggers_fired: 0,
-            current_action: OrderType::WalkingWithSword,
-            current_reverse: false,
-            saved_action_state: None,
         });
         target_entity.position_iface_mut().set_door_for_test(
             crate::position_interface::DoorHandle::new(7).expect("valid door index"),

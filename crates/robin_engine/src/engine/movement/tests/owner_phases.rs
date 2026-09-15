@@ -233,8 +233,7 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
             owner,
             selected,
         );
-        assert!(result.initial.is_none());
-        assert!(result.post_completion_override.is_none());
+        assert!(result.is_none());
         assert_eq!(
             engine
                 .get_entity(owner)

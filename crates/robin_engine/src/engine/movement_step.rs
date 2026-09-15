@@ -1,6 +1,9 @@
 //! Direct movement execution with scoped owner borrows and synchronous effects.
 //! Entry operands survive callbacks only where execution needs their earlier values.
 
+#[cfg(test)]
+#[path = "movement_step/tests.rs"]
+mod tests;
 use super::*;
 use crate::coordinates::GroundPoint;
 use crate::position_interface::SectorHandle;
@@ -157,7 +160,7 @@ impl EngineInner {
         actor_id: crate::entity_id::ActorId,
         mut ft: FinalTol,
         prepared: &LiveMobileGeometry,
-    ) -> MovementOwnerMotion {
+    ) -> Option<MotionState> {
         let mut seek_operands = self.movement_seek_operands(entity_id, selected, ft);
         let entity = self
             .world
@@ -200,60 +203,14 @@ impl EngineInner {
             entity_id,
             is_swordfighting,
         ) else {
-            self.finish_actor_movement(sim, assets, entity_id, selected, None);
-            return MovementOwnerMotion::default();
-        };
-        let SelectedMovementOrder {
-            order_id,
-            is_final_waypoint,
-            order_action,
-            order_compute_direction,
-            order_reverse,
-            ..
-        } = selected_order;
-        let terminal_pc_external_direction_goal = if is_pc
-            && is_final_waypoint
-            && matches!(
-                order_action,
-                OrderType::TransitionWalkingUprightWaitingUpright
-                    | OrderType::TransitionRunningUprightWaitingUpright
-                    | OrderType::TransitionWalkingCrouchedWaitingCrouched
-            )
-            && order_compute_direction
-            // A new movement order owns the goal unconditionally:
-            // Execution initializes motion with
-            // increment computation before any terminal cleanup can
-            // observe an external orientation.  Only an already-running
-            // order can have been reoriented between Execute calls.
-            && order_id.is_some_and(|order_id| {
-                entity.element_data().sprite.last_processed_order_id == order_id.get()
-            }) {
-            let pi = entity.position_iface();
-            if !pi.is_increment_all_computed() {
-                None
-            } else {
-                let increment = pi.get_increment();
-                let mut movement_direction = vector_to_sector_0_to_15(increment.x, increment.y);
-                if order_reverse {
-                    movement_direction ^= 8;
-                }
-                let live_direction_goal = i16::from(pi.get_direction_goal());
-                (live_direction_goal != movement_direction)
-                    .then_some((live_direction_goal, movement_direction))
-            }
-        } else {
-            None
+            return None;
         };
 
         let mut order_compute_direction = selected_order.order_compute_direction;
         if let Some(motion) =
             self.execute_non_sprite_movement_action(sim, assets, entity_id, selected_order)
         {
-            self.finish_actor_movement(sim, assets, entity_id, selected, Some(motion));
-            return MovementOwnerMotion {
-                initial: (motion == MotionState::InProgress).then_some(motion),
-                post_completion_override: None,
-            };
+            return Some(motion);
         }
         let SelectedMovementOrder {
             order_id,
@@ -423,8 +380,8 @@ impl EngineInner {
                 .get(entity_id)
                 .expect("movement owner disappeared during execution")
                 .element_data();
-            if let Some(dp_anim) = door_pass_sprite_animation_override(order_action, door_pass_anim)
-                .filter(|anim| !is_sword_movement_nonanimation(*anim))
+            if let Some(dp_anim) =
+                door_pass_anim.filter(|anim| !is_sword_movement_nonanimation(*anim))
             {
                 // PassDoor supplies the current translated movement step, but
                 // Soldier execution still dispatches that logical action
@@ -1459,7 +1416,6 @@ impl EngineInner {
                         transition_goal_reached
                     };
                     if matches!(raw_motion_state, MotionState::Terminated) {
-                        let mut discarded_lazy_door_followers = false;
                         // TillLastFrame can exhaust its animation before its
                         // distance target is reached (notably the short
                         // Waiting→Walking startup transition). Transition execution does
@@ -1469,8 +1425,7 @@ impl EngineInner {
                         // the exhausted transition. This keeps the copied order's
                         // old target as a one-tick continuation.
                         if !goal_reached {
-                            discarded_lazy_door_followers = self
-                                .insert_transition_distance_continuation(entity_id, selected_order);
+                            self.insert_transition_distance_continuation(selected_order);
                         }
                         let cleanup = match self.hand_off_terminated_transition_seek(
                             sim,
@@ -1495,13 +1450,6 @@ impl EngineInner {
                         ) {
                             break 'transition motion;
                         }
-                        self.retire_terminated_transition(
-                            assets,
-                            entity_id,
-                            selected_order,
-                            is_swordfighting,
-                            discarded_lazy_door_followers,
-                        );
                     }
                     movement_execute_visible_motion(
                         selected_order.order_action,
@@ -1619,10 +1567,8 @@ impl EngineInner {
                         tolerance_arrival,
                         point_seek_post_arrival: point_seek_post_arrival,
                         arrived_after_committed_step,
-                        is_sword_motion,
                         live_seek_target,
                     },
-                    !fast_climb_motion || fast_climb_stops_after_first_termination || motion_call == 1,
                 ));
             } else {
                 // Move toward waypoint.
@@ -1879,13 +1825,6 @@ impl EngineInner {
                     .entities
                     .get_mut(entity_id)
                     .expect("movement Execute owner disappeared");
-                if action_state.is_moving()
-                    && let Some(pass) = entity
-                        .actor_data_mut()
-                        .and_then(|actor| actor.active_door_pass.as_mut())
-                {
-                    pass.saved_action_state = None;
-                }
                 entity.set_posture(posture);
                 entity
                     .actor_data_mut()
@@ -1915,11 +1854,26 @@ impl EngineInner {
             if executes_sword_movement && motion_state == MotionState::Start && start_survives {
                 self.apply_sword_movement_start_initiative_transfer(entity_id);
             }
-            if is_sword_motion
-                && motion_state == MotionState::Terminated
-                && self.sword_movement_termination_warrants_provoke(assets, entity_id)
-            {
-                self.launch_sword_movement_termination_provoke(sim, assets, entity_id);
+            if is_sword_motion && motion_state == MotionState::Terminated {
+                let step_back = self
+                    .world
+                    .entities
+                    .current_element_for_actor(entity_id)
+                    .and_then(|(seq, elem)| self.orders.sequence_manager.get_element(seq, elem))
+                    .is_some_and(|element| {
+                        matches!(&element.data,
+                        crate::sequence::SequenceElementData::Movement { flags, .. }
+                            if flags.contains(MoveFlags::STEP_BACK_IN_COMBAT))
+                    });
+                self.world
+                    .entities
+                    .get_mut(entity_id)
+                    .and_then(Entity::human_data_mut)
+                    .expect("sword movement owner lost human state")
+                    .last_motion_was_step_back_in_combat = step_back;
+                if self.sword_movement_termination_warrants_provoke(assets, entity_id) {
+                    self.launch_sword_movement_termination_provoke(sim, assets, entity_id);
+                }
             }
             refresh_pc_walking_shield_after_execute(
                 self.world
@@ -2016,32 +1970,7 @@ impl EngineInner {
             }
             motion_state
         };
-        let terminal_direction = (is_transition_anim
-            && !tolerance_arrival
-            && raw_motion_state == MotionState::Terminated)
-            .then_some(terminal_pc_external_direction_goal)
-            .flatten();
-        self.finish_actor_movement(sim, assets, entity_id, selected, Some(motion));
-        if let Some((external_direction, movement_direction)) = terminal_direction {
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("terminal movement owner disappeared");
-            if i16::from(entity.position_iface().get_direction_goal()) == movement_direction {
-                entity
-                    .element_data_mut()
-                    .set_direction_goal(external_direction);
-            }
-        }
-        MovementOwnerMotion {
-            initial: (motion == MotionState::InProgress).then_some(motion),
-            post_completion_override: committed_arrival_post_completion_override(
-                raw_motion_state,
-                motion,
-                motion == MotionState::Terminated,
-            ),
-        }
+        Some(motion)
     }
 
     fn movement_point_seek_post_sector(
@@ -2076,11 +2005,7 @@ impl EngineInner {
         selected_order: SelectedMovementOrder,
     ) -> Option<MotionState> {
         let SelectedMovementOrder {
-            goal,
-            is_final_waypoint,
             order_action,
-            move_seq_id,
-            move_elem_idx,
             legacy_serialized_order_chain,
             ..
         } = selected_order;
@@ -2124,79 +2049,6 @@ impl EngineInner {
                 (pass.door_index, pass.direct, trigger)
             };
             self.execute_pass_door(sim, assets, owner, door, direct, trigger);
-            if is_final_waypoint {
-                let advance = {
-                    let actor = self
-                        .world
-                        .entities
-                        .get_mut(owner)
-                        .expect("door owner disappeared")
-                        .actor_data_mut()
-                        .expect("door owner must be an actor");
-                    EngineInner::advance_door_pass(
-                        actor,
-                        owner,
-                        goal,
-                        &mut self.orders.next_order_id,
-                    )
-                };
-                match advance {
-                    DoorPassAdvance::Continue {
-                        order_id,
-                        destination,
-                        action,
-                        reverse,
-                        compute_direction,
-                        tolerance,
-                    } => {
-                        let mut order = crate::order::Order::new(
-                            action,
-                            destination.x,
-                            destination.y,
-                            order_id,
-                        );
-                        order.reverse = reverse;
-                        order.compute_direction = compute_direction;
-                        order.tolerance = tolerance;
-                        insert_door_pass_successor(
-                            self.orders
-                                .sequence_manager
-                                .get_element_mut(move_seq_id, move_elem_idx)
-                                .expect("door successor disappeared"),
-                            order,
-                        );
-                    }
-                    DoorPassAdvance::Paused {
-                        transition_order: order,
-                    }
-                    | DoorPassAdvance::ActionPoint { order } => {
-                        insert_door_pass_successor(
-                            self.orders
-                                .sequence_manager
-                                .get_element_mut(move_seq_id, move_elem_idx)
-                                .expect("door successor disappeared"),
-                            order,
-                        );
-                    }
-                    DoorPassAdvance::Done { completed } => {
-                        if let Some((door, direct)) = completed {
-                            self.commit_completed_door_pass_position(assets, owner, door, direct);
-                            self.apply_completed_door_pass_lift_entry_state(owner, door, direct);
-                        }
-                        let actor = self
-                            .world
-                            .entities
-                            .get_mut(owner)
-                            .expect("door owner disappeared")
-                            .actor_data_mut()
-                            .expect("door owner must be an actor");
-                        actor.active_door_pass = None;
-                    }
-                    DoorPassAdvance::NoActive => {
-                        panic!("door pass disappeared during action point")
-                    }
-                }
-            }
         } else {
             assert!(
                 legacy_serialized_order_chain,
@@ -2233,119 +2085,37 @@ impl EngineInner {
         Some(MotionState::Terminated)
     }
 
-    fn insert_transition_distance_continuation(
-        &mut self,
-        entity_id: EntityId,
-        selected_order: SelectedMovementOrder,
-    ) -> bool {
-        let SelectedMovementOrder {
-            order_action,
-            move_seq_id,
-            move_elem_idx,
-            ..
-        } = selected_order;
-        let entity = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("movement owner disappeared during execution");
-        let mut discarded_lazy_door_followers = false;
-        // The concrete movement route already contains the
-        // whole PassDoor route. Rust keeps the untranslated
-        // tail on ActiveDoorPass, so the next distinct
-        // destination animation may live there rather than in
-        // `element.orders`.
-        let lazy_next_animation = entity
-            .actor_data()
-            .and_then(|actor| actor.active_door_pass.as_ref())
-            .and_then(|pass| {
-                pass.steps.iter().find_map(|step| match step {
-                    crate::element::DoorPassStep::Walk {
-                        destination,
-                        action,
-                        ..
-                    } if *destination != MapPoint::ZERO && *action != order_action => Some(*action),
-                    _ => None,
-                })
-            });
-        let concrete_door_prefix = if lazy_next_animation.is_some() {
-            entity
-                .actor_data_mut()
-                .and_then(|actor| actor.active_door_pass.as_mut())
-                .map(|pass| {
-                    materialize_door_action_point_prefix(pass, &mut self.orders.next_order_id)
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let mut continuation_door_action = None;
-        let mut discard_lazy_door_followers = false;
-        if let Some((element, next_order_id)) = self
+    fn insert_transition_distance_continuation(&mut self, selected_order: SelectedMovementOrder) {
+        let Some((element, next_order_id)) = self
             .orders
-            .element_with_order_ids_mut(move_seq_id, move_elem_idx)
-        {
-            for order in concrete_door_prefix {
-                element.push_order(order);
-            }
-            let current_action = element
-                .orders
-                .front()
-                .expect("terminated movement transition lost its current order")
-                .order_type;
-            let next_animation = element
-                .orders
-                .iter()
-                .enumerate()
-                .skip(1)
-                .find(|(_, order)| {
-                    order.order_type != current_action
-                        && (order.target_x != 0.0 || order.target_y != 0.0)
-                })
-                .map(|(index, order)| (index, order.order_type));
-            let next_animation = next_animation
-                .or_else(|| lazy_next_animation.map(|animation| (element.orders.len(), animation)));
-            if let Some((insertion, animation)) = next_animation {
-                let mut continuation = element.orders.front().unwrap().clone();
-                continuation.order_type = animation;
-                // Motion through the last frame can exhaust
-                // the transition animation before reaching its
-                // distance target. Insert the changed-animation copy here;
-                // door traversal keeps it ahead of the authored successor.
-                continuation.transition_distance_continuation = true;
-                continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
-                continuation_door_action = Some((animation, continuation.reverse));
-                element.insert_order(insertion, continuation);
-            } else {
-                element.orders.truncate(1);
-                discard_lazy_door_followers = true;
-            }
+            .element_with_order_ids_mut(selected_order.move_seq_id, selected_order.move_elem_idx)
+        else {
+            panic!("terminated movement transition lost its element");
+        };
+        let current_action = element
+            .orders
+            .front()
+            .expect("terminated movement transition lost its current order")
+            .order_type;
+        let next_animation = element
+            .orders
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, order)| {
+                order.order_type != current_action
+                    && (order.target_x != 0.0 || order.target_y != 0.0)
+            })
+            .map(|(index, order)| (index, order.order_type));
+        if let Some((insertion, animation)) = next_animation {
+            let mut continuation = element.orders.front().unwrap().clone();
+            continuation.order_type = animation;
+            continuation.transition_distance_continuation = true;
+            continuation.reseed_id(crate::order::alloc_order_id(next_order_id));
+            element.insert_order(insertion, continuation);
+        } else {
+            element.orders.truncate(1);
         }
-        if discard_lazy_door_followers {
-            discard_lazy_door_pass_following_orders(
-                entity
-                    .actor_data_mut()
-                    .and_then(|actor| actor.active_door_pass.as_mut()),
-            );
-            discarded_lazy_door_followers = true;
-        }
-        // Route construction stores the complete translated door route
-        // in the movement element, so changing to this copied
-        // successor changes the one authoritative current
-        // action. Rust keeps the untranslated route tail in a
-        // parallel ActiveDoorPass. Keep its animation mirror
-        // in lockstep with the concrete continuation order:
-        // lift handling and the next Execute slot both consult
-        // it before dispatching sprite motion.
-        if let Some((animation, reverse)) = continuation_door_action
-            && let Some(pass) = entity
-                .actor_data_mut()
-                .and_then(|actor| actor.active_door_pass.as_mut())
-        {
-            pass.current_action = animation;
-            pass.current_reverse = reverse;
-        }
-        discarded_lazy_door_followers
     }
 
     fn hand_off_terminated_transition_seek(
@@ -2680,104 +2450,5 @@ impl EngineInner {
             );
         }
         None
-    }
-
-    fn retire_terminated_transition(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        selected_order: SelectedMovementOrder,
-        is_swordfighting: bool,
-        discarded_lazy_door_followers: bool,
-    ) {
-        let SelectedMovementOrder {
-            goal,
-            is_final_waypoint,
-            move_seq_id,
-            move_elem_idx,
-            ..
-        } = selected_order;
-        let is_swordfighting = is_swordfighting;
-        let eid = entity_id;
-        // Re-borrow of the actor already checked by the post-seek handoff.
-        let actor = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("movement owner disappeared during execution")
-            .actor_data_mut()
-            .expect("actor-only branch");
-        // Last order of the Move element just completed — flip
-        // back to Waiting.
-        // Matches the `DoorPassAdvance::Done` arm below but for
-        // the transition-terminated path.
-        if is_final_waypoint {
-            let advance = if actor.active_door_pass.is_some() {
-                EngineInner::advance_door_pass(actor, eid, goal, &mut self.orders.next_order_id)
-            } else {
-                DoorPassAdvance::Done { completed: None }
-            };
-            match advance {
-                DoorPassAdvance::Continue {
-                    order_id,
-                    destination,
-                    action,
-                    reverse,
-                    compute_direction,
-                    tolerance,
-                } => {
-                    let mut order =
-                        crate::order::Order::new(action, destination.x, destination.y, order_id);
-                    order.reverse = reverse;
-                    order.compute_direction = compute_direction;
-                    order.tolerance = tolerance;
-                    insert_door_pass_successor(
-                        self.orders
-                            .sequence_manager
-                            .get_element_mut(move_seq_id, move_elem_idx)
-                            .expect("door-pass successor element disappeared"),
-                        order,
-                    );
-                }
-                DoorPassAdvance::Paused { transition_order } => {
-                    insert_door_pass_successor(
-                        self.orders
-                            .sequence_manager
-                            .get_element_mut(move_seq_id, move_elem_idx)
-                            .expect("door-pass successor element disappeared"),
-                        transition_order,
-                    );
-                }
-                DoorPassAdvance::ActionPoint { order } => {
-                    insert_door_pass_successor(
-                        self.orders
-                            .sequence_manager
-                            .get_element_mut(move_seq_id, move_elem_idx)
-                            .expect("door-pass successor element disappeared"),
-                        order,
-                    );
-                }
-                DoorPassAdvance::Done { completed } => {
-                    actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
-                        crate::element::ActionState::WaitingSword
-                    } else {
-                        crate::element::ActionState::Waiting
-                    };
-                    actor.active_door_pass = None;
-                    if let Some((door_index, direct)) =
-                        completed_door_pass_to_commit(discarded_lazy_door_followers, completed)
-                    {
-                        self.commit_completed_door_pass_position(assets, eid, door_index, direct);
-                        self.apply_completed_door_pass_lift_entry_state(eid, door_index, direct);
-                    }
-                }
-                DoorPassAdvance::NoActive => {
-                    tracing::warn!(
-                        entity = ?eid,
-                        "DoorPass: transition-terminated movement lost active pass"
-                    );
-                }
-            }
-        }
     }
 }

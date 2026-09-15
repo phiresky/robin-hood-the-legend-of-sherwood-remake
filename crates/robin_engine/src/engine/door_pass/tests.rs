@@ -1,5 +1,4 @@
 use super::*;
-use crate::engine::movement::DoorPassAdvance;
 use crate::engine::test_support::actors::TestActor;
 use crate::sequence::{
     LegacyV48OrderState, LegacyV48SequenceElementState, SequenceElement, SequenceElementData,
@@ -161,28 +160,27 @@ fn default_inside_outside_reserves_complete_translated_order_chain() {
         .get_element(seq_id, 0)
         .expect("PassDoor movement element remains installed");
     assert_eq!(element.current_order().unwrap().order_id.get(), first_id);
-    let pass = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_door_pass
-        .as_ref()
-        .unwrap();
     assert_eq!(
-        pass.preallocated_order_ids
+        element
+            .orders
             .iter()
-            .map(|id| id
-                .expect("new translations reserve every order identity")
-                .get())
+            .map(|order| order.order_id.get())
             .collect::<Vec<_>>(),
-        [first_id + 1, first_id + 2, first_id + 3]
+        [first_id, first_id + 1, first_id + 2, first_id + 3]
     );
-    assert!(matches!(pass.steps[0], DoorPassStep::PassingDoor));
-    assert!(matches!(pass.steps[1], DoorPassStep::Walk { .. }));
-    assert!(matches!(pass.steps[2], DoorPassStep::PassingDoor));
+    assert_eq!(
+        element
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        [
+            OrderType::WalkingUpright,
+            OrderType::PassingDoor,
+            OrderType::WalkingUpright,
+            OrderType::PassingDoor
+        ]
+    );
 }
 
 #[test]
@@ -482,7 +480,6 @@ fn install_production_climb_fixture(
             .set_sector(crate::position_interface::SectorHandle::new(7));
         let actor = entity.actor_data_mut().unwrap();
         actor.action_state = crate::element::ActionState::Waiting;
-        actor.active_door_pass.as_mut().unwrap().current_action = action;
     }
     engine.execute_pass_door(
         &crate::sim_rng::test_context(),
@@ -538,10 +535,12 @@ fn instruction_resolves_direction_and_installs_first_order() {
             .as_ref()
             .expect("door pass is active before the splice");
         assert_eq!(pass.direct, expected_direct);
-        let translated_exit = pass.steps.iter().find_map(|step| match step {
-            DoorPassStep::Walk { destination, .. } => Some(*destination),
-            _ => None,
-        });
+        let translated_exit = element
+            .orders
+            .iter()
+            .skip(1)
+            .find(|order| order.order_type == OrderType::WalkingUpright)
+            .map(|order| MapPoint::new(order.target_x, order.target_y));
         assert_eq!(translated_exit, Some(expected_exit));
     }
 }
@@ -588,24 +587,12 @@ fn corpse_carrying_pass_rewrites_authored_fast_run_without_affecting_upright_con
             "the selected first door rail must use the posture-adapted action"
         );
 
-        let pass = engine
-            .world
-            .entities
-            .get(owner)
-            .expect("door-pass test PC remains live")
-            .actor_data()
-            .expect("door-pass test PC has actor data")
-            .active_door_pass
-            .as_ref()
-            .expect("translated door pass remains active");
-        assert_eq!(pass.current_action, expected_action);
-        let remaining_walk_actions = pass
-            .steps
+        let remaining_walk_actions = element
+            .orders
             .iter()
-            .filter_map(|step| match step {
-                DoorPassStep::Walk { action, .. } => Some(*action),
-                _ => None,
-            })
+            .skip(1)
+            .filter(|order| order.order_type != OrderType::PassingDoor)
+            .map(|order| order.order_type)
             .collect::<Vec<_>>();
         assert!(!remaining_walk_actions.is_empty());
         assert!(
@@ -739,26 +726,13 @@ fn direct_stairs_pass_preserves_stamped_crouched_posture() {
         "the walk to the stairs midpoint must retain the stamped crouched posture"
     );
 
-    let pass = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_door_pass
-        .as_ref()
-        .unwrap();
-    assert_eq!(pass.current_action, OrderType::WalkingCrouched);
-    assert!(pass.steps.iter().any(|step| {
-        matches!(
-            step,
-            DoorPassStep::Walk {
-                action: OrderType::WalkingCrouched,
-                ..
-            }
-        )
-    }));
+    assert!(
+        element
+            .orders
+            .iter()
+            .skip(1)
+            .any(|order| order.order_type == OrderType::WalkingCrouched)
+    );
 }
 
 #[test]
@@ -798,91 +772,57 @@ fn indirect_stairs_pass_translates_dormant_lying_stamp_from_live_lift() {
         "the inside rail must use the live stairs sector despite the dormant lying stamp"
     );
 
-    let pass = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_door_pass
-        .as_ref()
-        .unwrap();
-    let remaining_walk_actions = pass
-        .steps
+    let remaining_walk_actions = element
+        .orders
         .iter()
-        .filter_map(|step| match step {
-            DoorPassStep::Walk { action, .. } => Some(*action),
-            _ => None,
-        })
+        .skip(1)
+        .filter(|order| order.order_type != OrderType::PassingDoor)
+        .map(|order| order.order_type)
         .collect::<Vec<_>>();
     assert_eq!(remaining_walk_actions, [OrderType::WalkingStairs]);
 }
 
 #[test]
-fn select_door_step_materializes_without_firing_its_hulk_callback() {
+fn translated_select_order_does_not_fire_its_hulk_callback() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(TestActor::pc(Posture::Upright).sector(7).build());
-    let actor = engine
-        .world
-        .entities
-        .get_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
-    actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: crate::gate::DoorIndex::new(43).unwrap(),
-        direct: true,
-        position_direct: true,
-        steps: [
-            DoorPassStep::Select { speed: 1.25 },
-            DoorPassStep::PassingDoor,
-        ]
-        .into(),
-        preallocated_order_ids: [std::num::NonZeroU32::new(41), std::num::NonZeroU32::new(42)]
-            .into(),
-        triggers_fired: 0,
-        current_action: OrderType::WalkingUpright,
-        current_reverse: false,
-        saved_action_state: None,
-    });
-    let next_order_id = engine.orders.next_order_id;
-    let DoorPassAdvance::ActionPoint { order } = EngineInner::advance_door_pass(
-        actor,
-        owner,
-        MapPoint::ZERO,
-        &mut engine.orders.next_order_id,
-    ) else {
-        panic!("Select must materialize a real action-point order")
+    let first_id = engine.orders.next_order_id;
+    let door = crate::gate::Door {
+        door_type: DoorType::Building,
+        point_out: MapPoint::new(-30.0, 30.0),
+        ..default_door()
     };
+    let (accepted, seq_id) = dispatch_pass(&mut engine, &[door], owner);
+    assert!(accepted);
+    let next_order_id = engine.orders.next_order_id;
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(seq_id, 0)
+        .unwrap();
+    let order = element.orders[1].clone();
     assert_eq!(order.order_type, OrderType::Select);
-    assert_eq!(order.order_id.get(), 41);
-    assert_eq!(order.tolerance, 1.25);
-    assert_eq!(
-        order.completion,
-        crate::order::OrderCompletion::ResumeDoorPass
-    );
+    assert_eq!(order.order_id.get(), first_id + 1);
+    assert_eq!(order.tolerance, 1.5);
+    assert_eq!(element.orders[2].order_type, OrderType::PassingDoor);
     assert_eq!(engine.orders.next_order_id, next_order_id);
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(entity.human_data().unwrap().running_hulk, 0);
-    let pass = entity
-        .actor_data()
-        .unwrap()
-        .active_door_pass
-        .as_ref()
-        .unwrap();
-    assert_eq!(pass.triggers_fired, 0);
-    assert!(matches!(
-        pass.steps.front(),
-        Some(DoorPassStep::PassingDoor)
-    ));
+    assert_eq!(
+        entity
+            .actor_data()
+            .unwrap()
+            .active_door_pass
+            .as_ref()
+            .unwrap()
+            .triggers_fired,
+        0
+    );
     assert_eq!(
         entity.element_data().sector(),
         crate::position_interface::SectorHandle::new(7)
     );
 
-    // The callback consumed by the animation outcome lane still applies
-    // the returned order's fade speed; materialization above did not run it.
     engine.apply_select_hulk(owner, order.tolerance);
     assert_eq!(
         engine
@@ -893,7 +833,7 @@ fn select_door_step_materializes_without_firing_its_hulk_callback() {
             .human_data()
             .unwrap()
             .running_hulk,
-        25
+        30
     );
 }
 
@@ -918,45 +858,24 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
     engine.script_domains.interactables.doors.push(door.clone());
     let (_, seq_id) = dispatch_pass(&mut engine, &[door], owner);
 
-    let transition_destination = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .element_data()
-        .position_map();
-    let transition = {
-        let actor = engine
-            .world
-            .entities
-            .get_mut(owner)
-            .unwrap()
-            .actor_data_mut()
+    engine.do_next_order(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        seq_id,
+        0,
+    );
+    let transition_order = {
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
             .unwrap();
-        EngineInner::advance_door_pass(
-            actor,
-            owner,
-            transition_destination,
-            &mut engine.orders.next_order_id,
-        )
+        element.current_order().unwrap().clone()
     };
-    let DoorPassAdvance::Continue {
-        order_id,
-        destination,
-        action,
-        reverse,
-        compute_direction,
-        tolerance,
-    } = transition
-    else {
-        panic!("low direct wall pass must schedule its climb transition: {transition:?}");
-    };
-    assert_eq!(action, OrderType::TransitionWaitingUprightClimbingWallUp);
-    let mut transition_order =
-        crate::order::Order::new(action, destination.x, destination.y, order_id);
-    transition_order.reverse = reverse;
-    transition_order.compute_direction = compute_direction;
-    transition_order.tolerance = tolerance;
+    assert_eq!(
+        transition_order.order_type,
+        OrderType::TransitionWaitingUprightClimbingWallUp
+    );
     assert_eq!(
         engine
             .world
@@ -981,17 +900,6 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
             .element_data()
             .sector(),
         crate::position_interface::SectorHandle::new(7)
-    );
-
-    engine
-        .orders
-        .sequence_manager
-        .push_order_on(seq_id, 0, transition_order.clone());
-    engine.do_next_order(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        seq_id,
-        0,
     );
 
     bind_single_animation(
@@ -1032,16 +940,8 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
 
     // The terminal transition slot applies its OnWall state and installs
     // PassingDoor, but does not execute the topology callback.
-    let _ = engine.tick_entity_movement_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        owner,
-        Some(crate::engine::movement::MovementOwnerSelection {
-            seq_id,
-            elem_idx: 0,
-            order_id: transition_order.order_id,
-        }),
-    );
+    let assets = engine.test_runtime_assets();
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(
@@ -1070,16 +970,8 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
         .element_data()
         .position_map();
 
-    let _ = engine.tick_entity_movement_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        owner,
-        Some(crate::engine::movement::MovementOwnerSelection {
-            seq_id,
-            elem_idx: 0,
-            order_id: passing_order.order_id,
-        }),
-    );
+    let assets = engine.test_runtime_assets();
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let entity = engine.world.entities.get(owner).unwrap();
     assert_eq!(
@@ -1135,7 +1027,7 @@ fn far_side_projection_selection_does_not_change_door_topology() {
 }
 
 #[test]
-fn direct_door_completion_preserves_rail_elevation_without_plane_reprojection() {
+fn final_door_callback_preserves_rail_position_and_elevation() {
     let mut engine = EngineInner::new();
     engine
         .script_domains
@@ -1166,18 +1058,17 @@ fn direct_door_completion_preserves_rail_elevation_without_plane_reprojection() 
             ));
     }
 
-    engine.commit_completed_door_pass_position(
+    engine.execute_pass_door(
+        &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
+        1,
     );
 
     let entity = engine.world.entities.get(owner).unwrap();
-    assert_eq!(
-        entity.element_data().position_map(),
-        MapPoint::new(30.0, 30.0)
-    );
+    assert_eq!(entity.element_data().position_map(), before_map);
     assert_eq!(
         entity.element_data().position().z.to_bits(),
         elevation.to_bits(),
@@ -1283,16 +1174,7 @@ fn wall_up_transition_completion_recomputes_midpoint_on_installed_rail_plane() {
                 door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: true,
                 position_direct: true,
-                steps: VecDeque::new(),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 0,
-                // The concrete/lazy door queues can already have exposed
-                // a copied successor by the time deferred completion
-                // effects drain. The captured terminating action remains
-                // authoritative.
-                current_action: OrderType::WalkingUpright,
-                current_reverse: false,
-                saved_action_state: None,
             });
         }
 
@@ -1420,11 +1302,13 @@ fn direct_door_completion_does_not_reconstruct_an_already_committed_endpoint() {
     }
     let before = engine.get_entity(owner).unwrap().element_data().position();
 
-    engine.commit_completed_door_pass_position(
+    engine.execute_pass_door(
+        &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
+        1,
     );
 
     let entity = engine.get_entity(owner).unwrap();
@@ -1541,23 +1425,9 @@ fn ladder_lift_instruction_installs_ladder_translation() {
     let initial_walk = element.current_order().unwrap();
     assert_eq!(initial_walk.order_type, OrderType::WalkingUpright);
     assert!(initial_walk.reverse);
-    let pass = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_door_pass
-        .as_ref()
-        .unwrap();
-    assert!(matches!(
-        pass.steps.front(),
-        Some(DoorPassStep::Transition {
-            action: OrderType::Turning,
-            reverse: true,
-        })
-    ));
+    let turning = &element.orders[1];
+    assert_eq!(turning.order_type, OrderType::Turning);
+    assert!(turning.reverse);
 }
 
 #[test]
@@ -1579,24 +1449,15 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
     assert!(accepted);
     assert!(
         engine
-            .get_entity(owner)
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_door_pass
-            .as_ref()
-            .unwrap()
-            .steps
+            .orders
             .iter()
-            .any(|step| matches!(
-                step,
-                DoorPassStep::Walk {
-                    destination,
-                    action: OrderType::ClimbingLadderDown,
-                    reverse: true,
-                    ..
-                } if *destination == MapPoint::new(30.0, 30.0)
-            ))
+            .any(|order| order.order_type == OrderType::ClimbingLadderDown
+                && order.reverse
+                && MapPoint::new(order.target_x, order.target_y) == MapPoint::new(30.0, 30.0))
     );
 
     bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
@@ -1633,20 +1494,10 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
         entity.element_data_mut().set_direction_goal(1);
         let actor = entity.actor_data_mut().unwrap();
         actor.execute_order_initialising = true;
-        actor.active_door_pass.as_mut().unwrap().current_action = OrderType::ClimbingLadderDown;
-        actor.active_door_pass.as_mut().unwrap().current_reverse = true;
     }
 
-    let _ = engine.tick_entity_movement_owner(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        owner,
-        Some(crate::engine::movement::MovementOwnerSelection {
-            seq_id,
-            elem_idx: 0,
-            order_id,
-        }),
-    );
+    let assets = engine.test_runtime_assets();
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let entity = engine.get_entity(owner).unwrap();
     assert_eq!(entity.element_data().posture(), Posture::Upright);
@@ -1711,8 +1562,6 @@ fn real_ladder_nonzero_climb_keeps_lift_facing_and_posture() {
         entity.element_data_mut().set_direction_goal(1);
         let actor = entity.actor_data_mut().unwrap();
         actor.execute_order_initialising = true;
-        actor.active_door_pass.as_mut().unwrap().current_action = OrderType::ClimbingLadderDown;
-        actor.active_door_pass.as_mut().unwrap().current_reverse = true;
     }
 
     let _ = engine.tick_entity_movement_owner(
@@ -1885,7 +1734,6 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
                 let actor = entity.actor_data_mut().unwrap();
                 actor.action_state = crate::element::ActionState::Waiting;
                 actor.execute_order_initialising = true;
-                actor.active_door_pass.as_mut().unwrap().current_action = action;
             }
 
             engine.execute_pass_door(
@@ -1937,10 +1785,13 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
                 .unwrap()
                 .element_data_mut()
                 .set_direction_goal(7);
-            engine.apply_completed_door_pass_lift_entry_state(
+            engine.execute_pass_door(
+                &crate::sim_rng::test_context(),
+                &LevelAssets::new(),
                 owner,
                 crate::gate::DoorIndex::new(0).expect("valid door index"),
                 true,
+                1,
             );
             assert_eq!(
                 engine
@@ -2233,8 +2084,6 @@ fn loaded_v48_pass_state(order_state: Vec<LegacyV48OrderState>) -> LegacyV48Sequ
         script_driven: false,
         raw_dormant_posture_after_transition: None,
         raw_dormant_action_state_after_transition: None,
-        next: None,
-        postponed: None,
         mummy: None,
         linked_seek: Some(None),
         damage_arrow: None,

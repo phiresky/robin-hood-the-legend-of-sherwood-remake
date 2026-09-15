@@ -83,7 +83,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// ability trackers (save 87 / replay 46).
 /// Protocol 55 removes the ranked multiplayer session, named-seat attestation
 /// and leaderboard co-sign messages.
-pub const NET_PROTOCOL_VERSION: u32 = 55;
+/// Protocol 56 carries canonical sequence links and ordinary door-route orders
+/// in authoritative snapshots (save 88 / replay 48).
+pub const NET_PROTOCOL_VERSION: u32 = 56;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

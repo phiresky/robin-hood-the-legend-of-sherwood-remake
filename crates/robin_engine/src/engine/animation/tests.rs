@@ -56,7 +56,7 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
 }
 
 #[test]
-fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
+fn execute_result_consumes_only_loop_arms() {
     let sim = crate::sim_rng::test_context();
     let sequence_manager = crate::sequence::SequenceManager::new();
     let next_order_id = 1;
@@ -91,10 +91,7 @@ fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
         ),
     ] {
         let result = finish_actor_execute_result(&sim, order, Some(raw), &mut ctx);
-        assert_eq!(result.entry_seq_id, crate::sequence::SequenceId(42));
-        assert_eq!(result.entry_elem_idx, 3);
-        assert_eq!(result.order_type, order);
-        assert_eq!(result.motion, expected);
+        assert_eq!(result, expected);
     }
 }
 
@@ -523,7 +520,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
         actor,
     );
 
-    assert_eq!(result.map(|result| result.motion), Some(MotionState::Start));
+    assert_eq!(result, Some(MotionState::Start));
     let entity = engine.get_entity(actor).expect("dead actor remains live");
     assert_eq!(
         entity.element_data().sprite.last_action,
@@ -766,7 +763,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
 
     let start = engine.tick_actor_animation_for(&sim, &assets, actor);
-    assert_eq!(start.expect("weak-sword START").motion, MotionState::Start);
+    assert_eq!(start.expect("weak-sword START"), MotionState::Start);
     for _ in 0..10 {
         let before = engine
             .get_entity(actor)
@@ -783,16 +780,10 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         if !sprite_is_at_action_done(entity.sprite()) {
             continue;
         }
-        assert_eq!(
-            result.expect("first action-done tick").motion,
-            MotionState::Done
-        );
+        assert_eq!(result.expect("first action-done tick"), MotionState::Done);
         let frame = (entity.sprite().current_frame, entity.sprite().frame_count);
         let held = engine.tick_actor_animation_for(&sim, &assets, actor);
-        assert_eq!(
-            held.expect("following held tick").motion,
-            MotionState::InProgress
-        );
+        assert_eq!(held.expect("following held tick"), MotionState::InProgress);
         let entity = engine.get_entity(actor).unwrap();
         assert_eq!(
             (entity.sprite().current_frame, entity.sprite().frame_count),
@@ -1647,10 +1638,7 @@ fn striking_down_force_initialization_preserves_walk_caches_for_start_tick() {
     assert_ne!(walk_forecast, crate::coordinates::WorldVec3D::ZERO);
 
     let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
-    assert_eq!(
-        first_result.map(|result| result.motion),
-        Some(MotionState::Start)
-    );
+    assert_eq!(first_result, Some(MotionState::Start));
     let sprite = engine.get_entity(owner).expect("owner").sprite();
     assert_eq!(sprite.last_processed_order_id, order_id.get());
     assert_eq!(sprite.current_frame, 0);
@@ -1678,10 +1666,7 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
     let (mut engine, assets, owner, victim, _sequence) = striking_down_execute_fixture();
 
     let first_result = engine.tick_actor_animation_for(&sim, &assets, owner);
-    assert_eq!(
-        first_result.map(|result| result.motion),
-        Some(MotionState::Done)
-    );
+    assert_eq!(first_result, Some(MotionState::Done));
     assert_eq!(
         engine
             .orders
@@ -1711,7 +1696,7 @@ fn striking_down_revalidates_after_done_before_repeating_kill() {
         "the invalid target is checked after advancing the strike sprite"
     );
     assert_eq!(
-        second_result.map(|result| result.motion),
+        second_result,
         Some(MotionState::Terminated),
         "the post-action validity check must retire the stale strike"
     );
@@ -1736,10 +1721,7 @@ fn striking_down_keeps_running_while_unconscious_victim_is_alive() {
     let _ = engine.tick_actor_animation_for(&sim, &assets, owner);
     let result = engine.tick_actor_animation_for(&sim, &assets, owner);
 
-    assert_eq!(
-        result.map(|result| result.motion),
-        Some(MotionState::InProgress)
-    );
+    assert_eq!(result, Some(MotionState::InProgress));
     assert_eq!(
         engine
             .orders

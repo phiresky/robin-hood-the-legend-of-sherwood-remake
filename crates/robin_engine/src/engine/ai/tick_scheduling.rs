@@ -78,7 +78,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> bool {
+    ) -> Option<crate::sprite::MotionState> {
         self.tick_enemy_ai_blip_detection(sim, assets, owner)
     }
 

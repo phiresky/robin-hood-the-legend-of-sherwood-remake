@@ -1,7 +1,6 @@
 use super::movement::{
     assign_circular_dispatch_candidates, circular_dispatch_candidate_points,
-    circular_dispatch_destinations, mercenary_formation_destinations,
-    uses_mercenary_group_formation,
+    circular_dispatch_destinations, uses_mercenary_group_formation,
 };
 use super::tick::{HourglassPhase, capture_hourglass_phases, capture_ordered_gameplay_entities};
 use super::*;

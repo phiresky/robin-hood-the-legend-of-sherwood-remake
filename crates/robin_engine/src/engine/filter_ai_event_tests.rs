@@ -1949,7 +1949,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         }
 
         let mut observer_saw_locked = None;
-        engine.tick_actor_animation_action_change_slots_with_after_slot(
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
             &crate::sim_rng::test_context(),
             &assets,
             |engine, owner| {
@@ -1987,7 +1987,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         assert_eq!(element.state, SequenceState::InProgress);
         assert_eq!(element.orders.len(), 1, "Done must not complete the order");
 
-        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
         assert_eq!(
             engine
                 .orders
@@ -2304,12 +2304,7 @@ fn animation_execution_gates_do_not_skip_action_change() {
                     .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
-                steps: std::collections::VecDeque::new(),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 0,
-                current_action: OrderType::Invalid,
-                current_reverse: false,
-                saved_action_state: None,
             });
         }
         let last_action_before = engine
@@ -2358,7 +2353,7 @@ fn animation_execution_gates_do_not_skip_action_change() {
             }
         }
 
-        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         assert_eq!(
             observed_action_args(&engine, actor),
@@ -2437,12 +2432,7 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                     .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
-                steps: std::collections::VecDeque::new(),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 0,
-                current_action: OrderType::Invalid,
-                current_reverse: false,
-                saved_action_state: None,
             });
         }
         let order =
@@ -2529,7 +2519,7 @@ fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback
         })
         .expect("wait-isolation mission remains installed");
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         engine
@@ -2615,7 +2605,7 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
         ));
 
     let (_, phases) = capture_actor_animation_boundary(|| {
-        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets)
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets)
     });
 
     let think = phases
@@ -2645,8 +2635,8 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
             .iter()
             .map(|stimulus| stimulus.stimulus_type)
             .collect::<Vec<_>>(),
-        vec![crate::ai::StimulusType::EventTimer],
-        "the synchronous combat Think must preserve the older unrelated FIFO entry"
+        Vec::<crate::ai::StimulusType>::new(),
+        "the NPC tail consumes deferred stimuli after synchronous combat Think and ActionChange"
     );
 }
 
@@ -2670,7 +2660,7 @@ fn earlier_action_change_replacement_is_animated_at_the_later_actor_slot() {
         ],
     );
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         engine
@@ -2707,7 +2697,7 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
     );
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -2721,7 +2711,7 @@ fn later_action_change_replacement_defers_already_visited_actor_animation() {
         "a later callback cannot retroactively replace animation at an already visited slot"
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -2752,22 +2742,18 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     let mut spawned = None;
 
     let (_, phases) = capture_actor_owner_envelope(|| {
-        engine.tick_actor_animation_action_change_slots_with_after_slot(
-            &sim,
-            &assets,
-            |engine, owner| {
-                visited.push(owner);
-                if owner == first {
-                    engine.remove_entity(removed_during_callback);
-                    let id = engine.add_test_entity(make_pc(false));
-                    assert!(
-                        id.index() > later.index(),
-                        "runtime entities are append-only"
-                    );
-                    spawned = Some(id);
-                }
-            },
-        );
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
+            visited.push(owner);
+            if owner == first {
+                engine.remove_entity(removed_during_callback);
+                let id = engine.add_test_entity(make_pc(false));
+                assert!(
+                    id.index() > later.index(),
+                    "runtime entities are append-only"
+                );
+                spawned = Some(id);
+            }
+        });
     });
     let spawned = spawned.expect("the first owner's callback must spawn an actor");
 
@@ -2819,7 +2805,7 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
     let sim = crate::sim_rng::test_context();
     let mut installed = None;
 
-    engine.tick_actor_animation_action_change_slots_with_after_slot(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim,
         &assets,
         |engine, completed_owner| {
@@ -2915,7 +2901,7 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
         sprite.action_done_counter = 0;
     }
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         observed_action_args(&engine, actor),
@@ -2967,7 +2953,7 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
         .old_action = OrderType::Pointing;
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         engine
@@ -3127,6 +3113,10 @@ fn turning_selects_sprite_row_after_the_direction_step() {
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_civilian(""));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(actor).unwrap() else {
+        unreachable!()
+    };
+    civilian.civilian.cached_camp = crate::element::Camp::Royalists;
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
 
@@ -3166,7 +3156,7 @@ fn turning_selects_sprite_row_after_the_direction_step() {
         entity.sprite_mut().last_processed_order_id = order_id.get();
     }
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let entity = engine
         .get_entity(actor)
@@ -3189,6 +3179,10 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
 
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_civilian(""));
+    let Entity::Civilian(civilian) = engine.get_entity_mut(actor).unwrap() else {
+        unreachable!()
+    };
+    civilian.civilian.cached_camp = crate::element::Camp::Royalists;
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
 
@@ -3229,7 +3223,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         entity.sprite_mut().last_processed_order_id = order_id.get();
     }
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let element = engine
         .orders
@@ -3288,7 +3282,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 1);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -3321,7 +3315,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
         "a positive counter is decremented after Execute without completing on the frame it reaches zero"
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -3349,7 +3343,7 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
         .expect("frozen timer owner is an actor")
         .execution_frozen = true;
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         engine
@@ -3434,7 +3428,7 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
         sprite.action_done_counter = 0;
     }
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let element = engine
         .orders
@@ -3454,120 +3448,6 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
             .expect("successor remains")
             .order_type,
         OrderType::Searching
-    );
-}
-
-#[test]
-fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
-    use crate::order::OrderType;
-    use crate::sequence::{Field, FieldValue};
-
-    let mut engine = EngineInner::new();
-    let actor = engine.add_test_entity(make_scripted_soldier(""));
-    engine
-        .world
-        .entities
-        .expect_actor_data_mut(actor, format_args!("timer fixture"))
-        .action_state = crate::element::ActionState::Bored;
-    let assets = LevelAssets::new();
-    bind_test_actor_animations(
-        &mut engine,
-        actor,
-        &[OrderType::Pointing, OrderType::Searching],
-    );
-    let first = crate::order::Order::new(
-        OrderType::Pointing,
-        0.0,
-        0.0,
-        engine.orders.allocate_order_id(),
-    );
-    let first_id = first.order_id;
-    let second = crate::order::Order::new(
-        OrderType::Searching,
-        0.0,
-        0.0,
-        engine.orders.allocate_order_id(),
-    );
-    let entry_sequence = install_test_order_queue(&mut engine, &assets, actor, [first, second]);
-    {
-        let sprite = &mut engine
-            .get_entity_mut(actor)
-            .expect("same-owner replacement actor exists")
-            .element_data_mut()
-            .sprite;
-        sprite.last_processed_order_id = first_id.get();
-        sprite.last_action = OrderType::Pointing;
-        sprite.current_row = 0;
-        sprite.current_frame = 1;
-        sprite.frame_count = 0;
-        sprite.action_done_frame = 1;
-        sprite.action_done_counter = 0;
-    }
-    let mut replacement_sequence = None;
-
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &crate::sim_rng::test_context(),
-        &assets,
-        |_, _| {},
-        |_, _| {},
-        |engine, callback_owner, _, _, _, _, _| {
-            if callback_owner != actor || replacement_sequence.is_some() {
-                return;
-            }
-            engine.postpone_element(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                entry_sequence,
-                0,
-            );
-            let mut timer = crate::sequence::SequenceElement::new_generic(
-                1,
-                crate::element::Command::WaitTimer,
-                Some(actor),
-            );
-            timer.set_property(Field::Timer, FieldValue::Integer(0));
-            let sequence = engine.orders.sequence_manager.insert_element(timer);
-            engine
-                .orders
-                .sequence_manager
-                .start_sequence_level(sequence);
-            engine.select_sequence_element(actor, None);
-            engine.instruct_owner(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                actor,
-                sequence,
-                0,
-            );
-            replacement_sequence = Some(sequence);
-        },
-        |_, _, _| {},
-    );
-
-    let replacement_sequence =
-        replacement_sequence.expect("same-owner callback installed replacement timer");
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(replacement_sequence, 0)
-            .expect("replacement timer remains inspectable")
-            .state,
-        crate::sequence::SequenceState::Terminated,
-        "effective termination must advance the order on the callback-installed live element"
-    );
-    let entry = engine
-        .orders
-        .sequence_manager
-        .get_element(entry_sequence, 0)
-        .expect("Execute-entry element remains inspectable");
-    assert_eq!(entry.state, crate::sequence::SequenceState::Postponed);
-    assert_eq!(
-        entry.orders.len(),
-        2,
-        "the raw Pointing termination must not retain an old-element completion bucket"
     );
 }
 
@@ -3604,7 +3484,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
         let sim = crate::sim_rng::test_context();
         let mut timer_sequence = None;
 
-        engine.tick_actor_animation_action_change_slots_with_after_slot(
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
             &sim,
             &assets,
             |engine, completed_owner| {
@@ -3793,7 +3673,7 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
         engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, actor);
 
     assert_eq!(
-        execute_result.expect("WaitingSword must execute").motion,
+        execute_result.expect("WaitingSword must execute"),
         crate::sprite::MotionState::InProgress,
         "human execution advances the WaitingSword sprite but never forwards its motion edge"
     );
@@ -3819,7 +3699,7 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
     });
 
     assert!(
@@ -3854,7 +3734,7 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
     });
     engine.set_actors_frozen(true);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
     });
 
     assert!(
@@ -3924,7 +3804,7 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     );
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     assert_eq!(
         engine
             .get_entity(soldier)
@@ -3948,7 +3828,7 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
         .unwrap()
         .element_data_mut()
         .active = false;
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     assert_eq!(
         engine
             .orders
@@ -3997,7 +3877,7 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
         .smalltalk_initiative = true;
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         !engine
@@ -4055,7 +3935,7 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
         .opponents = vec![stunned].into();
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         engine
@@ -4122,14 +4002,39 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
     engine.control.frame_counter = 42;
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    let mut synchronous_state = None;
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        &crate::sim_rng::test_context(),
+        &assets,
+        |engine, owner| {
+            if owner == stunned {
+                let ai = engine.get_entity(opponent).unwrap().enemy_ai().unwrap();
+                synchronous_state = Some((
+                    ai.base.when_does_timer_ring,
+                    ai.base
+                        .stimulus_queue
+                        .iter()
+                        .map(|s| s.stimulus_type)
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        },
+    );
+    assert_eq!(
+        synchronous_state,
+        Some((62, vec![StimulusType::EventFitAgain])),
+        "the direct weak callback arms the timer and preserves deferred stimuli before the opponent's own slot"
+    );
 
     let opponent_ai = engine.get_entity(opponent).unwrap().enemy_ai().unwrap();
     assert!(
         opponent_ai.base.timer_is_running,
         "EVENT_ADVERSARY_WEAK must reconsider the swordfight before actor initialization returns"
     );
-    assert_eq!(opponent_ai.base.when_does_timer_ring, 62);
+    assert_eq!(
+        opponent_ai.base.when_does_timer_ring, 63,
+        "the later frozen NPC slot postpones the armed timer by one frame"
+    );
     assert_eq!(
         opponent_ai
             .base
@@ -4334,7 +4239,7 @@ fn later_smalltalk_hint_defers_for_already_visited_defender() {
 
     let (mut engine, assets, _attacker, defender) = waiting_sword_pair(false);
     crate::sim_rng::with_seed(1, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
     });
 
     assert!(
@@ -4371,7 +4276,7 @@ fn earlier_initiative_transfer_drives_later_recipient_slot() {
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
     });
 
     assert!(
@@ -4399,7 +4304,7 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
         human.relative_fighting_ability = 100;
     }
     crate::sim_rng::with_seed(9, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
     });
 
     assert!(
@@ -4491,7 +4396,7 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         }
 
         crate::sim_rng::with_seed(5, |sim| {
-            engine.tick_actor_animation_action_change_slots(sim, &assets);
+            engine.tick_actor_owner_envelopes(sim, &assets);
         });
         // The prune launches both QuitSwordfight elements at the owner slot,
         // but a normal-priority launch is only registered with the sequence
@@ -4591,7 +4496,7 @@ fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
     );
 
     let observed = crate::sim_rng::with_seed(77, |sim| {
-        engine.tick_actor_animation_action_change_slots(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
         crate::sim_rng::bool(sim, crate::sim_rng::RngSite::SmalltalkStrikeSide)
     });
     let expected = crate::sim_rng::with_seed(77, |sim| {
@@ -4687,7 +4592,7 @@ fn waking_up_creation_order_engine(
 fn earlier_waking_up_done_changes_later_actor_before_its_animation_slot() {
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let target_entity = engine
         .world
@@ -4712,7 +4617,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(false);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     let target_entity = engine
         .world
         .entities
@@ -4730,7 +4635,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
         "later WAKING_UP DONE cannot retroactively animate an already visited target"
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .world
@@ -4754,7 +4659,7 @@ fn waking_up_done_does_not_force_awake_a_script_locked_npc() {
         .expect("wake target has AI")
         .script_locked = true;
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let target_entity = engine
         .world
@@ -4799,7 +4704,7 @@ fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
         .expect("rescuer WakingUp order remains installed")
         .antagonist = None;
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 }
 
 #[test]
@@ -5497,7 +5402,6 @@ fn install_unrelated_multi_exit_building_actor(
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::sector::{SectorNumber, SectorType};
-    use std::collections::VecDeque;
 
     let door_actor = engine.add_test_entity(make_pc(true));
     let Entity::Pc(pc) = engine
@@ -5514,12 +5418,7 @@ fn install_unrelated_multi_exit_building_actor(
         door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
-        steps: VecDeque::new(),
-        preallocated_order_ids: Default::default(),
         triggers_fired: 0,
-        current_action: crate::order::OrderType::default(),
-        current_reverse: false,
-        saved_action_state: None,
     });
     pc.actor.passing_door_directly = true;
     pc.element.sprite.position_iface.set_door_for_test(
@@ -5683,7 +5582,6 @@ fn resolve_test_actor_forecast(
 fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
     use crate::element::ActiveDoorPass;
     use crate::gate::DoorIndex;
-    use std::collections::VecDeque;
 
     let mut actor = make_pc(true);
     let Entity::Pc(pc) = &mut actor else {
@@ -5693,12 +5591,7 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
         door_index: DoorIndex::new(7).expect("valid door index"),
         direct: true,
         position_direct: true,
-        steps: VecDeque::new(),
-        preallocated_order_ids: Default::default(),
         triggers_fired: 0,
-        current_action: crate::order::OrderType::WalkingUpright,
-        current_reverse: false,
-        saved_action_state: None,
     });
 
     assert_eq!(
@@ -6264,7 +6157,6 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     use crate::gate::DoorIndex;
     use crate::profiles::ProfileRank;
     use crate::sim_rng::{RngSite, with_draw_trace};
-    use std::collections::VecDeque;
 
     let (mut engine, mut assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
     let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine, owner);
@@ -6282,12 +6174,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
         door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
-        steps: VecDeque::new(),
-        preallocated_order_ids: Default::default(),
         triggers_fired: 0,
-        current_action: crate::order::OrderType::default(),
-        current_reverse: false,
-        saved_action_state: None,
     });
     let officer_ai = officer.npc.ai_brain.enemy_mut().unwrap();
     crate::engine::test_support::actors::edit_enemy_profile(&mut assets, officer_ai, |profile| {

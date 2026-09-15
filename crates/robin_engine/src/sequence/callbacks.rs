@@ -174,7 +174,7 @@ impl SequenceManager {
                 "postpone-tail cache crosses owners"
             );
             assert!(
-                tail_element.cross_postponed.is_none(),
+                tail_element.postponed.is_none(),
                 "postpone-tail cache was not invalidated before {:?}/{} changed",
                 tail.sequence_id,
                 tail.element_index
@@ -205,7 +205,10 @@ impl SequenceManager {
                 current.0,
                 current.1
             );
-            let Some(next) = element.cross_postponed else {
+            let Some(next) = element
+                .postponed
+                .map(|reference| (reference.sequence_id, reference.element_index))
+            else {
                 self.postpone_tail_cache.entry(owner).or_default().insert(
                     (root_ref, waiter_priority),
                     PostponeTailSummary {
@@ -266,16 +269,16 @@ impl SequenceManager {
         assert_eq!(prior_summary.hops, prior_hops);
         let waiter_has_no_cross_successor = self
             .get_element(waiter.0, waiter.1)
-            .is_some_and(|element| element.cross_postponed.is_none());
+            .is_some_and(|element| element.postponed.is_none());
         self.invalidate_postpone_tail_cache_for(owner);
         let blocker_element = self
             .get_element_mut(blocker.0, blocker.1)
             .expect("postpone append blocker disappeared");
         assert!(
-            blocker_element.cross_postponed.is_none(),
+            blocker_element.postponed.is_none(),
             "postpone append point already has a successor"
         );
-        blocker_element.cross_postponed = Some(waiter);
+        blocker_element.postponed = Some(SequenceElementRef::new(waiter.0, waiter.1));
         // A waiter may already own a postponed successor chain (for example
         // after adopting postponed work). In that case it is not the new tail, so
         // caching it as one would leave a stale summary immediately after
@@ -305,7 +308,8 @@ impl SequenceManager {
         self.invalidate_postpone_tail_cache_for(owner);
         self.get_element_mut(blocker.0, blocker.1)
             .expect("cross-postponed blocker disappeared")
-            .cross_postponed = successor;
+            .postponed =
+            successor.map(|(sequence, index)| SequenceElementRef::new(sequence, index));
     }
 
     /// Transfer a cross-sequence postponed successor from `src` onto
@@ -318,10 +322,10 @@ impl SequenceManager {
         src_seq: SequenceId,
         src_idx: usize,
     ) {
-        let Some(src_next) = self
-            .get_element(src_seq, src_idx)
-            .and_then(|e| e.cross_postponed)
-        else {
+        let Some(src_next) = self.get_element(src_seq, src_idx).and_then(|e| {
+            e.postponed
+                .map(|reference| (reference.sequence_id, reference.element_index))
+        }) else {
             return;
         };
         // Walk dst's chain to the tail (first element with no
@@ -332,9 +336,9 @@ impl SequenceManager {
             let Some(e) = self.get_element(cur.0, cur.1) else {
                 return;
             };
-            match e.cross_postponed {
+            match e.postponed {
                 None => break,
-                Some(next) => cur = next,
+                Some(next) => cur = (next.sequence_id, next.element_index),
             }
         }
         // Install src's successor at the tail.
@@ -362,6 +366,25 @@ impl crate::engine::EngineInner {
         let interrupted_movement = element.state != state
             && state == SequenceState::Interrupted
             && element.data.is_movement();
+        let retiring_door_owner = (element.state != state
+            && element.command == Command::PassDoor
+            && matches!(
+                state,
+                SequenceState::Terminated
+                    | SequenceState::Interrupted
+                    | SequenceState::Impossible
+                    | SequenceState::Postponed
+            ))
+        .then_some(element.owner)
+        .flatten();
+        if let Some(owner) = retiring_door_owner
+            && self.world.entities.current_element_for_actor(owner) == Some((seq_id, elem_idx))
+        {
+            self.world
+                .entities
+                .expect_actor_data_mut(owner, format_args!("retiring door traversal"))
+                .active_door_pass = None;
+        }
         if interrupted_movement {
             if element.command == Command::MoveWaiting {
                 let owner = element.owner.expect("waiting movement has no owner");

@@ -355,12 +355,7 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
                     door_index: crate::gate::DoorIndex::new(0).unwrap(),
                     direct: true,
                     position_direct: true,
-                    steps: Default::default(),
-                    preallocated_order_ids: Default::default(),
                     triggers_fired: 0,
-                    current_action: crate::order::OrderType::WalkingUpright,
-                    current_reverse: false,
-                    saved_action_state: None,
                 })
             }
             _ => {}

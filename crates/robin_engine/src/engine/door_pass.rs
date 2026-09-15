@@ -1,104 +1,83 @@
 //! Door-pass translation and execution.
 //!
-//! Translates a door-pass into a chain of walk/transition steps and
+//! Appends the ordinary orders for door traversal and
 //! executes the layer/sector swap when the actor crosses the door.
 
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{ActiveDoorPass, DoorPassStep, EntityId, Posture};
+use crate::element::{ActiveDoorPass, EntityId, Posture};
 use crate::gate::DoorType;
 use crate::order::OrderType;
 use crate::sector::LiftType;
-use std::collections::VecDeque;
 
 mod steps;
 mod transitions;
 pub(super) use steps::*;
 
-// ─── Step construction helpers ──────────────────────────────────────
+// ─── Ordinary order construction ──────────────────────────────────────
 
-fn walk(dest: MapPoint, action: OrderType) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: false,
-        compute_direction: true,
-        tolerance: 0.0,
+/// Appends each translated door order immediately to its owning element.
+struct DoorOrders<'a> {
+    element: &'a mut crate::sequence::SequenceElement,
+    next_id: &'a mut u32,
+}
+
+impl DoorOrders<'_> {
+    fn push(
+        &mut self,
+        destination: MapPoint,
+        action: OrderType,
+        reverse: bool,
+        compute_direction: bool,
+        tolerance: f32,
+    ) {
+        let mut order = crate::order::Order::new(
+            action,
+            destination.x,
+            destination.y,
+            crate::order::alloc_order_id(self.next_id),
+        );
+        order.reverse = reverse;
+        order.compute_direction = compute_direction;
+        order.tolerance = tolerance;
+        self.element.push_order(order);
+    }
+
+    fn walk(&mut self, destination: MapPoint, action: OrderType) {
+        self.push(destination, action, false, true, 0.0);
+    }
+    fn walk_tol(&mut self, destination: MapPoint, action: OrderType, tolerance: f32) {
+        self.push(destination, action, false, true, tolerance);
+    }
+    fn walk_rev_tol(&mut self, destination: MapPoint, action: OrderType, tolerance: f32) {
+        self.push(destination, action, true, true, tolerance);
+    }
+    fn walk_nodir(&mut self, destination: MapPoint, action: OrderType) {
+        self.push(destination, action, false, false, 0.0);
+    }
+    fn walk_nodir_tol(&mut self, destination: MapPoint, action: OrderType, tolerance: f32) {
+        self.push(destination, action, false, false, tolerance);
+    }
+    fn walk_rev_nodir(&mut self, destination: MapPoint, action: OrderType) {
+        self.push(destination, action, true, false, 0.0);
+    }
+    fn transition(&mut self, action: OrderType) {
+        self.push(MapPoint::ZERO, action, false, true, 0.0);
+    }
+    fn transition_rev(&mut self, action: OrderType) {
+        self.push(MapPoint::ZERO, action, true, true, 0.0);
+    }
+    fn select(&mut self, speed: f32) {
+        self.push(MapPoint::ZERO, OrderType::Select, false, true, speed);
+    }
+    fn passing_door(&mut self) {
+        self.push(MapPoint::ZERO, OrderType::PassingDoor, false, true, 0.0);
     }
 }
 
-fn walk_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: false,
-        compute_direction: true,
-        tolerance,
-    }
-}
+// ─── Door translation inputs ───────────────────────────────
 
-fn walk_rev_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: true,
-        compute_direction: true,
-        tolerance,
-    }
-}
-
-fn walk_nodir(dest: MapPoint, action: OrderType) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: false,
-        compute_direction: false,
-        tolerance: 0.0,
-    }
-}
-
-fn walk_nodir_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: false,
-        compute_direction: false,
-        tolerance,
-    }
-}
-
-fn walk_rev_nodir(dest: MapPoint, action: OrderType) -> DoorPassStep {
-    DoorPassStep::Walk {
-        destination: dest,
-        action,
-        reverse: true,
-        compute_direction: false,
-        tolerance: 0.0,
-    }
-}
-
-fn transition(action: OrderType) -> DoorPassStep {
-    DoorPassStep::Transition {
-        action,
-        reverse: false,
-    }
-}
-
-fn transition_rev(action: OrderType) -> DoorPassStep {
-    DoorPassStep::Transition {
-        action,
-        reverse: true,
-    }
-}
-
-const fn passing_door() -> DoorPassStep {
-    DoorPassStep::PassingDoor
-}
-
-// ─── Context for building step chains ───────────────────────────────
-
-/// All the data needed to build a door-pass step chain.
-/// Extracted from the door, sector, and actor data before step construction.
+/// Door geometry and actor properties sampled at instruction entry.
 struct DoorPassContext {
     door_type: DoorType,
     point_mid: MapPoint,
@@ -135,8 +114,7 @@ struct DoorPassContext {
 
 // ─── Building door translation ──────────────────────────────────────
 
-fn translate_building(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
-    let mut s = VecDeque::new();
+fn translate_building(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
     let action = ctx.action;
 
     // PCs get a `Select` step between the walk-to-mid step and PASSING_DOOR;
@@ -149,44 +127,27 @@ fn translate_building(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 
     if ctx.direct {
         // Outside -> inside
-        s.push_back(walk(ctx.point_mid, action));
+        s.walk(ctx.point_mid, action);
         if ctx.is_pc {
-            s.push_back(DoorPassStep::Select {
-                speed: select_speed(ctx.point_mid, ctx.point_out),
-            });
+            s.select(select_speed(ctx.point_mid, ctx.point_out));
         }
-        s.push_back(passing_door());
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_in,
-            action,
-            reverse: false,
-            compute_direction: false,
-            tolerance: 0.0,
-        });
+        s.passing_door();
+        s.push(ctx.point_in, action, false, false, 0.0);
         // Building-trap: reverse ladder-down animation after entering
         if ctx.door_type == DoorType::BuildingTrap {
-            s.push_back(walk_rev_nodir(ctx.point_in, OrderType::ClimbingLadderDown));
+            s.push(ctx.point_in, OrderType::ClimbingLadderDown, true, true, 0.0);
         }
-        s.push_back(passing_door());
+        s.passing_door();
     } else {
         // Inside -> outside
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_mid,
-            action,
-            reverse: false,
-            compute_direction: false,
-            tolerance: 0.0,
-        });
+        s.push(ctx.point_mid, action, false, false, 0.0);
         if ctx.is_pc {
-            s.push_back(DoorPassStep::Select {
-                speed: select_speed(ctx.point_mid, ctx.point_in),
-            });
+            s.select(select_speed(ctx.point_mid, ctx.point_in));
         }
-        s.push_back(passing_door());
-        s.push_back(walk(ctx.point_out, action));
-        s.push_back(passing_door());
+        s.passing_door();
+        s.walk(ctx.point_out, action);
+        s.passing_door();
     }
-    s
 }
 
 // ─── Ladder door translation ────────────────────────────────────────
@@ -197,9 +158,7 @@ fn translate_building(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 /// point.
 const TELEPORT_LADDER: f32 = 45.0;
 
-fn translate_ladder(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
-    let mut s = VecDeque::new();
-
+fn translate_ladder(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
     if ctx.is_high {
         if ctx.direct {
             // High, outside -> inside (climb DOWN the ladder).
@@ -207,51 +166,47 @@ fn translate_ladder(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
             // climb-down transition distance (plus crouching-down for
             // non-soldier PCs); precomputed in `build_door_pass` via
             // `Sprite::distance_for_animation`.
-            s.push_back(walk_rev_tol(
+            s.walk_rev_tol(
                 ctx.point_mid,
                 OrderType::WalkingUpright,
                 ctx.tol_ladder_high_direct,
-            ));
-            s.push_back(transition_rev(OrderType::Turning));
+            );
+            s.transition_rev(OrderType::Turning);
             if ctx.is_pc {
-                s.push_back(transition_rev(OrderType::TransitionCrouchingDown));
+                s.transition_rev(OrderType::TransitionCrouchingDown);
             }
             let climb_start = if ctx.is_soldier_attentive {
                 OrderType::TransitionWaitingUprightClimbingLadderDownAlerted
             } else {
                 OrderType::TransitionWaitingCrouchedClimbingLadderDown
             };
-            s.push_back(walk_rev_nodir(ctx.point_mid, climb_start));
-            s.push_back(passing_door());
-            s.push_back(walk_rev_nodir(ctx.point_in, OrderType::ClimbingLadderDown));
+            s.walk_rev_nodir(ctx.point_mid, climb_start);
+            s.passing_door();
+            s.walk_rev_nodir(ctx.point_in, OrderType::ClimbingLadderDown);
         } else {
             // High, inside -> outside (climb UP the ladder).
             // `TELEPORT_LADDER` (45.0) is set as tolerance on the first
             // walk-to-mid step so the climb-up animation (which already
             // moves the actor past the midpoint) ends before the
             // waypoint is exactly reached.
-            s.push_back(walk_nodir_tol(
-                ctx.point_mid,
-                OrderType::ClimbingLadderUp,
-                TELEPORT_LADDER,
-            ));
+            s.walk_nodir_tol(ctx.point_mid, OrderType::ClimbingLadderUp, TELEPORT_LADDER);
             let climb_end = if ctx.is_soldier_attentive {
                 OrderType::TransitionClimbingLadderUpWaitingUprightAlerted
             } else {
                 OrderType::TransitionClimbingLadderUpWaitingCrouched
             };
-            s.push_back(walk_nodir(ctx.point_mid, climb_end));
+            s.walk_nodir(ctx.point_mid, climb_end);
             if ctx.is_pc && !ctx.sector_out_forces_crouch {
-                s.push_back(transition(OrderType::TransitionCrouchingUp));
+                s.transition(OrderType::TransitionCrouchingUp);
             }
-            s.push_back(passing_door());
+            s.passing_door();
             let exit_action = if ctx.is_pc && ctx.sector_out_forces_crouch {
                 OrderType::WalkingCrouched
             } else {
                 OrderType::WalkingUpright
             };
-            s.push_back(walk(ctx.point_out, exit_action));
-            s.push_back(passing_door());
+            s.walk(ctx.point_out, exit_action);
+            s.passing_door();
         }
     } else {
         if ctx.direct {
@@ -259,40 +214,39 @@ fn translate_ladder(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
             // `TransitionWaitingUprightClimbingLadderUp` animation
             // distance, precomputed in `build_door_pass` and threaded
             // as `ctx.tol_ladder_low_direct`.
-            s.push_back(walk_tol(
+            s.walk_tol(
                 ctx.point_mid,
                 OrderType::WalkingUpright,
                 ctx.tol_ladder_low_direct,
-            ));
+            );
             let climb_start = if ctx.is_soldier_attentive {
                 OrderType::TransitionWaitingUprightClimbingLadderUpAlerted
             } else {
                 OrderType::TransitionWaitingUprightClimbingLadderUp
             };
-            s.push_back(walk_nodir(ctx.point_mid, climb_start));
-            s.push_back(passing_door());
-            s.push_back(walk_nodir(ctx.point_in, OrderType::ClimbingLadderUp));
-            s.push_back(passing_door());
+            s.walk_nodir(ctx.point_mid, climb_start);
+            s.passing_door();
+            s.walk_nodir(ctx.point_in, OrderType::ClimbingLadderUp);
+            s.passing_door();
         } else {
             // Low, inside -> outside (climb DOWN)
-            s.push_back(walk_nodir(ctx.point_mid, OrderType::ClimbingLadderDown));
+            s.walk_nodir(ctx.point_mid, OrderType::ClimbingLadderDown);
             let climb_end = if ctx.is_soldier_attentive {
                 OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
             } else {
                 OrderType::TransitionClimbingLadderDownWaitingUpright
             };
-            s.push_back(transition(climb_end));
-            s.push_back(passing_door());
+            s.walk_nodir(ctx.point_mid, climb_end);
+            s.passing_door();
             if ctx.is_pc && ctx.sector_out_forces_crouch {
-                s.push_back(transition(OrderType::TransitionCrouchingDown));
-                s.push_back(walk(ctx.point_out, OrderType::WalkingCrouched));
+                s.transition(OrderType::TransitionCrouchingDown);
+                s.walk(ctx.point_out, OrderType::WalkingCrouched);
             } else {
-                s.push_back(walk(ctx.point_out, OrderType::WalkingUpright));
+                s.walk(ctx.point_out, OrderType::WalkingUpright);
             }
-            s.push_back(passing_door());
+            s.passing_door();
         }
     }
-    s
 }
 
 // ─── Wall door translation ──────────────────────────────────────────
@@ -301,9 +255,7 @@ fn translate_ladder(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 /// high/non-direct wall pass (climb-up).
 const TELEPORT_WALL: f32 = 60.0;
 
-fn translate_wall(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
-    let mut s = VecDeque::new();
-
+fn translate_wall(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
     if ctx.is_high {
         if ctx.direct {
             // High, outside -> inside (climb DOWN the wall).  The first
@@ -312,67 +264,63 @@ fn translate_wall(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
             // `build_door_pass` and threaded via the two
             // `tol_wall_high_direct_*` ctx fields.
             if !ctx.is_crenel {
-                s.push_back(walk_rev_tol(
+                s.walk_rev_tol(
                     ctx.point_mid,
                     OrderType::WalkingUpright,
                     ctx.tol_wall_high_direct_noncrenel,
-                ));
-                s.push_back(transition_rev(OrderType::Turning));
+                );
+                s.transition_rev(OrderType::Turning);
                 if ctx.is_pc {
-                    s.push_back(transition_rev(OrderType::TransitionCrouchingDown));
+                    s.transition_rev(OrderType::TransitionCrouchingDown);
                 }
-                s.push_back(walk_rev_nodir(
+                s.walk_rev_nodir(
                     ctx.point_mid,
                     OrderType::TransitionWaitingCrouchedClimbingWallDown,
-                ));
+                );
             } else {
                 // Crenel variant
-                s.push_back(walk_tol(
+                s.walk_tol(
                     ctx.point_mid,
                     OrderType::WalkingUpright,
                     ctx.tol_wall_high_direct_crenel,
-                ));
-                s.push_back(walk_nodir(
+                );
+                s.walk_nodir(
                     ctx.point_mid,
                     OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel,
-                ));
+                );
             }
-            s.push_back(passing_door());
-            s.push_back(walk_rev_nodir(ctx.point_in, OrderType::ClimbingWallDown));
-            s.push_back(passing_door());
+            s.passing_door();
+            s.walk_rev_nodir(ctx.point_in, OrderType::ClimbingWallDown);
+            s.passing_door();
         } else {
             // High, inside -> outside (climb UP the wall).
             // `TELEPORT_WALL` (60.0) is set as tolerance on the first
             // walk-to-mid step so the climb-up ends before the waypoint
             // is exactly reached (the animation itself carries the
             // actor past the point).
-            s.push_back(walk_nodir_tol(
-                ctx.point_mid,
-                OrderType::ClimbingWallUp,
-                TELEPORT_WALL,
-            ));
+            s.walk_nodir_tol(ctx.point_mid, OrderType::ClimbingWallUp, TELEPORT_WALL);
             if ctx.is_crenel {
-                s.push_back(walk_nodir(
+                s.walk_nodir(
                     ctx.point_out,
                     OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
-                ));
+                );
             } else {
-                s.push_back(walk_nodir(
+                s.walk_nodir(
                     ctx.point_mid,
                     OrderType::TransitionClimbingWallUpWaitingCrouched,
-                ));
+                );
             }
-            s.push_back(passing_door());
+            s.passing_door();
             if ctx.is_pc && !ctx.sector_out_forces_crouch {
-                s.push_back(transition(OrderType::TransitionCrouchingUp));
+                s.transition(OrderType::TransitionCrouchingUp);
             }
             let exit_action = if !ctx.is_pc || !ctx.sector_out_forces_crouch {
                 OrderType::WalkingUpright
             } else {
                 OrderType::WalkingCrouched
             };
-            s.push_back(walk(ctx.point_out, exit_action));
-            s.push_back(passing_door());
+            s.walk(ctx.point_out, exit_action);
+            s.passing_door();
         }
     } else {
         if ctx.direct {
@@ -380,41 +328,40 @@ fn translate_wall(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
             // `TransitionWaitingUprightClimbingWallUp` animation
             // distance, precomputed in `build_door_pass` and threaded
             // as `ctx.tol_wall_low_direct`.
-            s.push_back(walk_tol(
+            s.walk_tol(
                 ctx.point_mid,
                 OrderType::WalkingUpright,
                 ctx.tol_wall_low_direct,
-            ));
-            s.push_back(walk_nodir(
+            );
+            s.walk_nodir(
                 ctx.point_mid,
                 OrderType::TransitionWaitingUprightClimbingWallUp,
-            ));
-            s.push_back(passing_door());
-            s.push_back(walk_nodir(ctx.point_in, OrderType::ClimbingWallUp));
-            s.push_back(passing_door());
+            );
+            s.passing_door();
+            s.walk_nodir(ctx.point_in, OrderType::ClimbingWallUp);
+            s.passing_door();
         } else {
             // Low, inside -> outside (climb DOWN)
-            s.push_back(walk_nodir(ctx.point_mid, OrderType::ClimbingWallDown));
-            s.push_back(transition(
+            s.walk_nodir(ctx.point_mid, OrderType::ClimbingWallDown);
+            s.walk_nodir(
+                ctx.point_mid,
                 OrderType::TransitionClimbingWallDownWaitingUpright,
-            ));
-            s.push_back(passing_door());
+            );
+            s.passing_door();
             if ctx.is_pc && ctx.sector_out_forces_crouch {
-                s.push_back(transition(OrderType::TransitionCrouchingDown));
-                s.push_back(walk(ctx.point_out, OrderType::WalkingCrouched));
+                s.transition(OrderType::TransitionCrouchingDown);
+                s.walk(ctx.point_out, OrderType::WalkingCrouched);
             } else {
-                s.push_back(walk(ctx.point_out, OrderType::WalkingUpright));
+                s.walk(ctx.point_out, OrderType::WalkingUpright);
             }
-            s.push_back(passing_door());
+            s.passing_door();
         }
     }
-    s
 }
 
 // ─── Stairs door translation ────────────────────────────────────────
 
-fn translate_stairs(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
-    let mut s = VecDeque::new();
+fn translate_stairs(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
     let reverse = ctx.is_carrying_on_shoulders;
 
     // Determine inside/outside animations based on current movement
@@ -432,108 +379,57 @@ fn translate_stairs(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 
     if ctx.direct {
         // Outside -> inside
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_mid,
-            action: anim_outside,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_in,
-            action: anim_inside,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
+        s.push(ctx.point_mid, anim_outside, reverse, true, 0.0);
+        s.passing_door();
+        s.push(ctx.point_in, anim_inside, reverse, true, 0.0);
+        s.passing_door();
     } else {
         // Inside -> outside
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_mid,
-            action: anim_inside,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_out,
-            action: anim_outside,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
+        s.push(ctx.point_mid, anim_inside, reverse, true, 0.0);
+        s.passing_door();
+        s.push(ctx.point_out, anim_outside, reverse, true, 0.0);
+        s.passing_door();
     }
-    s
 }
 
 // ─── Translate default/gate/trap/reinforcement doors ────────────────
 
-fn translate_default(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
-    let mut s = VecDeque::new();
+fn translate_default(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
     let reverse = ctx.is_carrying_on_shoulders;
     let action = ctx.action;
 
     if !ctx.direct {
         // Inside -> outside
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_mid,
-            action,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
+        s.push(ctx.point_mid, action, reverse, true, 0.0);
+        s.passing_door();
 
         // Forced-crouch on exit sector
         if ctx.is_pc && ctx.sector_out_forces_crouch {
-            s.push_back(transition(OrderType::TransitionCrouchingDown));
-            s.push_back(walk(ctx.point_out, OrderType::WalkingCrouched));
+            s.transition(OrderType::TransitionCrouchingDown);
+            s.walk(ctx.point_out, OrderType::WalkingCrouched);
         } else {
-            s.push_back(DoorPassStep::Walk {
-                destination: ctx.point_out,
-                action,
-                reverse,
-                compute_direction: true,
-                tolerance: 0.0,
-            });
+            s.push(ctx.point_out, action, reverse, true, 0.0);
         }
-        s.push_back(passing_door());
+        s.passing_door();
     } else {
         // Outside -> inside
-        s.push_back(DoorPassStep::Walk {
-            destination: ctx.point_mid,
-            action,
-            reverse,
-            compute_direction: true,
-            tolerance: 0.0,
-        });
-        s.push_back(passing_door());
+        s.push(ctx.point_mid, action, reverse, true, 0.0);
+        s.passing_door();
 
         // Forced-crouch on entry sector
         if ctx.is_pc && ctx.sector_in_forces_crouch {
-            s.push_back(transition(OrderType::TransitionCrouchingDown));
-            s.push_back(walk(ctx.point_in, OrderType::WalkingCrouched));
+            s.transition(OrderType::TransitionCrouchingDown);
+            s.walk(ctx.point_in, OrderType::WalkingCrouched);
         } else {
-            s.push_back(DoorPassStep::Walk {
-                destination: ctx.point_in,
-                action,
-                reverse,
-                compute_direction: true,
-                tolerance: 0.0,
-            });
+            s.push(ctx.point_in, action, reverse, true, 0.0);
         }
-        s.push_back(passing_door());
+        s.passing_door();
     }
-    s
 }
 
 /// Return value from [`EngineInner::build_door_pass`].
 ///
-/// Pairs the built step chain with a post-install action-recursive
+/// Pairs the traversal identity with a post-translation action-recursive
 /// override.  When the PC exits a ladder/wall pass into a forced-crouch
 /// sector, the element's root action must be rewritten to
 /// `WalkingCrouched`.  The caller applies the override via
@@ -679,7 +575,14 @@ impl EngineInner {
             return;
         }
 
+        let door_type = door.door_type;
+        self.get_entity_mut(entity_id)
+            .expect("door instruction owner disappeared")
+            .position_iface_mut()
+            .set_door(door_index, direct);
         let mut built = self.build_door_pass(
+            seq_id,
+            elem_idx,
             entity_id,
             door_index,
             direct,
@@ -705,7 +608,7 @@ impl EngineInner {
         // (their step actions are explicit), and nothing propagates to
         // following elements — only the PC forced-crouch override below
         // walks the chain recursively.
-        let rewrite_element_action = match door.door_type {
+        let rewrite_element_action = match door_type {
             DoorType::LiftHigh | DoorType::LiftLow | DoorType::LiftHighCrenel => {
                 matches!(lift_type, Some(LiftType::Stairs) | Some(LiftType::Normal))
             }
@@ -724,48 +627,19 @@ impl EngineInner {
                 .sequence_manager
                 .set_action_recursive(seq_id, elem_idx, override_action);
         }
-        built
-            .pass
-            .preallocate_pending_order_ids(&mut self.orders.next_order_id);
-        let (initial_step, initial_order_id) = built
-            .pass
-            .pop_pending_step()
-            .expect("PassDoor translation has no initial step");
-        let initial_order_id =
-            initial_order_id.expect("fresh PassDoor translation has no initial order identity");
-        let DoorPassStep::Walk {
-            destination,
-            action,
-            reverse,
-            compute_direction,
-            tolerance,
-        } = initial_step
-        else {
-            panic!(
-                "PassDoor translation for owner {entity_id:?}, door {door_index} did not start with a Walk step"
-            );
-        };
-        built.pass.current_action = action;
-        built.pass.current_reverse = reverse;
-        self.install_initial_walk(
-            entity_id,
-            seq_id,
-            elem_idx,
-            destination,
-            action,
-            reverse,
-            compute_direction,
-            tolerance,
-            initial_order_id,
-            built.pass,
-            built.sets_passing_door_directly,
-        );
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
+        let actor = self
+            .world
+            .entities
+            .expect_actor_data_mut(entity_id, format_args!("door instruction owner"));
+        if built.sets_passing_door_directly {
+            actor.passing_door_directly = built.pass.position_direct;
+        }
+        actor.active_door_pass = Some(built.pass);
         tracing::debug!(
             entity = ?entity_id,
             door = %door_index,
             ?direct,
-            "PassDoor: started multi-step door pass"
+            "PassDoor: installed door order chain"
         );
     }
 }
@@ -786,12 +660,14 @@ pub(super) fn start_hulk_on(entity: &mut crate::element::Entity, speed: f32) {
 // ─── EngineInner methods ─────────────────────────────────────────────────
 
 impl EngineInner {
-    /// Build the complete door-pass step chain for the given door and actor.
+    /// Append the complete order chain and return its traversal identity.
     ///
     /// Dispatches to the appropriate translate function based on door type
     /// and lift type.
     fn build_door_pass(
-        &self,
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
         direct: bool,
@@ -1012,17 +888,28 @@ impl EngineInner {
                 | DoorType::LiftLow
         );
 
-        let steps = match door_type {
-            DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx),
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+            .expect("door translation element disappeared");
+        let mut orders = DoorOrders {
+            element,
+            next_id: &mut self.orders.next_order_id,
+        };
+        match door_type {
+            DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx, &mut orders),
             DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow => match lift_type {
-                Some(LiftType::Ladder) => translate_ladder(&ctx),
-                Some(LiftType::Wall) => translate_wall(&ctx),
-                Some(LiftType::Stairs) | Some(LiftType::Normal) => translate_stairs(&ctx),
+                Some(LiftType::Ladder) => translate_ladder(&ctx, &mut orders),
+                Some(LiftType::Wall) => translate_wall(&ctx, &mut orders),
+                Some(LiftType::Stairs) | Some(LiftType::Normal) => {
+                    translate_stairs(&ctx, &mut orders)
+                }
                 None => panic!(
                     "PassDoor owner {entity_id:?} door {door_index} is a lift door but sector {sector_in} has no lift type"
                 ),
             },
-            _ => translate_default(&ctx),
+            _ => translate_default(&ctx, &mut orders),
         };
 
         // When the PC exits a ladder/wall pass (non-direct) into a
@@ -1044,65 +931,12 @@ impl EngineInner {
                 door_index,
                 direct,
                 position_direct: direct,
-                steps,
-                preallocated_order_ids: VecDeque::new(),
                 triggers_fired: 0,
-                current_action: action,
-                current_reverse: false,
-                saved_action_state: None,
             },
             root_action: action,
             post_chain_action_recursive,
             sets_passing_door_directly,
         }
-    }
-
-    fn install_initial_walk(
-        &mut self,
-        entity_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        destination: MapPoint,
-        action: OrderType,
-        reverse: bool,
-        compute_direction: bool,
-        tolerance: f32,
-        order_id: std::num::NonZeroU32,
-        active_door_pass: ActiveDoorPass,
-        sets_passing_door_directly: bool,
-    ) {
-        let door_handle = active_door_pass.door_index;
-        let door_direction = active_door_pass.direct;
-        let mut order = crate::order::Order::new(action, destination.x, destination.y, order_id);
-        order.reverse = reverse;
-        order.compute_direction = compute_direction;
-        order.tolerance = tolerance;
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
-
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!(
-                "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
-            )
-        });
-        // The original game's translation installs the door identity before creating
-        // the translated order chain. Building containment observes that identity
-        // throughout the pre-trigger rail movement, even while the actor's
-        // sector still names the outdoor side.
-        entity
-            .position_iface_mut()
-            .set_door(door_handle, door_direction);
-        let actor = entity.actor_data_mut().unwrap_or_else(|| {
-            panic!(
-                "PassDoor initial walk for {entity_id:?} at {seq_id:?}/{elem_idx} lost its actor"
-            )
-        });
-        if sets_passing_door_directly {
-            actor.passing_door_directly = active_door_pass.position_direct;
-        }
-        actor.active_door_pass = Some(active_door_pass);
-        actor.sequence_element_started = true;
     }
 }
 
@@ -1112,7 +946,7 @@ impl EngineInner {
     /// Execute the PassDoor callback — change layer/sector and trigger
     /// building/lift callbacks.
     ///
-    /// Called when a [`DoorPassStep::PassingDoor`] step fires.
+    /// Called by the selected PassingDoor order.
     /// First call (trigger 0) changes layer/sector; subsequent calls
     /// re-enable anti-collision.
     pub(super) fn execute_pass_door(
@@ -1576,140 +1410,6 @@ impl EngineInner {
         // machine: the state *is* the patch's applied-ness, and the
         // visual *is* the transition animation.  The Rust enum is
         // driven off the same completion signal.
-    }
-
-    /// Commit the exact endpoint when the final door-pass order completes.
-    ///
-    /// Original's last door-rail movement has already written this position
-    /// before the NPC update tail runs. Keeping Rust's interpolated
-    /// pre-door coordinate until a later movement pass makes same-slot AI
-    /// callbacks observe the wrong side of the gate.
-    pub(super) fn commit_completed_door_pass_position(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        door_index: crate::gate::DoorIndex,
-        direct: bool,
-    ) {
-        let door = self
-            .script_domains
-            .interactables
-            .doors
-            .get(usize::from(door_index))
-            .unwrap_or_else(|| {
-                panic!("completed PassDoor for {entity_id:?} references missing door {door_index}")
-            });
-        let point = if direct {
-            door.point_in
-        } else {
-            door.point_out
-        };
-        let point = crate::coordinates::MapPoint::new(point.x, point.y);
-        // The final rail order normally reaches and snaps to the exact door
-        // endpoint before door passage runs. The original game's direct branch then
-        // changes only topology; it does not recompute any position
-        // representation.  Reconstructing world Y as `map_y + z` and then
-        // deriving map Y again as `world_y - z` is not bitwise idempotent at
-        // every magnitude and can manufacture a one-ULP movement on the next
-        // frame.  Keep the already-authoritative endpoint untouched.  The
-        // fallback below remains necessary for paths whose final rail order
-        // did not itself commit the endpoint.
-        if self
-            .get_entity(entity_id)
-            .is_some_and(|entity| entity.element_data().position_map() == point)
-        {
-            return;
-        }
-        let position = if direct {
-            // The direct door-passing branch changes topology but
-            // does not recompute all positions. The preceding door-rail
-            // movement therefore owns Z; snapping map XY must not project it
-            // through the currently installed plane a second time.
-            let elevation = self
-                .get_entity(entity_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "completed direct PassDoor for {entity_id:?} lost its owner before endpoint commit"
-                    )
-                })
-                .element_data()
-                .position()
-                .z;
-            let ground = crate::coordinates::GroundPoint::from_map_and_z(point, elevation);
-            super::special_motion::SpecialMovePosition::World(
-                crate::coordinates::WorldPoint3D::new(ground.x, ground.y, elevation),
-            )
-        } else {
-            // The original game's non-direct branch does recompute position, after
-            // installing the outside projection plane on building exits.
-            super::special_motion::SpecialMovePosition::Map(point)
-        };
-        self.finalize_special_move_position(
-            assets,
-            entity_id,
-            position,
-            None,
-            None,
-            (!direct).then_some(point),
-            "completed door pass",
-        );
-    }
-
-    pub(super) fn apply_completed_door_pass_lift_entry_state(
-        &mut self,
-        entity_id: EntityId,
-        door_index: crate::gate::DoorIndex,
-        direct: bool,
-    ) {
-        let door = self
-            .script_domains
-            .interactables
-            .doors
-            .get(usize::from(door_index))
-            .unwrap_or_else(|| {
-                panic!("completed PassDoor for {entity_id:?} references missing door {door_index}")
-            });
-        if !direct
-            || !matches!(
-                door.door_type,
-                DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow
-            )
-        {
-            return;
-        }
-        let target_sector = door.sector_in;
-        let sector = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(target_sector)))
-            .unwrap_or_else(|| {
-                panic!(
-                    "completed PassDoor for {entity_id:?}, door {door_index} references missing lift sector {target_sector}"
-                )
-            });
-        let lift_type = sector.lift_type.unwrap_or_else(|| {
-            panic!(
-                "completed PassDoor for {entity_id:?}, door {door_index} targets non-lift sector {target_sector}"
-            )
-        });
-        let posture = match lift_type {
-            LiftType::Wall => crate::element::Posture::OnWall,
-            LiftType::Ladder => crate::element::Posture::OnLadder,
-            _ => return,
-        };
-
-        let entity = self.get_entity_mut(entity_id).unwrap_or_else(|| {
-            panic!("completed PassDoor for door {door_index} lost owner {entity_id:?}")
-        });
-        entity.set_posture(posture);
-        entity
-            .actor_data_mut()
-            .unwrap_or_else(|| panic!("completed PassDoor owner {entity_id:?} is not an actor"))
-            .action_state = crate::element::ActionState::Moving;
-        tracing::debug!(
-            entity = ?entity_id,
-            sector = %target_sector,
-            ?posture,
-            "DoorPass: completed into lift, preserving climb state and facing"
-        );
     }
 
     /// Find the projection-area obstacle in `sector_number` on `layer`

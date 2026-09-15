@@ -135,8 +135,9 @@ impl EngineInner {
                             element.command,
                             element.state,
                             element.priority,
-                            element.postponed_element_index,
-                            element.cross_postponed,
+                            element
+                                .postponed
+                                .map(|reference| (reference.sequence_id, reference.element_index)),
                             manager.is_registered_to_go(sequence.id, element_index),
                             element
                                 .orders
@@ -207,7 +208,9 @@ impl EngineInner {
                                     .iter()
                                     .map(|order| (order.order_type, order.order_id, order.done))
                                     .collect::<Vec<_>>(),
-                                element.cross_postponed,
+                                element.postponed.map(|reference| {
+                                    (reference.sequence_id, reference.element_index)
+                                }),
                             )
                         })
                         .collect::<Vec<_>>()

@@ -189,40 +189,6 @@ fn post_load_fixups_aborts_midzoom() {
 }
 
 #[test]
-fn mercenary_formation_single_pc_lands_on_click() {
-    let click = crate::coordinates::map_pt(200.0, 300.0);
-    let dests = mercenary_formation_destinations(&[crate::coordinates::map_pt(50.0, 50.0)], click);
-    assert_eq!(dests.len(), 1);
-    assert_eq!(dests[0].x, click.x);
-    assert_eq!(dests[0].y, click.y);
-}
-
-#[test]
-fn mercenary_formation_preserves_relative_offsets() {
-    // 3 PCs in a horizontal line at (0,0), (50,0), (100,0).
-    // Centroid = (50, 0).  Click at (200, 300).
-    // Per-PC dests should preserve the (-50, 0), (0, 0), (+50, 0) offsets
-    // relative to the click point.
-    let pcs = [
-        crate::coordinates::map_pt(0.0, 0.0),
-        crate::coordinates::map_pt(50.0, 0.0),
-        crate::coordinates::map_pt(100.0, 0.0),
-    ];
-    let click = crate::coordinates::map_pt(200.0, 300.0);
-    let dests = mercenary_formation_destinations(&pcs, click);
-    assert_eq!(dests.len(), 3);
-    assert_eq!(dests[0], crate::coordinates::map_pt(150.0, 300.0));
-    assert_eq!(dests[1], crate::coordinates::map_pt(200.0, 300.0));
-    assert_eq!(dests[2], crate::coordinates::map_pt(250.0, 300.0));
-}
-
-#[test]
-fn mercenary_formation_empty_input() {
-    let dests = mercenary_formation_destinations(&[], crate::coordinates::map_pt(0.0, 0.0));
-    assert!(dests.is_empty());
-}
-
-#[test]
 fn group_formation_uses_original_pair_distance_bounds_and_integer_radius() {
     let three_candidates =
         circular_dispatch_candidate_points(3, crate::coordinates::map_pt(0.0, 0.0));
@@ -1363,8 +1329,11 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
 
         let sim = crate::sim_rng::test_context();
         let executed = engine.tick_actor_animation_for(&sim, &assets, attacker);
-        let executed = executed.expect("the selected WaitingSword order must execute");
-        assert_eq!(executed.order_type, waiting);
+        assert!(
+            executed.is_some(),
+            "the selected WaitingSword order must execute"
+        );
+        assert_eq!(engine.actor_order_type(attacker), Some(waiting));
         engine.tick_waiting_sword_execute_for(&sim, &assets, attacker);
 
         let strikes_before_manager: Vec<_> = engine

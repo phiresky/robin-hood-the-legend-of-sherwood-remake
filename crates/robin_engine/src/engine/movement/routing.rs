@@ -679,10 +679,7 @@ impl EngineInner {
             .and_then(|entity| {
                 let actor = entity.actor_data()?;
                 Some((
-                    actor
-                        .active_door_pass
-                        .as_ref()
-                        .map_or(order_action, |pass| pass.current_action),
+                    order_action,
                     actor.active_door_pass.as_ref().map(|pass| pass.door_index),
                     entity.element_data().sector(),
                     actor.execute_order_initialising,

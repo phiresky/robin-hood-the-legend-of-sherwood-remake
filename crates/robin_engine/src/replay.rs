@@ -153,7 +153,8 @@ pub struct ReplayHeader {
 /// Version 45 removes retained instruction handoff fields from actor state.
 /// Version 46 removes duplicated movement, shot, and ability execution trackers.
 /// Version 47 removes the unused entity-mutation counter marker from state hashes.
-pub const REPLAY_SCHEMA_VERSION: u32 = 47;
+/// Version 48 stores canonical sequence links and ordinary door-route orders.
+pub const REPLAY_SCHEMA_VERSION: u32 = 48;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

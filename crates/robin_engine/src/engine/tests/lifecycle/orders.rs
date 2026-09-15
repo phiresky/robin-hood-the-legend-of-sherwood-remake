@@ -437,7 +437,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     assert_eq!(selected.command, Command::Wait);
     let expected_order_id = selected.current_order().map(|order| order.order_id);
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.sprite().last_action, OrderType::BeingTied);
     assert_eq!(
@@ -473,8 +473,8 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     );
 
     let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    let mut assets = engine.test_runtime_assets();
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let entity = engine.get_entity(owner).unwrap();
     assert!(!entity.is_active());
@@ -508,7 +508,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     entity.element_data_mut().active = false;
     entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
     entity.element_data_mut().sprite = crate::sprite::Sprite::new(
-        std::sync::Arc::new(vec![script]),
+        std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
 
@@ -526,14 +526,14 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
         0,
     );
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
     let mut executed_idle = false;
     let mut forwarded_termination = false;
     for _ in 0..16 {
         let executed = engine.tick_actor_animation_for(&sim, &assets, animated);
         executed_idle |= executed.is_some();
-        forwarded_termination |= executed
-            .as_ref()
-            .is_some_and(|result| result.motion == MotionState::Terminated);
+        forwarded_termination |= executed == Some(MotionState::Terminated);
         if forwarded_termination {
             break;
         }
@@ -606,7 +606,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     );
 
     assert_eq!(
-        executed.map(|result| result.motion),
+        executed,
         Some(MotionState::InProgress),
         "BeingTied holds human execution even though tied humans carry the unconscious flag"
     );
@@ -863,17 +863,22 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         )
     };
     let mut selected_ability = None;
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim,
         &assets,
-        |_, _| {},
-        |_, _| {},
-        |_, selected_owner, _, _, _, ability, _| {
-            if selected_owner == owner {
-                selected_ability = Some(ability);
+        |engine, selected_owner| {
+            let ability = crate::abilities::selected_ability(
+                &engine.world.entities,
+                &engine.orders.sequence_manager,
+                selected_owner,
+            )
+            .map(|ability| (ability.sequence_id, ability.element_index, ability.order_id));
+            {
+                if selected_owner == owner {
+                    selected_ability = Some(ability);
+                }
             }
         },
-        |_, _, _| {},
     );
 
     assert_eq!(selected_ability, Some(None));
@@ -1359,7 +1364,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+                engine.tick_actor_owner_envelopes(&sim, &assets);
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1440,92 +1445,6 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         engine.orders.sequence_manager.sequences_iter().count(),
         sequence_count,
         "retaliation side effects must not repeat after terminal cleanup"
-    );
-}
-
-#[test]
-fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass() {
-    use crate::element::{Command, Posture};
-    use crate::order::{Order, OrderType};
-    use crate::sequence::SequenceElement;
-
-    let sim = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    // This fixture isolates owner identity; the real projectile terminal
-    // effect is covered by the production coordinator regression below.
-    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
-    let ability_order = Order::test_new(OrderType::ThrowingApple, 0.0, 0.0);
-    let ability_id = ability_order.order_id;
-    element.orders.push_back(ability_order);
-    element
-        .orders
-        .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let seq = {
-        let launch_assets = engine.test_runtime_assets();
-        engine.launch_element(&crate::sim_rng::test_context(), &launch_assets, element)
-    };
-    engine.select_sequence_element(owner, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(seq, 0)
-        .unwrap()
-        .orders
-        .front_mut()
-        .unwrap()
-        .done = true;
-    let initial = engine
-        .get_entity(owner)
-        .unwrap()
-        .element_data()
-        .sprite
-        .last_action;
-
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &sim,
-        &LevelAssets::new(),
-        |_, _| {},
-        |_, _| {},
-        |engine, selected_owner, _, _, _, ability, _| {
-            assert_eq!(
-                (selected_owner, ability),
-                (owner, Some((seq, 0, ability_id)))
-            );
-            engine
-                .orders
-                .sequence_manager
-                .get_element_mut(seq, 0)
-                .unwrap()
-                .pop_current_order();
-        },
-        |_, _, _| {},
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_action,
-        initial
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&engine.world.entities, owner)
-            .unwrap()
-            .2
-            .order_type,
-        OrderType::WaitingUpright
     );
 }
 

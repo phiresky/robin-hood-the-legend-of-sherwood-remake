@@ -528,20 +528,12 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
     let mut later_observed_final = false;
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &sim,
-        &assets,
-        |engine, owner| {
-            engine.tick_static_entity_hourglass_for(&sim, &assets, owner);
-            if owner == later {
-                let patch = &engine.script_domains.interactables.patches[0];
-                later_observed_final = patch.applied && !patch.in_transition;
-            }
-        },
-        |_, _| {},
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
-    );
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
+        if owner == later {
+            let patch = &engine.script_domains.interactables.patches[0];
+            later_observed_final = patch.applied && !patch.in_transition;
+        }
+    });
     assert!(
         later_observed_final,
         "later slot sees synchronous transition clearing and final-state application"

@@ -302,7 +302,7 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
 
     assert_eq!(
         engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
-        strikes::SweepTickPhase::Initialized
+        Some(crate::sprite::MotionState::Done)
     );
     let pending = &engine
         .get_entity(attacker)

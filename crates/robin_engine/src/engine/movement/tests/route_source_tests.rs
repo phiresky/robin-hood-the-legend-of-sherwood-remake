@@ -11,19 +11,14 @@ fn pc_with_door_pass(triggers_fired: u8) -> Entity {
 }
 
 fn pc_with_door_pass_directions(triggers_fired: u8, direct: bool, position_direct: bool) -> Entity {
-    Entity::Pc(ActorPc {
+    let mut entity = Entity::Pc(ActorPc {
         element: ElementData::default(),
         actor: ActorData {
             active_door_pass: Some(ActiveDoorPass {
                 door_index: DoorIndex::new(53).expect("valid door index"),
                 direct,
                 position_direct,
-                steps: Default::default(),
-                preallocated_order_ids: Default::default(),
                 triggers_fired,
-                current_action: OrderType::WalkingUpright,
-                current_reverse: false,
-                saved_action_state: None,
             }),
             installed_order: Some(InstalledActorOrder {
                 order_id: std::num::NonZeroU32::new(1).unwrap(),
@@ -33,7 +28,13 @@ fn pc_with_door_pass_directions(triggers_fired: u8, direct: bool, position_direc
         },
         human: HumanData::default(),
         pc: PcData::default(),
-    })
+    });
+    if triggers_fired == 0 {
+        entity
+            .position_iface_mut()
+            .set_door(DoorHandle::new(53).expect("valid door index"), direct);
+    }
+    entity
 }
 
 #[test]
@@ -56,6 +57,7 @@ fn route_source_drops_active_door_after_pass_callback() {
 #[test]
 fn route_source_does_not_resurrect_postponed_door_under_unrelated_order() {
     let mut pc = pc_with_door_pass(0);
+    pc.position_iface_mut().clear_door();
     pc.actor_data_mut().unwrap().installed_order = Some(InstalledActorOrder {
         order_id: std::num::NonZeroU32::new(2).unwrap(),
         order_type: OrderType::WaitingUpright,

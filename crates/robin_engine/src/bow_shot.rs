@@ -15,14 +15,9 @@
 //!    and [`compute_trajectory_ballistic`], and spawns the arrow via
 //!    [`spawn_arrow`].
 //!
-//! 3. [`tick_arrows`] runs every engine tick and advances each arrow
-//!    along its precomputed ballistic trajectory (popping waypoints
-//!    from the trajectory list, interpolating between them).  When the
-//!    arrow comes within [`HIT_DISTANCE`] of any human, or the
-//!    trajectory runs out, it returns an [`ArrowTickResult`].  The
-//!    engine layer turns that into a `ReceiveArrowDamage` sequence
-//!    element so damage and death animations follow the normal
-//!    sequence-manager path.
+//! 3. Each projectile advances at its position in the entity update order.
+//!    Collision queries read live entities, and impact callbacks immediately
+//!    launch damage or target activation before the next entity updates.
 //!
 //! ## UI action-slot refresh
 //!
@@ -60,17 +55,15 @@ pub(crate) use collision::{
     refresh_retained_shield_obstacle, shield_obstacle_from_serialized_state,
 };
 pub use projectile::{
-    APEX_BEGGAR_COIN, APEX_COIN, ArrowTickResult, BOUNCE_COIN, COIN_SCATTER_ATTEMPTS,
-    COIN_SCATTER_MIN, COIN_SCATTER_RANGE, MASS_COIN, NUMBER_OF_COINS_IN_PURSE, NUMBER_OF_WASPS,
-    SpawnArrowParams, apply_arrow_hit, spawn_apple, spawn_arrow, spawn_coin, spawn_net,
-    spawn_purse, spawn_stone, spawn_wasp, spawn_wasp_nest, tick_arrows, tick_existing_projectile,
+    APEX_BEGGAR_COIN, APEX_COIN, BOUNCE_COIN, COIN_SCATTER_ATTEMPTS, COIN_SCATTER_MIN,
+    COIN_SCATTER_RANGE, MASS_COIN, NUMBER_OF_COINS_IN_PURSE, NUMBER_OF_WASPS, SpawnArrowParams,
+    apply_arrow_hit, spawn_apple, spawn_arrow, spawn_coin, spawn_net, spawn_purse, spawn_stone,
+    spawn_wasp, spawn_wasp_nest,
 };
 pub(crate) use projectile::{
-    make_arrow_falling_down, projectile_shield_holder, refresh_arrow_after_previous_hourglass,
-    tick_arrow_in_actor_order_with_diplomacy, tick_existing_projectile_in_actor_order,
+    make_arrow_falling_down, projectile_human_victim, projectile_shield_holder,
+    projectile_target_victim, refresh_arrow_after_previous_hourglass,
 };
-#[cfg(test)]
-use projectile::{tick_arrow, tick_arrow_in_actor_order};
 use trajectory::compute_trajectory_ballistic_bounce;
 pub use trajectory::{
     TrajectoryObstacleCheck, apply_projectile_landing_resolution, bind_trajectory_obstacle,
@@ -131,7 +124,7 @@ pub const HIT_DISTANCE: f32 = 15.0;
 /// Experience points awarded for a bow kill.
 pub const BOW_KILL_EXPERIENCE_POINTS: u32 = 20;
 
-fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) {
+pub(crate) fn set_projectile_animation(proj: &mut ElementProjectile, animation: Animation) {
     proj.object.animation = animation;
     if proj.element.sprite.current_conversion().is_empty() {
         return;

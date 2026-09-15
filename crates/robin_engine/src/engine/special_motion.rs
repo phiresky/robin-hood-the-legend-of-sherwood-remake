@@ -9,9 +9,7 @@
 
 use super::{EngineInner, LevelAssets};
 use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::element::{ActiveDoorPass, EntityId};
-use crate::order::{Order, OrderType};
-use crate::sequence::SequenceId;
+use crate::element::EntityId;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum SpecialMovePosition {
@@ -244,63 +242,5 @@ impl EngineInner {
         );
 
         self.update_opponents_jump_lines(assets, entity_id);
-    }
-
-    /// Install a movement order that was produced by a special-motion
-    /// translator such as PassDoor/lift/wall/stairs.
-    ///
-    /// The original game still executes these as normal actor movement orders after the
-    /// translator has selected the exact step. Selecting the successor does
-    /// not execute it: posture/action-state changes belong to the successor's
-    /// own actor slot and are therefore deliberately not applied here.
-    pub(super) fn install_special_walk_order(
-        &mut self,
-        entity_id: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
-        order_id: std::num::NonZeroU32,
-        destination: MapPoint,
-        action: OrderType,
-        reverse: bool,
-        compute_direction: bool,
-        tolerance: f32,
-        active_door_pass: Option<ActiveDoorPass>,
-        context: &'static str,
-    ) {
-        let mut order = Order::new(action, destination.x, destination.y, order_id);
-        order.reverse = reverse;
-        order.compute_direction = compute_direction;
-        order.tolerance = tolerance;
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
-
-        if let Some(entity) = self.world.entities.get_mut(entity_id) {
-            if let Some(actor) = entity.actor_data_mut() {
-                if let Some(dp) = active_door_pass {
-                    actor.passing_door_directly = dp.position_direct;
-                    actor.active_door_pass = Some(dp);
-                }
-            }
-        } else {
-            tracing::warn!(
-                ?entity_id,
-                ?seq_id,
-                elem_idx,
-                context,
-                "special walk order installed for missing entity"
-            );
-        }
-
-        tracing::debug!(
-            entity = ?entity_id,
-            ?seq_id,
-            elem_idx,
-            ?action,
-            target_x = destination.x,
-            target_y = destination.y,
-            context,
-            "special walk order installed"
-        );
     }
 }

@@ -99,12 +99,7 @@ fn inactive_ale_approach_faces_current_bottle_position() {
         engine.unavailable_ale_position(&assets, owner),
         Some(engine.observation_object_position(bottle))
     );
-    engine.execute_ai_enemy_observation(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        EnemyObservation::AleApproach { arrived: true },
-    );
+    engine.execute_ai_ale_approach(&crate::sim_rng::test_context(), &assets, owner, true);
     let expected_direction =
         crate::position_interface::vector_to_sector_0_to_15_iso(300.0, 200.0) as u32;
     assert!(engine.orders.sequence_manager.sequences_iter().flat_map(|s| s.elements.iter())
@@ -185,12 +180,7 @@ fn arrow_reaction_keeps_rank_and_existing_search_branches_distinct() {
         });
         ai.base.timer_is_running = false;
         let entry_substate = ai.base.current_substate;
-        engine.execute_ai_enemy_observation(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            EnemyObservation::Arrow { origin },
-        );
+        engine.execute_ai_received_arrow(&crate::sim_rng::test_context(), &assets, owner, origin);
         let ai = engine.observation_ai(owner);
         assert_eq!(ai.base.my_reconnaissance_report.seek_position, origin);
         assert_eq!(ai.base.current_substate, expected.unwrap_or(entry_substate));
@@ -232,12 +222,7 @@ fn ale_timer_reads_retained_inactive_bottle_instead_of_cached_seek_position() {
     crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
         profile.beer = 1
     });
-    engine.execute_ai_enemy_observation(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        EnemyObservation::AleReaction,
-    );
+    engine.execute_ai_ale_reaction(&crate::sim_rng::test_context(), &assets, owner);
     let ai = engine.observation_ai(owner);
     assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
     assert_eq!(
@@ -359,13 +344,11 @@ fn door_position(engine: &mut EngineInner, actor: EntityId, point: MapPoint) {
 #[test]
 fn enemy_sighting_uses_live_geometry_without_detection_capture() {
     let (mut engine, assets, owner, target) = fixture();
-    engine.execute_ai_enemy_observation(
+    engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
-        EnemyObservation::Enemy {
-            target: target.index(),
-        },
+        target.index(),
     );
     let ai = engine
         .world
@@ -411,13 +394,11 @@ fn moving_sighting_approach_radius_uses_raw_stretched_world_distance() {
             .actor_data_mut()
             .unwrap()
             .action_state = ActionState::MovingFast;
-        engine.execute_ai_enemy_observation(
+        engine.execute_ai_seen_enemy(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            EnemyObservation::Enemy {
-                target: target.index(),
-            },
+            target.index(),
         );
         let ai = engine
             .world
@@ -450,13 +431,11 @@ fn near_sighting_gate_uses_world_y_and_elevation() {
         .entities
         .expect_enemy_ai_mut(owner, format_args!("near sighting"))
         .combat_trainer = true;
-    engine.execute_ai_enemy_observation(
+    engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
-        EnemyObservation::Enemy {
-            target: target.index(),
-        },
+        target.index(),
     );
     assert_ne!(
         engine
@@ -483,13 +462,11 @@ fn near_sighting_gate_reads_raw_target_during_door_pass() {
         WorldPoint3D::new(560.9536, 1552.7451, 130.001),
     );
     door_position(&mut engine, target, MapPoint::new(663.75, 1421.5));
-    engine.execute_ai_enemy_observation(
+    engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
-        EnemyObservation::Enemy {
-            target: target.index(),
-        },
+        target.index(),
     );
     assert_eq!(
         engine
@@ -510,12 +487,7 @@ fn shadow_changes_music_alert_without_accelerating_view_refresh() {
         y: 400.0,
         ..engine.live_ai_position(owner)
     };
-    engine.execute_ai_enemy_observation(
-        &crate::sim_rng::test_context(),
-        &assets,
-        owner,
-        EnemyObservation::Shadow { position },
-    );
+    engine.execute_ai_seen_shadow(&crate::sim_rng::test_context(), &assets, owner, position);
     let ai = engine
         .world
         .entities
@@ -552,13 +524,11 @@ fn runtime_objects_trigger_reactions_but_bonus_variants_are_ignored() {
                 ..Default::default()
             },
         }));
-        engine.execute_ai_enemy_observation(
+        engine.execute_ai_seen_object(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            EnemyObservation::Object {
-                target: object.index(),
-            },
+            object.index(),
         );
         let ai = engine
             .world
@@ -652,13 +622,11 @@ fn moving_sighting_rereads_target_after_state_callback() {
         .as_mut()
         .unwrap()
         .bind_actor(ScriptHandleCodec::actor_handle(owner), "MoveObserved");
-    engine.execute_ai_enemy_observation(
+    engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
         owner,
-        EnemyObservation::Enemy {
-            target: target.index(),
-        },
+        target.index(),
     );
     let ai = engine
         .world

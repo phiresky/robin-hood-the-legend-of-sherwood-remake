@@ -797,7 +797,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         pc_id: EntityId,
-    ) -> bool {
+    ) -> Option<crate::sprite::MotionState> {
         const DISTANCE_LISTEN: f32 = 750.0;
         const TIME_LISTEN_WAIT: u32 = 25;
         // FrozenAll is volatile script state and Original samples it inside
@@ -813,27 +813,20 @@ impl EngineInner {
         //    and drive the `LISTENING` sprite while deliberately ignoring its
         //    completion state. On the frame the countdown reaches 0,
         //    fire the one-shot blip reveal + FX-target `Heard()`
-        //    callback (below) and advance to the exit-transition order.
+        //    callback (below) and return termination to the actor update.
         //
         // The action state stays `Listening` through the
         // countdown — the exit transition in owner-local `tick_ability`
         // will flip it back to `Waiting`.
-        #[derive(Clone, Copy)]
-        struct FiringListener {
-            position: crate::coordinates::WorldPoint3D,
-            pc_id: EntityId,
-            seq_id: crate::sequence::SequenceId,
-            elem_idx: usize,
-        }
         let Some(ability) = crate::abilities::selected_ability(
             &self.world.entities,
             &self.orders.sequence_manager,
             pc_id,
         )
         .filter(|ability| ability.order_type == crate::order::OrderType::Listening) else {
-            return false;
+            return None;
         };
-        let firing_listener = {
+        let listener_position = {
             let pc = match self.world.entities.get_mut(pc_id) {
                 Some(Entity::Pc(pc)) => pc,
                 Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
@@ -873,33 +866,18 @@ impl EngineInner {
                 // Player-character execution deliberately discards
                 // action processing's start/done result for listening and returns
                 // an in-progress result on every nonterminal countdown tick.
-                // The actor continuation stores that wrapper result, not the
-                // raw sprite edge.
-                // The owner coordinator latches the specialized Execute
-                // result from `last_motion_state` after this helper returns.
-                // Store the PC wrapper's authoritative result there; merely
-                // changing `continuation` here would be overwritten by the
-                // raw sprite START/DONE edge later in the same actor slot.
-                pc.element.sprite.last_motion_state = Some(crate::sprite::MotionState::InProgress);
-                return false;
+                return Some(crate::sprite::MotionState::InProgress);
             }
             // Countdown hit 0 — fire the one-shot reveal and
             // advance the phase so owner-local `tick_ability` plays the
             // exit transition next.
-            let fl = FiringListener {
-                pc_id,
-                position: pc.element.position(),
-                seq_id: ability.sequence_id,
-                elem_idx: ability.element_index,
-            };
             tracing::debug!(
                 pc = pc_id.index(),
                 "Listen: one-shot reveal fired after TIME_LISTEN_WAIT frames"
             );
-            fl
+            pc.element.position()
         };
 
-        let listener = firing_listener;
         {
             // The original game captures the size once, then resolves each live slot and
             // applies blip reveals and hearing synchronously in that mixed order.
@@ -912,7 +890,7 @@ impl EngineInner {
                     continue;
                 };
                 let elem = entity.element_data();
-                if listen_distance_squared(listener.position, elem.position())
+                if listen_distance_squared(listener_position, elem.position())
                     >= DISTANCE_LISTEN * DISTANCE_LISTEN
                 {
                     continue;
@@ -962,7 +940,7 @@ impl EngineInner {
                         "LISTEN target {entity_id:?} has no required script class"
                     );
                     let target_handle = crate::natives::ScriptHandleCodec::actor_handle(entity_id);
-                    let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(listener.pc_id);
+                    let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc_id);
                     self.call_script_vm(
                         sim,
                         assets,
@@ -977,20 +955,8 @@ impl EngineInner {
                     observe_heard_callback(self, entity_id);
                 }
             }
-            self.do_next_order(sim, assets, listener.seq_id, listener.elem_idx);
-            let exit_order_type = self
-                .orders
-                .sequence_manager
-                .get_element(listener.seq_id, listener.elem_idx)
-                .and_then(|element| element.current_order())
-                .map(|order| order.order_type)
-                .unwrap_or_else(|| panic!("Listen countdown did not expose its exit order"));
-            assert_eq!(
-                exit_order_type,
-                crate::order::OrderType::TransitionListeningWaitingUpright
-            );
         }
-        true
+        Some(crate::sprite::MotionState::Terminated)
     }
 
     /// Strict live discovery refresh for one bonus-owned

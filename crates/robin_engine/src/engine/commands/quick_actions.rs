@@ -1893,14 +1893,14 @@ impl EngineInner {
             element.script_driven = true;
             element.orders.clear();
             element.num_transition_orders = 0;
-            element.cross_postponed = None;
+            element.postponed = None;
         }
         if let Some(sequence) = &mut seek {
             for element in &mut sequence.elements {
                 element.script_driven = true;
                 element.orders.clear();
                 element.num_transition_orders = 0;
-                element.cross_postponed = None;
+                element.postponed = None;
             }
             self.append_posture_recovery(pc, sequence);
         } else {

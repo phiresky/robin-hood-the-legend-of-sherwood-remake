@@ -191,160 +191,40 @@ impl EngineInner {
             return Vec::new();
         }
 
-        // Match group movement's click-sector reference, including the
-        // committed far side of an in-progress non-interruptible door pass.
-        let route_sources: Vec<(EntityId, MapPoint, u16)> = pc_ids
-            .iter()
-            .map(|&pc_id| {
-                let entity = self
-                    .get_entity(pc_id)
-                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"));
-                let (position, _sector, layer) = group_move_route_source(
-                    self,
-                    pc_id,
-                    entity,
-                    &self.script_domains.interactables.doors,
-                );
-                (pc_id, position, layer)
-            })
-            .collect();
-        let src_layer = route_sources[0].2;
-        let reference = route_sources[0].1;
-
-        let hit = self
-            .world
-            .fast_grid
-            .get_sector_screen(click_point, reference);
-        let selected_grid_sector = hit
-            .sector_idx
-            .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)));
-        let GroupMoveClick {
-            is_lift_click,
-            is_jump_click,
-            jump_underlying_sector,
-            clicked_door_index: _,
-            is_door_click: _,
-            bypass_formation_authorization,
-        } = self.classify_group_move_click(
-            selected_grid_sector,
-            click_point,
-            goal_override,
-            goal_sector_index_override,
-            door_route_override,
-        );
-        let (goal_sector, goal_layer) = group_move_route_goal(goal_override, hit.sector, hit.layer);
-        let goal_sector_index = resolve_group_move_route_goal_index(
-            goal_override,
-            goal_sector_index_override,
-            hit.sector,
-            hit.sector_idx,
-            hit.layer,
-            selected_grid_sector,
-            &self.world.fast_grid.level,
-        );
-        let (effective_click, effective_layer) = if goal_override.is_some() {
-            (click_point, goal_layer)
-        } else if hit.is_valid_for_move(&self.world.fast_grid) || is_jump_click {
-            (click_point, hit.layer)
-        } else {
-            (
-                self.snap_to_nearest_walkable(assets, click_point, src_layer)
-                    .unwrap_or(click_point),
-                src_layer,
-            )
-        };
-
-        let pc_positions: Vec<MapPoint> = pc_ids
-            .iter()
-            .map(|&pc_id| {
-                self.get_entity(pc_id)
-                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
-                    .element_data()
-                    .position_map()
-            })
-            .collect();
-        let n = pc_positions.len() as f32;
-        let mut center_x = pc_positions.iter().map(|point| point.x).sum::<f32>();
-        let mut center_y = pc_positions.iter().map(|point| point.y).sum::<f32>();
-        let reciprocal = 1.0f32 / n;
-        center_x *= reciprocal;
-        center_y *= reciprocal;
-        let center = MapPoint::new(center_x, center_y);
-        let compact = uses_mercenary_group_formation(&pc_positions);
-        let circular_destinations = (!compact).then(|| {
-            self.authorized_circular_group_destinations(
+        let plan = self
+            .group_move_click_plan(
+                assets,
                 pc_ids,
-                &pc_positions,
-                effective_click,
-                effective_layer,
-                is_lift_click,
-                bypass_formation_authorization,
+                click_point,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                &[],
+                &[],
             )
-        });
+            .expect("nonempty group has a route-source position");
+        let formation = self.group_move_formation_slots(pc_ids, None, &plan);
 
-        pc_ids
-            .iter()
-            .enumerate()
-            .map(|(index, &actor)| {
-                let entity = self
-                    .get_entity(actor)
-                    .unwrap_or_else(|| panic!("selected group-move actor {actor:?} is missing"));
-                let destination = if compact {
-                    let position = entity.position_iface();
-                    let mut bbox = group_move_mercenary_box(
-                        *position.get_move_box_map(),
-                        *position.get_move_box(),
-                        entity.element_data().position_map(),
-                        center,
-                        effective_click,
-                        is_lift_click,
-                    );
-                    let authorized = bypass_formation_authorization
-                        || self.world.fast_grid.find_authorized_position_toward(
-                            &mut bbox,
-                            effective_click,
-                            effective_layer,
-                        );
-                    authorized.then(|| bbox.center())
-                } else {
-                    circular_destinations
-                        .as_ref()
-                        .expect("spread group must have circular destinations")
-                        .0[index]
-                };
-                let Some(destination) = destination else {
-                    return PlannedRecordedGroupMoveOutcome::Unauthorized { actor };
-                };
-
-                let route = if is_jump_click {
-                    let (sector, sector_index, layer) = jump_underlying_sector.unwrap_or_else(|| {
-                        panic!(
-                            "recorded jump group move for {actor:?} has no underlying goal sector"
-                        )
-                    });
-                    recorded_qa_move_route(sector, sector_index, layer)
-                } else {
-                    recorded_qa_move_route(
-                        goal_sector.unwrap_or_else(|| {
-                            panic!(
-                                "recorded group move for {actor:?} has no resolved goal sector"
-                            )
-                        }),
-                        goal_sector_index.unwrap_or_else(|| {
-                            panic!(
-                                "recorded group move for {actor:?} has no exact goal-sector identity"
-                            )
-                        }),
-                        effective_layer,
-                    )
-                };
-                PlannedRecordedGroupMoveOutcome::Resolved(PlannedRecordedGroupMove {
-                    actor,
-                    destination,
-                    route,
-                })
-            })
-            .collect()
+        pc_ids.iter().enumerate().map(|(index, &actor)| {
+            let Some(destination) = self.resolve_group_move_destination(&plan, &formation, index) else {
+                return PlannedRecordedGroupMoveOutcome::Unauthorized { actor };
+            };
+            // Recording retains the jump's underlying sector and the formation
+            // destination; live execution may instead approach a jump line.
+            let route = if plan.is_jump_click {
+                let (sector, sector_index, layer) = plan.jump_underlying_sector.unwrap_or_else(|| {
+                    panic!("recorded jump group move for {actor:?} has no underlying goal sector")
+                });
+                recorded_qa_move_route(sector, sector_index, layer)
+            } else {
+                recorded_qa_move_route(
+                    plan.goal_sector.expect("recorded group move has no resolved goal sector"),
+                    plan.route_goal_sector_index.expect("recorded group move has no exact goal-sector identity"),
+                    plan.effective_layer,
+                )
+            };
+            PlannedRecordedGroupMoveOutcome::Resolved(PlannedRecordedGroupMove { actor, destination, route })
+        }).collect()
     }
 
     /// Issue movement orders for a group of selected PCs around a single
@@ -517,7 +397,7 @@ impl EngineInner {
     /// classification. `None` means no route-source positions were collected;
     /// the group move then stops.
     fn group_move_click_plan(
-        &mut self,
+        &self,
         assets: &LevelAssets,
         pc_ids: &[EntityId],
         click_point: MapPoint,
@@ -656,66 +536,21 @@ impl EngineInner {
             },
         );
 
-        let (
-            goal_sector,
-            effective_click,
-            effective_layer,
-            is_valid,
-            is_lift_click,
-            is_door_click,
-            is_jump_click,
-            clicked_jump_sector_idx,
-            jump_underlying_sector,
-            clicked_door_index,
-        ) = if goal_override.is_some() {
-            (
-                route_goal_sector,
-                click_point,
-                route_goal_layer,
-                true,
-                is_lift_click,
-                is_door_click,
-                is_jump_click,
-                if is_jump_click { hit.sector_idx } else { None },
-                jump_underlying_sector,
-                clicked_door_index,
-            )
+        let is_valid = goal_override.is_some() || hit.is_valid_for_move(&self.world.fast_grid);
+        let (effective_click, effective_layer) = if goal_override.is_some() {
+            (click_point, route_goal_layer)
+        } else if is_valid || is_jump_click {
+            (click_point, hit.layer)
         } else {
-            let is_valid = hit.is_valid_for_move(&self.world.fast_grid);
-
-            // ── Door/Drawbridge click shortcut ──
-            //
-            // When the click hits a door sector, bypass the walkability
-            // snap on formation slots.  Per-PC routing must also skip
-            // `snap_click_to_walkable` so the destination stays in the
-            // door sector and the gate-A* path routes through the
-            // door's entry point (the door sector itself is not a
-            // motion area).
-            // Door index of the clicked door sector, if any.  Used to
-            // route the per-PC gate search via `find_path_to_door` and
-            // emit a `GoalShape::Door` terminal element.
-            let (effective_click, effective_layer) = if is_valid || is_jump_click {
-                (click_point, hit.layer)
-            } else {
-                let snapped = self.snap_to_nearest_walkable(assets, click_point, src_layer);
-                (snapped.unwrap_or(click_point), src_layer)
-            };
             (
-                hit.sector,
-                effective_click,
-                effective_layer,
-                is_valid,
-                is_lift_click,
-                is_door_click,
-                is_jump_click,
-                if is_jump_click { hit.sector_idx } else { None },
-                jump_underlying_sector,
-                clicked_door_index,
+                self.snap_to_nearest_walkable(assets, click_point, src_layer)
+                    .unwrap_or(click_point),
+                src_layer,
             )
         };
         Some(GroupMoveClickPlan {
             positions,
-            goal_sector,
+            goal_sector: route_goal_sector,
             route_goal_sector_index,
             effective_click,
             effective_layer,
@@ -723,7 +558,7 @@ impl EngineInner {
             is_lift_click,
             is_door_click,
             is_jump_click,
-            clicked_jump_sector_idx,
+            clicked_jump_sector_idx: is_jump_click.then_some(hit.sector_idx).flatten(),
             jump_underlying_sector,
             clicked_door_index,
             bypass_formation_authorization,
@@ -734,7 +569,7 @@ impl EngineInner {
     /// Formation slots around the click point: explicit destinations,
     /// mercenary formation, or authorized circular dispatch.
     fn group_move_formation_slots(
-        &mut self,
+        &self,
         pc_ids: &[EntityId],
         explicit_destinations: Option<&[MapPoint]>,
         plan: &GroupMoveClickPlan,
@@ -784,10 +619,7 @@ impl EngineInner {
             if uses_mercenary_group_formation(&pc_positions) {
                 (
                     Some(MapPoint::new(cx, cy)),
-                    mercenary_formation_destinations(&pc_positions, effective_click)
-                        .into_iter()
-                        .map(Some)
-                        .collect(),
+                    Vec::new(),
                     (0..pc_ids.len()).collect(),
                 )
             } else {
@@ -819,95 +651,61 @@ impl EngineInner {
         ctx: &GroupMoveRouteCtx<'_>,
         dispatch_index: usize,
     ) -> Option<GroupMovePcRoute> {
-        let GroupMoveRouteCtx {
-            plan:
-                GroupMoveClickPlan {
-                    ref positions,
-                    goal_sector,
-                    route_goal_sector_index,
-                    effective_click,
-                    effective_layer,
-                    is_lift_click,
-                    bypass_formation_authorization,
-                    ..
-                },
-            formation:
-                GroupMoveFormation {
-                    mercenary_center,
-                    ref dests,
-                    ..
-                },
-            ..
-        } = *ctx;
-        let (pc_id, _, _, _) = &positions[dispatch_index];
-        let formation_dest = &dests[dispatch_index];
-        let Some(formation_dest) = formation_dest.as_ref() else {
+        let plan = &ctx.plan;
+        let pc_id = plan.positions[dispatch_index].0;
+        let Some(dest) = self.resolve_group_move_destination(plan, &ctx.formation, dispatch_index)
+        else {
             self.hero_speaking(
                 assets,
-                *pc_id,
+                pc_id,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             return None;
         };
-        let owner_is_pc = self
-            .get_entity(*pc_id)
-            .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
-            .is_pc();
-        // Compact-group placement is authorized exactly once, before
-        // movement execution, using the box produced by Original's ordered
-        // `box - center + click` translations. Reconstructing a point
-        // first and then translating the box is algebraically equivalent
-        // but changes f32 rounding at path-goal boundaries.
-        let mercenary_dest;
-        let dest = if let Some(center) = mercenary_center {
-            let Some(entity) = self.get_entity(*pc_id) else {
-                panic!("selected group-move actor {pc_id:?} is missing");
-            };
-            let position = entity.position_iface();
-            let live_move_box_map = *position.get_move_box_map();
-            let upright_move_box = *position.get_move_box();
-            let actor_position = entity.element_data().position_map();
-            let mut bbox = group_move_mercenary_box(
-                live_move_box_map,
-                upright_move_box,
-                actor_position,
-                center,
-                effective_click,
-                is_lift_click,
-            );
-            let authorized = if bypass_formation_authorization {
-                true
-            } else {
-                self.world.fast_grid.find_authorized_position_toward(
-                    &mut bbox,
-                    effective_click,
-                    effective_layer,
-                )
-            };
-            if !authorized {
-                self.hero_speaking(
-                    assets,
-                    *pc_id,
-                    crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                );
-                return None;
-            }
-            mercenary_dest = bbox.center();
-            &mercenary_dest
-        } else {
-            formation_dest
-        };
-        let pc_goal_sector = goal_sector;
-        let pc_goal_sector_index = route_goal_sector_index;
-        let pc_effective_layer = effective_layer;
         Some(GroupMovePcRoute {
             dispatch_index,
-            dest: *dest,
-            owner_is_pc,
-            pc_goal_sector,
-            pc_goal_sector_index,
-            pc_effective_layer,
+            dest,
+            owner_is_pc: self
+                .get_entity(pc_id)
+                .expect("selected group-move actor is missing")
+                .is_pc(),
+            pc_goal_sector: plan.goal_sector,
+            pc_goal_sector_index: plan.route_goal_sector_index,
+            pc_effective_layer: plan.effective_layer,
         })
+    }
+
+    /// Resolve compact slots from the actor's live box at dispatch time.
+    /// Circular slots were authorized together before dispatch began.
+    fn resolve_group_move_destination(
+        &self,
+        plan: &GroupMoveClickPlan,
+        formation: &GroupMoveFormation,
+        dispatch_index: usize,
+    ) -> Option<MapPoint> {
+        let Some(center) = formation.mercenary_center else {
+            return formation.dests[dispatch_index];
+        };
+        let actor = plan.positions[dispatch_index].0;
+        let entity = self
+            .get_entity(actor)
+            .expect("selected group-move actor is missing");
+        let position = entity.position_iface();
+        let mut bbox = group_move_mercenary_box(
+            *position.get_move_box_map(),
+            *position.get_move_box(),
+            entity.element_data().position_map(),
+            center,
+            plan.effective_click,
+            plan.is_lift_click,
+        );
+        let authorized = plan.bypass_formation_authorization
+            || self.world.fast_grid.find_authorized_position_toward(
+                &mut bbox,
+                plan.effective_click,
+                plan.effective_layer,
+            );
+        authorized.then(|| bbox.center())
     }
 
     /// Jump-sector click: authorize the slot, then either record the QA
@@ -1909,6 +1707,219 @@ impl EngineInner {
             clicked_door_index,
             is_door_click,
             bypass_formation_authorization,
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn recorded_jump_slots_match_live_resolution_and_keep_circle_dispatch_order() {
+        use crate::coordinates::MoveBox;
+        use crate::element::Posture;
+        use crate::engine::test_support::actors::TestActor;
+        use crate::sector::{SectorNumber, SectorType};
+
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(16, 16);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let mut sector = crate::fast_find_grid::GridSector {
+            points: vec![
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(800.0, 0.0),
+                MapPoint::new(800.0, 800.0),
+                MapPoint::new(0.0, 800.0),
+            ],
+            bounding_box: MapBBox::from_corners(
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(800.0, 800.0),
+            ),
+            sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
+            layer: 0,
+            sector_number: SectorNumber::new(1),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+        let underlying = crate::fast_find_grid::SectorIndex::new(
+            engine.world.fast_grid_mut().add_sector(sector.clone(), 0),
+        )
+        .unwrap();
+        sector.sector_number = SectorNumber::new(2);
+        sector.sector_type = SectorType::MOUSE | SectorType::JUMP;
+        sector.underlying_sector = Some(underlying);
+        engine
+            .world
+            .fast_grid_mut()
+            .level_mut()
+            .jump_lines
+            .push(crate::jump_line::JumpLine::new(
+                MapPoint::new(380.0, 400.0),
+                MapPoint::new(420.0, 400.0),
+                0.0,
+                0.0,
+            ));
+        sector
+            .jump_line_indices
+            .push(crate::jump_line::JumpLineIndex::new(0).unwrap());
+        engine.world.fast_grid_mut().add_sector(sector, 0);
+        let actors: Vec<_> = [300.0, 500.0]
+            .into_iter()
+            .map(|y| {
+                let mut actor = TestActor::pc(Posture::Upright).build();
+                actor
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(400.0, y));
+                actor.element_data_mut().set_sector(Some(
+                    crate::position_interface::SectorHandle::new(1)
+                        .unwrap()
+                        .with_arena_index(underlying),
+                ));
+                actor
+                    .position_iface_mut()
+                    .set_move_box(MoveBox::from_coords(-2.0, -2.0, 2.0, 2.0));
+                actor
+                    .position_iface_mut()
+                    .set_map_position(MapPoint::new(400.0, y));
+                engine.add_test_entity(actor)
+            })
+            .collect();
+        let assets = LevelAssets::new();
+        let click = MapPoint::new(400.0, 400.0);
+        let goal = Some((SectorNumber::new(1), 0));
+        let plan = engine
+            .group_move_click_plan(
+                &assets,
+                &actors,
+                click,
+                goal,
+                Some(underlying),
+                Some(false),
+                &[],
+                &[],
+            )
+            .unwrap();
+        assert!(plan.is_jump_click);
+        let formation = engine.group_move_formation_slots(&actors, None, &plan);
+        assert_eq!(formation.dispatch_order, vec![1, 0]);
+        let ctx = GroupMoveRouteCtx {
+            plan,
+            formation,
+            run: false,
+            show_marker: false,
+            recorded_gate_routes: &[],
+            recorded_failed_gate_routes: &[],
+        };
+        let recorded = engine.plan_recorded_group_move(
+            &assets,
+            &actors,
+            click,
+            goal,
+            Some(underlying),
+            Some(false),
+        );
+        for (index, outcome) in recorded.into_iter().enumerate() {
+            let PlannedRecordedGroupMoveOutcome::Resolved(recorded) = outcome else {
+                panic!("authorized circle slot must resolve");
+            };
+            let live = engine
+                .group_move_pc_destination(&assets, &ctx, index)
+                .unwrap();
+            assert_eq!(recorded.actor, actors[index]);
+            assert_eq!(recorded.destination.x.to_bits(), live.dest.x.to_bits());
+            assert_eq!(recorded.destination.y.to_bits(), live.dest.y.to_bits());
+            assert_eq!(recorded.route.goal_sector, SectorNumber::new(1));
+            assert_eq!(recorded.route.goal_sector_index, underlying);
+            assert_eq!(recorded.route.goal_layer, 0);
+        }
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn compact_dispatch_reads_live_boxes_while_circle_keeps_authorized_slots() {
+        use crate::coordinates::MoveBox;
+        use crate::element::Posture;
+        use crate::engine::test_support::actors::TestActor;
+        for (spacing, compact) in [(30.0, true), (130.0, false)] {
+            let mut engine = EngineInner::new();
+            let actors: Vec<_> = [100.0, 100.0 + spacing, 100.0 + 2.0 * spacing]
+                .into_iter()
+                .map(|x| {
+                    let mut actor = TestActor::pc(Posture::Upright).build();
+                    actor
+                        .element_data_mut()
+                        .set_position_map(MapPoint::new(x, 100.0));
+                    actor
+                        .element_data_mut()
+                        .set_sector(crate::position_interface::SectorHandle::new(1));
+                    actor
+                        .position_iface_mut()
+                        .set_move_box(MoveBox::from_coords(-2.0, -2.0, 2.0, 2.0));
+                    actor
+                        .position_iface_mut()
+                        .set_map_position(MapPoint::new(x, 100.0));
+                    engine.add_test_entity(actor)
+                })
+                .collect();
+            let mut plan = engine
+                .group_move_click_plan(
+                    &LevelAssets::new(),
+                    &actors,
+                    MapPoint::new(400.0, 400.0),
+                    Some((crate::sector::SectorNumber::new(1), 0)),
+                    None,
+                    None,
+                    &[],
+                    &[],
+                )
+                .unwrap();
+            // Bypass authorization to isolate live slot sampling from geometry.
+            plan.bypass_formation_authorization = true;
+            let formation = engine.group_move_formation_slots(&actors, None, &plan);
+            assert_eq!(formation.mercenary_center.is_some(), compact);
+            let before = engine
+                .resolve_group_move_destination(&plan, &formation, 1)
+                .unwrap();
+            // A previous actor's synchronous move may alter the next actor's
+            // live box before that actor is dispatched.
+            engine
+                .get_entity_mut(actors[1])
+                .unwrap()
+                .position_iface_mut()
+                .set_move_box(MoveBox::from_coords(8.0, -2.0, 12.0, 2.0));
+            engine
+                .get_entity_mut(actors[1])
+                .unwrap()
+                .position_iface_mut()
+                .set_map_position(MapPoint::new(100.0 + spacing, 100.0));
+            let after = engine
+                .resolve_group_move_destination(&plan, &formation, 1)
+                .unwrap();
+            assert_eq!(after.y.to_bits(), before.y.to_bits());
+            assert_eq!(after.x, before.x + if compact { 10.0 } else { 0.0 });
+            if compact {
+                assert!(formation.dests.is_empty());
+                assert_eq!(formation.dispatch_order, vec![0, 1, 2]);
+            } else {
+                assert_eq!(formation.dispatch_order.len(), 3);
+            }
         }
     }
 }

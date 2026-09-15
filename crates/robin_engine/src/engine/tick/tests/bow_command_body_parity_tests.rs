@@ -517,7 +517,7 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     );
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert_eq!(
         engine
@@ -573,7 +573,7 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
             crate::order::Order::new(order_type, 0.0, 0.0, order_id),
         );
 
-        engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
         let remaining = engine
             .world
             .entities
@@ -659,7 +659,7 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
         "sequence-element launch must leave ordinary work unresolved until manager instruction"
     );
 
-    engine.tick_actor_animation_action_change_slots(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let sprite = &engine
         .world
@@ -701,164 +701,6 @@ fn lazy_wait_publishes_start_before_preexisting_owner_instruction() {
         })
         .collect::<Vec<_>>();
     assert_eq!(pending_ids[0], parry_sequence);
-}
-
-#[test]
-fn owner_local_stop_movement_new_id_preserves_execute_start() {
-    let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
-    let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
-    let mut movement =
-        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
-    movement.priority = crate::sequence::SequencePriority::Normal;
-    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
-    engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
-    let entry_order_id = engine.orders.allocate_order_id();
-    engine.orders.sequence_manager.push_order_on(
-        sequence_id,
-        0,
-        crate::order::Order::new(OrderType::WalkingUpright, 20.0, 0.0, entry_order_id),
-    );
-
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &crate::sim_rng::test_context(),
-        &assets,
-        |_, _| {},
-        |_, _| {},
-        |engine, execute_owner, selected_movement, _, _, _, _| {
-            assert_eq!(execute_owner, owner);
-            assert!(selected_movement.is_some());
-            engine
-                .world
-                .entities
-                .get_mut(owner)
-                .unwrap()
-                .element_data_mut()
-                .sprite
-                .last_motion_state = Some(crate::sprite::MotionState::Start);
-            // A LINE_SCRIPT EnterZone callback can invoke StopActor here,
-            // after execution has produced START but before the actor update
-            // performs its completion projection.
-            engine.stop_actor_orders(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                owner,
-                crate::sequence::SequencePriority::Script,
-            );
-        },
-        |_, _, _| {},
-    );
-
-    let actor = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap();
-    assert_eq!(
-        actor.continuation.motion_state,
-        crate::sprite::MotionState::Start
-    );
-    let (_, _, rewritten) = engine
-        .orders
-        .sequence_manager
-        .current_order_for_actor(&engine.world.entities, owner)
-        .expect("stopped walking order remains selected as its transition");
-    assert_eq!(
-        rewritten.order_type,
-        OrderType::TransitionWalkingUprightWaitingUpright
-    );
-    assert_ne!(rewritten.order_id, entry_order_id);
-}
-
-#[test]
-fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
-    let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
-    let owner = engine.add_test_entity(make_aiming_pc(ActionState::MovingFast));
-    let mut movement =
-        SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
-    movement.priority = crate::sequence::SequencePriority::Normal;
-    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
-    engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
-    // Path postprocessing allocates its final transition before inserting
-    // path waypoints ahead of it, so the waypoint has the newer ID.
-    let transition_order_id = engine.orders.allocate_order_id();
-    let waypoint_order_id = engine.orders.allocate_order_id();
-    engine.orders.sequence_manager.push_order_on(
-        sequence_id,
-        0,
-        crate::order::Order::new(OrderType::RunningUpright, 20.0, 0.0, waypoint_order_id),
-    );
-    engine.orders.sequence_manager.push_order_on(
-        sequence_id,
-        0,
-        crate::order::Order::new(
-            OrderType::TransitionRunningUprightWaitingUpright,
-            20.0,
-            0.0,
-            transition_order_id,
-        ),
-    );
-
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &crate::sim_rng::test_context(),
-        &assets,
-        |_, _| {},
-        |_, _| {},
-        |engine, execute_owner, selected_movement, _, _, _, _| {
-            assert_eq!(execute_owner, owner);
-            assert!(selected_movement.is_some());
-            engine
-                .world
-                .entities
-                .get_mut(owner)
-                .unwrap()
-                .element_data_mut()
-                .sprite
-                .last_motion_state = Some(crate::sprite::MotionState::Start);
-            engine.do_next_order(&crate::sim_rng::test_context(), &assets, sequence_id, 0);
-        },
-        |_, _, _| {},
-    );
-
-    let actor = engine
-        .world
-        .entities
-        .get(owner)
-        .unwrap()
-        .actor_data()
-        .unwrap();
-    assert_eq!(
-        actor.continuation.motion_state,
-        crate::sprite::MotionState::InProgress
-    );
-    let (_, _, successor) = engine
-        .orders
-        .sequence_manager
-        .current_order_for_actor(&engine.world.entities, owner)
-        .expect("pre-existing stop transition must remain selected");
-    assert_eq!(successor.order_id, transition_order_id);
-    assert_eq!(
-        successor.order_type,
-        OrderType::TransitionRunningUprightWaitingUpright
-    );
 }
 
 #[test]
@@ -1554,6 +1396,12 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let sector_number = crate::sector::SectorNumber::new(42);
     install_test_lift_sector(&mut engine, owner, sector_number);
     crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
@@ -1592,7 +1440,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
     assert_eq!(
         engine
@@ -1604,7 +1452,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         SequenceState::InProgress
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 0);
     assert_eq!(
         engine
@@ -1617,7 +1465,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         "authorization returns false on the frame that decrements the cooldown to zero"
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .orders
@@ -1633,7 +1481,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     // The fallback idle Wait is no longer installed inside the
     // terminating owner slot: the null-order guard books it at the start
     // of the owner's next actor frame.
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .world

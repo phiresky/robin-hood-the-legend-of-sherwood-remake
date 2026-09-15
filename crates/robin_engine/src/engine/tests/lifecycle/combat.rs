@@ -185,7 +185,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
 #[test]
 fn heal_done_revalidates_before_effect_and_ammo_consumption() {
     use crate::coordinates::MapPoint;
-    use crate::element::{Command, ElementData, ElementFx, ElementKind, Entity, Posture};
+    use crate::element::{Command, ElementData, ElementKind, ElementTarget, Entity, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
 
@@ -227,9 +227,10 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                     initial_element
                 };
                 element.set_position_map(MapPoint::new(distance, 0.0));
-                engine.add_test_entity(Entity::Fx(ElementFx {
+                engine.add_test_entity(Entity::Target(ElementTarget {
                     element,
                     fx: Default::default(),
+                    target: Default::default(),
                 }))
             }
             TargetKind::SelfHeal => {
@@ -279,7 +280,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         let position = element.position_map();
         let direction = element.direction();
         element.sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script]),
+            std::sync::Arc::new(vec![script; 16]),
             std::sync::Arc::new(conversion),
         );
         element.set_position_map(position);
@@ -326,10 +327,11 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .get_entity(target)
             .and_then(Entity::pc_data)
             .map(|pc| pc.life_points);
-        let assets = assets_with_test_pc_profile();
+        let mut assets = assets_with_test_pc_profile();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
         let sim = crate::sim_rng::test_context();
         for _ in 0..4 {
-            engine.tick_selected_ability(&sim, &assets, healer, engine.actors_frozen());
+            engine.tick_actor_owner_envelopes(&sim, &assets);
             let ammo = engine.mission_domain.campaign.characters[healer_description]
                 .status
                 .get_ammo(crate::profiles::Action::Heal);
@@ -556,7 +558,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .unwrap()
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.tick_selected_ability(&sim, &assets, attacker, invalid.actors_frozen());
+    invalid.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         invalid
             .orders
@@ -792,14 +794,9 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         .unwrap()
         .execute_order_initialising = true;
 
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
-    assert!(
-        !(engine
-            .get_entity(attacker)
-            .unwrap()
-            .sprite()
-            .last_motion_state
-            == Some(crate::sprite::MotionState::Done)),
+    assert_ne!(
+        engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen()),
+        Some(crate::sprite::MotionState::Done),
         "the first valid Execute must leave a later terminal boundary to recheck"
     );
     engine
@@ -822,28 +819,21 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         .element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(41.0, 0.0));
 
+    let mut completion_results = Vec::new();
     for branch in [&mut in_range, &mut out_of_range] {
+        let mut result = None;
         for _ in 0..10 {
-            branch.tick_selected_ability(&sim, &assets, attacker, branch.actors_frozen());
-            if branch
-                .get_entity(attacker)
-                .unwrap()
-                .sprite()
-                .last_motion_state
-                == Some(crate::sprite::MotionState::Done)
-            {
+            result = branch.tick_selected_ability(&sim, &assets, attacker, branch.actors_frozen());
+            if result == Some(crate::sprite::MotionState::Done) {
                 break;
             }
         }
-        assert!(
-            (branch
-                .get_entity(attacker)
-                .unwrap()
-                .sprite()
-                .last_motion_state
-                == Some(crate::sprite::MotionState::Done)),
+        assert_eq!(
+            result,
+            Some(crate::sprite::MotionState::Done),
             "both branches must reach the real Hitting Done boundary"
         );
+        completion_results.push(result);
     }
 
     let in_range_sprite = &in_range.get_entity(attacker).unwrap().element_data().sprite;
@@ -862,7 +852,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         "the zero-delay fixture makes the virgin increment advance exactly one frame"
     );
     assert_eq!(
-        out_of_range_sprite.last_motion_state,
+        completion_results[1],
         Some(crate::sprite::MotionState::Done),
         "the virgin increment must not replace Hitting's terminal Done edge"
     );
@@ -975,7 +965,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+                engine.tick_one_actor_animation_action_change_slot(&sim, &assets, attacker);
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1102,6 +1092,7 @@ fn add_strangle_placement_failure_scene(
             underlying_sector: None,
         });
     }
+    crate::engine::test_support::ensure_ordinary_sector(engine, 5, 8);
     (attacker, victim, assets, hotspot)
 }
 
@@ -1186,6 +1177,21 @@ fn launch_initialized_strangle(
         seq,
         0,
     );
+    let order_id = engine
+        .orders
+        .sequence_manager
+        .get_element(seq, 0)
+        .unwrap()
+        .current_order()
+        .unwrap()
+        .order_id;
+    engine
+        .get_entity_mut(attacker)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .last_execute_order_id = Some(order_id);
+    engine.publish_selected_order_as_installed(attacker);
     StrangleLaunch {
         seq,
         expected_action_point,
@@ -1496,7 +1502,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
         .sequence_manager
         .get_element_mut(quit, 0)
         .unwrap()
-        .cross_postponed = Some((movement, 0));
+        .postponed = Some(crate::sequence::SequenceElementRef::new(movement, 0));
 
     engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, quit, 0);
 

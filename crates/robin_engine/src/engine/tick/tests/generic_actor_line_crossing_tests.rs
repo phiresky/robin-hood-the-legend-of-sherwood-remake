@@ -88,7 +88,13 @@ fn dying_find_place_increment_after_crossing(
             ..ActorData::default()
         },
         human: HumanData::default(),
-        npc: NpcData::default(),
+        npc: NpcData {
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         soldier: crate::element::SoldierData {
             cached_camp: crate::element::Camp::Lacklandists,
             ..Default::default()
@@ -109,10 +115,7 @@ fn dying_find_place_increment_after_crossing(
         0,
     );
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     let entity = engine.get_entity(owner).expect("dying owner remains live");
     let old_position = entity.position_iface().old_map_position();

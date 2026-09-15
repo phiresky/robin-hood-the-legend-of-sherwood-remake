@@ -13,24 +13,6 @@ pub(crate) enum EnemyRecovery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum EnemyObservation {
-    Noise { noise: super::Noise },
-    LookThere { position: super::Position },
-    TowerGuardAlert { hint: super::Hint },
-    TowerGuardCalls { hint: super::Hint },
-    CombatAlert { position: super::Position },
-    ArcherEnemy { target: super::HumanHandle },
-    Enemy { target: super::HumanHandle },
-    Charly { target: super::HumanHandle },
-    Shadow { position: super::Position },
-    Object { target: super::ObjectHandle },
-    Arrow { origin: super::Position },
-    ArrowReaction,
-    AleReaction,
-    AleApproach { arrived: bool },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum BodyReaction {
     Seen { body: super::HumanHandle },
     ReactionTimer,

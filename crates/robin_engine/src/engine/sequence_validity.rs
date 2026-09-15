@@ -1354,12 +1354,12 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-    ) -> bool {
+    ) -> Option<crate::sprite::MotionState> {
         let Some(entity) = self.world.entities.get(entity_id) else {
-            return false;
+            return None;
         };
         if !entity.is_human() {
-            return false;
+            return None;
         }
         let actor = entity
             .actor_data()
@@ -1371,14 +1371,14 @@ impl EngineInner {
         // any animation.  Skipping the pre-pass for inactive PCs let
         // the transition play instead, so no active gate here.
         if entity.element_data().posture().is_dead() {
-            return false;
+            return None;
         }
         // PC override `Execute` opens with
         // `if (execution_frozen) return InProgress;` — frozen PCs
         // never reach the validity guards. Human action execution has the same
         // execution-freeze entry guard for non-PC humans.
         if actor.execution_frozen {
-            return false;
+            return None;
         }
 
         let snapshot = self
@@ -1387,12 +1387,12 @@ impl EngineInner {
             .current_order_for_actor(&self.world.entities, entity_id)
             .map(|(s, i, o)| (s, i, o.order_type));
         let Some((seq_id, elem_idx, order_type)) = snapshot else {
-            return false;
+            return None;
         };
 
         let Some((check_position, terminal)) = human_init_validity_arm(order_type, entity.is_pc())
         else {
-            return false;
+            return None;
         };
 
         // The original game's guard compares initialization with new-order state, which
@@ -1402,16 +1402,16 @@ impl EngineInner {
         // restored/test actors can retain a live shot without that history,
         // and re-validating their already-running shoot row would abort it.
         if !actor.execute_order_initialising {
-            return false;
+            return None;
         }
 
         // Look up the element so we can run the per-command
         // validity rule.
         let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
-            return false;
+            return None;
         };
         if self.check_sequence_element_validity(assets, entity_id, elem, check_position) {
-            return false;
+            return None;
         }
 
         // Resolve the special `TransitionCarryingCorpseWaitingUpright`
@@ -1435,55 +1435,22 @@ impl EngineInner {
             "human_execute_validity: Human init-arm validity failed — aborting/terminating"
         );
 
-        // These guards are early returns from human or player execution, so
-        // The actor update observes and serializes their motion result before
-        // it applies the corresponding sequence-state transition.  Merely
-        // terminating the Rust element can leave no selected Execute owner
-        // below, in which case the previous frame's motion would remain
-        // latched indefinitely.
+        // Return the guard's motion after its immediate effects. The actor
+        // update owns crossing and order completion.
         let motion = match terminal {
             ValidityArmTerminal::Aborted => crate::sprite::MotionState::Aborted,
-            ValidityArmTerminal::Terminated
-            | ValidityArmTerminal::TerminatedWithDrop { .. }
-            | ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
-                crate::sprite::MotionState::Terminated
-            }
-        };
-        self.world
-            .entities
-            .get_mut(entity_id)
-            .and_then(Entity::actor_data_mut)
-            .expect("Human validity owner disappeared before motion-state latch")
-            .continuation
-            .motion_state = motion;
-
-        match terminal {
-            ValidityArmTerminal::Aborted => {
-                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            }
-            ValidityArmTerminal::Terminated => {
-                self.do_next_order(sim, assets, seq_id, elem_idx);
-            }
+            ValidityArmTerminal::Terminated => crate::sprite::MotionState::Terminated,
             ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
                 if needs_drop {
-                    // Instant drop.
                     self.force_drop_carried_corpse_instant(sim, assets, entity_id);
                 }
-                self.do_next_order(sim, assets, seq_id, elem_idx);
+                crate::sprite::MotionState::Terminated
             }
-            // Unresolved variant — should never reach apply phase
-            // because the snapshot loop converts it to
-            // `TerminatedWithDrop`.  Defensive log + treat as plain
-            // Terminated.
             ValidityArmTerminal::TerminatedDropCorpseUnlessDrop => {
-                tracing::warn!(
-                    ?entity_id,
-                    "human_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
-                );
-                self.do_next_order(sim, assets, seq_id, elem_idx);
+                unreachable!("drop validity guard must resolve the entry command")
             }
-        }
-        true
+        };
+        Some(motion)
     }
 
     /// Returns true iff the PC is alive, conscious, not netted, not
@@ -2219,7 +2186,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_eating_initialization_latches_execute_terminated_motion() {
+    fn invalid_eating_initialization_returns_terminated_without_completing_order() {
         let mut description = crate::campaign::PcDescription::default();
         description.status.num_rations = 1;
         let mut campaign = crate::campaign::Campaign::default();
@@ -2259,21 +2226,17 @@ mod tests {
             .expect("test actor data")
             .execute_order_initialising = true;
 
-        engine.pre_tick_human_execute_validity_for(
+        let motion = engine.pre_tick_human_execute_validity_for(
             &crate::sim_rng::test_context(),
             &LevelAssets::new(),
             pc_id,
         );
 
+        assert_eq!(motion, Some(crate::sprite::MotionState::Terminated));
         assert_eq!(
-            engine
-                .get_entity(pc_id)
-                .and_then(Entity::actor_data)
-                .expect("test actor data")
-                .continuation
-                .motion_state,
-            crate::sprite::MotionState::Terminated,
-            "PC execution returns TERMINATED before the actor update retires invalid Eating"
+            engine.world.entities.current_element_for_actor(pc_id),
+            Some((sequence, 0)),
+            "validity returns its motion before the actor update advances the order"
         );
     }
 
@@ -2445,6 +2408,11 @@ mod tests {
     #[test]
     fn bow_release_initialization_aborts_when_target_becomes_invalid_during_raise() {
         let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
+        let sprite_order_before = engine
+            .get_entity(shooter)
+            .unwrap()
+            .sprite()
+            .last_processed_order_id;
         // The valid-control test below establishes the fixture baseline. This
         // test changes only the target state that became stale during raise.
         engine
@@ -2452,30 +2420,26 @@ mod tests {
             .and_then(Entity::human_data_mut)
             .expect("test target human data")
             .unconscious = true;
-        engine.pre_tick_human_execute_validity_for(
+        let motion = engine.pre_tick_human_execute_validity_for(
             &crate::sim_rng::test_context(),
             &assets,
             shooter,
         );
 
+        assert_eq!(motion, Some(crate::sprite::MotionState::Aborted));
         assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(sequence, 0)
-                .expect("test shot element after abort")
-                .state,
-            crate::sequence::SequenceState::Impossible,
-            "PC bow shot must abort before its shooting row starts",
+            engine.world.entities.current_element_for_actor(shooter),
+            Some((sequence, 0)),
+            "the actor update owns the returned abort's completion"
         );
         assert_eq!(
             engine
                 .get_entity(shooter)
-                .and_then(Entity::actor_data)
-                .expect("test shooter actor data")
-                .continuation
-                .motion_state,
-            crate::sprite::MotionState::Aborted,
+                .unwrap()
+                .sprite()
+                .last_processed_order_id,
+            sprite_order_before,
+            "invalid bow execution must return before entering its shooting row"
         );
     }
 
@@ -2491,11 +2455,7 @@ mod tests {
             .expect("test target human data")
             .unconscious = true;
 
-        engine.pre_tick_human_execute_validity_for(
-            &crate::sim_rng::test_context(),
-            &assets,
-            shooter,
-        );
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         assert_eq!(
             engine

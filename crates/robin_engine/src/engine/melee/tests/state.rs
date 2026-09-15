@@ -1824,8 +1824,6 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
         &crate::sim_rng::test_context(),
         &assets,
         attacker,
-        None,
-        0,
         SwordStrike::D,
         Some(1),
     );
@@ -2054,7 +2052,7 @@ fn push_strike_does_not_recover_antagonist_outside_rectangle() {
 
     assert_eq!(
         engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
-        strikes::SweepTickPhase::InProgress
+        Some(crate::sprite::MotionState::Done)
     );
 
     assert!(

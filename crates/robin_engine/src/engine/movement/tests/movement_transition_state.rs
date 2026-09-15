@@ -313,12 +313,7 @@ mod suite {
                     door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
-                    steps: Default::default(),
-                    preallocated_order_ids: Default::default(),
                     triggers_fired: 0,
-                    current_action: transition,
-                    current_reverse: false,
-                    saved_action_state: None,
                 }),
                 ..ActorData::default()
             },
@@ -539,12 +534,7 @@ mod suite {
                     door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
-                    steps: Default::default(),
-                    preallocated_order_ids: Default::default(),
                     triggers_fired: 0,
-                    current_action: action,
-                    current_reverse: false,
-                    saved_action_state: None,
                 }),
                 ..ActorData::default()
             },
@@ -715,7 +705,7 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
         let first_tick_forecast = engine
             .get_entity(owner)
             .unwrap()
@@ -748,7 +738,7 @@ mod suite {
             first_order_id
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
         assert_eq!(
             engine
                 .get_entity(owner)
@@ -760,7 +750,7 @@ mod suite {
             "the transition remains nonterminal while its turning slowdown leaves the goal ahead"
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
         assert_eq!(
             engine
@@ -824,8 +814,8 @@ mod suite {
             old_goal,
         );
 
-        engine.tick_entity_movement(&sim, &assets);
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
 
         assert_stop_transition_terminated_and_goal_cleared(&engine, owner, outgoing_sequence);
 
@@ -1187,7 +1177,7 @@ mod suite {
             if point_move_selected {
                 break;
             }
-            engine.tick_entity_movement(sim, assets);
+            engine.tick_actor_owner_envelopes(sim, assets);
         }
         assert_eq!(
             engine
@@ -1213,7 +1203,7 @@ mod suite {
                 && (selected_point_order.target_y - new_goal.y).abs() <= 0.02,
             "fixture must select the authored destination endpoint, not the source-side transition-distance continuation"
         );
-        engine.tick_entity_movement(sim, assets);
+        engine.tick_actor_owner_envelopes(sim, assets);
         let installed_goal = engine
             .get_entity(owner)
             .unwrap()
@@ -1223,142 +1213,6 @@ mod suite {
             (installed_goal.x - new_goal.x).abs() <= 0.02
                 && (installed_goal.y - new_goal.y).abs() <= 0.02,
             "the promoted point movement installs its destination on first execution"
-        );
-    }
-
-    #[test]
-    fn terminal_movement_handoff_advances_live_move_waiting_order_without_seek_metadata() {
-        let assets = LevelAssets::new();
-        let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        }));
-        let mut outgoing = SequenceElement::new_movement(
-            1,
-            Command::MoveOk,
-            Some(owner),
-            OrderType::WalkingCrouched,
-        );
-        outgoing.orders.push_back(Order::test_new(
-            OrderType::TransitionWalkingCrouchedWaitingCrouched,
-            867.70776,
-            2471.1958,
-        ));
-        let outgoing_sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            outgoing,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            outgoing_sequence,
-            0,
-        );
-        let mut waiting = SequenceElement::new_movement(
-            1,
-            Command::MoveWaiting,
-            Some(owner),
-            OrderType::WalkingCrouched,
-        );
-        waiting
-            .orders
-            .push_back(Order::test_new(OrderType::Freezing, 867.70776, 2471.1958));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            waiting,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
-        let mut completed_parallel =
-            SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
-        completed_parallel.state = SequenceState::Terminated;
-        engine
-            .orders
-            .sequence_manager
-            .get_sequence_mut(sequence)
-            .unwrap()
-            .elements
-            .push(completed_parallel);
-        engine.select_sequence_element(owner, Some((sequence, 0)));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: engine
-                .orders
-                .sequence_manager
-                .get_element(sequence, 0)
-                .unwrap()
-                .current_order()
-                .unwrap()
-                .order_id,
-            order_type: OrderType::Freezing,
-        });
-        engine
-            .orders
-            .pending_path_requests
-            .enqueue(PendingPathRequest::test_request(owner, sequence, 0));
-
-        engine.advance_live_order_after_terminal_handoff(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-        );
-
-        let element = engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .expect("terminated movement replacement remains inspectable");
-        assert!(element.orders.is_empty());
-        assert_eq!(element.state, SequenceState::Terminated);
-        assert!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .installed_order
-                .is_none(),
-            "the actor update advances the live Freezing order"
-        );
-        assert!(
-            engine.orders.pending_path_requests.ignore_next_path,
-            "terminating the live MoveWaiting must retain and invalidate its pathfinder head"
-        );
-        assert_eq!(
-            engine.orders.pending_path_requests.waiting.len(),
-            1,
-            "Original path cancellation retains the logical head until its completion slot"
-        );
-        assert_eq!(
-            engine
-                .orders
-                .sequence_manager
-                .get_element(outgoing_sequence, 0)
-                .unwrap()
-                .orders
-                .len(),
-            1,
-            "the captured outgoing order remains stale; the update advances the live replacement"
         );
     }
 
@@ -1635,7 +1489,7 @@ mod suite {
         );
 
         let sim = crate::sim_rng::test_context();
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
         assert_eq!(
             i16::from(
                 engine
@@ -1653,7 +1507,7 @@ mod suite {
         let entity = engine.get_entity_mut(owner).unwrap();
         entity.element_data_mut().set_direction_goal(4);
         entity.position_iface_mut().turn();
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
 
         let entity = engine.get_entity(owner).unwrap();
         assert_eq!(i16::from(entity.position_iface().get_direction()), 4);
@@ -1774,7 +1628,7 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
         let entity = engine.get_entity(owner).unwrap();
         assert_eq!(
@@ -1958,7 +1812,13 @@ mod suite {
                 unconscious: command == Command::TieCmd,
                 ..HumanData::default()
             },
-            npc: NpcData::default(),
+            npc: NpcData {
+                ai: crate::element::AiActorData {
+                    ai_brain: AiBrain::Enemy(Box::default()),
+                    ..Default::default()
+                },
+                ..NpcData::default()
+            },
             soldier: SoldierData {
                 cached_camp: Camp::Lacklandists,
                 ..SoldierData::default()
@@ -2055,7 +1915,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..64 {
-            engine.tick_entity_movement(&sim, &assets);
+            engine.tick_actor_owner_envelopes(&sim, &assets);
             engine.hourglass_phase_sequences(
                 &sim,
                 &mut crate::engine::HostDisplayState::default(),
@@ -2140,7 +2000,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..64 {
-            engine.tick_entity_movement(&sim, &assets);
+            engine.tick_actor_owner_envelopes(&sim, &assets);
             engine.hourglass_phase_sequences(
                 &sim,
                 &mut crate::engine::HostDisplayState::default(),
@@ -2281,7 +2141,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..8 {
-            engine.tick_entity_movement(&sim, &assets);
+            engine.tick_actor_owner_envelopes(&sim, &assets);
             if engine
                 .get_entity(owner)
                 .unwrap()
@@ -2432,7 +2292,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         for _ in 0..4 {
-            engine.tick_entity_movement(&sim, &assets);
+            engine.tick_actor_owner_envelopes(&sim, &assets);
             engine.hourglass_phase_sequences(
                 &sim,
                 &mut crate::engine::HostDisplayState::default(),

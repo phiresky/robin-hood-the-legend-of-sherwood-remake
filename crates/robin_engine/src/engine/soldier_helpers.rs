@@ -1642,12 +1642,7 @@ mod tests {
                     door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: false,
                     position_direct: false,
-                    steps: Default::default(),
-                    preallocated_order_ids: Default::default(),
                     triggers_fired,
-                    current_action: OrderType::RunningUpright,
-                    current_reverse: false,
-                    saved_action_state: None,
                 }),
                 installed_order: (triggers_fired == 0).then_some(InstalledActorOrder {
                     order_id: std::num::NonZeroU32::new(1).unwrap(),
@@ -1662,6 +1657,16 @@ mod tests {
             },
         }));
 
+        if triggers_fired == 0 {
+            engine
+                .get_entity_mut(pc)
+                .unwrap()
+                .position_iface_mut()
+                .set_door(
+                    crate::position_interface::DoorHandle::new(0).unwrap(),
+                    false,
+                );
+        }
         (engine, pc, goal)
     }
 
@@ -1758,6 +1763,11 @@ mod tests {
 
         let sim = crate::sim_rng::test_context();
         let (mut engine, pc, goal) = door_fight_route_fixture(0);
+        engine
+            .get_entity_mut(pc)
+            .unwrap()
+            .position_iface_mut()
+            .clear_door();
         let actor = engine.get_entity_mut(pc).unwrap().actor_data_mut().unwrap();
         actor.installed_order = Some(InstalledActorOrder {
             order_id: std::num::NonZeroU32::new(2).unwrap(),
@@ -1781,7 +1791,7 @@ mod tests {
                 RngSite::RuntimeBuildingExitWait,
                 RngSite::RuntimeBuildingExitWait
             ],
-            "movement-sequence construction builds the building exit after the old pass is postponed"
+            "a dormant pass without a live position door must not suppress the building exit"
         );
         assert_eq!(
             door_fight_sequence(&engine, pc)

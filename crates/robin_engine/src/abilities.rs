@@ -3085,7 +3085,7 @@ mod tests {
     }
 
     #[test]
-    fn frozen_listen_entry_publishes_in_progress_without_advancing_sprite() {
+    fn frozen_listen_entry_returns_in_progress_without_advancing_sprite() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
             element: {
@@ -3146,7 +3146,7 @@ mod tests {
         let mut engine = crate::engine::EngineInner::new();
         engine.world.entities = entities;
         engine.orders.sequence_manager = manager;
-        engine.tick_selected_ability(
+        let motion = engine.tick_selected_ability(
             &crate::sim_rng::test_context(),
             &crate::engine::LevelAssets::new(),
             owner,
@@ -3172,9 +3172,14 @@ mod tests {
             "FreezeAll must not advance the action-point sprite operands"
         );
         assert_eq!(
-            sprite.last_motion_state,
+            motion,
             Some(SpriteMotionState::InProgress),
-            "the Listen owner envelope must not retain the pre-freeze DONE edge"
+            "frozen Execute returns in-progress independently of the previous sprite edge"
+        );
+        assert_eq!(
+            sprite.last_motion_state,
+            Some(SpriteMotionState::Done),
+            "a skipped sprite call leaves its previous edge untouched"
         );
     }
 

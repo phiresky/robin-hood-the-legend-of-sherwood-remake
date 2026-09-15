@@ -395,8 +395,9 @@ impl EngineInner {
                                                 (order.order_type, order.order_id, order.done)
                                             })
                                             .collect::<Vec<_>>(),
-                                        element.postponed_element_index,
-                                        element.cross_postponed,
+                                        element.postponed.map(|reference| {
+                                            (reference.sequence_id, reference.element_index)
+                                        }),
                                     )
                                 })
                                 .collect::<Vec<_>>()
@@ -433,7 +434,10 @@ impl EngineInner {
                 .orders
                 .sequence_manager
                 .get_element(blocker_seq, blocker_idx)
-                .and_then(|e| e.cross_postponed);
+                .and_then(|e| {
+                    e.postponed
+                        .map(|reference| (reference.sequence_id, reference.element_index))
+                });
             if let Some((existing_seq, existing_idx)) = existing_postponed {
                 tracing::trace!(
                     target: "parity_launch",

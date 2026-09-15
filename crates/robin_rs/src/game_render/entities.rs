@@ -641,7 +641,8 @@ pub(super) fn transition_crenel_climb_up_mask_position(
     }
     let actor = entity.actor_data()?;
     let door_pass = actor.active_door_pass.as_ref()?;
-    if door_pass.current_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel {
+    if actor.installed_order?.order_type != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+    {
         return None;
     }
     if !engine.has_mission_geometry() {

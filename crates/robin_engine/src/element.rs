@@ -29,7 +29,6 @@
 //!   exhaustive pattern matching without `dyn`.
 //! - **[`EntityId`]**: Cross-entity references use IDs, not pointers.
 
-use std::collections::VecDeque;
 use std::fmt;
 use std::hash::Hasher;
 
@@ -662,62 +661,7 @@ pub struct ActiveFlight {
     pub ladder_fall: bool,
 }
 
-/// One step in a door-pass sub-order chain.
-///
-/// Built by `translate_pass_door_*`. Each door type produces a specific
-/// sequence of walk/transition/trigger steps.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum DoorPassStep {
-    /// Walk to destination with the given animation.
-    Walk {
-        destination: MapPoint,
-        action: crate::order::OrderType,
-        reverse: bool,
-        compute_direction: bool,
-        /// Optional walk-step tolerance.  Used by the ladder / wall
-        /// translators so the walk-to-mid step ends early enough for
-        /// the subsequent climb transition to land at the exact
-        /// lift-edge pixel (e.g. `TELEPORT_LADDER = 45.0`,
-        /// `TELEPORT_WALL = 60.0`, or per-animation distances via
-        /// per-animation distance). Stairs / building door passes
-        /// leave this at `0.0`.
-        tolerance: f32,
-    },
-    /// Fire the PassDoor() callback — change layer/sector, building/lift callbacks.
-    /// First trigger changes layer/sector; second re-enables anti-collision.
-    PassingDoor,
-    /// Play a transition animation in place (crouch, climb transition, turn).
-    Transition {
-        action: crate::order::OrderType,
-        reverse: bool,
-    },
-    /// Fire a selection-flash hulk effect on self (and carried, if any).
-    /// Inserted by the building-door translator between the walk-to-mid
-    /// and `PassingDoor` steps for PCs.  The handler calls
-    /// hulk startup with default animation, level 2, and the supplied tolerance.
-    Select {
-        /// Speed factor for the hulk fade —
-        /// the normalized midpoint-to-endpoint vector scaled by 0.03.
-        speed: f32,
-    },
-}
-
-/// Active door-pass state on an actor.
-///
-/// Tracks the multi-step walk-through sequence built by the
-/// `translate_pass_door_*` functions (engine/door_pass.rs).
-/// The movement tick processes steps one at a time:
-/// - Walk steps set waypoints on the actor path
-/// - PassingDoor steps fire the layer/sector swap callback
-/// - Transition steps play animations in place
+/// Door identity retained while its ordinary order chain executes.
 #[derive(
     Debug,
     Clone,
@@ -728,197 +672,12 @@ pub enum DoorPassStep {
     bitcode::Decode,
 )]
 pub struct ActiveDoorPass {
-    /// Door index in the global door table.
     pub door_index: crate::gate::DoorIndex,
-    /// Direction: true = outside→inside (direct), false = inside→outside.
     pub direct: bool,
-    /// Direction stored on the owning movement element.
-    ///
-    /// This normally equals `direct`. A v48 save can resume after the actor
-    /// has already crossed the gate, however, so Rust rebuilds the remaining
-    /// physical steps from the actor's destination-side sector while the
-    /// Original movement element retains its initial traversal direction.
-    /// AI `Position(actor)` and route-source queries read that retained value.
+    /// Direction of the owning movement element, retained across a restored crossing.
     pub position_direct: bool,
-    /// Remaining steps to execute (front = next step).
-    pub steps: VecDeque<DoorPassStep>,
-    /// Order identities allocated eagerly by PassDoor translation, in the
-    /// same order as `steps`. Original constructs the complete translated
-    /// order list up front even though Rust executes its steps lazily.
-    #[serde(default)]
-    pub preallocated_order_ids: VecDeque<Option<std::num::NonZeroU32>>,
-    /// How many PassingDoor triggers have fired (first changes layer, second
-    /// re-enables anti-collision).
+    /// First trigger crosses the gate; the second enables anti-collision.
     pub triggers_fired: u8,
-    /// Animation for the currently executing Walk step. Set when a Walk step
-    /// is popped, read by `tick_entity_movement` for sprite animation.
-    pub current_action: crate::order::OrderType,
-    /// Whether the current Walk step plays its animation in reverse.
-    pub current_reverse: bool,
-    /// When a `Transition` step is popped and its animation starts via
-    /// `active_ai_anim`, the actor's walking `action_state` is saved here
-    /// and the runtime `action_state` is cleared to `Waiting` so the
-    /// movement loop stops advancing.  When the animation completes and
-    /// `advance_door_pass` proceeds to the next `Walk` step, the saved
-    /// state is restored so movement resumes with the correct sprite row.
-    /// The order list blocks naturally until the sprite animation
-    /// reports `MOTION_TERMINATED`.
-    pub saved_action_state: Option<ActionState>,
-}
-
-impl ActiveDoorPass {
-    /// Restored passes may omit some trailing reserved identities. Preserve
-    /// those as unallocated slots; extra identities have no corresponding step
-    /// and are an invariant error. This does not allocate any order IDs.
-    pub(crate) fn align_pending_order_ids(&mut self) {
-        assert!(
-            self.preallocated_order_ids.len() <= self.steps.len(),
-            "door-pass order identity queue exceeds its translated step queue"
-        );
-        self.preallocated_order_ids.resize(self.steps.len(), None);
-    }
-
-    /// Fresh translation reserves the complete route before installing its
-    /// first order, including steps which will only materialize later.
-    pub(crate) fn preallocate_pending_order_ids(&mut self, next_order_id: &mut u32) {
-        self.preallocated_order_ids = self
-            .steps
-            .iter()
-            .map(|_| Some(crate::order::alloc_order_id(next_order_id)))
-            .collect();
-    }
-
-    /// Consume one lazy step together with its reserved identity. The caller
-    /// allocates an ID only when it materializes an unreserved step.
-    pub(crate) fn pop_pending_step(
-        &mut self,
-    ) -> Option<(DoorPassStep, Option<std::num::NonZeroU32>)> {
-        self.align_pending_order_ids();
-        let step = self.steps.pop_front()?;
-        let identity = self
-            .preallocated_order_ids
-            .pop_front()
-            .expect("aligned door-pass step lost its identity slot");
-        Some((step, identity))
-    }
-
-    /// Insert a newly translated step without displacing existing identities.
-    pub(crate) fn insert_pending_step(
-        &mut self,
-        index: usize,
-        step: DoorPassStep,
-        order_id: std::num::NonZeroU32,
-    ) {
-        assert!(
-            index <= self.steps.len(),
-            "door-pass insertion index exceeds its step queue"
-        );
-        self.align_pending_order_ids();
-        self.steps.insert(index, step);
-        self.preallocated_order_ids.insert(index, Some(order_id));
-    }
-
-    /// Discard both halves when concrete order truncation removes the lazy tail.
-    pub(crate) fn clear_pending_steps(&mut self) {
-        self.steps.clear();
-        self.preallocated_order_ids.clear();
-    }
-}
-
-#[cfg(test)]
-mod door_pass_pending_tests {
-    use super::*;
-    use std::num::NonZeroU32;
-
-    fn pass() -> ActiveDoorPass {
-        ActiveDoorPass {
-            door_index: crate::gate::DoorIndex::new(67).unwrap(),
-            direct: false,
-            position_direct: true,
-            steps: [
-                DoorPassStep::Select { speed: 0.5 },
-                DoorPassStep::PassingDoor,
-            ]
-            .into(),
-            preallocated_order_ids: [NonZeroU32::new(41)].into(),
-            triggers_fired: 1,
-            current_action: crate::order::OrderType::WalkingUpright,
-            current_reverse: false,
-            saved_action_state: None,
-        }
-    }
-
-    #[test]
-    fn restored_partial_ids_stay_paired_through_insertion_and_consumption() {
-        let mut pass = pass();
-        pass.insert_pending_step(
-            1,
-            DoorPassStep::Select { speed: 0.75 },
-            NonZeroU32::new(42).unwrap(),
-        );
-        assert_eq!(pass.steps.len(), 3);
-        assert_eq!(
-            pass.preallocated_order_ids,
-            [NonZeroU32::new(41), NonZeroU32::new(42), None]
-        );
-        let (step, id) = pass.pop_pending_step().unwrap();
-        assert!(matches!(step, DoorPassStep::Select { speed } if speed == 0.5));
-        assert_eq!(id, NonZeroU32::new(41));
-        let (step, id) = pass.pop_pending_step().unwrap();
-        assert!(matches!(step, DoorPassStep::Select { speed } if speed == 0.75));
-        assert_eq!(id, NonZeroU32::new(42));
-        let (step, id) = pass.pop_pending_step().unwrap();
-        assert!(matches!(step, DoorPassStep::PassingDoor));
-        assert_eq!(
-            id, None,
-            "the restored unreserved step must not invent an ID"
-        );
-        assert!(pass.pop_pending_step().is_none());
-        assert!(pass.preallocated_order_ids.is_empty());
-        assert_eq!(
-            pass.triggers_fired, 1,
-            "queue changes cannot run door callbacks"
-        );
-        assert!(!pass.direct);
-        assert!(pass.position_direct);
-    }
-
-    #[test]
-    fn fresh_translation_reserves_ids_before_consuming_any_step() {
-        let mut pass = pass();
-        pass.preallocated_order_ids.clear();
-        let mut next = 100;
-        pass.preallocate_pending_order_ids(&mut next);
-        assert_eq!(next, 102);
-        assert_eq!(pass.pop_pending_step().unwrap().1, NonZeroU32::new(100));
-        assert_eq!(pass.pop_pending_step().unwrap().1, NonZeroU32::new(101));
-        assert_eq!(next, 102, "consumption must not allocate a second identity");
-    }
-
-    #[test]
-    #[should_panic(expected = "door-pass order identity queue exceeds its translated step queue")]
-    fn malformed_identity_tail_is_rejected_before_consumption() {
-        let mut pass = pass();
-        pass.preallocated_order_ids = [NonZeroU32::new(41); 3].into();
-        pass.pop_pending_step();
-    }
-
-    #[test]
-    fn discarded_route_clears_both_queues_without_allocating() {
-        let mut pass = pass();
-        pass.preallocated_order_ids = [NonZeroU32::new(41); 3].into();
-        // Discard is intentionally unconditional, matching order truncation.
-        pass.clear_pending_steps();
-        assert!(pass.steps.is_empty());
-        assert!(pass.preallocated_order_ids.is_empty());
-    }
-
-    #[test]
-    #[should_panic(expected = "door-pass insertion index exceeds its step queue")]
-    fn invalid_insertion_is_rejected() {
-        let mut pass = pass();
-        pass.insert_pending_step(3, DoorPassStep::PassingDoor, NonZeroU32::new(42).unwrap());
-    }
 }
 
 /// Exact representation of the original game's installed actor order.
@@ -2249,11 +2008,12 @@ pub fn advance_trajectory_one_frame(
     element: &mut ElementData,
     projectile: &mut ProjectileData,
 ) -> bool {
-    if projectile.trajectory_frame_count == 0 {
+    if (projectile.trajectory_frame_count as i16) <= 0 {
         if projectile.trajectory.is_empty() {
             projectile.flying = false;
             projectile.trajectory_frame_count = u16::MAX;
             projectile.velocity_increment = WorldVec3D::ZERO;
+            element.finish_projectile_position_update(WorldVec3D::ZERO);
             return true;
         }
         if !projectile.trajectory_runtime.is_empty() {
@@ -2266,10 +2026,14 @@ pub fn advance_trajectory_one_frame(
             element.set_material(crate::element::GameMaterial::from_u32(runtime.material));
         }
         let point = projectile.trajectory.remove(0);
-        let time = point.time.max(1);
-        projectile.trajectory_frame_count = time - 1;
+        let time = point.time;
+        projectile.trajectory_frame_count = time.wrapping_sub(1);
         let current = element.position();
-        let factor = 1.0 / time as f32;
+        let factor = if (time as i16) > 0 {
+            1.0 / time as f32
+        } else {
+            1.0
+        };
         projectile.velocity_increment = WorldVec3D {
             x: (point.position.x - current.x) * factor,
             y: (point.position.y - current.y) * factor,

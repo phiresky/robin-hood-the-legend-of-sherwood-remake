@@ -2484,18 +2484,6 @@ fn dispatch_arm_completion(
     ExecuteOutcome::Forward(motion)
 }
 
-/// The base-Actor completion control that must remain unresolved until every
-/// synchronous callback inside the derived Execute arm has returned.
-/// TERMINATED targets the owner's then-live sequence element; ABORTED retains
-/// the element snapshot taken on entry to Execute.
-#[derive(Debug, Clone)]
-pub(super) struct ActorExecuteResult {
-    pub order_type: OrderType,
-    pub entry_seq_id: crate::sequence::SequenceId,
-    pub entry_elem_idx: usize,
-    pub motion: MotionState,
-}
-
 /// Resolve the arm's return after its callbacks. The actor update applies
 /// wait modifiers and crossings before completing the then-live sequence.
 fn finish_actor_execute_result(
@@ -2503,7 +2491,7 @@ fn finish_actor_execute_result(
     anim_type: OrderType,
     motion: Option<MotionState>,
     arm_ctx: &mut ArmCtx<'_>,
-) -> ActorExecuteResult {
+) -> MotionState {
     let entity_id = arm_ctx.entity_id;
     let seq_id = arm_ctx.seq_id;
     let elem_idx = arm_ctx.elem_idx;
@@ -2552,12 +2540,7 @@ fn finish_actor_execute_result(
         ExecuteOutcome::Forward(motion) => motion,
         ExecuteOutcome::Consumed => MotionState::InProgress,
     };
-    ActorExecuteResult {
-        order_type: anim_type,
-        entry_seq_id: seq_id,
-        entry_elem_idx: elem_idx,
-        motion: effective_motion,
-    }
+    effective_motion
 }
 
 impl EngineInner {
@@ -2615,7 +2598,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::types::LevelAssets,
         entity_id: EntityId,
-    ) -> Option<ActorExecuteResult> {
+    ) -> Option<MotionState> {
         let entry = match self.actor_animation_entry(entity_id) {
             std::ops::ControlFlow::Continue(entry) => entry,
             std::ops::ControlFlow::Break(frozen_wait) => {
@@ -2899,7 +2882,7 @@ mod soldier_take_drink_parity_tests {
                 let result = engine
                     .tick_actor_animation_for(&sim, &assets, owner)
                     .expect("selected drinking order must execute");
-                saw_done |= result.motion == MotionState::Done;
+                saw_done |= result == MotionState::Done;
                 let alcohol = engine
                     .get_entity(owner)
                     .unwrap()
@@ -2909,7 +2892,7 @@ mod soldier_take_drink_parity_tests {
                     .base()
                     .unwrap()
                     .blood_alcohol;
-                if result.motion == MotionState::Terminated {
+                if result == MotionState::Terminated {
                     assert_eq!(alcohol, if removed_at_tick.is_none() { 40 } else { 0 });
                     terminated = true;
                     break;
@@ -2963,7 +2946,7 @@ mod soldier_take_drink_parity_tests {
             let actor = engine.get_entity(owner).unwrap();
             assert_eq!(actor.sprite().current_row, entry_direction);
             assert_eq!(actor.element_data().direction(), direction);
-            assert_eq!(result.motion, expected);
+            assert_eq!(result, expected);
             assert_eq!(actor.sprite().last_motion_state, Some(expected));
         }
     }

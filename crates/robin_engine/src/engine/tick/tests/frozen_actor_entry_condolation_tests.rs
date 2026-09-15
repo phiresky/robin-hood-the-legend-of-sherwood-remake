@@ -71,7 +71,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
         CascadeFlags::NEXT_LEVEL,
     );
 
-    engine.tick_actor_animation_action_change_slots_with_after_slot(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
         &assets,
         |engine, actor| {

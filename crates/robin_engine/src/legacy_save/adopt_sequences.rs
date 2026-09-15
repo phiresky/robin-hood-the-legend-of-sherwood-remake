@@ -515,6 +515,14 @@ fn convert_sequence(
         }
     }
 
+    if !manager_owned {
+        let count = elements.len();
+        for (index, element) in elements.iter_mut().enumerate() {
+            element.next = (index + 1 < count)
+                .then(|| SequenceElementRef::new(SequenceId(saved.unique_id.0), index + 1));
+        }
+    }
+
     Ok(Sequence::restore_v48_state(
         SequenceId(saved.unique_id.0),
         elements,
@@ -831,20 +839,13 @@ fn convert_element(
     element.action_state_after_transition = action_state_after_transition;
     element.orders = orders.into();
     element.data = data;
-    if let Some(postponed) = postponed {
-        if postponed.sequence_id == SequenceId(sequence_id) {
-            element.postponed_element_index = Some(postponed.element_index);
-        } else {
-            element.cross_postponed = Some((postponed.sequence_id, postponed.element_index));
-        }
-    }
+    element.next = next;
+    element.postponed = postponed;
     element.legacy_v48 = Some(LegacyV48SequenceElementState {
         deleted: base.deleted,
         script_driven: base.script_driven,
         raw_dormant_posture_after_transition,
         raw_dormant_action_state_after_transition,
-        next,
-        postponed,
         mummy,
         linked_seek,
         damage_arrow,
@@ -1662,6 +1663,43 @@ mod tests {
     }
 
     #[test]
+    fn owner_local_import_links_append_order_and_launch_remaps_identity() {
+        let (entities, _, _) = entities();
+        let saved_elements = (0..3)
+            .map(|index| {
+                let mut element = base(100 + index, index as u16 + 1, 3, fixups(None, None, 44));
+                element.command = Command::Wait as i32;
+                element.orders.clear();
+                element.manager_fixups = None;
+                LegacyInlineSequenceElement::Simple(element)
+            })
+            .collect();
+        let mut saved = sequence(44, saved_elements, 0, 0).body;
+        saved.started = false;
+        let imported = convert_owner_local_sequence(&saved, &entities, &topology()).unwrap();
+        assert_eq!(
+            imported.elements[0].next,
+            Some(SequenceElementRef::new(SequenceId(44), 1))
+        );
+        assert_eq!(
+            imported.elements[1].next,
+            Some(SequenceElementRef::new(SequenceId(44), 2))
+        );
+        assert_eq!(imported.elements[2].next, None);
+        let mut manager = crate::sequence::SequenceManager::new();
+        let id = manager.insert_sequence(imported);
+        assert_eq!(
+            manager.get_element(id, 0).unwrap().next,
+            Some(SequenceElementRef::new(id, 1))
+        );
+        assert_eq!(
+            manager.get_element(id, 1).unwrap().next,
+            Some(SequenceElementRef::new(id, 2))
+        );
+        assert_eq!(manager.get_element(id, 2).unwrap().next, None);
+    }
+
+    #[test]
     fn preflights_and_atomically_restores_manager_identity_and_fifo_order() {
         let (entities, owner, target) = entities();
         let plan = preflight_v48_sequence_manager(&fixture(), &entities, &topology()).unwrap();
@@ -1706,11 +1744,11 @@ mod tests {
         );
         let retained = movement.legacy_v48.as_ref().unwrap();
         assert_eq!(
-            retained.next,
+            movement.next,
             Some(SequenceElementRef::new(SequenceId(10), 1))
         );
         assert_eq!(
-            retained.postponed,
+            movement.postponed,
             Some(SequenceElementRef::new(SequenceId(20), 0))
         );
         assert_eq!(

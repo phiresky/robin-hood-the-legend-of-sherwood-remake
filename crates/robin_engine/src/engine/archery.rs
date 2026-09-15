@@ -114,7 +114,7 @@ pub const STONE_CONCUSSION: u16 = 100;
 /// Outcome of testing an arrow-candidate-victim impact.  See
 /// [`EngineInner::classify_arrow_hit`] for the full control flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ArrowHitOutcome {
+pub(super) enum ArrowHitOutcome {
     /// Apply piercing damage to the victim.
     Damage,
     /// Arrow flies through silently — friendly-fire filter or VIP NPC.
@@ -455,21 +455,21 @@ impl EngineInner {
         assets: &LevelAssets,
         shooter_id: EntityId,
         expected_order_id: std::num::NonZeroU32,
-    ) -> Vec<EntityId> {
+    ) -> Option<crate::sprite::MotionState> {
         use crate::element::{ActionState, Posture};
         use crate::sprite::MotionState;
 
         let shooter = self.expect_entity(shooter_id, "bow execution owner");
         let actor = shooter.actor_data().expect("bow owner must be an actor");
         if actor.execution_frozen {
-            return Vec::new();
+            return Some(MotionState::InProgress);
         }
         let Some((sequence_id, element_index, order_id)) = self.selected_bow_order(shooter_id)
         else {
-            return Vec::new();
+            return None;
         };
         if order_id != expected_order_id {
-            return Vec::new();
+            return None;
         }
         let element = self
             .orders
@@ -558,7 +558,7 @@ impl EngineInner {
                 ActionState::AimingWithBowDown => crate::weapons::ShootMode::Down,
                 state => panic!("bow release requires an aiming action, got {state:?}"),
             };
-            let arrow = self.release_bow_arrow(sim, assets, shooter_id, target_id, shoot_mode);
+            self.release_bow_arrow(sim, assets, shooter_id, target_id, shoot_mode);
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
             if order_type == OrderType::ShootingWithBowLeaningOut {
@@ -570,33 +570,9 @@ impl EngineInner {
                     .element_data_mut()
                     .publish_order_posture(Posture::Upright);
             }
-            return arrow.into_iter().collect();
+            return Some(motion);
         }
-        if matches!(motion, MotionState::Terminated | MotionState::Aborted) {
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(sequence_id, element_index)
-                .expect("terminating bow order lost its element");
-            element.orders.pop_front();
-            let installed_order =
-                element
-                    .current_order()
-                    .map(|order| crate::element::InstalledActorOrder {
-                        order_id: order.order_id,
-                        order_type: order.order_type,
-                    });
-            let complete = element.orders.is_empty();
-            let actor = self
-                .expect_entity_mut(shooter_id, "bow order advancement owner")
-                .actor_data_mut()
-                .unwrap();
-            actor.installed_order = installed_order;
-            if complete {
-                self.element_terminated(sim, assets, &mut Vec::new(), sequence_id, element_index);
-            }
-        }
-        Vec::new()
+        Some(motion)
     }
 
     fn release_bow_arrow(
@@ -1177,7 +1153,12 @@ impl EngineInner {
     /// branch: inverse sector (xor 8), `y * 10`, z velocity zero.  Used
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
-    fn start_arrow_ricochet(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
+    pub(super) fn start_arrow_ricochet(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow_id: EntityId,
+    ) {
         let (entities, sight_obstacles, fast_find_grid, _) =
             self.world.entities_mut_with_sight(assets);
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
@@ -1192,7 +1173,10 @@ impl EngineInner {
             return;
         };
 
-        bow_shot::make_arrow_falling_down(proj, false, Some(&obstacle_check));
+        if bow_shot::make_arrow_falling_down(proj, false, Some(&obstacle_check)) {
+            // The nested update's retirement result does not retire its caller.
+            self.finish_projectile_landing(sim, assets, arrow_id);
+        }
     }
 
     /// Classify an arrow impact on a candidate victim.
@@ -1215,7 +1199,7 @@ impl EngineInner {
     /// `PassThrough` replays the silent miss, `Ricochet` plays the
     /// falling-state transition, and `Damage` launches the damage
     /// sequence element.
-    fn classify_arrow_hit(
+    pub(super) fn classify_arrow_hit(
         &self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2336,7 +2320,7 @@ fn projectile_trajectory_origin_sector(
     }
 }
 
-fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> {
+pub(super) fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> {
     match entity {
         Entity::Projectile(p) => {
             let sector = projectile_trajectory_origin_sector(&p.projectile);
@@ -2408,361 +2392,11 @@ impl EngineInner {
         );
     }
 
-    /// Advance one pre-existing projectile at its creation-order position in
-    /// the per-entity update pass.
-    pub(super) fn tick_existing_projectile(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        projectile_id: EntityId,
-    ) {
-        let (entities, sight_obstacles, fast_find_grid, actor_order) =
-            self.world.entities_mut_with_sight(assets);
-        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid,
-            sight_obstacles,
-            water_zones: Some(&assets.environment.water_zones),
-        };
-        let results = bow_shot::tick_existing_projectile_in_actor_order(
-            entities,
-            sight_obstacles,
-            Some(&obstacle_check),
-            projectile_id,
-            actor_order,
-            &self.mission_domain.diplomacy,
-        );
-        self.process_projectile_tick_results(sim, assets, results);
-    }
-
-    fn tick_new_projectile_once(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        arrow_id: EntityId,
-    ) {
-        let (entities, sight_obstacles, fast_find_grid, actor_order) =
-            self.world.entities_mut_with_sight(assets);
-        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid,
-            sight_obstacles,
-            water_zones: Some(&assets.environment.water_zones),
-        };
-        let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
-            entities,
-            sight_obstacles,
-            Some(&obstacle_check),
-            arrow_id,
-            actor_order,
-            &self.mission_domain.diplomacy,
-        );
-        self.process_projectile_tick_results(sim, assets, results);
-    }
-
-    pub(super) fn process_projectile_tick_results(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        results: Vec<bow_shot::ArrowTickResult>,
-    ) {
-        for result in results {
-            // ── Shield hit — trigger parry ───────────────────────
-            // Runs for every projectile type.  The per-type impact FX
-            // and the ParryShield sequence launch both fire at the
-            // shield holder's map position.
-            //
-            // Arrow: impact FX is suppressed because the falling-state
-            // transition runs before the impact sound check, and the
-            // sound gate excludes already-falling projectiles. So
-            // arrow shield hits leave `impact_fx = None`.
-            //
-            // Apple (509) and stone (508): impact_fx populated, played
-            // at the holder's map position.
-            if let Some(holder) = result.shield_hit {
-                tracing::debug!(
-                    arrow = ?result.arrow,
-                    shield_holder = ?holder,
-                    "Projectile blocked by shield"
-                );
-                if let Some(fx_id) = result.impact_fx
-                    && let Some(entity) = self.get_entity(holder)
-                {
-                    let p = entity.element_data().position_map();
-                    self.feedback
-                        .pending_side_effects
-                        .sounds
-                        .push(super::SoundCommand::Fx {
-                            fx_id,
-                            position: p,
-                            material: None,
-                        });
-                }
-                // Trigger parry-shield animation if not already parrying.
-                // The gate is on the current combat_anim order type, not
-                // the action state (they can diverge by a frame).
-                let already_parrying = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, holder)
-                    .map(|(_, _, o)| o.order_type == crate::order::OrderType::ParryingShield)
-                    .unwrap_or(false);
-                if !already_parrying {
-                    let seq_elem = crate::sequence::SequenceElement::new(
-                        1,
-                        Command::ParryShield,
-                        Some(holder),
-                    );
-                    self.launch_element(sim, assets, seq_elem);
-                }
-                if result.despawn {
-                    self.deactivate_projectile_tombstone(result.arrow, false);
-                }
-                continue;
-            }
-
-            // FX-target hit — launch the projectile's activation command
-            // (ActivateArrow / ActivateApple) as an interaction element
-            // on the target with the shooter as antagonist. `tick_arrows`
-            // selects the command based on the projectile's object type.
-            if let Some((target_id, activation_cmd)) = result.fx_target_hit {
-                let shooter = self.get_entity(result.arrow).and_then(|e| match e {
-                    Entity::Projectile(p) => p.projectile.shooter,
-                    _ => None,
-                });
-                let mut seq_elem =
-                    crate::sequence::SequenceElement::new(1, activation_cmd, Some(target_id));
-                seq_elem.data = crate::sequence::SequenceElementData::Interaction {
-                    antagonist: shooter,
-                };
-                self.launch_element(sim, assets, seq_elem);
-                tracing::debug!(
-                    projectile = ?result.arrow,
-                    target = ?target_id,
-                    ?shooter,
-                    command = ?activation_cmd,
-                    "FX target activated by projectile"
-                );
-                let was_distraction = self.emit_noise_distraction_impact(
-                    sim,
-                    assets,
-                    result.arrow,
-                    result.impact_pos,
-                );
-                if let Some(fx_id) = result.impact_fx
-                    && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
-                {
-                    self.feedback
-                        .pending_side_effects
-                        .sounds
-                        .push(super::SoundCommand::Fx {
-                            fx_id,
-                            position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
-                            material: None,
-                        });
-                }
-                if result.despawn {
-                    self.deactivate_projectile_tombstone(result.arrow, false);
-                }
-                continue;
-            }
-
-            if let Some(victim) = result.hit_target {
-                // Identify the shooter and projectile type.
-                let Some((shooter, projectile_kind)) =
-                    self.get_entity(result.arrow).and_then(|e| match e {
-                        Entity::Projectile(p) => Some((p.projectile.shooter, p.object.object_type)),
-                        _ => None,
-                    })
-                else {
-                    tracing::warn!(
-                        projectile = ?result.arrow,
-                        ?victim,
-                        "projectile human hit missing projectile entity; skipping hit"
-                    );
-                    continue;
-                };
-                let Some(shooter) = shooter else {
-                    tracing::warn!(
-                        projectile = ?result.arrow,
-                        ?victim,
-                        ?projectile_kind,
-                        "projectile human hit missing shooter; skipping hit"
-                    );
-                    continue;
-                };
-
-                match projectile_kind {
-                    crate::element::ObjectType::Apple => {
-                        if let Some(old_pos) = result.human_hit_old_position {
-                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
-                        }
-                        // No damage; if the victim is a soldier, set
-                        // apple-smell and dispatch EventApple.
-                        self.on_apple_hit_human(sim, assets, result.arrow, victim);
-                    }
-                    crate::element::ObjectType::Stone => {
-                        if let Some(old_pos) = result.human_hit_old_position {
-                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
-                        }
-                        // Non-VIP and (non-soldier OR piercing-protection
-                        // roll failed) → piercing damage.  NPCs that
-                        // dodge (VIP or protected soldier) trigger an
-                        // EventApple stimulus instead.
-                        self.on_stone_hit_human(sim, assets, result.arrow, victim, shooter);
-                    }
-                    _ => {
-                        // ── Arrow path (default) — the 3-way classifier
-                        // folds in the friendly-fire / shielded-PC
-                        // pre-filter.  Each outcome is a distinct
-                        // side-effect:
-                        //   * `PassThrough`  — arrow keeps flying, no sound.
-                        //   * `Ricochet`     — falling state, silent.
-                        //   * `Damage`       — launch damage sequence element.
-                        match self.classify_arrow_hit(sim, assets, victim, shooter) {
-                            ArrowHitOutcome::PassThrough => {
-                                // Friendly-fire / VIP-NPC / civilian-protected
-                                // / PC-with-shield: arrow sails past.
-                                // `tick_arrows` has already flagged the
-                                // projectile for despawn; flip it back to
-                                // flying and skip the sound / despawn
-                                // sections below.
-                                if let Some(Entity::Projectile(p)) =
-                                    self.world.entities.get_mut(result.arrow)
-                                {
-                                    p.projectile.flying = true;
-                                }
-                                continue;
-                            }
-                            ArrowHitOutcome::Ricochet => {
-                                // Piercing-protection deflected.  Arrow
-                                // tumbles to the ground.  The
-                                // ricochet-falling transition runs
-                                // before the impact-sound check, and the
-                                // sound gate excludes already-falling
-                                // projectiles, so the ricochet impact
-                                // sound is intentionally silent.
-                                tracing::debug!(
-                                    arrow = ?result.arrow,
-                                    victim = ?victim,
-                                    "Arrow ricocheted from armor"
-                                );
-                                self.start_arrow_ricochet(assets, result.arrow);
-                                continue;
-                            }
-                            ArrowHitOutcome::Damage => {}
-                        }
-
-                        if let Some(old_pos) = result.human_hit_old_position {
-                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
-                        }
-
-                        let damage = result.damage;
-                        // Civilian-with-attached-scroll immunity
-                        // (scroll-reveal beggar).  Consume the arrow but
-                        // don't apply damage.
-                        if self.is_scroll_protected_civilian(victim) {
-                            tracing::debug!(
-                                arrow = ?result.arrow,
-                                ?victim,
-                                "arrow hit blocked: civilian carrying unrevealed scroll"
-                            );
-                            continue;
-                        }
-                        self.queue_projectile_damage(
-                            sim,
-                            assets,
-                            victim,
-                            shooter,
-                            Command::ReceiveArrowDamage,
-                            damage,
-                            // The arrow-specific Original
-                            // Damage-sequence initialization stores
-                            // concussion to zero; only generic/stone damage
-                            // accepts an independent concussion payload.
-                            0,
-                            Some(result.arrow),
-                        );
-                        tracing::debug!(
-                            arrow = ?result.arrow,
-                            victim = ?victim,
-                            damage,
-                            "Arrow damage queued"
-                        );
-
-                        // After launching the damage sequence, if the
-                        // victim is an NPC, dispatch EventGetArrow at the
-                        // arrow's trajectory origin so the surviving
-                        // target wakes up and searches toward the shot
-                        // origin.
-                        let Some(victim_is_npc) = self.get_entity(victim).map(|e| e.is_npc())
-                        else {
-                            tracing::warn!(
-                                ?victim,
-                                arrow = ?result.arrow,
-                                "arrow hit follow-up skipped: victim missing before EventGetArrow"
-                            );
-                            continue;
-                        };
-                        if victim_is_npc {
-                            let trajectory_origin = self
-                                .get_entity(result.arrow)
-                                .and_then(projectile_trajectory_origin);
-                            if let Some(origin) = trajectory_origin {
-                                self.dispatch_event_get_arrow(sim, assets, victim, origin);
-                            } else {
-                                tracing::warn!(
-                                    arrow = ?result.arrow,
-                                    victim = ?victim,
-                                    "arrow hit NPC missing trajectory origin; skipping EventGetArrow"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Impact sound: apple 509, stone 508.  The arrow's 510
-            // plays only on shield deflection (handled above), so
-            // non-shield arrow impacts stay silent.
-            let was_distraction =
-                self.emit_noise_distraction_impact(sim, assets, result.arrow, result.impact_pos);
-            if let Some(fx_id) = result.impact_fx
-                && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
-            {
-                self.feedback
-                    .pending_side_effects
-                    .sounds
-                    .push(super::SoundCommand::Fx {
-                        fx_id,
-                        position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
-                        material: None,
-                    });
-            }
-
-            // Landing deliberately re-derives no membership: a projectile's
-            // obstacle, layer and sector are settled while its arc is built
-            // and hold for the whole flight. Re-resolving them from the
-            // landing footprint would contradict that answer and, for a
-            // landing on open ground, bind a null obstacle whose plane drags
-            // the elevation just snapped above back down to a flat zero.
-
-            // Water/hole splash — arrow landed in a water or hole zone
-            // with no victim/shield/target.  Add the plouf titbit,
-            // broadcast the PLOUF noise, and play impact sound ID 470.
-            if result.despawn && result.hit_target.is_none() {
-                self.maybe_splash_on_landing(sim, assets, result.arrow);
-            }
-
-            if result.despawn {
-                self.deactivate_projectile_tombstone(result.arrow, result.hit_target.is_none());
-            }
-        }
-    }
-
     /// Consume a ground-stone's one-shot impact latch and synchronously feed
     /// the resulting authored noise into the existing AI hearing pipeline.
     /// Returns whether this impact was the distraction terminal, allowing the
     /// caller to apply the independently configurable feedback gate.
-    fn emit_noise_distraction_impact(
+    pub(super) fn emit_noise_distraction_impact(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2799,34 +2433,6 @@ impl EngineInner {
         true
     }
 
-    pub(super) fn deactivate_projectile_tombstone(
-        &mut self,
-        projectile_id: EntityId,
-        disappearance_reached: bool,
-    ) {
-        let entity = self
-            .get_entity_mut(projectile_id)
-            .unwrap_or_else(|| panic!("despawning projectile {projectile_id:?} vanished"));
-        assert!(
-            matches!(entity, Entity::Projectile(_) | Entity::Net(_)),
-            "projectile despawn targeted non-projectile {projectile_id:?}"
-        );
-        if let Entity::Projectile(projectile) = entity
-            && projectile.object.object_type == crate::element::ObjectType::Arrow
-            && (!projectile.projectile.disappear || !disappearance_reached)
-        {
-            // Successful human/target impact returns from the projectile tick
-            // before its later disappear branch. Thus even an arrow whose
-            // remaining trajectory would have fallen into a hole exposes one
-            // stopped, active snapshot and is retired by arrow presentation refresh.
-            // Only actually reaching the hole/water trajectory endpoint makes
-            // disappearance immediate.
-            projectile.projectile.flying = false;
-            return;
-        }
-        entity.element_data_mut().active = false;
-    }
-
     pub(super) fn rewind_projectile_to_human_hit_old_position(
         &mut self,
         projectile: EntityId,
@@ -2856,7 +2462,7 @@ impl EngineInner {
 
     /// Apple lands on a human.  Apples deal no damage; they only
     /// affect soldiers via the apple-smell AI hook.
-    fn on_apple_hit_human(
+    pub(super) fn on_apple_hit_human(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -2894,7 +2500,7 @@ impl EngineInner {
     /// Stone lands on a human.  Non-VIPs that fail the
     /// piercing-protection roll take `STONE_DAMAGE`; NPCs that dodge
     /// (VIP or armored soldier) receive an EventApple stimulus.
-    fn on_stone_hit_human(
+    pub(super) fn on_stone_hit_human(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3152,7 +2758,7 @@ impl EngineInner {
     /// Dispatch an EventGetArrow stimulus at the arrow's trajectory
     /// origin — wakes the struck NPC and seeds the search toward the
     /// shot origin.
-    fn dispatch_event_get_arrow(
+    pub(super) fn dispatch_event_get_arrow(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3176,7 +2782,7 @@ impl EngineInner {
     /// If the arrow's landing position is inside a water or hole zone,
     /// spawn the splash titbit, broadcast a PLOUF noise, and play the
     /// plouf impact sound (FX 470).
-    fn maybe_splash_on_landing(
+    pub(super) fn maybe_splash_on_landing(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3209,7 +2815,7 @@ impl EngineInner {
         // water-zone lookup (which can miss when the extended final
         // point sits on the polygon boundary) and drop into the silent
         // hole-disappear branch directly.
-        if pre_flagged_disappear {
+        if pre_flagged_disappear && !pre_flagged_dive {
             return;
         }
 
@@ -3295,16 +2901,6 @@ impl EngineInner {
             None,
         );
 
-        // Plouf impact sound (FX 470).
-        self.feedback
-            .pending_side_effects
-            .sounds
-            .push(super::SoundCommand::Fx {
-                fx_id: 470,
-                position: position_map,
-                material: None,
-            });
-
         // Broadcast PLOUF noise so nearby NPCs react. Volume from
         // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
         self.broadcast_noise_synchronously(
@@ -3317,6 +2913,16 @@ impl EngineInner {
             position.z.max(0.0) as u16,
             Some(arrow),
         );
+
+        // Plouf impact sound (FX 470).
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: 470,
+                position: position_map,
+                material: None,
+            });
     }
 
     // ─── Shield obstacle update ─────────────────────────────────

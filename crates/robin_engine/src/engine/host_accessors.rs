@@ -494,7 +494,9 @@ impl EngineInner {
                             .front()
                             .map(|order| (order.order_type, order.order_id)),
                         element.orders.len(),
-                        element.cross_postponed,
+                        element
+                            .postponed
+                            .map(|reference| (reference.sequence_id, reference.element_index)),
                     )
                 });
             let sequence_state =
@@ -515,7 +517,9 @@ impl EngineInner {
                                     element.state,
                                     element.priority,
                                     element.orders.len(),
-                                    element.cross_postponed,
+                                    element.postponed.map(|reference| {
+                                        (reference.sequence_id, reference.element_index)
+                                    }),
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -574,6 +578,14 @@ impl EngineInner {
             return;
         };
 
+        if let Some(owner) = owner {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("order advancement owner disappeared")
+                .execute_order_initialising = true;
+        }
         if let Some(next_order) = next_order {
             // Original-game order advancement publishes the next order immediately
             // and, when a successor exists, republishes the motion state as

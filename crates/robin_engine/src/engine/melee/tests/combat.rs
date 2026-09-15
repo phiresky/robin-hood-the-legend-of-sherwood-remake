@@ -1034,7 +1034,7 @@ fn completed_missed_sword_strike_adds_tiredness_once() {
 
     install_test_melee_order(&mut engine, attacker, target, SwordStrike::A, true);
 
-    engine.tick_melee_strikes(sim, &assets);
+    engine.tick_actor_owner_envelopes(sim, &assets);
 
     assert_eq!(
         engine
@@ -1107,9 +1107,10 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
         assets_with_nonstraight_profile(SwordStrike::D, crate::profiles::WeaponThrustKind::Lateral);
     let selected = install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, false);
 
-    let phase = engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected);
-    assert!(
-        phase == strikes::SweepTickPhase::Initialized,
+    let motion = engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected);
+    assert_eq!(
+        motion,
+        Some(crate::sprite::MotionState::Done),
         "the lateral DONE branch must initialize a sweep"
     );
     let initial_current = engine
@@ -1118,9 +1119,7 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
         .human_data()
         .unwrap()
         .sword_sweep
-        .current_angle;
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, true);
-
+        .initial_angle;
     let current = engine
         .get_entity(attacker)
         .unwrap()
@@ -1168,7 +1167,7 @@ fn push_victims_queue_damage_in_creation_fifo() {
 
     assert_eq!(
         engine.tick_nonstraight_melee_for(sim, &assets, attacker, selected),
-        strikes::SweepTickPhase::InProgress
+        Some(crate::sprite::MotionState::Done)
     );
 
     let first_life = soldier_life(&engine, first_victim);
@@ -3719,7 +3718,8 @@ fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
             .sequence_manager
             .get_element(admission, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None,
         "failed admission must sever the restart edge before terminal callbacks"
     );
@@ -3794,7 +3794,8 @@ fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
             .sequence_manager
             .get_element(admission, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((postponed, 0)),
         "failure cleanup is specific to the THRUST_A admission prerequisite"
     );
@@ -3874,7 +3875,8 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
             .sequence_manager
             .get_element(admission, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((postponed, 0)),
         "successful admission retains the normal prerequisite chain"
     );

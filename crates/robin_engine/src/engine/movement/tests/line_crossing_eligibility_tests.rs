@@ -33,13 +33,14 @@ fn retired_seek_crossing_preserves_increment_and_direction() {
         let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
         let pi = &mut pc.element.sprite.position_iface;
         pi.set_map_position(MapPoint::new(130.0, 130.0));
-        pi.new_move();
-        pi.set_map_position(MapPoint::new(130.0, 134.0));
         pi.set_map_increment(MapVec::new(1.0, 0.0));
         pi.set_direction(crate::position_interface::Direction::from_raw(4));
         // A seek's synchronous removal clears its goal and invalidates the
         // increment cache, while retaining the last computed vector.
         pi.set_map_goal(MapPoint::ZERO);
+        pc.element
+            .set_position_map_delayed(MapPoint::new(130.0, 134.0));
+        pc.actor.execution_frozen = true;
         let owner = engine.add_test_entity(Entity::Pc(pc));
         let order_id = engine.orders.allocate_order_id();
         let mut movement =
@@ -55,17 +56,10 @@ fn retired_seek_crossing_preserves_increment_and_direction() {
         sequence.append_element(movement);
         let seq_id = engine.orders.sequence_manager.insert_sequence(sequence);
         engine.orders.sequence_manager.start_sequence_level(seq_id);
-        engine.finish_actor_movement(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            owner,
-            MovementOwnerSelection {
-                seq_id,
-                elem_idx: 0,
-                order_id: std::num::NonZeroU32::new(order_id.get()).unwrap(),
-            },
-            None,
-        );
+        if state == SequenceState::InProgress {
+            engine.select_sequence_element(owner, Some((seq_id, 0)));
+        }
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
         let pi = engine.get_entity(owner).unwrap().position_iface();
         if state == SequenceState::Terminated {
             assert_eq!(pi.raw_increment_map(), MapVec::new(1.0, 0.0));

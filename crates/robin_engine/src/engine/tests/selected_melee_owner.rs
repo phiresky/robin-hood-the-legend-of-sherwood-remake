@@ -899,55 +899,52 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
     let assets = LevelAssets::new();
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    let owner = attacker;
+    let order_id = engine
+        .orders
+        .sequence_manager
+        .get_element(melee_sequence, 0)
+        .unwrap()
+        .current_order()
+        .unwrap()
+        .order_id;
+    let selected = crate::engine::tick::MeleeOwnerSelection {
+        seq_id: melee_sequence,
+        elem_idx: 0,
+        order_id,
+    };
+    engine.element_interrupted(
         &crate::sim_rng::test_context(),
         &assets,
-        |_, _| {},
-        |_, _| {},
-        |engine, owner, _, melee, _, _, _| {
-            if owner != attacker {
-                return;
-            }
-            let selected = melee.expect("melee was selected at Execute entry");
-            engine.element_interrupted(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                melee_sequence,
-                0,
-                crate::sequence::CascadeFlags::empty(),
-            );
-            let replacement = engine
-                .orders
-                .sequence_manager
-                .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
-            engine
-                .orders
-                .sequence_manager
-                .start_sequence_level(replacement);
-            let order_id = engine.orders.allocate_order_id();
-            engine.orders.sequence_manager.push_order_on(
-                replacement,
-                0,
-                Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
-            );
-            engine.select_sequence_element(owner, Some((replacement, 0)));
-            engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &assets,
-                &mut Vec::new(),
-                replacement,
-                0,
-            );
-            engine.tick_selected_melee_owner(
-                &crate::sim_rng::test_context(),
-                &assets,
-                owner,
-                selected,
-            );
-        },
-        |_, _, _| {},
+        &mut Vec::new(),
+        melee_sequence,
+        0,
+        crate::sequence::CascadeFlags::empty(),
     );
+    let replacement = engine
+        .orders
+        .sequence_manager
+        .insert_element(SequenceElement::new(1, Command::Wait, Some(owner)));
+    engine
+        .orders
+        .sequence_manager
+        .start_sequence_level(replacement);
+    let order_id = engine.orders.allocate_order_id();
+    engine.orders.sequence_manager.push_order_on(
+        replacement,
+        0,
+        Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
+    );
+    engine.select_sequence_element(owner, Some((replacement, 0)));
+    engine.element_in_progress(
+        &crate::sim_rng::test_context(),
+        &assets,
+        &mut Vec::new(),
+        replacement,
+        0,
+    );
+    engine.tick_selected_melee_owner(&crate::sim_rng::test_context(), &assets, owner, selected);
+
     assert_eq!(
         engine
             .get_entity(attacker)

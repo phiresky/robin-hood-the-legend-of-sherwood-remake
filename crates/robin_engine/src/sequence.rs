@@ -1047,42 +1047,13 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
     /// Subtype-specific data.
     pub data: SequenceElementData<P>,
 
-    /// Index of a postponed element (within the same sequence) that should be
-    /// restarted when this element finishes.
-    ///
-    /// Used for *intra-sequence* postponement (e.g. `PASS_DOOR` postponing a
-    /// subsequent `MOVE` within the same launched sequence).
-    pub postponed_element_index: Option<usize>,
+    /// Following graph edge, including explicit null and cross-sequence links.
+    pub next: Option<SequenceElementRef>,
+    /// Element postponed behind this one, whether local or in another sequence.
+    pub postponed: Option<SequenceElementRef>,
 
-    /// Cross-sequence postpone successor — the sequence element waiting
-    /// for this one to terminate (lives on the *blocking* element and
-    /// points at the *waiting* one).  When this element terminates or
-    /// is interrupted, the successor is released (registered for
-    /// dispatch or cascaded).
-    ///
-    /// The existing `postponed_element_index` handles the *intra-
-    /// sequence* case (e.g. `PASS_DOOR` postponing a later `MOVE` in the
-    /// same launched sequence).  `cross_postponed` handles the case
-    /// where instruction arbitration postpones a new element launched
-    /// via a *different* sequence (e.g. a user-click sword strike issued
-    /// while another sword strike sequence is mid-walk).
-    pub cross_postponed: Option<(SequenceId, usize)>,
-
-    /// Stopping a sequence element clears its next-element link once the
-    /// recursive stop leaves that successor `RHSEQ_INTERRUPTED`
-    /// after the recursive stop. Runtime-authored elements derive
-    /// their successor from append order rather than from a stored pointer,
-    /// so record the severing explicitly. Loaded v48 elements clear
-    /// `legacy_v48.next` instead, exactly as the Original save does.
-    pub next_link_severed: bool,
-
-    /// Original-only authoritative members retained during v48 adoption.
-    ///
-    /// TODO(legacy-sequence-runtime): route `next`, `mummy`, linked-seek,
-    /// deleted/script-driven and arrow fields through the
-    /// corresponding runtime paths. Keeping the exact values here prevents a
-    /// successful load from silently discarding state while those behaviors
-    /// are being implemented.
+    /// Additional serialized metadata retained during v48 adoption. Live graph
+    /// edges use the same `next` and `postponed` fields for every element.
     pub(crate) legacy_v48: Option<LegacyV48SequenceElementState>,
 }
 
@@ -1107,9 +1078,8 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             point_seek_route_provenance,
             orders,
             data,
-            postponed_element_index,
-            cross_postponed,
-            next_link_severed,
+            next,
+            postponed,
             legacy_v48,
         } = self;
         Ok(SequenceElement {
@@ -1128,9 +1098,8 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             point_seek_route_provenance,
             orders,
             data: data.try_map_post_seek(map)?,
-            postponed_element_index,
-            cross_postponed,
-            next_link_severed,
+            next,
+            postponed,
             legacy_v48,
         })
     }
@@ -1183,8 +1152,6 @@ pub(crate) struct LegacyV48SequenceElementState {
     /// Dormant invalid counterpart of `action_state_after_transition`; see
     /// [`Self::raw_dormant_posture_after_transition`].
     pub raw_dormant_action_state_after_transition: Option<i32>,
-    pub next: Option<SequenceElementRef>,
-    pub postponed: Option<SequenceElementRef>,
     pub mummy: Option<SequenceId>,
     /// `None` means this is not a movement element; `Some(None)` is a
     /// movement element with a serialized null linked-seek pointer.
@@ -1226,9 +1193,8 @@ impl SequenceElement {
             point_seek_route_provenance: PointSeekRouteProvenance::Live,
             orders: VecDeque::new(),
             data: SequenceElementData::Simple,
-            postponed_element_index: None,
-            cross_postponed: None,
-            next_link_severed: false,
+            next: None,
+            postponed: None,
             legacy_v48: None,
         }
     }
@@ -2050,6 +2016,10 @@ impl Sequence {
                 });
             }
         }
+        let next = SequenceElementRef::new(self.id, self.elements.len());
+        if let Some(last) = self.elements.last_mut() {
+            last.next = Some(next);
+        }
         self.elements.push(element);
         Ok(())
     }
@@ -2477,18 +2447,7 @@ impl Sequence {
             .elements
             .get(elem_idx)
             .expect("postponed-link owner missing");
-        assert!(
-            element.postponed_element_index.is_none() || element.cross_postponed.is_none(),
-            "one element cannot have two postponed successors"
-        );
-        element
-            .cross_postponed
-            .map(|(sequence, index)| SequenceElementRef::new(sequence, index))
-            .or_else(|| {
-                element
-                    .postponed_element_index
-                    .map(|index| SequenceElementRef::new(self.id, index))
-            })
+        element.postponed
     }
 
     pub(crate) fn sever_following_link(&mut self, elem_idx: usize) {
@@ -2496,10 +2455,7 @@ impl Sequence {
             .elements
             .get_mut(elem_idx)
             .expect("following-link owner missing");
-        if let Some(legacy) = &mut element.legacy_v48 {
-            legacy.next = None;
-        }
-        element.next_link_severed = true;
+        element.next = None;
     }
 
     pub(crate) fn sever_postponed_link(&mut self, elem_idx: usize) {
@@ -2507,35 +2463,11 @@ impl Sequence {
             .elements
             .get_mut(elem_idx)
             .expect("postponed-link owner missing");
-        element.postponed_element_index = None;
-        element.cross_postponed = None;
+        element.postponed = None;
     }
 
-    /// Interpret the stored following link, without traversal policy.
-    /// Runtime-authored sequences wire this pointer in append order. Loaded
-    /// v48 elements retain its exact serialized target, including null and
-    /// non-adjacent or cross-sequence links. Target validation, owner filtering,
-    /// and the runtime severed-link mirror belong to the named queries below.
-    fn raw_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
-        let element = self.elements.get(elem_idx)?;
-        if let Some(legacy) = &element.legacy_v48 {
-            legacy.next
-        } else {
-            self.elements
-                .get(elem_idx + 1)
-                .map(|_| SequenceElementRef::new(self.id, elem_idx + 1))
-        }
-    }
-
-    /// Following edge visible to live queries after Stop severs a link.
-    /// Runtime-authored elements remain physically adjacent after Halt; seeing
-    /// through that edge could suppress the selected actor's condolence callback.
     fn unsevered_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
-        let element = self.elements.get(elem_idx)?;
-        if element.next_link_severed {
-            return None;
-        }
-        self.raw_following_ref(elem_idx)
+        self.elements.get(elem_idx)?.next
     }
 
     /// Select only the current node's Stop branch. The engine resolves its

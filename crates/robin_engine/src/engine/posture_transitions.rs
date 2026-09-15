@@ -30,116 +30,11 @@
 //!    table-swordfight and other line-goal moves emitted through
 //!    `GoalShape::Line` / line-movement sequence equivalents.
 
-use crate::coordinates::MapPoint;
-use crate::element::{ActionState, Command, DoorPassStep, EntityId, Posture};
+use crate::element::{ActionState, Command, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceId, SequenceState};
-use std::collections::VecDeque;
 
 use super::EngineInner;
-
-/// Apply the original game's transition-start insertion algorithm to the lazy
-/// door-pass tail. The original game stores these sub-orders directly in the
-/// movement sequence; the port retains them separately until launch.
-fn insert_door_pass_start_transition(
-    pass: &mut crate::element::ActiveDoorPass,
-    next_order_id: &mut u32,
-    point_start: MapPoint,
-    animation_to_replace: OrderType,
-    animation_transition: OrderType,
-    distance_transition: f32,
-) {
-    pass.align_pending_order_ids();
-    let mut distance_remaining = if distance_transition == 0.0 {
-        0.01
-    } else {
-        distance_transition
-    };
-    let mut point = point_start;
-    let mut index = 0;
-
-    while index < pass.steps.len() {
-        let mut insert_destination = None;
-        if let DoorPassStep::Walk {
-            destination,
-            action,
-            ..
-        } = &mut pass.steps[index]
-        {
-            if *action == animation_to_replace {
-                let movement = *destination - point;
-                let norm = movement.length();
-                if norm >= distance_remaining {
-                    let destination = if norm != 0.0 {
-                        point + movement.scale(distance_remaining / norm)
-                    } else {
-                        point
-                    };
-                    insert_destination = Some(destination);
-                } else {
-                    distance_remaining -= norm;
-                    *action = animation_transition;
-                }
-            }
-
-            if *destination != MapPoint::ZERO {
-                point = *destination;
-            }
-        }
-
-        if let Some(destination) = insert_destination {
-            pass.insert_pending_step(
-                index,
-                DoorPassStep::Walk {
-                    destination,
-                    action: animation_transition,
-                    reverse: false,
-                    compute_direction: true,
-                    tolerance: 0.0,
-                },
-                crate::order::alloc_order_id(next_order_id),
-            );
-            return;
-        }
-        index += 1;
-    }
-}
-
-/// Continue the original game's transition-start insertion scan from the materialized
-/// prefix into Rust's separately stored door-pass tail.
-///
-/// Returns the last nonzero destination and the transition distance which
-/// the materialized orders did not consume. `None` means the transition was
-/// placed completely inside the materialized prefix.
-fn door_pass_transition_tail_cursor(
-    orders: &VecDeque<crate::order::Order>,
-    point_start: MapPoint,
-    animation_to_replace: OrderType,
-    distance_transition: f32,
-) -> Option<(MapPoint, f32)> {
-    let mut distance_remaining = if distance_transition == 0.0 {
-        0.01
-    } else {
-        distance_transition
-    };
-    let mut point = point_start;
-
-    for order in orders {
-        let destination = MapPoint::new(order.target_x, order.target_y);
-        if order.order_type == animation_to_replace {
-            let norm = (destination - point).length();
-            if norm >= distance_remaining {
-                return None;
-            }
-            distance_remaining -= norm;
-        }
-        if destination != MapPoint::ZERO {
-            point = destination;
-        }
-    }
-
-    Some((point, distance_remaining))
-}
 
 impl EngineInner {
     fn selected_order_action(&self, entity: EntityId) -> Option<OrderType> {
@@ -153,8 +48,8 @@ impl EngineInner {
     /// leaves its identity alone. The original game's actor order points at that same
     /// mutated object, so animation queries observe the new action
     /// immediately even though the sprite does not execute it until its next
-    /// actor slot. Keep Rust's detached installed-order copy and the lazy
-    /// door-pass mirror pointed at that rewritten action without publishing a
+    /// actor slot. Keep the installed-order copy pointed at that rewritten
+    /// action without publishing a
     /// newly inserted, not-yet-installed order. Call this both before and
     /// after `post_process_path`: ordinary paths insert a new transition ID
     /// that the second call rejects, while loaded PassDoor tails can rewrite
@@ -184,9 +79,6 @@ impl EngineInner {
                 .is_some_and(|installed| installed.order_id == selected_after.order_id)
             {
                 actor.installed_order = Some(selected_after);
-            }
-            if let Some(pass) = actor.active_door_pass.as_mut() {
-                pass.current_action = selected_after.order_type;
             }
         }
     }
@@ -230,7 +122,6 @@ impl EngineInner {
                     .make_fast(entity, pathfinder_index);
                 return;
             }
-            self.make_active_door_pass_fast(entity);
             self.after_make_rewrite(sim, entity, selected_movement);
             self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
@@ -270,107 +161,6 @@ impl EngineInner {
                 .sequence_manager
                 .make_slow(&self.world.entities, entity);
         }
-    }
-
-    fn make_active_door_pass_fast(&mut self, entity: EntityId) {
-        let Some(owner) = self.get_entity(entity) else {
-            return;
-        };
-        let position = owner.element_data().position_map();
-        let actor = owner.actor_data().expect("movement owner is not an actor");
-        let movement_action = self
-            .selected_movement_element(entity)
-            .and_then(|(seq_id, elem_idx)| {
-                self.orders.sequence_manager.get_element(seq_id, elem_idx)
-            })
-            .and_then(|element| match &element.data {
-                SequenceElementData::Movement { action, .. } => Some(*action),
-                _ => None,
-            });
-        let transition = if matches!(
-            movement_action,
-            Some(OrderType::WalkingWithSword | OrderType::RunningWithSword)
-        ) {
-            // The original game's path post-processing treats both sword movement tokens as
-            // total no-transition arms, irrespective of posture/action state.
-            None
-        } else {
-            match owner.element_data().posture() {
-                // The transition selects the crouched posture
-                // transition before considering the action-state transition.
-                // This matters when acceleration rewrites the untranslated tail of a
-                // high wall pass while TransitionCrouchingUp is still current:
-                // Original inserts crouched-walking -> running, not
-                // waiting-upright -> running.
-                Posture::Crouched => Some(OrderType::TransitionWalkingCrouchedRunningUpright),
-                _ => match actor.action_state {
-                    ActionState::Moving => Some(OrderType::TransitionWalkingUprightRunningUpright),
-                    ActionState::Waiting | ActionState::Bored => {
-                        Some(OrderType::TransitionWaitingUprightRunningUpright)
-                    }
-                    _ => None,
-                },
-            }
-        };
-        // The original game keeps the already-materialized door-passage orders and its
-        // untranslated tail in one order list. Continue the same
-        // Transition-start insertion scan across the representation boundary:
-        // matching materialized orders consume transition distance, every
-        // nonzero destination advances the cursor, and zero-position door
-        // action points leave it unchanged.
-        let transition_and_tail_cursor = transition.map(|transition| {
-            let transition_distance = f32::from(owner.sprite().distance_for_animation(transition));
-            let tail_cursor = self
-                .selected_movement_element(entity)
-                .and_then(|(seq_id, elem_idx)| {
-                    self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                })
-                .and_then(|element| {
-                    door_pass_transition_tail_cursor(
-                        &element.orders,
-                        position,
-                        OrderType::RunningUpright,
-                        transition_distance,
-                    )
-                });
-            (transition, tail_cursor)
-        });
-        let next_order_id = &mut self.orders.next_order_id;
-        let Some(actor) = self
-            .world
-            .entities
-            .get_mut(entity)
-            .and_then(|e| e.actor_data_mut())
-        else {
-            return;
-        };
-        let Some(pass) = actor.active_door_pass.as_mut() else {
-            return;
-        };
-
-        for step in pass.steps.iter_mut() {
-            let DoorPassStep::Walk { action, .. } = step else {
-                continue;
-            };
-            *action = match *action {
-                OrderType::WalkingUpright | OrderType::WalkingCrouched => OrderType::RunningUpright,
-                OrderType::WalkingWithSword => OrderType::RunningWithSword,
-                OrderType::WalkingWithShield => OrderType::RunningUpright,
-                other => other,
-            };
-        }
-        let Some((transition, Some((tail_start, distance_remaining)))) = transition_and_tail_cursor
-        else {
-            return;
-        };
-        insert_door_pass_start_transition(
-            pass,
-            next_order_id,
-            tail_start,
-            OrderType::RunningUpright,
-            transition,
-            distance_remaining,
-        );
     }
 
     /// Stand the actor up (rewrite crouched movement orders upright).
@@ -1368,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn in_place_make_rewrite_updates_matching_installed_order_and_door_mirror() {
+    fn in_place_make_rewrite_updates_matching_installed_order_and_preserves_door_identity() {
         let (mut engine, owner, sequence, order_id) = selected_running_pc();
         {
             let actor = engine
@@ -1384,12 +1174,7 @@ mod tests {
                 door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: false,
                 position_direct: false,
-                steps: Default::default(),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 1,
-                current_action: OrderType::RunningUpright,
-                current_reverse: false,
-                saved_action_state: None,
             });
         }
         engine
@@ -1412,10 +1197,11 @@ mod tests {
                 order_type: OrderType::TransitionRunningUprightWalkingCrouched,
             })
         );
-        assert_eq!(
-            actor.active_door_pass.as_ref().unwrap().current_action,
-            OrderType::TransitionRunningUprightWalkingCrouched
-        );
+        let pass = actor.active_door_pass.as_ref().unwrap();
+        assert_eq!(pass.door_index, crate::gate::DoorIndex::new(0).unwrap());
+        assert!(!pass.direct);
+        assert!(!pass.position_direct);
+        assert_eq!(pass.triggers_fired, 1);
     }
 
     #[test]
@@ -1511,8 +1297,8 @@ mod tests {
     }
 
     #[test]
-    fn crouched_door_pass_make_fast_uses_crouched_running_transition_in_lazy_tail() {
-        let (mut engine, owner, sequence, _) = selected_running_pc();
+    fn crouched_door_pass_make_fast_inserts_transition_in_authored_chain() {
+        let (mut engine, owner, sequence, prefix_id) = selected_running_pc();
         {
             let entity = engine.get_entity_mut(owner).expect("test PC");
             entity
@@ -1521,64 +1307,60 @@ mod tests {
             let actor = entity.actor_data_mut().expect("test actor");
             actor.action_state = ActionState::Waiting;
             actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
+                door_index: crate::gate::DoorIndex::new(0).unwrap(),
                 direct: false,
                 position_direct: false,
-                steps: VecDeque::from([DoorPassStep::Walk {
-                    destination: MapPoint::new(30.0, 20.0),
-                    action: OrderType::WalkingUpright,
-                    reverse: false,
-                    compute_direction: true,
-                    tolerance: 0.0,
-                }]),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 1,
-                current_action: OrderType::TransitionCrouchingUp,
-                current_reverse: false,
-                saved_action_state: Some(ActionState::Waiting),
             });
         }
-        // Model the materialized TransitionCrouchingUp prefix of the high
-        // wall pass; the following walk remains in ActiveDoorPass::steps.
-        engine
+        let walk_id = engine.orders.allocate_order_id();
+        {
+            let element = engine
+                .orders
+                .sequence_manager
+                .get_element_mut(sequence, 0)
+                .unwrap();
+            element.command = Command::PassDoor;
+            let SequenceElementData::Movement { flags, .. } = &mut element.data else {
+                panic!("movement element");
+            };
+            flags.insert(MoveFlags::NO_TRANSITIONS);
+            element.orders.front_mut().unwrap().order_type = OrderType::TransitionCrouchingUp;
+            element
+                .orders
+                .push_back(Order::new(OrderType::WalkingUpright, 30.0, 20.0, walk_id));
+        }
+        let next_order_id = engine.orders.next_order_id;
+
+        engine.actor_make_fast(&crate::sim_rng::test_context(), owner);
+
+        let element = engine
             .orders
             .sequence_manager
-            .get_element_mut(sequence, 0)
-            .expect("selected movement")
-            .orders
-            .front_mut()
-            .expect("materialized transition")
-            .order_type = OrderType::TransitionCrouchingUp;
-
-        let next_order_id = engine.orders.next_order_id;
-        engine.make_active_door_pass_fast(owner);
-        assert_eq!(engine.orders.next_order_id, next_order_id + 1);
-
-        let pass = engine
-            .get_entity(owner)
-            .expect("test PC")
-            .actor_data()
-            .expect("test actor")
-            .active_door_pass
-            .as_ref()
-            .expect("active door pass");
-        assert!(matches!(
-            pass.steps.front(),
-            Some(DoorPassStep::Walk {
-                action: OrderType::TransitionWalkingCrouchedRunningUpright,
-                ..
-            })
-        ));
-        assert_eq!(pass.preallocated_order_ids.len(), pass.steps.len());
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(element.orders.len(), 3);
         assert_eq!(
-            pass.preallocated_order_ids.front().copied().flatten(),
-            std::num::NonZeroU32::new(next_order_id),
-            "the inserted transition reserves its Original-timed order identity"
+            element.orders[0].order_type,
+            OrderType::TransitionCrouchingUp
         );
+        assert_eq!(element.orders[0].order_id, prefix_id);
+        assert_eq!(
+            element.orders[1].order_type,
+            OrderType::TransitionWalkingCrouchedRunningUpright
+        );
+        assert_eq!(element.orders[1].order_id.get(), next_order_id);
+        assert_eq!(element.orders[2].order_type, OrderType::RunningUpright);
+        assert_eq!(element.orders[2].order_id, walk_id);
+        assert_eq!(
+            (element.orders[2].target_x, element.orders[2].target_y),
+            (30.0, 20.0)
+        );
+        assert_eq!(engine.orders.next_order_id, next_order_id + 1);
     }
 
     #[test]
-    fn sword_door_pass_make_fast_rewrites_lazy_tail_without_inserting_transition() {
+    fn sword_door_pass_make_fast_rewrites_authored_tail_without_inserting_transition() {
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(ActorPc {
@@ -1635,21 +1417,19 @@ mod tests {
                 door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: false,
                 position_direct: false,
-                steps: VecDeque::from([DoorPassStep::Walk {
-                    destination: MapPoint::new(30.0, 20.0),
-                    action: OrderType::WalkingUpright,
-                    reverse: false,
-                    compute_direction: true,
-                    tolerance: 0.0,
-                }]),
-                preallocated_order_ids: Default::default(),
                 triggers_fired: 1,
-                current_action: OrderType::PassingDoor,
-                current_reverse: false,
-                saved_action_state: Some(ActionState::MovingSword),
             });
         }
 
+        let walk_id = engine.orders.allocate_order_id();
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .unwrap()
+            .orders
+            .push_back(Order::new(OrderType::WalkingUpright, 30.0, 20.0, walk_id));
+        let next_order_id = engine.orders.next_order_id;
         engine.actor_make_fast(&crate::sim_rng::test_context(), owner);
 
         let element = engine
@@ -1663,22 +1443,20 @@ mod tests {
         assert_eq!(*action, OrderType::RunningWithSword);
         assert!(flags.contains(MoveFlags::FAST));
 
-        let pass = engine
-            .get_entity(owner)
-            .expect("test PC")
-            .actor_data()
-            .expect("test actor")
-            .active_door_pass
-            .as_ref()
-            .expect("active door pass");
-        assert_eq!(pass.steps.len(), 1, "sword speed changes add no transition");
-        assert!(matches!(
-            pass.steps.front(),
-            Some(DoorPassStep::Walk {
-                action: OrderType::RunningUpright,
-                ..
-            })
-        ));
+        assert_eq!(
+            element.orders.len(),
+            2,
+            "sword speed changes add no transition"
+        );
+        assert_eq!(element.orders[0].order_type, OrderType::PassingDoor);
+        assert_eq!(element.orders[0].order_id, order_id);
+        assert_eq!(element.orders[1].order_type, OrderType::RunningUpright);
+        assert_eq!(element.orders[1].order_id, walk_id);
+        assert_eq!(
+            (element.orders[1].target_x, element.orders[1].target_y),
+            (30.0, 20.0)
+        );
+        assert_eq!(engine.orders.next_order_id, next_order_id);
     }
 
     #[test]

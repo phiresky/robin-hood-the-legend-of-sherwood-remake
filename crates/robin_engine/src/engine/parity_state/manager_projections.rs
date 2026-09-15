@@ -512,17 +512,9 @@ impl Engine {
                     }
                 };
 
-                let postponed = match (
-                    element_state.postponed_element_index,
-                    element_state.cross_postponed,
-                ) {
-                    (Some(index), None) => Some(reference(sequence.id, index)),
-                    (None, Some((id, index))) => Some(reference(id, index)),
-                    (None, None) => None,
-                    (Some(_), Some(_)) => panic!(
-                        "parity sequence element carries both intra- and cross-sequence postponed refs"
-                    ),
-                };
+                let postponed = element_state
+                    .postponed
+                    .map(|link| reference(link.sequence_id, link.element_index));
                 let transition_live =
                     element_state.state == crate::sequence::SequenceState::InProgress;
                 elements.push(SequenceElement {

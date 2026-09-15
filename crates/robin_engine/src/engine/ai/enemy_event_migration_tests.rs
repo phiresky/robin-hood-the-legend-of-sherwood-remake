@@ -826,12 +826,7 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
             .ale_reliable_distraction = reliable;
         let sim =
             crate::sim_rng::SimulationContext::with_seed_and_config(1, engine.control.sim_config);
-        engine.execute_ai_enemy_observation(
-            &sim,
-            &assets,
-            owner,
-            crate::ai::EnemyObservation::AleReaction,
-        );
+        engine.execute_ai_ale_reaction(&sim, &assets, owner);
         assert_eq!(
             engine
                 .get_entity(owner)

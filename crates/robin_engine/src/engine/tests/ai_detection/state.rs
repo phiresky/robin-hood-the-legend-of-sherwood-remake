@@ -238,12 +238,7 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
             door_index: DoorIndex::new(0).unwrap(),
             direct: direction != 0,
             position_direct: direction != 0,
-            steps: Default::default(),
-            preallocated_order_ids: Default::default(),
             triggers_fired: 0,
-            current_action: Default::default(),
-            current_reverse: false,
-            saved_action_state: None,
         });
         let mut pass = crate::sequence::SequenceElement::new_movement(
             1,

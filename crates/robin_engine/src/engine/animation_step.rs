@@ -47,7 +47,7 @@ impl EngineInner {
     pub(super) fn actor_animation_entry(
         &mut self,
         entity_id: EntityId,
-    ) -> ControlFlow<Option<ActorExecuteResult>, ActorAnimationEntry> {
+    ) -> ControlFlow<Option<MotionState>, ActorAnimationEntry> {
         let globally_frozen = self.actors_frozen();
         let diagnostic_frame = self.control.frame_counter;
         let diagnostic_creation_order =
@@ -93,7 +93,7 @@ impl EngineInner {
             && actor.execution_frozen
         {
             let frozen_wait = self.orders.sequence_manager.current_order_for_actor(&self.world.entities, entity_id)
-                .and_then(|(seq_id, elem_idx, order)| {
+                .and_then(|(seq_id, elem_idx, _)| {
                     let element = self
                         .orders
                         .sequence_manager
@@ -104,12 +104,7 @@ impl EngineInner {
                             )
                         });
                     matches!(element.command, Command::WaitTimer | Command::WaitFreeLift)
-                        .then_some(ActorExecuteResult {
-                            order_type: order.order_type,
-                            entry_seq_id: seq_id,
-                            entry_elem_idx: elem_idx,
-                            motion: MotionState::InProgress,
-                        })
+                        .then_some(MotionState::InProgress)
                 });
             return ControlFlow::Break(frozen_wait);
         }
@@ -580,7 +575,7 @@ impl EngineInner {
         selected_generic_order: bool,
         entry: ActorAnimationEntry,
         operands: ActorAnimationOperands,
-    ) -> Option<ActorExecuteResult> {
+    ) -> Option<MotionState> {
         let frame_counter = self.control.frame_counter;
         let reusable_cloaks_enabled = self.control.sim_config.reusable_cloaks;
 
@@ -1005,12 +1000,7 @@ impl EngineInner {
                 )
                 .is_active()
         {
-            return Some(ActorExecuteResult {
-                order_type: anim_type,
-                entry_seq_id: seq_id,
-                entry_elem_idx: elem_idx,
-                motion: MotionState::Terminated,
-            });
+            return Some(MotionState::Terminated);
         } else {
             // Human under-net initialization runs before
             // action processing in the original game. Wriggling may rotate the
@@ -1439,12 +1429,7 @@ impl EngineInner {
                         )
                         .is_active()
                 {
-                    return Some(ActorExecuteResult {
-                        order_type: anim_type,
-                        entry_seq_id: seq_id,
-                        entry_elem_idx: elem_idx,
-                        motion: MotionState::Terminated,
-                    });
+                    return Some(MotionState::Terminated);
                 } else {
                     sprite_motion
                 }
@@ -1473,12 +1458,7 @@ impl EngineInner {
                 victim,
                 self.is_entity_vip(assets, victim),
             ) {
-                return Some(ActorExecuteResult {
-                    order_type: anim_type,
-                    entry_seq_id: seq_id,
-                    entry_elem_idx: elem_idx,
-                    motion: MotionState::Terminated,
-                });
+                return Some(MotionState::Terminated);
             }
         }
         let standing_up_sword_direction_goal = operands.standing_up_sword_direction_goal;

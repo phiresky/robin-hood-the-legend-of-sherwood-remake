@@ -8,7 +8,6 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
-use super::animation::ActorExecuteResult;
 use super::{EngineInner, LevelAssets};
 
 fn rolling_initial_direction(position: MapPoint, goal: MapPoint) -> i16 {
@@ -36,13 +35,6 @@ fn rolling_terminal_posture(motion: MotionState, is_dead: bool) -> Option<crate:
     })
 }
 
-/// The original game's multi-line crossing check always executes the
-/// shared roll-update/increment-recompute tail, even when none of the
-/// coincident lines is an elevation bond.
-fn rolling_crossing_revalidates(crossed_elevation: bool, crossing_count: usize) -> bool {
-    crossed_elevation || crossing_count > 1
-}
-
 impl EngineInner {
     /// original-game rolling action.
     pub(super) fn tick_rolling_owner(
@@ -50,7 +42,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> Option<ActorExecuteResult> {
+    ) -> Option<MotionState> {
         let Some((seq_id, elem_idx, order, next_order)) = self
             .orders
             .sequence_manager
@@ -247,30 +239,6 @@ impl EngineInner {
             entity.element_data_mut().update_grid_cell();
         }
 
-        let new_pos = self.world.entities[owner]
-            .as_ref()
-            .unwrap()
-            .element_data()
-            .position_map();
-        // The single-line arm revalidates only for an elevation line. The
-        // multi-line arm enters the shared tail unconditionally, including
-        // coincident script/sound boundaries with zero elevation lines.
-        let crossing_count = self
-            .world
-            .fast_grid
-            .get_actor_crossing_line_indices(layer, old_pos, new_pos)
-            .len();
-        let crossed = self.check_for_line_crossing(assets, owner, old_pos, new_pos, layer);
-        if rolling_crossing_revalidates(crossed, crossing_count) {
-            self.update_roll_after_crossing(assets, owner);
-            self.world.entities[owner]
-                .as_mut()
-                .expect("Rolling owner disappeared after line crossing")
-                .position_iface_mut()
-                .compute_increment_all(order.compute_direction);
-        }
-        self.check_for_non_elevation_line_crossing(sim, assets, owner, old_pos, new_pos, layer);
-
         // The original game commits the landing posture before the actor update pops
         // the rolling order and resumes its postponed successor. That successor
         // must therefore generate its posture transition from Lying (normally a
@@ -298,12 +266,7 @@ impl EngineInner {
         if motion == MotionState::Start {
             self.execute_non_interruptable_lifts((seq_id, elem_idx));
         }
-        Some(ActorExecuteResult {
-            order_type: OrderType::Rolling,
-            entry_seq_id: seq_id,
-            entry_elem_idx: elem_idx,
-            motion: effective_motion,
-        })
+        Some(effective_motion)
     }
 }
 
@@ -384,13 +347,5 @@ mod tests {
             rolling_terminal_posture(MotionState::Terminated, true),
             Some(crate::element::Posture::Dead)
         );
-    }
-
-    #[test]
-    fn coincident_non_elevation_lines_revalidate_roll() {
-        assert!(!rolling_crossing_revalidates(false, 0));
-        assert!(!rolling_crossing_revalidates(false, 1));
-        assert!(rolling_crossing_revalidates(true, 1));
-        assert!(rolling_crossing_revalidates(false, 2));
     }
 }

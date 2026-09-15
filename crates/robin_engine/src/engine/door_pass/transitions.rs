@@ -14,10 +14,11 @@ impl EngineInner {
 
         let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
             entity.actor_data().and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|dp| (dp.door_index, dp.current_action, entity.is_pc()))
+                actor.active_door_pass.as_ref().and_then(|dp| {
+                    actor
+                        .installed_order
+                        .map(|order| (dp.door_index, order.order_type, entity.is_pc()))
+                })
             })
         }) else {
             return;
@@ -220,10 +221,11 @@ impl EngineInner {
             .get_entity(entity_id)
             .and_then(|entity| entity.actor_data())
             .and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|pass| (pass.door_index, pass.current_action))
+                actor.active_door_pass.as_ref().and_then(|pass| {
+                    actor
+                        .installed_order
+                        .map(|order| (pass.door_index, order.order_type))
+                })
             })
             .unwrap_or_else(|| {
                 panic!(

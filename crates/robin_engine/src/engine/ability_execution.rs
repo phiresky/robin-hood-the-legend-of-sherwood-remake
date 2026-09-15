@@ -480,7 +480,7 @@ impl EngineInner {
         target_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> SpriteMotionState {
         // Player-character execution checks Heal validity again in
         // the completed-motion arm, immediately before healing (or
         // FX activation) and consuming a plant. The target may
@@ -497,34 +497,7 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, healer_id, element, true)
         };
         if !heal_still_valid {
-            let healer = self
-                .get_entity_mut(healer_id)
-                .unwrap_or_else(|| panic!("Heal DONE owner {healer_id:?} disappeared"));
-            healer.element_data_mut().sprite.last_motion_state =
-                Some(crate::sprite::MotionState::Terminated);
-            let actor = healer
-                .actor_data_mut()
-                .expect("Heal DONE owner lost actor state");
-            actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
-            // Execute returned TERMINATED: close the selected
-            // order through the ordinary actor-update path,
-            // including the synchronous owner condolence card.
-            self.do_next_order(sim, assets, seq_id, elem_idx);
-            // The actor envelope normally serializes Execute's
-            // return after the synchronous completion stack. This
-            // DONE guard closes that stack locally, so publish the
-            // returned TERMINATED value after it unwinds as well.
-            let healer = self.get_entity_mut(healer_id).unwrap_or_else(|| {
-                panic!("Heal DONE owner {healer_id:?} disappeared after condolence")
-            });
-            healer.element_data_mut().sprite.last_motion_state =
-                Some(crate::sprite::MotionState::Terminated);
-            healer
-                .actor_data_mut()
-                .expect("Heal DONE owner lost actor state after condolence")
-                .continuation
-                .motion_state = crate::sprite::MotionState::Terminated;
-            return;
+            return SpriteMotionState::Terminated;
         }
 
         // Heal effect depends on the antagonist's type.
@@ -569,6 +542,7 @@ impl EngineInner {
             "Heal: restored HP"
         );
         self.record_achievement_contribution(healer_id);
+        SpriteMotionState::Done
     }
 
     pub(super) fn apply_ability_eat_done(&mut self, assets: &LevelAssets, actor_id: EntityId) {
@@ -852,7 +826,7 @@ impl EngineInner {
         beggar_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) {
+    ) -> SpriteMotionState {
         // Paying validates again after action processing reports completion.
         // Ransom or distance may have changed while the PC was
         // turning/animating; invalid payment aborts before launching the
@@ -875,9 +849,7 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, pc_id, element, true)
         };
         if !valid {
-            self.record_aborted_ability_motion(pc_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return;
+            return SpriteMotionState::Aborted;
         }
 
         // On Paying-animation completion: deduct
@@ -926,6 +898,7 @@ impl EngineInner {
             beggar = ?beggar_id,
             "Pay: salary deducted, ACTIVATE_MONEY / RECEIVE_PURSE launched"
         );
+        SpriteMotionState::Done
     }
 
     pub(super) fn apply_ability_receive_purse_revealing(
@@ -1009,9 +982,6 @@ impl EngineInner {
                 .element_data_mut()
                 .sprite;
             sprite.perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
-            // Execution returns the pre-increment completed-motion state;
-            // preserve that edge for end-of-tick order propagation.
-            sprite.last_motion_state = Some(crate::sprite::MotionState::Done);
             tracing::debug!(
                 attacker = ?actor_id,
                 target = ?target_id,
@@ -1173,10 +1143,8 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         target_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
         sprite_frozen: bool,
-    ) {
+    ) -> SpriteMotionState {
         let (position, action_point, direction, layer, sector, obstacle, plane) = {
             let attacker = self
                 .get_entity(actor_id)
@@ -1229,9 +1197,7 @@ impl EngineInner {
                 layer,
             )
         {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return;
+            return SpriteMotionState::Aborted;
         }
         let authorized_position = victim_box.center();
         {
@@ -1273,11 +1239,11 @@ impl EngineInner {
                 .sprite
                 .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
         }
+        SpriteMotionState::Done
     }
 
     pub(super) fn initialize_ability_pay_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
@@ -1304,8 +1270,6 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, actor_id, element, true)
         };
         if !valid {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return false;
         }
 
@@ -1330,7 +1294,6 @@ impl EngineInner {
 
     pub(super) fn initialize_ability_hit_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
@@ -1377,8 +1340,6 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, actor_id, element, true)
         };
         if !valid {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return false;
         }
         true
@@ -1386,7 +1347,6 @@ impl EngineInner {
 
     pub(super) fn initialize_ability_tying_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
@@ -1419,8 +1379,6 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, actor_id, element, true)
         };
         if !valid {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return false;
         }
 
@@ -1459,14 +1417,6 @@ impl EngineInner {
     ) -> bool {
         let target_id = ability.target.expect("Carry order requires an antagonist");
         if !self.ability_carry_target_valid(assets, actor_id, ability) {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(
-                sim,
-                assets,
-                &mut Vec::new(),
-                ability.sequence_id,
-                ability.element_index,
-            );
             return false;
         }
         // The pickup transition's first Execute is where the carried
@@ -1553,7 +1503,6 @@ impl EngineInner {
 
     pub(super) fn initialize_ability_strangle_init(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         actor_id: EntityId,
         ability: &crate::abilities::SelectedAbility,
@@ -1582,8 +1531,6 @@ impl EngineInner {
             self.check_sequence_element_validity(assets, actor_id, element, true)
         };
         if !valid {
-            self.record_aborted_ability_motion(actor_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             return false;
         }
 
@@ -1617,24 +1564,6 @@ impl EngineInner {
         true
     }
 
-    pub(super) fn record_aborted_ability_motion(&mut self, actor_id: EntityId) {
-        // The execution arm returned an aborted motion. Publish that result for
-        // the actor-owner envelope as well. In particular, Tie deliberately
-        // fails validity one frame after DONE changed its victim from Lying
-        // to Tied; without replacing the sprite's previous-frame DONE latch,
-        // the envelope records DONE even though the element is made
-        // impossible in this frame.
-        if let Some(entity) = self.get_entity_mut(actor_id) {
-            entity.element_data_mut().sprite.last_motion_state =
-                Some(crate::sprite::MotionState::Aborted);
-            entity
-                .actor_data_mut()
-                .expect("ability owner must retain actor state during abort cleanup")
-                .continuation
-                .motion_state = crate::sprite::MotionState::Aborted;
-        }
-    }
-
     /// Advance the active ability for one actor.
     ///
     /// This is the per-owner unit used by the engine's creation-ordered element
@@ -1645,7 +1574,7 @@ impl EngineInner {
         assets: &LevelAssets,
         requested_actor: EntityId,
         sprite_frozen: bool,
-    ) {
+    ) -> Option<SpriteMotionState> {
         let entity = self
             .world
             .entities
@@ -1661,7 +1590,7 @@ impl EngineInner {
             &self.orders.sequence_manager,
             requested_actor,
         ) else {
-            return;
+            return None;
         };
         let initialising = self
             .world
@@ -1674,13 +1603,13 @@ impl EngineInner {
         let initialized = !initialising
             || match ability.kind {
                 AbilityKind::Pay => {
-                    self.initialize_ability_pay_init(sim, assets, requested_actor, &ability)
+                    self.initialize_ability_pay_init(assets, requested_actor, &ability)
                 }
                 AbilityKind::Hit => {
-                    self.initialize_ability_hit_init(sim, assets, requested_actor, &ability)
+                    self.initialize_ability_hit_init(assets, requested_actor, &ability)
                 }
                 AbilityKind::Tie | AbilityKind::Untie => {
-                    self.initialize_ability_tying_init(sim, assets, requested_actor, &ability)
+                    self.initialize_ability_tying_init(assets, requested_actor, &ability)
                 }
                 AbilityKind::Carry => {
                     self.initialize_ability_carry_init(sim, assets, requested_actor, &ability)
@@ -1693,18 +1622,18 @@ impl EngineInner {
                 ),
                 AbilityKind::Heal => self.initialize_ability_heal_facing(requested_actor, &ability),
                 AbilityKind::Strangle => {
-                    self.initialize_ability_strangle_init(sim, assets, requested_actor, &ability)
+                    self.initialize_ability_strangle_init(assets, requested_actor, &ability)
                 }
                 _ => true,
             };
         if !initialized {
-            return;
+            return Some(SpriteMotionState::Aborted);
         }
         // Execute retains the entry order and its antagonist through initialization.
         let kind = ability.kind;
 
-        if self.tick_ability_pre_action(sim, assets, requested_actor, &ability) {
-            return;
+        if let Some(motion) = self.tick_ability_pre_action(sim, assets, requested_actor, &ability) {
+            return Some(motion);
         }
 
         let entity = self
@@ -1722,11 +1651,11 @@ impl EngineInner {
         // plus the `listen_wait_time` countdown in
         // the selected PC owner arm.
         if kind == AbilityKind::Listen {
-            return self.tick_listen(sim, assets, entity_id, &ability, sprite_frozen);
+            return Some(self.tick_listen(sim, assets, entity_id, &ability, sprite_frozen));
         }
 
         if kind == AbilityKind::ReceivePurse {
-            return self.tick_receive_purse(sim, assets, entity_id, &ability, sprite_frozen);
+            return Some(self.tick_receive_purse(sim, assets, entity_id, &ability, sprite_frozen));
         }
 
         let order_id = Some(ability.order_id);
@@ -1842,15 +1771,11 @@ impl EngineInner {
             motion,
             SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
         ) {
-            return;
+            return Some(motion);
         }
 
-        let seq_id = ability.sequence_id;
-        let elem_idx = ability.element_index;
         if motion == SpriteMotionState::Aborted {
-            self.record_aborted_ability_motion(entity_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return;
+            return Some(motion);
         }
         if motion == SpriteMotionState::Terminated {
             match kind {
@@ -1876,18 +1801,17 @@ impl EngineInner {
                 ),
                 _ => {}
             }
-            self.do_next_order(sim, assets, seq_id, elem_idx);
-            return;
+            return Some(motion);
         }
 
         if matches!(
             kind,
             AbilityKind::Drop | AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders
         ) {
-            return;
+            return Some(motion);
         }
 
-        self.execute_ability_done(sim, assets, entity_id, &ability, sprite_frozen);
+        Some(self.execute_ability_done(sim, assets, entity_id, &ability, sprite_frozen))
     }
 
     fn tick_ability_pre_action(
@@ -1896,22 +1820,13 @@ impl EngineInner {
         assets: &LevelAssets,
         requested_actor: EntityId,
         ability: &SelectedAbility,
-    ) -> bool {
-        let entity_id = requested_actor;
+    ) -> Option<SpriteMotionState> {
         let kind = ability.kind;
         if kind == AbilityKind::Carry
             && !ability.order_done
             && !self.ability_carry_target_valid(assets, requested_actor, ability)
         {
-            self.record_aborted_ability_motion(requested_actor);
-            self.element_impossible(
-                sim,
-                assets,
-                &mut Vec::new(),
-                ability.sequence_id,
-                ability.element_index,
-            );
-            return true;
+            return Some(SpriteMotionState::Aborted);
         }
         // Player-character tying execution revalidates the antagonist every
         // frame. The DONE callback itself changes Lying -> Tied, so the next
@@ -1926,15 +1841,7 @@ impl EngineInner {
                     && target.element_data().posture() == Posture::Lying
             });
             if !target_valid {
-                self.record_aborted_ability_motion(entity_id);
-                self.element_impossible(
-                    sim,
-                    assets,
-                    &mut Vec::new(),
-                    ability.sequence_id,
-                    ability.element_index,
-                );
-                return true;
+                return Some(SpriteMotionState::Aborted);
             }
         }
         if kind == AbilityKind::Untie && !ability.order_done {
@@ -1949,15 +1856,7 @@ impl EngineInner {
                     && target.element_data().posture() == Posture::Tied
             });
             if !target_valid {
-                self.record_aborted_ability_motion(entity_id);
-                self.element_impossible(
-                    sim,
-                    assets,
-                    &mut Vec::new(),
-                    ability.sequence_id,
-                    ability.element_index,
-                );
-                return true;
+                return Some(SpriteMotionState::Aborted);
             }
         }
 
@@ -1980,7 +1879,7 @@ impl EngineInner {
                 .turn_fast()
             {
                 self.advance_pre_action_strangle_victim_if_due(sim, requested_actor, victim_id);
-                return true;
+                return Some(SpriteMotionState::InProgress);
             }
             let victim =
                 self.world.entities.get_mut(victim_id).unwrap_or_else(|| {
@@ -1992,7 +1891,7 @@ impl EngineInner {
             );
             if victim.position_iface_mut().turn_fast() {
                 self.advance_pre_action_strangle_victim_if_due(sim, requested_actor, victim_id);
-                return true;
+                return Some(SpriteMotionState::InProgress);
             }
         }
 
@@ -2019,7 +1918,7 @@ impl EngineInner {
                 .set_direction_goal((helper_direction + 8) & 15);
         }
 
-        false
+        None
     }
 
     fn ability_carry_target_valid(
@@ -2043,7 +1942,7 @@ impl EngineInner {
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
-    ) {
+    ) -> SpriteMotionState {
         let entity = self
             .world
             .entities
@@ -2059,10 +1958,6 @@ impl EngineInner {
         let order_id = Some(ability.order_id);
 
         let motion = if sprite_frozen {
-            // Frozen actions publish in-progress without advancing the sprite.
-            // Replace a stale DONE edge before the owner reads the motion.
-            entity.element_data_mut().sprite.last_motion_state =
-                Some(SpriteMotionState::InProgress);
             SpriteMotionState::InProgress
         } else {
             let elem = entity.element_data_mut();
@@ -2079,13 +1974,11 @@ impl EngineInner {
             motion,
             SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
         ) {
-            return;
+            return motion;
         }
         let actor = entity.actor_data_mut().unwrap_or_else(|| {
             panic!("asserted Listen owner {entity_id:?} lost required actor state")
         });
-        let seq_id = ability.sequence_id;
-        let elem_idx = ability.element_index;
         match motion {
             SpriteMotionState::Done => {
                 if order_type == OrderType::TransitionWaitingUprightListening {
@@ -2101,13 +1994,9 @@ impl EngineInner {
                     self.apply_ability_listen_done(sim, assets, entity_id);
                 }
             }
-            SpriteMotionState::Terminated => self.do_next_order(sim, assets, seq_id, elem_idx),
-            SpriteMotionState::Aborted => {
-                self.record_aborted_ability_motion(entity_id);
-                self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            }
             _ => {}
         }
+        motion
     }
 
     fn tick_receive_purse(
@@ -2117,7 +2006,7 @@ impl EngineInner {
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
-    ) {
+    ) -> SpriteMotionState {
         let entity = self
             .world
             .entities
@@ -2146,18 +2035,14 @@ impl EngineInner {
             motion,
             SpriteMotionState::Terminated | SpriteMotionState::Aborted
         ) {
-            return;
+            return motion;
         }
 
         let actor = entity.actor_data_mut().unwrap_or_else(|| {
             panic!("asserted ReceivePurse owner {entity_id:?} lost required actor state")
         });
-        let seq_id = ability.sequence_id;
-        let elem_idx = ability.element_index;
         if motion == SpriteMotionState::Aborted {
-            self.record_aborted_ability_motion(entity_id);
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-            return;
+            return motion;
         }
         match order_type {
             OrderType::ReceivingPurse => {}
@@ -2170,7 +2055,7 @@ impl EngineInner {
             }
             _ => unreachable!("selected purse order changed kind"),
         }
-        self.do_next_order(sim, assets, seq_id, elem_idx);
+        motion
     }
 
     fn execute_ability_done(
@@ -2180,7 +2065,7 @@ impl EngineInner {
         entity_id: EntityId,
         ability: &SelectedAbility,
         sprite_frozen: bool,
-    ) {
+    ) -> SpriteMotionState {
         let entity = self
             .world
             .entities
@@ -2203,21 +2088,30 @@ impl EngineInner {
             AbilityKind::Tie => self.apply_ability_tie_done(sim, assets, entity_id, target()),
             AbilityKind::Untie => self.apply_ability_untie_done(sim, assets, entity_id, target()),
             AbilityKind::Heal => {
-                self.apply_ability_heal_done(sim, assets, entity_id, target(), seq_id, elem_idx)
+                return self.apply_ability_heal_done(
+                    sim,
+                    assets,
+                    entity_id,
+                    target(),
+                    seq_id,
+                    elem_idx,
+                );
             }
             AbilityKind::Whistle => {
                 self.apply_ability_whistle_done(sim, assets, entity_id, actor_pos)
             }
-            AbilityKind::Pay => self.apply_ability_pay_done(
-                sim,
-                assets,
-                entity_id,
-                ability
-                    .target
-                    .expect("AbilityKind::Pay must carry a beggar target (set in begin_pay)"),
-                seq_id,
-                elem_idx,
-            ),
+            AbilityKind::Pay => {
+                return self.apply_ability_pay_done(
+                    sim,
+                    assets,
+                    entity_id,
+                    ability
+                        .target
+                        .expect("AbilityKind::Pay must carry a beggar target (set in begin_pay)"),
+                    seq_id,
+                    elem_idx,
+                );
+            }
             AbilityKind::Listen | AbilityKind::ReceivePurse => unreachable!(
                 "{kind:?} is handled by the phase-aware inline branch earlier \
                  in tick_selected_ability and never reaches the generic completion match"
@@ -2318,22 +2212,23 @@ impl EngineInner {
                 seq_id,
                 elem_idx,
             ),
-            AbilityKind::Strangle => self.apply_ability_strangle_setup_done(
-                sim,
-                assets,
-                entity_id,
-                ability
-                    .target
-                    .expect("AbilityKind::Strangle must carry a target (set in begin_strangle)"),
-                seq_id,
-                elem_idx,
-                sprite_frozen,
-            ),
+            AbilityKind::Strangle => {
+                return self.apply_ability_strangle_setup_done(
+                    sim,
+                    assets,
+                    entity_id,
+                    ability.target.expect(
+                        "AbilityKind::Strangle must carry a target (set in begin_strangle)",
+                    ),
+                    sprite_frozen,
+                );
+            }
             AbilityKind::Eat => self.apply_ability_eat_done(assets, entity_id),
             AbilityKind::ClimbOnShoulders | AbilityKind::ClimbDownFromShoulders => {
                 unreachable!("shoulder completion runs at animation termination")
             }
         }
+        SpriteMotionState::Done
     }
 
     /// Match the strangling tail while its attacker-and-victim fast-turn guard

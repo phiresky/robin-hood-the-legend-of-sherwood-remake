@@ -46,6 +46,7 @@ mod patch_effects;
 pub mod peripherals;
 mod posture_transitions;
 mod presentation_view;
+mod projectile_runtime;
 pub use presentation_view::PresentationView;
 mod purse;
 mod queries;
@@ -1792,7 +1793,7 @@ impl EngineInner {
                     continue;
                 }
                 eprintln!(
-                    "PARITY_ATTENTIVE_OWNER frame={} owner={} stage=element seq={} elem={} id={} command={:?} state={:?} priority={:?} postponed={:?} cross_postponed={:?} orders={:?}",
+                    "PARITY_ATTENTIVE_OWNER frame={} owner={} stage=element seq={} elem={} id={} command={:?} state={:?} priority={:?} postponed={:?} orders={:?}",
                     self.control.frame_counter,
                     owner.index(),
                     sequence.id.0,
@@ -1801,8 +1802,7 @@ impl EngineInner {
                     element.command,
                     element.state,
                     element.priority,
-                    element.postponed_element_index,
-                    element.cross_postponed,
+                    element.postponed,
                     element
                         .orders
                         .iter()

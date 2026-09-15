@@ -131,7 +131,7 @@ impl EngineInner {
         );
         for (index, element) in sequence.elements.iter().enumerate() {
             eprintln!(
-                "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
+                "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} data={:?}",
                 self.control.frame_counter,
                 seq_id.0,
                 index,
@@ -143,8 +143,7 @@ impl EngineInner {
                 element.priority,
                 element.script_driven,
                 element.legacy_v48.is_some(),
-                element.postponed_element_index,
-                element.cross_postponed,
+                element.postponed,
                 element.data,
             );
         }
@@ -417,7 +416,11 @@ impl EngineInner {
                     .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
-                    .and_then(|element| element.cross_postponed)
+                    .and_then(|element| {
+                        element
+                            .postponed
+                            .map(|reference| (reference.sequence_id, reference.element_index))
+                    })
                     .filter(|(postponed_sequence, postponed_index)| {
                         self.orders
                             .sequence_manager

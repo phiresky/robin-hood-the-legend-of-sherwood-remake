@@ -49,9 +49,7 @@ pub(crate) use contexts::{ai_position_to_point_3d, enemy_lift_approach_for_posit
 
 mod duty;
 mod effects;
-pub(crate) use duty::{
-    BodyReaction, EnemyObservation, EnemyRecovery, MoneyFightOperation, OfficerAlertCaller,
-};
+pub(crate) use duty::{BodyReaction, EnemyRecovery, MoneyFightOperation, OfficerAlertCaller};
 pub use effects::AiSpeechAttempt;
 
 mod controller;

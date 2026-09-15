@@ -282,7 +282,6 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     use crate::scb::{SCB_VERSION, ScbFile};
     use crate::sector::{SectorNumber, SectorType};
     use crate::sim_rng::{RngSite, with_draw_trace};
-    use std::collections::VecDeque;
 
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
@@ -327,12 +326,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
-        steps: VecDeque::new(),
-        preallocated_order_ids: Default::default(),
         triggers_fired: 0,
-        current_action: crate::order::OrderType::default(),
-        current_reverse: false,
-        saved_action_state: None,
     });
     pc.actor.passing_door_directly = true;
     // Forecast preparation only treats the actor as mid door transit while

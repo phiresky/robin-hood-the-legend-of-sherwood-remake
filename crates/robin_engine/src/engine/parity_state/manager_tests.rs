@@ -198,17 +198,10 @@ impl Engine {
                     }
                 };
 
-                let postponed = match (
-                    element_state.postponed_element_index,
-                    element_state.cross_postponed,
-                ) {
-                    (Some(index), None) => reference(sequence.id, index),
-                    (None, Some((id, index))) => reference(id, index),
-                    (None, None) => Value::Null,
-                    (Some(_), Some(_)) => panic!(
-                        "parity sequence element carries both intra- and cross-sequence postponed refs"
-                    ),
-                };
+                let postponed = element_state
+                    .postponed
+                    .map(|link| reference(link.sequence_id, link.element_index))
+                    .unwrap_or(Value::Null);
                 let transition_live =
                     element_state.state == crate::sequence::SequenceState::InProgress;
                 elements.push(json!({
@@ -918,8 +911,8 @@ fn populated_manager_schemas_match_original_encoders() {
         .unwrap();
     sequence.elements[0].state = crate::sequence::SequenceState::InProgress;
     sequence.elements[0].num_transition_orders = 3;
-    sequence.elements[0].postponed_element_index = Some(1);
-    sequence.elements[1].cross_postponed = Some((sequence_id, 4));
+    sequence.elements[0].postponed = Some(SequenceElementRef::new(sequence_id, 1));
+    sequence.elements[1].postponed = Some(crate::sequence::SequenceElementRef::new(sequence_id, 4));
     inner.orders.next_order_id = 12;
     let reference = SequenceElementRef::new(sequence_id, 2);
     inner.orders.timer_elements.push(crate::engine::TimerEntry {

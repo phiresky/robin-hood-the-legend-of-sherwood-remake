@@ -499,24 +499,13 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
     }
 
     let mut tail_order = None;
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
-        |_, _| {},
-        |_, _| {},
-        |engine, execute_owner, movement, _, _, _, _| {
-            assert_eq!(execute_owner, owner);
-            let movement = movement.expect("live MoveOk must own the actor Execute slot");
-            assert!(perform_seek_lost_actor_target(
-                engine,
-                execute_owner,
-                movement,
-            ));
-            Some(MotionState::Terminated)
-        },
-        |_, tail_owner, order_type| {
-            assert_eq!(tail_owner, owner);
-            tail_order = Some(order_type);
+        |engine, tail_owner| {
+            if tail_owner == owner {
+                tail_order = engine.actor_order_type(owner);
+            }
         },
     );
     let entity = engine.get_entity(owner).unwrap();

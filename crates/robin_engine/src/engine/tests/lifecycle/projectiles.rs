@@ -73,6 +73,9 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         },
     });
     let existing_arrow_id = engine.add_test_entity(existing_arrow);
+    if let Some(Entity::Projectile(arrow)) = engine.get_entity_mut(existing_arrow_id) {
+        arrow.projectile.trajectory_origin_layer = crate::position_interface::Layer::new(0);
+    }
     assert_eq!(existing_arrow_id, EntityId::Projectile(ProjectileId(1)));
 
     let mut shooter = make_test_pc(Posture::Upright);
@@ -347,6 +350,104 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 }
 
 #[test]
+fn water_and_hole_projectiles_retire_after_their_nonterminal_derived_tail() {
+    use crate::element::{
+        Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
+        ProjectileData,
+    };
+    use crate::order::OrderType;
+    use crate::sprite_script::SpriteScript;
+
+    for kind in [ObjectType::Apple, ObjectType::Stone] {
+        for (dive, disappear) in [(true, false), (false, true), (true, true)] {
+            let mut engine = EngineInner::new();
+            let mut element = ElementData::default();
+            element.kind = ElementKind::ObjectProjectile;
+            element.active = true;
+            element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 60.0, 12.0));
+            let mut conversion = crate::engine::test_support::unmapped_conversion();
+            conversion[OrderType::ObjectFlying as usize] = 0;
+            element.sprite = crate::sprite::Sprite::new(
+                std::sync::Arc::new(vec![SpriteScript {
+                    action_id: OrderType::ObjectFlying as u16,
+                    action_done: 1,
+                    frame_ids: vec![0, 1, 2],
+                    delays: vec![10, 10, 10],
+                    ..Default::default()
+                }]),
+                std::sync::Arc::new(conversion),
+            );
+            element.sprite.force_animation(OrderType::ObjectFlying, 0);
+            // Replacing the sprite replaces its position interface too.
+            element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 60.0, 12.0));
+            let id = engine.add_test_entity(Entity::Projectile(ElementProjectile {
+                element,
+                object: ObjectData {
+                    object_type: kind,
+                    animation: Animation::ObjectFlying,
+                    ..Default::default()
+                },
+                projectile: ProjectileData {
+                    flying: true,
+                    dive,
+                    disappear,
+                    ..Default::default()
+                },
+            }));
+            let assets = LevelAssets::new();
+            let (_, tails) = capture_projectile_derived_tails(|| {
+                engine.tick_projectile_or_net_hourglass(
+                    &crate::sim_rng::test_context(),
+                    &assets,
+                    id,
+                );
+            });
+            assert_eq!(tails, vec![(id, kind)]);
+            let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+                unreachable!()
+            };
+            assert!(
+                !projectile.element.active,
+                "base removal must survive the derived animation tail"
+            );
+            assert!(!projectile.projectile.flying);
+            assert_eq!(
+                projectile.object.animation,
+                Animation::ObjectFlying,
+                "water and holes skip burst animation"
+            );
+            assert_eq!(
+                projectile.element.position().z,
+                12.0,
+                "water and holes skip dry-ground elevation snapping"
+            );
+            assert!(
+                projectile.element.sprite.frame_count > 0,
+                "the still-playing derived tail must advance before removal"
+            );
+            let sounds: Vec<_> = engine
+                .feedback
+                .pending_side_effects
+                .sounds
+                .iter()
+                .filter_map(|sound| {
+                    if let crate::engine::SoundCommand::Fx { fx_id, .. } = sound {
+                        Some(*fx_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(
+                sounds,
+                if dive { vec![470] } else { vec![] },
+                "water wins over a retained hole flag; neither emits a normal impact FX"
+            );
+        }
+    }
+}
+
+#[test]
 fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() {
     use crate::element::{
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
@@ -490,7 +591,7 @@ fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
 }
 
 #[test]
-fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
+fn stationary_arrow_with_future_hole_flag_stays_active_until_refresh() {
     use crate::element::{
         Animation, ElementData, ElementKind, ElementProjectile, ObjectData, ObjectType,
         ProjectileData,
@@ -517,15 +618,14 @@ fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
         },
     }));
 
-    // Human impact returns true immediately, before projectile ticking can
-    // inspect the trajectory's unrelated future disappear-on-landing state.
-    engine.deactivate_projectile_tombstone(arrow, false);
+    // A stopped arrow does not execute landing logic for its retained trajectory flags.
+    engine.tick_projectile_or_net_hourglass(&sim, &LevelAssets::new(), arrow);
     let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
         unreachable!()
     };
     assert!(
         projectile.element.active,
-        "a future hole landing must not retire an arrow on its human-hit frame"
+        "a future hole landing must not retire an already stopped arrow"
     );
 
     engine.control.arrow_refresh_pending = true;
@@ -750,6 +850,8 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
 
     let (mut engine, carrier, body, _) =
         corpse_exit_initialization_fixture(crate::element::Command::WhistleCmd);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     assert_eq!(
         crate::abilities::selected_ability(
             &engine.world.entities,
@@ -760,10 +862,7 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
         Some(AbilityKind::Drop)
     );
 
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 9);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
@@ -773,10 +872,7 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(2);
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().direction(), 2);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 2);
@@ -904,102 +1000,6 @@ fn unbound_bow_transition_still_uses_generic_execute() {
 }
 
 #[test]
-fn terminal_bow_owner_defers_its_exposed_generic_successor_until_next_hourglass() {
-    use crate::element::{Command, Posture};
-    use crate::order::Order;
-    use crate::sequence::SequenceElement;
-
-    let sim_context = crate::sim_rng::test_context();
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    let mut element = SequenceElement::new(1, Command::ShootBow, Some(owner));
-    let mut bow_order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
-    bow_order.antagonist = Some(owner);
-    let bow_order_id = bow_order.order_id;
-    element.orders.push_back(bow_order);
-    element
-        .orders
-        .push_back(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
-    let sequence = engine.orders.sequence_manager.insert_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .start_sequence_level(sequence);
-    engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    let actor = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
-
-    // The hook models terminal work from an already-entered specialized bow
-    // Execute arm. Preserve its selected-order history just as a live prior
-    // actor update would have done.
-    actor.last_execute_order_id = Some(bow_order_id);
-
-    let assets = engine.test_runtime_assets();
-    let initial_action = engine
-        .get_entity(owner)
-        .unwrap()
-        .element_data()
-        .sprite
-        .last_action;
-
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &sim_context,
-        &assets,
-        |_, _| {},
-        |_, _| {},
-        |engine, selected_owner, _, _, bow, _, _| {
-            assert_eq!(selected_owner, owner);
-            assert_eq!(bow, Some((sequence, 0, bow_order_id)));
-            engine
-                .orders
-                .sequence_manager
-                .get_element_mut(sequence, 0)
-                .unwrap()
-                .pop_current_order();
-        },
-        |_, _, _| {},
-    );
-
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_action,
-        initial_action,
-        "the successor exposed by terminal bow work must not enter generic Execute in the same owner slot"
-    );
-    assert_eq!(
-        engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&engine.world.entities, owner)
-            .unwrap()
-            .2
-            .order_type,
-        OrderType::WaitingUpright
-    );
-
-    let next_execute = engine.tick_actor_animation_for(&sim_context, &assets, owner);
-    assert_eq!(
-        next_execute.unwrap().order_type,
-        OrderType::WaitingUpright,
-        "the exposed generic successor must become eligible at the next Execute boundary"
-    );
-}
-
-#[test]
 fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     use crate::element::{Command, Posture};
     use crate::order::Order;
@@ -1043,15 +1043,14 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         .unwrap()
         .clone();
 
-    assert!(
-        engine
-            .tick_bow_shot_for(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                shooter,
-                order_id
-            )
-            .is_empty()
+    assert_eq!(
+        engine.tick_bow_shot_for(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            shooter,
+            order_id
+        ),
+        Some(crate::sprite::MotionState::InProgress)
     );
     assert_eq!(
         bitcode::encode(

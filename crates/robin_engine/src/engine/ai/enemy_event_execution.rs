@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::ai::{
-    AiState, DutyFlags, EmoticonType, EnemyObservation, EnemyRecovery, MoneyFightOperation, Remark,
-    Stimulus, StimulusInfo, Substate,
+    AiState, DutyFlags, EmoticonType, EnemyRecovery, MoneyFightOperation, Remark, Stimulus,
+    StimulusInfo, Substate,
 };
 use crate::sim_rng::SimulationContext;
 
@@ -42,7 +42,7 @@ impl EngineInner {
             state,
             AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
         );
-        let observation = match event {
+        match event {
             StimulusType::EventView => {
                 self.execute_ai_view_event(sim, assets, owner, stimulus);
                 return false;
@@ -54,7 +54,8 @@ impl EngineInner {
                 let StimulusInfo::Noise(noise) = stimulus.info else {
                     panic!("hearing event requires noise");
                 };
-                Some(EnemyObservation::Noise { noise })
+                self.execute_ai_heard_noise(sim, assets, owner, &noise);
+                return false;
             }
             StimulusType::EventGetArrow if peaceful => {
                 if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
@@ -63,7 +64,8 @@ impl EngineInner {
                 let StimulusInfo::Position(origin) = stimulus.info else {
                     panic!("arrow event requires origin");
                 };
-                Some(EnemyObservation::Arrow { origin })
+                self.execute_ai_received_arrow(sim, assets, owner, origin);
+                return false;
             }
             StimulusType::EventSeesObject if peaceful => {
                 if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
@@ -72,9 +74,8 @@ impl EngineInner {
                 let StimulusInfo::Object(target) = stimulus.info else {
                     panic!("object sighting requires object");
                 };
-                Some(EnemyObservation::Object {
-                    target: target.get(),
-                })
+                self.execute_ai_seen_object(sim, assets, owner, target.get());
+                return false;
             }
             StimulusType::EventSeesShadow if state == AiState::Default => {
                 if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
@@ -83,7 +84,8 @@ impl EngineInner {
                 let StimulusInfo::Position(position) = stimulus.info else {
                     panic!("shadow sighting requires position");
                 };
-                Some(EnemyObservation::Shadow { position })
+                self.execute_ai_seen_shadow(sim, assets, owner, position);
+                return false;
             }
             StimulusType::CallLookThere => {
                 if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
@@ -92,9 +94,8 @@ impl EngineInner {
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("look-there call requires hint");
                 };
-                Some(EnemyObservation::LookThere {
-                    position: hint.seek_point,
-                })
+                self.execute_ai_look_there_reaction(sim, assets, owner, hint.seek_point);
+                return false;
             }
             StimulusType::CallTowerGuardAlert
                 if matches!(state, AiState::Default | AiState::Wondering) =>
@@ -105,7 +106,8 @@ impl EngineInner {
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("tower alert requires hint");
                 };
-                Some(EnemyObservation::TowerGuardAlert { hint: hint.clone() })
+                self.execute_ai_tower_alert_reaction(sim, assets, owner, hint);
+                return false;
             }
             StimulusType::CallTowerGuardCallsMe
                 if matches!(state, AiState::Default | AiState::Wondering) =>
@@ -113,7 +115,8 @@ impl EngineInner {
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("tower call requires hint");
                 };
-                Some(EnemyObservation::TowerGuardCalls { hint: hint.clone() })
+                self.execute_ai_tower_call_reaction(sim, assets, owner, hint);
+                return false;
             }
             StimulusType::EventSeesCharly
                 if state == AiState::Seeking
@@ -126,9 +129,8 @@ impl EngineInner {
                 let StimulusInfo::Human(target) = stimulus.info else {
                     panic!("Charly sighting requires human");
                 };
-                Some(EnemyObservation::Charly {
-                    target: target.get(),
-                })
+                self.execute_ai_seen_charly(sim, assets, owner, target.get());
+                return false;
             }
             StimulusType::CallCombatAlert => {
                 assert_eq!(
@@ -142,21 +144,12 @@ impl EngineInner {
                     let StimulusInfo::Position(position) = stimulus.info else {
                         panic!("combat alert requires position");
                     };
-                    self.execute_ai_enemy_observation(
-                        sim,
-                        assets,
-                        owner,
-                        EnemyObservation::CombatAlert { position },
-                    );
+                    self.execute_ai_combat_alert_reaction(sim, assets, owner, position);
                     return true;
                 }
                 return state == AiState::Attacking;
             }
-            _ => None,
-        };
-        if let Some(operation) = observation {
-            self.execute_ai_enemy_observation(sim, assets, owner, operation);
-            return false;
+            _ => {}
         }
         let recovery = match event {
             StimulusType::EventFitAgain => Some(EnemyRecovery::FitAgain),
@@ -409,14 +402,7 @@ impl EngineInner {
                 Substate::AttackingArcherWaitOnArcheryPath
                 | Substate::AttackingArcherWaitOnBendPoint
                 | Substate::AttackingArcherWaitOnArcheryPathBending => {
-                    self.execute_ai_enemy_observation(
-                        sim,
-                        assets,
-                        owner,
-                        EnemyObservation::ArcherEnemy {
-                            target: target.get(),
-                        },
-                    );
+                    self.execute_ai_seen_enemy_as_archer(sim, assets, owner, target.get());
                 }
                 Substate::AttackingApproachingSleepingEnemy
                 | Substate::AttackingKillingSleepingEnemy => {
@@ -443,14 +429,7 @@ impl EngineInner {
             },
         }
         if observe {
-            self.execute_ai_enemy_observation(
-                sim,
-                assets,
-                owner,
-                EnemyObservation::Enemy {
-                    target: target.get(),
-                },
-            );
+            self.execute_ai_seen_enemy(sim, assets, owner, target.get());
         }
     }
 }

@@ -1,8 +1,7 @@
 //! Sight and arrow reactions retain actor identities across synchronous callbacks.
 use super::*;
 use crate::ai::{
-    AiEntityHandle, AiState, EmoticonType, EnemyObservation, GotoFlags, Position, Remark,
-    ReportType, Substate,
+    AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{EnemyAi, ProfileRank, task_priority};
 use crate::sim_rng::SimulationContext;
@@ -21,65 +20,18 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("observation owner"))
     }
-    pub(in crate::engine) fn execute_ai_enemy_observation(
+    pub(super) fn execute_ai_seen_enemy_as_archer(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        operation: EnemyObservation,
+        target: crate::ai::HumanHandle,
     ) {
-        match operation {
-            EnemyObservation::ArrowReaction => {
-                self.observation_say(sim, assets, owner, Remark::Arrow);
-                self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingArrow);
-                let position = self.observation_ai(owner).base.seek_position;
-                self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
-                let position = self.observation_ai(owner).base.seek_position;
-                self.execute_ai_look_there(sim, assets, owner, position, 100);
-                self.observation_timer(owner, 200);
-            }
-            EnemyObservation::Noise { noise } => {
-                self.execute_ai_heard_noise(sim, assets, owner, &noise)
-            }
-            EnemyObservation::LookThere { position } => {
-                self.execute_ai_look_there_reaction(sim, assets, owner, position)
-            }
-            EnemyObservation::TowerGuardAlert { hint } => {
-                self.execute_ai_tower_alert_reaction(sim, assets, owner, &hint)
-            }
-            EnemyObservation::TowerGuardCalls { hint } => {
-                self.execute_ai_tower_call_reaction(sim, assets, owner, &hint)
-            }
-            EnemyObservation::CombatAlert { position } => {
-                self.execute_ai_combat_alert_reaction(sim, assets, owner, position)
-            }
-            EnemyObservation::AleApproach { arrived } => {
-                self.execute_ai_ale_approach(sim, assets, owner, arrived)
-            }
-            EnemyObservation::ArcherEnemy { target } => {
-                self.reinitialize_live_ai_enemies(owner);
-                let target = self.expect_human_id_for_ai_handle(target, "archer sighting target");
-                let below = self.observation_enemy_below(owner, target);
-                self.observation_ai_mut(owner).enemy_seen_below = below;
-                self.execute_battle_decisions(sim, assets, owner);
-            }
-            EnemyObservation::AleReaction => self.execute_ai_ale_reaction(sim, assets, owner),
-            EnemyObservation::Enemy { target } => {
-                self.execute_ai_seen_enemy(sim, assets, owner, target)
-            }
-            EnemyObservation::Charly { target } => {
-                self.execute_ai_seen_charly(sim, assets, owner, target)
-            }
-            EnemyObservation::Shadow { position } => {
-                self.execute_ai_seen_shadow(sim, assets, owner, position)
-            }
-            EnemyObservation::Object { target } => {
-                self.execute_ai_seen_object(sim, assets, owner, target)
-            }
-            EnemyObservation::Arrow { origin } => {
-                self.execute_ai_received_arrow(sim, assets, owner, origin)
-            }
-        }
+        self.reinitialize_live_ai_enemies(owner);
+        let target = self.expect_human_id_for_ai_handle(target, "archer sighting target");
+        let below = self.observation_enemy_below(owner, target);
+        self.observation_ai_mut(owner).enemy_seen_below = below;
+        self.execute_battle_decisions(sim, assets, owner);
     }
     pub(super) fn observation_timer(&mut self, owner: EntityId, frames: u32) {
         let frame = self.control.frame_counter;
@@ -180,7 +132,7 @@ impl EngineInner {
         self.observation_timer(owner, frames);
     }
 
-    fn execute_ai_seen_enemy(
+    pub(super) fn execute_ai_seen_enemy(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -363,7 +315,7 @@ impl EngineInner {
         let dy = (b.y - a.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         dx * dx + dy * dy <= height * height
     }
-    fn execute_ai_seen_shadow(
+    pub(super) fn execute_ai_seen_shadow(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -394,7 +346,7 @@ impl EngineInner {
         self.duty_face_position_ground(sim, assets, owner, position);
         self.observation_timer(owner, 10);
     }
-    fn execute_ai_received_arrow(
+    pub(super) fn execute_ai_received_arrow(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -455,7 +407,7 @@ impl EngineInner {
             );
         }
     }
-    fn execute_ai_seen_object(
+    pub(super) fn execute_ai_seen_object(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -595,7 +547,7 @@ impl EngineInner {
         }
         None
     }
-    fn execute_ai_ale_approach(
+    pub(super) fn execute_ai_ale_approach(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
@@ -644,7 +596,7 @@ impl EngineInner {
         }
     }
 
-    fn execute_ai_ale_reaction(
+    pub(super) fn execute_ai_ale_reaction(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,

@@ -455,40 +455,6 @@ impl EngineInner {
         }
     }
 
-    /// Per-tick line-crossing dispatch for a moving actor.
-    ///
-    /// Restricted to elevation-line crossings.  For each elevation
-    /// line the actor's `(old_pos, new_pos)` segment crosses on its
-    /// current layer, we swap the actor's obstacle pointer via
-    /// `cross_elevation_line`.  When multiple elevation lines are
-    /// crossed in one tick, they are bubble-sorted by obstacle
-    /// continuity so consecutive `cross_elevation_line` calls walk an
-    /// actual chain of adjacent obstacles.
-    ///
-    /// Returns `true` if any elevation line was crossed — callers can
-    /// use that to fire the human-specific roll-update follow-up.
-    pub(in crate::engine) fn check_for_line_crossing(
-        &mut self,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        old_pos: MapPoint,
-        new_pos: MapPoint,
-        layer: u16,
-    ) -> bool {
-        // Early-out: exact same position means no crossing at all.
-        if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
-            return false;
-        }
-
-        let indices = self
-            .world
-            .fast_grid
-            .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
-        self.check_for_elevation_line_crossing_indices(
-            assets, entity_id, old_pos, new_pos, layer, indices,
-        )
-    }
-
     /// Dispatch an already-filtered elevation subset from Actor's unified
     /// line-crossing list. This keeps the original game's candidate count and callback
     /// set on the same boundary.
@@ -584,33 +550,6 @@ impl EngineInner {
         true
     }
 
-    /// Dispatch the original-game actor's non-elevation line-crossing tail.
-    ///
-    /// Patch, script, and sound lines share one candidate list and one stable
-    /// distance sort. For each line the Original checks those flags in that
-    /// order, so callbacks from different boundary kinds remain interleaved
-    /// by the actor's travel order rather than grouped by kind.
-    pub(in crate::engine) fn check_for_non_elevation_line_crossing(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        old_pos: MapPoint,
-        new_pos: MapPoint,
-        layer: u16,
-    ) {
-        if old_pos == new_pos {
-            return;
-        }
-        let indices = self
-            .world
-            .fast_grid
-            .get_actor_non_elevation_crossing_line_indices(layer, old_pos, new_pos);
-        self.check_for_non_elevation_line_crossing_indices(
-            sim, assets, entity_id, old_pos, new_pos, indices,
-        );
-    }
-
     pub(in crate::engine) fn check_for_non_elevation_line_crossing_indices(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -680,7 +619,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        entry_compute_direction: Option<bool>,
     ) {
         #[cfg(test)]
         observe_post_execute_crossing(self, entity_id);
@@ -752,10 +690,23 @@ impl EngineInner {
             if is_human {
                 self.update_roll_after_crossing(assets, entity_id);
             }
-            // The actor order is the entry-latched reference in the original game. Execution may
-            // already have exhausted the Rust order deque, but Actor does not
-            // advance the order until after this crossing boundary.
-            if let Some(compute_direction) = entry_compute_direction
+            let installed_order = self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::actor_data)
+                .and_then(|actor| actor.installed_order);
+            let compute_direction = installed_order.and_then(|installed| {
+                let (seq, elem) = self.world.entities.current_element_for_actor(entity_id)?;
+                self.orders
+                    .sequence_manager
+                    .get_element(seq, elem)?
+                    .orders
+                    .iter()
+                    .find(|order| order.order_id == installed.order_id)
+                    .map(|order| order.compute_direction)
+            });
+            if let Some(compute_direction) = compute_direction
                 && let Some(entity) = self.world.entities.get_mut(entity_id)
             {
                 // Preserve PositionInterface's cached-computation contract:

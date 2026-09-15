@@ -314,9 +314,17 @@ impl SequenceManager {
         // here so replay sees identical ids. Same treatment for each
         // element id — the global atomic in `SequenceElement::new`
         // was process-wide and broke rollback.
+        let previous_id = sequence.id;
         sequence.id = SequenceId(self.next_sequence_id);
         self.next_sequence_id = self.next_sequence_id.wrapping_add(1);
         for element in sequence.elements.iter_mut() {
+            for link in [&mut element.next, &mut element.postponed] {
+                if let Some(target) = link
+                    && target.sequence_id == previous_id
+                {
+                    target.sequence_id = sequence.id;
+                }
+            }
             element.id = self.next_element_id;
             self.next_element_id = self.next_element_id.wrapping_add(1);
         }

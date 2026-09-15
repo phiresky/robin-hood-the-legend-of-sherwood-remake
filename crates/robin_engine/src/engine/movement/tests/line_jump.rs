@@ -342,7 +342,7 @@ mod suite {
         );
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
         let captures =
             crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
@@ -473,7 +473,7 @@ mod suite {
         );
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
         let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
@@ -629,7 +629,7 @@ mod suite {
         engine.world.static_sight_obstacle_active = vec![true];
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
         let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
@@ -964,7 +964,7 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
         assert_eq!(
             engine
@@ -1059,11 +1059,6 @@ mod suite {
                 visible,
                 MotionState::Terminated,
                 "a step that satisfies the goal predicate reaches Execute as a termination"
-            );
-            assert_eq!(
-                committed_arrival_post_completion_override(motion, visible, true),
-                Some(MotionState::Terminated),
-                "staged arrival must preserve the Execute result for the post-completion latch"
             );
         }
         assert_eq!(

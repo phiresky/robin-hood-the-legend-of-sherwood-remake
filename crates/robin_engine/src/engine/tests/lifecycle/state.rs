@@ -49,44 +49,30 @@ fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance(
     let mut spawned = Vec::new();
     let mut appended = false;
 
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &sim,
-        &assets,
-        |engine, id| {
-            if matches!(
-                engine.get_entity(id),
-                Some(Entity::Projectile(_) | Entity::Net(_))
-            ) {
-                engine.tick_projectile_or_net_hourglass(&sim, &assets, id);
-            }
-        },
-        |engine, owner| {
-            if owner != actor || appended {
-                return;
-            }
-            appended = true;
-            for entity in [
-                crate::bow_shot::spawn_net(actor, start, end, 0, None),
-                crate::bow_shot::spawn_wasp_nest(actor, start, end, 0, None),
-                crate::bow_shot::spawn_apple(actor, start, end, None, None, 0, None),
-                crate::bow_shot::spawn_stone(actor, start, end, None, None, 0, None),
-            ] {
-                let id = engine.add_test_entity(entity);
-                let frame_count = match engine.get_entity(id).unwrap() {
-                    Entity::Projectile(projectile) => projectile.projectile.frame_count,
-                    Entity::Net(net) => net.projectile.frame_count,
-                    _ => unreachable!(),
-                };
-                assert_eq!(
-                    frame_count, 1,
-                    "{id:?} must enter EntitySlots after its primer"
-                );
-                spawned.push(id);
-            }
-        },
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
-    );
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
+        if owner != actor || appended {
+            return;
+        }
+        appended = true;
+        for entity in [
+            crate::bow_shot::spawn_net(actor, start, end, 0, None),
+            crate::bow_shot::spawn_wasp_nest(actor, start, end, 0, None),
+            crate::bow_shot::spawn_apple(actor, start, end, None, None, 0, None),
+            crate::bow_shot::spawn_stone(actor, start, end, None, None, 0, None),
+        ] {
+            let id = engine.add_test_entity(entity);
+            let frame_count = match engine.get_entity(id).unwrap() {
+                Entity::Projectile(projectile) => projectile.projectile.frame_count,
+                Entity::Net(net) => net.projectile.frame_count,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                frame_count, 1,
+                "{id:?} must enter EntitySlots after its primer"
+            );
+            spawned.push(id);
+        }
+    });
 
     assert_eq!(spawned.len(), 4);
     for id in spawned {
@@ -646,16 +632,21 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
         .unwrap()
         .execution_frozen = true;
 
+    engine.publish_selected_order_as_installed(owner);
     let result = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
     );
-    let result = result.expect("frozen wait still returns the base Execute identity");
-    assert_eq!(result.entry_seq_id, sequence);
-    assert_eq!(result.entry_elem_idx, 0);
-    assert_eq!(result.order_type, OrderType::WaitingUpright);
-    assert_eq!(result.motion, crate::sprite::MotionState::InProgress);
+    assert_eq!(result, Some(crate::sprite::MotionState::InProgress));
+    assert_eq!(
+        engine.world.entities.current_element_for_actor(owner),
+        Some((sequence, 0))
+    );
+    assert_eq!(
+        engine.actor_order_type(owner),
+        Some(OrderType::WaitingUpright)
+    );
     assert_ne!(
         engine
             .get_entity(owner)
@@ -693,13 +684,18 @@ fn ability_command_with_generic_order_does_not_suppress_generic_execute() {
     );
 
     let mut observed = None;
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim,
         &LevelAssets::new(),
-        |_, _| {},
-        |_, _| {},
-        |_, selected_owner, _, _, _, ability, _| observed = Some((selected_owner, ability)),
-        |_, _, _| {},
+        |engine, selected_owner| {
+            let ability = crate::abilities::selected_ability(
+                &engine.world.entities,
+                &engine.orders.sequence_manager,
+                selected_owner,
+            )
+            .map(|ability| (ability.sequence_id, ability.element_index, ability.order_id));
+            observed = Some((selected_owner, ability))
+        },
     );
     assert_eq!(observed, Some((owner, None)));
     assert_eq!(
@@ -857,7 +853,8 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
     let (pc, beggar) = add_pay_facing_actors(&mut engine);
     let seq = translate_pay_without_facing_or_speech(&mut engine, pc, beggar);
 
-    let assets = assets_with_test_pc_profile();
+    let mut assets = assets_with_test_pc_profile();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     assert_invalid_first_pay_execute_aborts_before_facing(&engine, &sim, &assets, pc, beggar);
     first_valid_pay_execute_samples_facing_once(&mut engine, &sim, &assets, pc, beggar);
 
@@ -1247,11 +1244,10 @@ fn assert_invalid_pay_completion_aborts(
         .set_value(CampaignValue::Ransom, 0);
     let ((), invalid_cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
         for _ in 0..128 {
-            invalid_completion.tick_selected_ability(
+            invalid_completion.tick_one_actor_animation_action_change_slot(
                 invalid_completion_sim,
                 assets,
                 pc,
-                invalid_completion.actors_frozen(),
             );
             if invalid_completion
                 .orders
@@ -1333,11 +1329,10 @@ fn assert_valid_pay_completion_launches_response(
     // Valid completion still applies the salary exactly once and launches
     // the civilian response.
     for _ in 0..128 {
-        valid_completion.tick_selected_ability(
+        valid_completion.tick_one_actor_animation_action_change_slot(
             valid_completion_sim,
             assets,
             pc,
-            valid_completion.actors_frozen(),
         );
         if valid_completion
             .orders

@@ -137,6 +137,113 @@ fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
     entities
 }
 
+fn projectile_engine(
+    entities: Entities,
+) -> (crate::engine::EngineInner, crate::engine::LevelAssets) {
+    let mut engine = crate::engine::EngineInner::new();
+    engine.world.entities = entities;
+    for (_, projectile) in engine.world.entities.projectiles_mut() {
+        // These fixtures launch from ground-level actors even when the
+        // projectile itself temporarily has no current navigation layer.
+        projectile.projectile.trajectory_origin_layer = crate::position_interface::Layer::new(0);
+    }
+    let creation_orders = engine
+        .world
+        .entities
+        .occupied()
+        .map(|(id, _)| (id, id.index()))
+        .collect();
+    let next = engine
+        .world
+        .entities
+        .occupied()
+        .map(|(id, _)| id.index())
+        .max()
+        .map_or(0, |index| index + 1);
+    engine
+        .world
+        .install_original_creation_orders(creation_orders, next);
+    let mut assets = engine.test_runtime_assets();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    (engine, assets)
+}
+
+fn make_arrow_target(x: f32, y: f32) -> Entity {
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
+    };
+    element.set_position_map(MapPoint { x, y });
+    element.set_position(WorldPoint3D { x, y, z: 0.0 });
+    Entity::Target(ElementTarget {
+        element,
+        fx: FxData::default(),
+        target: TargetData {
+            action_filter: TargetFilter::ARROW,
+            ..TargetData::default()
+        },
+    })
+}
+
+/// Test helper — launch a `ShootBow` sequence element and return
+/// `(sequence_manager, seq_id, elem_idx)` so tests can hand the
+/// triple to `begin_bow_shot` and exact-owner execution.
+fn launch_test_shoot_element(
+    shooter: EntityId,
+    target: EntityId,
+) -> (SequenceManager, SequenceId, usize) {
+    let mut sm = SequenceManager::new();
+    let elem = build_shoot_bow_element(shooter, target);
+    let seq_id = sm.insert_element(elem);
+    sm.start_sequence_level(seq_id);
+    // Model the running bow element independently of instruction dispatch.
+    sm.get_element_mut(seq_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
+    sm.get_sequence_mut(seq_id)
+        .unwrap()
+        .increase_elements_in_progress();
+    sm.rebuild_indices();
+    (sm, seq_id, 0)
+}
+
+fn set_test_action_state_after_transition(
+    sm: &mut SequenceManager,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    action_state: ActionState,
+) {
+    sm.get_element_mut(seq_id, elem_idx)
+        .unwrap()
+        .action_state_after_transition = action_state;
+}
+
+fn bind_test_bow_release_rows(entity: &mut Entity, order_type: OrderType) {
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    let base_row = 0u16;
+    conversion[order_type as usize] = base_row;
+
+    let mut scripts = Vec::with_capacity(16);
+    for _direction in 0..16 {
+        scripts.push(SpriteScript {
+            action_id: order_type as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: SpriteLocalPoint::new(2.0, 3.0),
+            sum_distance: 0,
+            frame_ids: vec![1, 2, 3],
+            delays: vec![0, 0, 0],
+            distances: vec![0, 0, 0],
+            offsets: vec![SpriteFrameOffset::ZERO; 3],
+            sound_ids: vec![0, 0, 0],
+        });
+    }
+
+    let sprite = &mut entity.element_data_mut().sprite;
+    sprite.scripts = std::sync::Arc::new(scripts);
+    sprite.conversion = std::sync::Arc::new(conversion);
+}
+
 fn make_pc(x: f32, y: f32) -> Entity {
     TestActor::pc(Posture::Undefined)
         .map_position(MapPoint { x, y })
@@ -234,85 +341,28 @@ fn existing_arrow_collision_uses_new_move_old_position() {
     assert!(norm(reconstructed_old, belt) > norm(reconstructed_old, integrated));
     assert!(norm(saved_old, belt) <= norm(saved_old, integrated));
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-    assert!(
-        results
-            .iter()
-            .any(|result| result.hit_target == Some(victim_id))
-    );
-}
-
-fn make_arrow_target(x: f32, y: f32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
     };
-    element.set_position_map(MapPoint { x, y });
-    element.set_position(WorldPoint3D { x, y, z: 0.0 });
-    Entity::Target(ElementTarget {
-        element,
-        fx: FxData::default(),
-        target: TargetData {
-            action_filter: TargetFilter::ARROW,
-            ..TargetData::default()
-        },
-    })
-}
-
-/// Test helper — launch a `ShootBow` sequence element and return
-/// `(sequence_manager, seq_id, elem_idx)` so tests can hand the
-/// triple to `begin_bow_shot` and exact-owner execution.
-fn launch_test_shoot_element(
-    shooter: EntityId,
-    target: EntityId,
-) -> (SequenceManager, SequenceId, usize) {
-    let mut sm = SequenceManager::new();
-    let elem = build_shoot_bow_element(shooter, target);
-    let seq_id = sm.insert_element(elem);
-    sm.start_sequence_level(seq_id);
-    // Model the running bow element independently of instruction dispatch.
-    sm.get_element_mut(seq_id, 0).unwrap().state = crate::sequence::SequenceState::InProgress;
-    sm.rebuild_indices();
-    (sm, seq_id, 0)
-}
-
-fn set_test_action_state_after_transition(
-    sm: &mut SequenceManager,
-    seq_id: SequenceId,
-    elem_idx: usize,
-    action_state: ActionState,
-) {
-    sm.get_element_mut(seq_id, elem_idx)
-        .unwrap()
-        .action_state_after_transition = action_state;
-}
-
-fn bind_test_bow_release_rows(entity: &mut Entity, order_type: OrderType) {
-    let mut conversion = crate::engine::test_support::unmapped_conversion();
-    let base_row = 0u16;
-    conversion[order_type as usize] = base_row;
-
-    let mut scripts = Vec::with_capacity(16);
-    for _direction in 0..16 {
-        scripts.push(SpriteScript {
-            action_id: order_type as u16,
-            action_done: 1,
-            average_speed: 0.0,
-            hotspot: SpriteLocalPoint::new(2.0, 3.0),
-            sum_distance: 0,
-            frame_ids: vec![1, 2, 3],
-            delays: vec![0, 0, 0],
-            distances: vec![0, 0, 0],
-            offsets: vec![SpriteFrameOffset::ZERO; 3],
-            sound_ids: vec![0, 0, 0],
-        });
-    }
-
-    let sprite = &mut entity.element_data_mut().sprite;
-    sprite.scripts = std::sync::Arc::new(scripts);
-    sprite.conversion = std::sync::Arc::new(conversion);
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
+    );
+    assert_eq!(hit, Some(victim_id));
 }
 
 #[test]
@@ -450,24 +500,26 @@ fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
         std::num::NonZeroU32::new(999).unwrap(),
     ));
 
+    let (mut engine, assets) = projectile_engine(entities);
+    engine.orders.sequence_manager = sequences;
     let mut pulse_count = 0;
     let mut restored = None;
     for _ in 0..12 {
-        run_test_bow_owner(&sim, &mut entities, &mut sequences, owner, false);
-        if test_bow_done_pulse(&entities, owner) {
+        engine.tick_one_actor_animation_action_change_slot(&sim, &assets, owner);
+        if test_bow_done_pulse(&engine.world.entities, owner) {
             pulse_count += 1;
-            restored = Some((entities.clone(), sequences.clone()));
+            restored = Some(engine.clone());
         }
     }
     assert_eq!(
         pulse_count, 1,
         "one authored animation yields one release pulse"
     );
-    let (mut entities, mut sequences) = restored.expect("captured state immediately after DONE");
+    let mut engine = restored.expect("captured state immediately after DONE");
     for _ in 0..8 {
-        run_test_bow_owner(&sim, &mut entities, &mut sequences, owner, false);
+        engine.tick_one_actor_animation_action_change_slot(&sim, &assets, owner);
         assert!(
-            !test_bow_done_pulse(&entities, owner),
+            !test_bow_done_pulse(&engine.world.entities, owner),
             "restored animation must not release again"
         );
     }
@@ -784,32 +836,51 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
         crate::order::alloc_order_id(&mut next_order_id),
     ));
 
+    let (mut engine, assets) = projectile_engine(entities);
+    engine.orders.sequence_manager = sm;
     let mut released = false;
     for _ in 0..64 {
-        run_test_bow_owner(
+        engine.tick_one_actor_animation_action_change_slot(
             sim,
-            &mut entities,
-            &mut sm,
+            &assets,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            false,
         );
-        released |= test_bow_done_pulse(&entities, EntityId::Pc(crate::entity_id::PcId(0)));
-        if !test_selected_bow(&entities, &sm, EntityId::Pc(crate::entity_id::PcId(0))) {
+        released |= test_bow_done_pulse(
+            &engine.world.entities,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+        );
+        if !test_selected_bow(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            EntityId::Pc(crate::entity_id::PcId(0)),
+        ) {
             break;
         }
     }
 
     assert!(released);
     assert_eq!(
-        sm.get_element(seq_id, elem_idx).unwrap().state,
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .unwrap()
+            .state,
         crate::sequence::SequenceState::InProgress
     );
     assert!(
-        !test_selected_bow(&entities, &sm, EntityId::Pc(crate::entity_id::PcId(0))),
+        !test_selected_bow(
+            &engine.world.entities,
+            &engine.orders.sequence_manager,
+            EntityId::Pc(crate::entity_id::PcId(0))
+        ),
         "active bow-shot driver should detach after the final bow order"
     );
     assert_eq!(
-        sm.get_element(seq_id, elem_idx)
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
             .unwrap()
             .current_order()
             .unwrap()
@@ -1607,9 +1678,13 @@ fn tick_arrows_follows_trajectory_and_hits() {
             time: 2,
         },
     ];
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
-        Some(make_soldier(50.0, 0.0)),
+        Some(make_soldier_with_camp(
+            50.0,
+            0.0,
+            crate::element::Camp::Lacklandists,
+        )),
         Some(spawn_arrow(SpawnArrowParams {
             shooter: EntityId::Pc(crate::entity_id::PcId(0)),
             bow_point: WorldPoint3D {
@@ -1632,25 +1707,29 @@ fn tick_arrows_follows_trajectory_and_hits() {
         })),
     ]);
 
-    let mut hit = None;
+    let (mut engine, assets) = projectile_engine(entities);
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let victim = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let sim = crate::sim_rng::test_context();
     for _ in 0..20 {
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-        for r in &results {
-            if r.hit_target.is_some() {
-                hit = r.hit_target;
-                assert_eq!(r.damage, 30);
-                break;
-            }
-        }
-        if hit.is_some() {
+        engine.tick_existing_projectile(&sim, &assets, arrow_id);
+        if projectile_activation_seen(&engine, victim, Command::ReceiveArrowDamage) {
             break;
         }
     }
-    assert_eq!(
-        hit,
-        Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
-        "arrow should reach target"
-    );
+    let damage = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .find(|element| {
+            element.owner == Some(victim) && element.command == Command::ReceiveArrowDamage
+        })
+        .expect("arrow registers damage on its victim");
+    assert!(matches!(
+        damage.data,
+        SequenceElementData::Damage { damage: 30, .. }
+    ));
 }
 
 #[test]
@@ -1701,31 +1780,54 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
             z: 0.0,
         },
     });
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
-        Some(make_soldier(50.0, 0.0)),
+        Some(make_soldier_with_camp(
+            50.0,
+            0.0,
+            crate::element::Camp::Lacklandists,
+        )),
         Some(arrow),
     ]);
 
-    let mut hit = None;
+    let (mut engine, assets) = projectile_engine(entities);
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let victim = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    let sim = crate::sim_rng::test_context();
+    let mut impact_old = None;
     for _ in 0..20 {
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-        hit = results.into_iter().find(|result| {
-            result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
-        });
-        if hit.is_some() {
+        let old = engine
+            .world
+            .entities
+            .get(arrow_id)
+            .unwrap()
+            .element_data()
+            .position();
+        engine.tick_existing_projectile(&sim, &assets, arrow_id);
+        if projectile_activation_seen(&engine, victim, Command::ReceiveArrowDamage) {
+            impact_old = Some(old);
             break;
         }
     }
-
-    let hit = hit.expect("arrow should reach human target");
-    assert_eq!(hit.impact_pos, MapPoint { x: 50.0, y: 0.0 });
-    let old_pos = hit
-        .human_hit_old_position
-        .expect("human hit should carry previous projectile position");
-    assert!(old_pos.x < hit.impact_pos.x);
-    assert!((old_pos.y - 0.0).abs() < 0.01);
-    assert!(old_pos.z >= 25.0);
+    let old = impact_old.expect("arrow damages its victim");
+    let arrow = engine.world.entities.get(arrow_id).unwrap();
+    assert_eq!(
+        arrow.element_data().position(),
+        old,
+        "consumed projectile rewinds to its previous position"
+    );
+    let impact = engine
+        .world
+        .entities
+        .get(victim)
+        .unwrap()
+        .element_data()
+        .position();
+    assert_eq!(impact.x, 50.0);
+    assert_eq!(impact.y, 0.0);
+    assert!(old.x < impact.x);
+    assert!(old.y.abs() < 0.01);
+    assert!(old.z >= 25.0);
 }
 
 #[test]
@@ -1793,34 +1895,30 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
         z: 40.0,
     });
 
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
         Some(make_arrow_target(50.0, 0.0)),
         Some(arrow),
         Some(other_arrow),
     ]);
 
-    let results = tick_arrow(
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-        None,
+    let (mut engine, assets) = projectile_engine(entities);
+    engine.tick_new_projectile_once(
+        &crate::sim_rng::test_context(),
+        &assets,
         EntityId::Projectile(crate::entity_id::ProjectileId(2)),
     );
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(
-        results[0].arrow,
-        EntityId::Projectile(crate::entity_id::ProjectileId(2))
-    );
-    assert_eq!(
-        results[0].fx_target_hit,
-        Some((
-            EntityId::Target(crate::entity_id::TargetId(1)),
-            Command::ActivateArrow
-        ))
-    );
-
-    let Some(Entity::Projectile(p)) = entities.get_at_index(3).map(|(_, entity)| entity) else {
+    assert!(projectile_activation_seen(
+        &engine,
+        EntityId::Target(crate::entity_id::TargetId(1)),
+        Command::ActivateArrow
+    ));
+    let Some(Entity::Projectile(p)) = engine
+        .world
+        .entities
+        .get_at_index(3)
+        .map(|(_, entity)| entity)
+    else {
         panic!("other arrow should remain present");
     };
     assert!(
@@ -1877,18 +1975,31 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-    assert!(
-        results
-            .iter()
-            .all(|r| r.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))),
-        "same-camp soldier must be filtered before hit selection"
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
+    };
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
     );
-    assert!(
-        results
-            .iter()
-            .any(|r| r.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))),
-        "arrow should continue to the valid victim behind the filtered candidate"
+    assert_eq!(
+        hit,
+        Some(EntityId::Soldier(crate::entity_id::SoldierId(2))),
+        "friendly candidate is skipped before the valid later victim"
     );
 }
 
@@ -1923,7 +2034,7 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
             z: 0.0,
         },
     });
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
         Some(make_soldier_with_camp(
             80.0,
@@ -1946,20 +2057,20 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
     )
     .unwrap();
 
-    let results = tick_arrow_in_actor_order_with_diplomacy(
-        &mut entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-        None,
-        arrow_id,
+    let Entity::Projectile(arrow) = entities.get(arrow_id).unwrap() else {
+        unreachable!()
+    };
+    let old_position = arrow.projectile.launch_segment_start.unwrap();
+    let hit = projectile_human_victim(
+        &entities,
         &[EntityId::Pc(crate::entity_id::PcId(0)), victim_id],
         &diplomacy,
+        arrow_id,
+        old_position,
     );
-
-    assert!(
-        results
-            .iter()
-            .all(|result| result.hit_target != Some(victim_id)),
-        "neutral actors must be filtered before projectile hit selection"
+    assert_eq!(
+        hit, None,
+        "neutral actors are excluded before hit selection"
     );
 }
 
@@ -2001,19 +2112,31 @@ fn tick_arrows_selects_last_eligible_human_in_actor_order() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
-    assert!(
-        results.iter().any(|result| {
-            result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
-        }),
-        "Original retains the last eligible human visited by marrayActors"
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
+    };
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
     );
-    assert!(
-        results.iter().all(|result| {
-            result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
-        }),
-        "an earlier eligible human must be replaced by a later one"
+    assert_eq!(
+        hit,
+        Some(EntityId::Soldier(crate::entity_id::SoldierId(2))),
+        "last eligible actor replaces earlier farther candidate"
     );
 }
 
@@ -2074,20 +2197,22 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
     let actor_order = world.actor_registry_ids.clone();
     assert_eq!(actor_order, [pc, soldier_2, soldier_1]);
 
-    let results = tick_arrow_in_actor_order(
-        &mut world.entities,
-        crate::sight_obstacle::ObstacleList::empty(),
-        None,
-        arrow_id,
+    let Entity::Projectile(arrow) = world.entities.get(arrow_id).unwrap() else {
+        unreachable!()
+    };
+    let old_position = arrow.projectile.launch_segment_start.unwrap();
+    let hit = projectile_human_victim(
+        &world.entities,
         &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
     );
-
-    assert!(results.iter().any(|result| {
-        result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
-    }));
-    assert!(results.iter().all(|result| {
-        result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
-    }));
+    assert_eq!(
+        hit,
+        Some(soldier_1),
+        "last eligible actor follows creation order, not entity slot"
+    );
 }
 
 #[test]
@@ -2123,7 +2248,7 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
         lands_in_hole: false,
         initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
     });
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(100.0, 0.0)),
         Some(make_holder()),
         Some(make_holder()),
@@ -2137,23 +2262,17 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
         soldier_1,
     ];
 
-    let mut shield_hit = None;
-    for _ in 0..10 {
-        for result in tick_arrow_in_actor_order(
-            &mut entities,
-            crate::sight_obstacle::ObstacleList::empty(),
-            None,
-            arrow_id,
-            &actor_order,
-        ) {
-            shield_hit = shield_hit.or(result.shield_hit);
-        }
-        if shield_hit.is_some() {
-            break;
-        }
-    }
-
-    assert_eq!(shield_hit, Some(soldier_2));
+    let Entity::Projectile(arrow) = entities.get(arrow_id).unwrap() else {
+        unreachable!()
+    };
+    let hit = projectile_shield_holder(
+        &entities,
+        &actor_order,
+        arrow.projectile.launch_segment_start.unwrap(),
+        WorldPoint3D::new(50.0, 0.0, 40.0),
+        arrow.projectile.velocity_increment,
+    );
+    assert_eq!(hit, Some(soldier_2));
 }
 
 #[test]
@@ -2208,14 +2327,28 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
-    assert!(results.iter().any(|result| {
-        result.hit_target == Some(EntityId::Soldier(crate::entity_id::SoldierId(2)))
-    }));
-    assert!(results.iter().all(|result| {
-        result.hit_target != Some(EntityId::Soldier(crate::entity_id::SoldierId(1)))
-    }));
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
+    };
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
+    );
+    assert_eq!(hit, Some(EntityId::Soldier(crate::entity_id::SoldierId(2))));
 }
 
 #[test]
@@ -2267,10 +2400,30 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
         Some(arrow),
     ]);
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-    assert!(
-        results.iter().all(|r| r.hit_target.is_none()),
-        "the original game returns no victim when the projectile is not moving"
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
+    };
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
+    );
+    assert_eq!(
+        hit, None,
+        "stationary projectiles cannot select a human victim"
     );
 }
 
@@ -2308,11 +2461,28 @@ fn tick_arrows_without_shooter_does_not_hit_human() {
     }
     let mut entities = entity_table(vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)]);
 
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-    assert!(
-        results.iter().all(|r| r.hit_target.is_none()),
-        "the original game returns no victim when the projectile has no shooter"
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let old_position = {
+        let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        if let Some(old) = arrow.projectile.launch_segment_start.take() {
+            old
+        } else {
+            let old = arrow.element.position();
+            arrow.advance_projectile_hourglass();
+            old
+        }
+    };
+    let hit = projectile_human_victim(
+        &entities,
+        &actor_order,
+        &crate::diplomacy::DiplomacyState::default(),
+        arrow_id,
+        old_position,
     );
+    assert_eq!(hit, None, "a missing shooter excludes all human victims");
 }
 
 /// An arrow whose shooter dies mid-flight keeps hunting victims.
@@ -2365,19 +2535,36 @@ fn tick_arrows_dead_shooter_still_hits_human() {
         Some(arrow),
     ]);
 
-    let mut any_hit = None;
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let mut hit = None;
     for _ in 0..10 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if r.hit_target.is_some() {
-                any_hit = r.hit_target;
+        let old_position = {
+            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+                unreachable!()
+            };
+            if let Some(old) = arrow.projectile.launch_segment_start.take() {
+                old
+            } else {
+                let old = arrow.element.position();
+                if arrow.advance_projectile_hourglass() {
+                    break;
+                }
+                old
             }
+        };
+        hit = projectile_human_victim(
+            &entities,
+            &actor_order,
+            &crate::diplomacy::DiplomacyState::default(),
+            arrow_id,
+            old_position,
+        );
+        if hit.is_some() {
+            break;
         }
     }
-    assert_eq!(
-        any_hit,
-        Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
-        "a dead shooter's arrow must still resolve its human victim"
-    );
+    assert_eq!(hit, Some(EntityId::Soldier(crate::entity_id::SoldierId(1))));
 }
 
 /// Apple projectile flying through an APPLE-filtered FX target
@@ -2459,31 +2646,41 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
         },
     });
 
-    let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
+    let entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
-    let mut activation = None;
-    let mut impact = None;
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = EntityId::Projectile(crate::entity_id::ProjectileId(1));
+    let target = EntityId::Target(crate::entity_id::TargetId(0));
     for _ in 0..20 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if let Some(hit) = r.fx_target_hit {
-                activation = Some(hit);
-                impact = Some((r.impact_fx, r.impact_pos));
-                break;
-            }
-        }
-        if activation.is_some() {
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        if projectile_activation_seen(&engine, target, Command::ActivateApple) {
             break;
         }
     }
-    assert_eq!(
-        activation,
-        Some((
-            EntityId::Target(crate::entity_id::TargetId(0)),
-            Command::ActivateApple
-        )),
+    assert!(
+        projectile_activation_seen(&engine, target, Command::ActivateApple),
         "apple projectile should activate APPLE-filter target with ActivateApple"
     );
-    assert_eq!(impact, Some((Some(509), target_pos)));
+    assert!(engine.feedback.pending_side_effects.sounds.iter().any(|sound| matches!(
+        sound, crate::engine::SoundCommand::Fx { fx_id: 509, position, .. } if *position == target_pos
+    )));
+}
+
+fn projectile_activation_seen(
+    engine: &crate::engine::EngineInner,
+    target: EntityId,
+    command: Command,
+) -> bool {
+    engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .any(|sequence| {
+            sequence
+                .elements
+                .iter()
+                .any(|element| element.owner == Some(target) && element.command == command)
+        })
 }
 
 /// The original game uses current-position range gating for
@@ -2554,20 +2751,25 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
         },
     });
 
-    let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
+    let entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
+    let (mut engine, assets) = projectile_engine(entities);
+    engine.tick_existing_projectile(
+        &crate::sim_rng::test_context(),
+        &assets,
+        EntityId::Projectile(crate::entity_id::ProjectileId(1)),
+    );
     assert!(
-        results.iter().any(|r| {
-            r.fx_target_hit
-                == Some((
-                    EntityId::Target(crate::entity_id::TargetId(0)),
-                    Command::ActivateArrow,
-                ))
-                && r.despawn
-        }),
+        projectile_activation_seen(
+            &engine,
+            EntityId::Target(crate::entity_id::TargetId(0)),
+            Command::ActivateArrow
+        ),
         "arrow should activate target using the original game's current-position range gate"
     );
+    let Entity::Projectile(arrow) = engine.world.entities.get_at_index(1).unwrap().1 else {
+        panic!("expected arrow");
+    };
+    assert!(!arrow.projectile.flying);
 }
 
 /// The original game's stationary FX-target checks still require
@@ -2638,11 +2840,19 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
         },
     });
 
-    let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
+    let entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
+    let (mut engine, assets) = projectile_engine(entities);
+    engine.tick_existing_projectile(
+        &crate::sim_rng::test_context(),
+        &assets,
+        EntityId::Projectile(crate::entity_id::ProjectileId(1)),
+    );
     assert!(
-        results.iter().all(|r| r.fx_target_hit.is_none()),
+        !projectile_activation_seen(
+            &engine,
+            EntityId::Target(crate::entity_id::TargetId(0)),
+            Command::ActivateArrow
+        ),
         "stationary projectile must not activate nearby FX target by radius"
     );
 }
@@ -2679,12 +2889,14 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
             z: 0.0,
         },
     });
-    let mut entities = entity_table(vec![Some(make_pc(0.0, -100.0)), Some(arrow)]);
+    let entities = entity_table(vec![Some(make_pc(0.0, -100.0)), Some(arrow)]);
 
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
     let mut despawn_frame = None;
     for frame in 0..260 {
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-        if results.iter().any(|r| r.despawn) {
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        if !engine.world.entities.get(projectile).unwrap().is_active() {
             despawn_frame = Some(frame);
             break;
         }
@@ -2694,7 +2906,7 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
         despawn_frame, None,
         "projectile lifetime is trajectory-driven, not capped at 250 frames"
     );
-    match entities.get_at_index(1).map(|(_, entity)| entity).unwrap() {
+    match engine.world.entities.get(projectile).unwrap() {
         Entity::Projectile(p) => assert!(p.projectile.flying),
         _ => panic!("expected projectile"),
     }
@@ -2757,10 +2969,16 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
         },
     });
 
-    let mut entities = entity_table(vec![Some(target), Some(apple)]);
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+    let entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(100.0, 100.0))]);
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
+    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
     assert!(
-        results.is_empty(),
+        !projectile_activation_seen(
+            &engine,
+            EntityId::Target(crate::entity_id::TargetId(0)),
+            Command::ActivateApple
+        ),
         "the original game ignores nonmatching target filters before the target can burst"
     );
 }
@@ -2812,17 +3030,21 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
             ..ProjectileData::default()
         },
     });
-    let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
+    let entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
     // First tick: apple reaches target, bursts.
-    let impact_results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
+    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
     assert!(
-        impact_results
-            .iter()
-            .any(|r| r.fx_target_hit.is_some() && !r.despawn),
+        projectile_activation_seen(
+            &engine,
+            EntityId::Target(crate::entity_id::TargetId(0)),
+            Command::ActivateApple
+        ) && engine.world.entities.get(projectile).unwrap().is_active(),
         "apple must NOT despawn on impact frame — it bursts first"
     );
-    let proj_after = entities.get_at_index(1).map(|(_, entity)| entity).unwrap();
+    let proj_after = engine.world.entities.get(projectile).unwrap();
     match proj_after {
         Entity::Projectile(p) => {
             assert!(!p.projectile.flying);
@@ -2831,11 +3053,12 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         _ => panic!("expected apple projectile"),
     }
 
-    let grounded_base_results =
-        tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-    assert!(
-        grounded_base_results.is_empty(),
-        "projectile ticking must not duplicate the derived landed animation/removal"
+    let impact_sound_count = engine.feedback.pending_side_effects.sounds.len();
+    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    assert_eq!(
+        engine.feedback.pending_side_effects.sounds.len(),
+        impact_sound_count,
+        "grounded updates must not repeat impact feedback"
     );
 }
 
@@ -2874,12 +3097,22 @@ fn tick_arrows_impact_fx_per_projectile_type() {
     }
 
     let fx_for = |obj: ObjectType| -> Option<u32> {
-        let mut entities = entity_table(vec![
+        let entities = entity_table(vec![
             Some(spawn_projectile_at_impact(obj)),
             Some(make_pc(100.0, 0.0)),
         ]);
-        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-        results.into_iter().find_map(|r| r.impact_fx)
+        let (mut engine, assets) = projectile_engine(entities);
+        let projectile = engine.world.entities.get_at_index(0).unwrap().0;
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        engine
+            .feedback
+            .pending_side_effects
+            .sounds
+            .iter()
+            .find_map(|sound| match sound {
+                crate::engine::SoundCommand::Fx { fx_id, .. } => Some(*fx_id),
+                _ => None,
+            })
     };
     assert_eq!(fx_for(ObjectType::Apple), Some(509));
     assert_eq!(fx_for(ObjectType::Stone), Some(508));
@@ -3790,19 +4023,36 @@ fn tick_arrows_skips_lying_victim() {
 
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)]);
 
-    let mut any_hit = None;
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let mut hit = None;
     for _ in 0..10 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if r.hit_target.is_some() {
-                any_hit = r.hit_target;
-                break;
+        let old_position = {
+            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+                unreachable!()
+            };
+            if let Some(old) = arrow.projectile.launch_segment_start.take() {
+                old
+            } else {
+                let old = arrow.element.position();
+                if arrow.advance_projectile_hourglass() {
+                    break;
+                }
+                old
             }
+        };
+        hit = projectile_human_victim(
+            &entities,
+            &actor_order,
+            &crate::diplomacy::DiplomacyState::default(),
+            arrow_id,
+            old_position,
+        );
+        if hit.is_some() {
+            break;
         }
     }
-    assert!(
-        any_hit.is_none(),
-        "arrow must not hit a lying soldier (posture filter)"
-    );
+    assert_eq!(hit, None);
 }
 
 /// Arrow that sails past a target in 3D does not hit it even when
@@ -3866,21 +4116,36 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
         Some(arrow),
     ]);
 
-    let mut any_hit = None;
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let mut hit = None;
     for _ in 0..20 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if r.hit_target.is_some() {
-                any_hit = r.hit_target;
+        let old_position = {
+            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+                unreachable!()
+            };
+            if let Some(old) = arrow.projectile.launch_segment_start.take() {
+                old
+            } else {
+                let old = arrow.element.position();
+                if arrow.advance_projectile_hourglass() {
+                    break;
+                }
+                old
             }
-        }
-        if any_hit.is_some() {
+        };
+        hit = projectile_human_victim(
+            &entities,
+            &actor_order,
+            &crate::diplomacy::DiplomacyState::default(),
+            arrow_id,
+            old_position,
+        );
+        if hit.is_some() {
             break;
         }
     }
-    assert!(
-        any_hit.is_none(),
-        "arrow arcing 50+ units above a soldier's belt must not register a hit"
-    );
+    assert_eq!(hit, None);
 }
 
 /// Arrow that shares the soldier's 2D column but passes at belt
@@ -3931,13 +4196,31 @@ fn tick_arrows_hits_through_belt_column() {
         Some(make_soldier(20.0, 0.0)),
         Some(arrow),
     ]);
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
     let mut hit = None;
     for _ in 0..20 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if r.hit_target.is_some() {
-                hit = r.hit_target;
+        let old_position = {
+            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
+                unreachable!()
+            };
+            if let Some(old) = arrow.projectile.launch_segment_start.take() {
+                old
+            } else {
+                let old = arrow.element.position();
+                if arrow.advance_projectile_hourglass() {
+                    break;
+                }
+                old
             }
-        }
+        };
+        hit = projectile_human_victim(
+            &entities,
+            &actor_order,
+            &crate::diplomacy::DiplomacyState::default(),
+            arrow_id,
+            old_position,
+        );
         if hit.is_some() {
             break;
         }
@@ -4005,39 +4288,46 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
         },
     });
 
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(100.0, 0.0)),
         Some(shield_holder),
         Some(arrow),
     ]);
 
-    // Advance ticks until the shield_hit fires.
-    let mut shield_hit = None;
-    let mut despawn_seen = false;
+    let (mut engine, assets) = projectile_engine(entities);
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
     for _ in 0..10 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if let Some(holder) = r.shield_hit {
-                shield_hit = Some(holder);
-                despawn_seen = r.despawn;
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, arrow_id);
+        if let Entity::Projectile(p) = engine.world.entities.get(arrow_id).unwrap() {
+            if p.projectile.falling {
+                break;
             }
         }
-        if shield_hit.is_some() {
-            break;
-        }
     }
-    assert_eq!(
-        shield_hit,
-        Some(EntityId::Soldier(crate::entity_id::SoldierId(1))),
-        "arrow must report shield hit on the holder"
-    );
+    assert!(projectile_activation_seen(
+        &engine,
+        EntityId::Soldier(crate::entity_id::SoldierId(1)),
+        Command::ParryShield
+    ));
     assert!(
-        !despawn_seen,
-        "shield-hit arrow keeps flying (falling) on same tick"
+        engine
+            .world
+            .entities
+            .get(arrow_id)
+            .unwrap()
+            .element_data()
+            .active,
+        "shield deflection does not deactivate the projectile"
     );
-
     // The projectile should be flagged as falling, and the hit
     // check must now skip (falling arrows pass through bodies).
-    match entities.get_at_index(2).map(|(_, entity)| entity).unwrap() {
+    match engine
+        .world
+        .entities
+        .get_at_index(2)
+        .map(|(_, entity)| entity)
+        .unwrap()
+    {
         Entity::Projectile(p) => {
             assert!(
                 p.projectile.falling,
@@ -4163,13 +4453,19 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
                 z: 0.0,
             },
         });
-        let mut entities = entity_table(vec![Some(make_pc(100.0, 0.0)), Some(holder), Some(arrow)]);
-        let mut shield_hit = None;
-        for _ in 0..10 {
-            for result in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-                shield_hit = shield_hit.or(result.shield_hit);
-            }
-        }
+        let entities = entity_table(vec![Some(make_pc(100.0, 0.0)), Some(holder), Some(arrow)]);
+        let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+        let Entity::Projectile(arrow) = entities.get(arrow_id).unwrap() else {
+            unreachable!()
+        };
+        let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+        let shield_hit = projectile_shield_holder(
+            &entities,
+            &actor_order,
+            arrow.projectile.launch_segment_start.unwrap(),
+            WorldPoint3D::new(50.0, 0.0, 40.0),
+            arrow.projectile.velocity_increment,
+        );
         let after_obstacle = entities
             .get_at_index(1)
             .unwrap()
@@ -4380,14 +4676,14 @@ fn ground_crossing_is_attributed_to_first_front_facing_shield() {
     );
 
     assert_eq!(
-        projectile_shield_holder(&entities, None, old, new, increment),
+        projectile_shield_holder(&entities, &[holder_id], old, new, increment),
         Some(holder_id),
         "reachability tests the ground crossing before the shield obstacle list"
     );
 }
 
 /// An arrow that runs out of trajectory without hitting anything
-/// stops flying on the landing tick and despawns.
+/// stops flying on the landing tick and retains its grounded presentation.
 #[test]
 fn tick_arrows_miss_and_land_despawns() {
     let trajectory = vec![TrajectoryPoint {
@@ -4419,23 +4715,27 @@ fn tick_arrows_miss_and_land_despawns() {
         },
     });
     // No other humans in range — arrow will fly out and land.
-    let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(arrow)]);
+    let entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(arrow)]);
 
-    let mut despawn = false;
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
+    let mut landed = false;
     for _ in 0..10 {
-        for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-            if r.despawn && r.hit_target.is_none() && r.shield_hit.is_none() {
-                despawn = true;
-            }
-        }
-        if despawn {
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        let Entity::Projectile(arrow) = engine.world.entities.get(projectile).unwrap() else {
+            panic!("expected arrow");
+        };
+        landed = !arrow.projectile.flying;
+        if landed {
             break;
         }
     }
+    assert!(landed, "arrow that misses should stop flying on landing");
     assert!(
-        despawn,
-        "arrow that misses should land and despawn without hit_target / shield_hit"
+        engine.world.entities.get(projectile).unwrap().is_active(),
+        "grounded arrow survives until presentation retirement"
     );
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
@@ -4495,14 +4795,19 @@ fn one_waypoint_falling_arrow_into_hole_disappears_without_ground_snap() {
 
     arrow.advance_trajectory_one_frame();
     assert_eq!(arrow.element.position().z.to_bits(), endpoint.z.to_bits());
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(100.0, 100.0)),
         Some(Entity::Projectile(arrow)),
     ]);
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
-    assert!(results.iter().any(|result| result.despawn));
-    let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
+    let retain =
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    assert!(
+        !retain,
+        "terminal projectile asks its concrete owner to retire it"
+    );
+    let Entity::Projectile(arrow) = engine.world.entities.get(projectile).unwrap() else {
         panic!("falling arrow changed concrete entity kind");
     };
     assert!(!arrow.projectile.flying);
@@ -4542,17 +4847,21 @@ fn falling_arrow_into_water_retires_without_ground_snap() {
     arrow.projectile.flying = true;
     arrow.projectile.dive = true;
 
-    let mut entities = entity_table(vec![
+    let entities = entity_table(vec![
         Some(make_pc(100.0, 100.0)),
         Some(Entity::Projectile(arrow)),
     ]);
-    let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
-
-    assert!(results.iter().any(|result| result.despawn));
-    let Entity::Projectile(arrow) = entities.get_at_index(1).unwrap().1 else {
+    let (mut engine, assets) = projectile_engine(entities);
+    let projectile = engine.world.entities.get_at_index(1).unwrap().0;
+    let retain =
+        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    assert!(
+        !retain,
+        "terminal projectile asks its concrete owner to retire it"
+    );
+    let Entity::Projectile(arrow) = engine.world.entities.get(projectile).unwrap() else {
         panic!("falling arrow changed concrete entity kind");
     };
-    assert!(!arrow.element.active);
     assert!(!arrow.projectile.flying);
     assert_eq!(arrow.element.position().z.to_bits(), endpoint.z.to_bits());
     assert!(!arrow.element.sprite.position_iface.is_moving());

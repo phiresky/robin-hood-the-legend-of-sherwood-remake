@@ -63,21 +63,12 @@ impl EngineInner {
                     + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::EnemyWonderingLook, 0..8);
                 self.remaining_wondering_timer(owner, delay);
             }
-            (WonderingAleReactiontime, EventTimer) => self.execute_ai_enemy_observation(
-                sim,
-                assets,
-                owner,
-                crate::ai::EnemyObservation::AleReaction,
-            ),
-            (WonderingApproachingAle, EventTimer | EventReachPoint) => self
-                .execute_ai_enemy_observation(
-                    sim,
-                    assets,
-                    owner,
-                    crate::ai::EnemyObservation::AleApproach {
-                        arrived: event == EventReachPoint,
-                    },
-                ),
+            (WonderingAleReactiontime, EventTimer) => {
+                self.execute_ai_ale_reaction(sim, assets, owner)
+            }
+            (WonderingApproachingAle, EventTimer | EventReachPoint) => {
+                self.execute_ai_ale_approach(sim, assets, owner, event == EventReachPoint)
+            }
             (WonderingOfficerSeeingBrawl, EventTimer) => {
                 self.duty_set_state(
                     sim,

@@ -3,7 +3,7 @@
 //! These helpers mirror original-game movement-animation selection,
 //! opponent-facing, and danger-facing without owning movement state.
 
-use super::{OrderType, door_pass_sprite_animation_override};
+use super::OrderType;
 
 pub(super) fn is_sword_movement_nonanimation(order: OrderType) -> bool {
     matches!(
@@ -17,8 +17,7 @@ pub(super) fn is_sword_motion_context(
     door_pass_action: Option<OrderType>,
     order_action: OrderType,
 ) -> bool {
-    let selected_action =
-        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    let selected_action = door_pass_action.unwrap_or(order_action);
     let stale_sword_state = matches!(
         action_state,
         crate::element::ActionState::MovingSword | crate::element::ActionState::MovingFastSword
@@ -52,8 +51,7 @@ pub(super) fn executes_sword_movement_action(
     door_pass_action: Option<OrderType>,
     order_action: OrderType,
 ) -> bool {
-    let action =
-        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    let action = door_pass_action.unwrap_or(order_action);
     is_sword_movement_nonanimation(action)
 }
 
@@ -67,8 +65,7 @@ pub(super) fn executes_shield_movement_action(
     door_pass_action: Option<OrderType>,
     order_action: OrderType,
 ) -> bool {
-    let action =
-        door_pass_sprite_animation_override(order_action, door_pass_action).unwrap_or(order_action);
+    let action = door_pass_action.unwrap_or(order_action);
     action == OrderType::WalkingWithShield
 }
 

@@ -2,11 +2,7 @@
 use super::*;
 
 impl SequenceManager {
-    /// Graph rewrites historically follow stored edges even when the runtime
-    /// severed-link mirror is set; owner filtering is performed at each visited
-    /// node. Keep that distinct from live movement and completion queries.
-    /// TODO(sequence-links): establish Original rewrite behavior for a retained
-    /// runtime-authored severed edge before changing this query's semantics.
+    /// Graph rewrites follow the same live edge as execution.
     pub(super) fn rewrite_following_ref(
         &self,
         sequence_id: SequenceId,
@@ -14,7 +10,7 @@ impl SequenceManager {
     ) -> Option<(SequenceId, usize)> {
         let next = self
             .get_sequence(sequence_id)?
-            .raw_following_ref(element_index)?;
+            .live_following_ref(element_index)?;
         Some((next.sequence_id, next.element_index))
     }
 

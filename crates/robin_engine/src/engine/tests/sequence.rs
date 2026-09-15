@@ -2,6 +2,103 @@ use super::scenarios::assets_with_test_pc_profile;
 use super::*;
 
 #[test]
+fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = assets_with_test_pc_profile();
+    let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
+    bind_test_action_point(
+        &mut engine,
+        owner,
+        OrderType::WaitingUpright,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let mut outgoing = SequenceElement::new(1, Command::Wait, Some(owner));
+    outgoing.push_order(Order::new(
+        OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        engine.orders.allocate_order_id(),
+    ));
+    let outgoing = engine.launch_element_for_owner(&sim, &assets, outgoing);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.mission_domain.campaign.characters[0]
+        .status
+        .set_ammo(crate::profiles::Action::Bow, 1);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::TransitionLoadingBow;
+    let incoming =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), Some(target));
+    let incoming = engine.launch_element_for_owner(&sim, &assets, incoming);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots,
+        [crate::sequence::SequenceElementRef::new(incoming, 0)]
+    );
+    // A script can change the requested action state while the sprite still
+    // displays the aiming animation. Retrying the retained shot must then
+    // rebuild its equipment transition before validating the shot body.
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .action_state = crate::element::ActionState::Waiting;
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .sprite
+        .last_action = OrderType::AimingWithBow;
+
+    engine.tick_actor_owner_envelopes(&sim, &assets);
+
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .human_data()
+            .unwrap()
+            .pending_shoots
+            .is_empty()
+    );
+    let recovery = engine
+        .orders
+        .sequence_manager
+        .get_element(incoming, 0)
+        .unwrap();
+    assert_eq!(
+        recovery.state,
+        SequenceState::Impossible,
+        "the unavailable bow transition aborts the element selected by the prelude"
+    );
+    assert_ne!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(outgoing, 0)
+            .unwrap()
+            .state,
+        SequenceState::Impossible,
+        "the element selected before the prelude is not the aborted execution owner"
+    );
+}
+
+#[test]
 fn instruction_publication_follows_actor_selection_before_progress_promotion() {
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
@@ -106,13 +203,19 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
     );
     engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
+    let selected_order = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(&engine.world.entities, owner)
+        .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
     );
+    assert!(executed.is_some());
     assert_eq!(
-        executed.map(|result| result.order_type),
+        selected_order,
         Some(OrderType::WaitingAlerted),
         "the regression must enter the actual soldier WaitingAlerted Execute arm"
     );
@@ -177,13 +280,19 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
     );
     engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
+    let selected_order = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(&engine.world.entities, owner)
+        .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
     );
+    assert!(executed.is_some());
     assert_eq!(
-        executed.map(|result| result.order_type),
+        selected_order,
         Some(OrderType::WaitingUpright),
         "the regression must enter the actual soldier WaitingUpright Execute arm"
     );
@@ -241,15 +350,18 @@ fn waiting_upright_execute_needs_represented_attentive_state_for_correction() {
     );
     engine.select_sequence_element(owner, Some((wait_sequence, 0)));
 
+    let selected_order = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(&engine.world.entities, owner)
+        .map(|(_, _, order)| order.order_type);
     let executed = engine.tick_actor_animation_for(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
         owner,
     );
-    assert_eq!(
-        executed.map(|result| result.order_type),
-        Some(OrderType::WaitingUpright)
-    );
+    assert!(executed.is_some());
+    assert_eq!(selected_order, Some(OrderType::WaitingUpright));
     assert!(
         !engine
             .orders
@@ -620,7 +732,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         old_order_id.get()
     );
 
-    engine.tick_actor_animation_action_change_slots(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let (fresh_sequence, fresh_index) = engine
         .current_sequence_element_for_actor(owner)
@@ -1738,7 +1850,10 @@ fn entity_phase_completion_resumes_postponed_work_in_same_manager_drain() {
         .sequence_manager
         .get_element_mut(blocker_sequence, 0)
         .unwrap()
-        .cross_postponed = Some((successor_sequence, 0));
+        .postponed = Some(crate::sequence::SequenceElementRef::new(
+        successor_sequence,
+        0,
+    ));
 
     // Actor execution completes its callback before the sequence-manager
     // tick. Normal-priority resumed work stays registered until that tick.
@@ -1888,7 +2003,8 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
                 .sequence_manager
                 .get_element(tail, 0)
                 .unwrap()
-                .cross_postponed,
+                .postponed
+                .map(|link| (link.sequence_id, link.element_index)),
             Some((waiter, 0)),
         );
         tail = waiter;
@@ -1909,7 +2025,8 @@ fn deep_postpone_chain_preserves_unrelated_work_and_reaches_weak_tail() {
             .sequence_manager
             .get_element(tail, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         None,
     );
     assert_eq!(
@@ -1995,7 +2112,8 @@ fn repeated_postpone_and_stop_preserve_append_order() {
                 .sequence_manager
                 .get_element(previous, 0)
                 .unwrap()
-                .cross_postponed,
+                .postponed
+                .map(|link| (link.sequence_id, link.element_index)),
             Some((waiter, 0))
         );
         assert_eq!(
@@ -2013,7 +2131,8 @@ fn repeated_postpone_and_stop_preserve_append_order() {
                 .sequence_manager
                 .get_element(waiter, 0)
                 .unwrap()
-                .cross_postponed,
+                .postponed
+                .map(|link| (link.sequence_id, link.element_index)),
             None
         );
         previous = waiter;
@@ -2064,7 +2183,8 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
             .sequence_manager
             .get_element(root, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((injury, 0))
     );
     assert_eq!(
@@ -2073,7 +2193,8 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
             .sequence_manager
             .get_element(injury, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((old_tail, 0))
     );
 
@@ -2093,7 +2214,8 @@ fn postpone_tail_cache_repairs_after_postpone_current_rewrite() {
             .sequence_manager
             .get_element(old_tail, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((new_tail, 0)),
         "append after PostponeCurrent must follow the rewritten topology"
     );
@@ -2148,7 +2270,8 @@ fn postpone_tail_cache_does_not_cache_waiter_with_existing_successor() {
             .sequence_manager
             .get_element(existing_successor, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((next_waiter, 0))
     );
 }
@@ -2204,7 +2327,8 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
                             .sequence_manager
                             .get_element(blocker_sequence, 0)
                             .unwrap()
-                            .cross_postponed,
+                            .postponed
+                            .map(|link| (link.sequence_id, link.element_index)),
                         None,
                         "the incoming waiter is not installed during the displaced successor's callback"
                     );
@@ -2252,7 +2376,8 @@ fn interrupted_postponed_successor_is_replaced_after_its_condolation() {
             .sequence_manager
             .get_element(blocker_sequence, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((waiter_sequence, 0)),
         "outer priority arbitration must install its waiter after the card returns"
     );
@@ -3267,7 +3392,10 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
         .sequence_manager
         .get_element_mut(parry_sequence, 0)
         .unwrap()
-        .cross_postponed = Some((existing_sequence, 0));
+        .postponed = Some(crate::sequence::SequenceElementRef::new(
+        existing_sequence,
+        0,
+    ));
 
     let mut incoming =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
@@ -3305,7 +3433,8 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
                             .sequence_manager
                             .get_element(parry_sequence, 0)
                             .unwrap()
-                            .cross_postponed,
+                            .postponed
+                            .map(|link| (link.sequence_id, link.element_index)),
                         None,
                         "the displaced successor's callback finishes before the new movement is postponed"
                     );
@@ -3346,7 +3475,8 @@ fn waiting_parry_survives_normal_movement_successor_replacement() {
             .sequence_manager
             .get_element(parry_sequence, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((incoming_sequence, 0))
     );
 
@@ -4313,7 +4443,12 @@ fn arbitration_ignores_serialized_order_ai_lock_like_original() {
         .get_element(incoming_seq, 0)
         .unwrap();
     assert_eq!(incoming.state, SequenceState::Todo);
-    assert_eq!(incoming.cross_postponed, Some((current_seq, 0)));
+    assert_eq!(
+        incoming
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
+        Some((current_seq, 0))
+    );
 }
 
 #[test]
@@ -4372,7 +4507,12 @@ fn injury_postpones_nonterminating_lift_wait_despite_done_sprite_cycle() {
                     | OrderType::WaitingUprightBoredRandom
             )
         {
-            assert_eq!(injury.cross_postponed, Some((current_seq, 0)));
+            assert_eq!(
+                injury
+                    .postponed
+                    .map(|link| (link.sequence_id, link.element_index)),
+                Some((current_seq, 0))
+            );
         }
         current_state
     }
@@ -4513,7 +4653,8 @@ fn reentrant_lethal_interrupt_supersedes_injury_before_postponing_its_wait() {
             .sequence_manager
             .get_element(incoming_sequence, 0)
             .unwrap()
-            .cross_postponed,
+            .postponed
+            .map(|link| (link.sequence_id, link.element_index)),
         Some((nested_sequence, 0))
     );
 
@@ -4676,7 +4817,11 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     assert_eq!(held.posture_after_transition, Posture::Undefined);
     assert_eq!(held.action_state_after_transition, ActionState::Waiting);
     assert!(held.orders.is_empty());
-    assert_eq!(held.cross_postponed, None);
+    assert_eq!(
+        held.postponed
+            .map(|link| (link.sequence_id, link.element_index)),
+        None
+    );
     assert_eq!(
         engine
             .get_entity(pc)
@@ -4952,10 +5097,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     );
 
     let result = engine.tick_actor_animation_for(&sim, &assets, pc);
-    assert_eq!(
-        result.unwrap().motion,
-        crate::sprite::MotionState::InProgress
-    );
+    assert_eq!(result.unwrap(), crate::sprite::MotionState::InProgress);
     assert_eq!(
         engine.get_entity(pc).unwrap().sprite().frame_count,
         0,
@@ -5099,7 +5241,11 @@ fn executing_pass_door_postpones_new_move() {
         .get_element(pass_seq, 0)
         .unwrap();
     assert_eq!(pass.state, SequenceState::InProgress);
-    assert_eq!(pass.cross_postponed, Some((incoming_seq, 0)));
+    assert_eq!(
+        pass.postponed
+            .map(|link| (link.sequence_id, link.element_index)),
+        Some((incoming_seq, 0))
+    );
 
     let incoming = engine
         .orders

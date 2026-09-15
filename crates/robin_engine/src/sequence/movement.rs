@@ -33,20 +33,17 @@ impl SequenceManager {
                     continue;
                 }
                 for element in &mut sequence.elements {
-                    if let Some(legacy) = &mut element.legacy_v48 {
-                        if legacy
-                            .next
-                            .is_some_and(|next| deleted.contains(&next.sequence_id))
-                        {
-                            legacy.next = None;
-                            element.next_link_severed = true;
-                        }
+                    if element
+                        .next
+                        .is_some_and(|next| deleted.contains(&next.sequence_id))
+                    {
+                        element.next = None;
                     }
                     if element
-                        .cross_postponed
-                        .is_some_and(|(target, _)| deleted.contains(&target))
+                        .postponed
+                        .is_some_and(|next| deleted.contains(&next.sequence_id))
                     {
-                        element.cross_postponed = None;
+                        element.postponed = None;
                     }
                 }
             }
@@ -164,18 +161,10 @@ impl SequenceManager {
             return false;
         };
 
-        let intra_sequence_matches = current
-            .postponed_element_index
-            .and_then(|postponed_idx| self.get_element(seq_id, postponed_idx))
-            .is_some_and(|postponed| postponed.command == command);
-        let cross_sequence_matches = current
-            .cross_postponed
-            .and_then(|(postponed_seq, postponed_idx)| {
-                self.get_element(postponed_seq, postponed_idx)
-            })
-            .is_some_and(|postponed| postponed.command == command);
-
-        intra_sequence_matches || cross_sequence_matches
+        current
+            .postponed
+            .and_then(|reference| self.get_element(reference.sequence_id, reference.element_index))
+            .is_some_and(|postponed| postponed.command == command)
     }
 
     /// Apply fast-movement conversion to all active/pending movement elements owned by
@@ -208,8 +197,8 @@ impl SequenceManager {
             }
             let following = self.rewrite_following_ref(sid, idx);
             let postponed = element
-                .cross_postponed
-                .or_else(|| element.postponed_element_index.map(|next| (sid, next)));
+                .postponed
+                .map(|reference| (reference.sequence_id, reference.element_index));
 
             self.get_element_mut(sid, idx)
                 .expect("recursive action-assignment graph element disappeared")
@@ -278,8 +267,8 @@ impl SequenceManager {
 
             let following = self.rewrite_following_ref(seq_id, elem_idx);
             let postponed = element
-                .cross_postponed
-                .or_else(|| element.postponed_element_index.map(|idx| (seq_id, idx)));
+                .postponed
+                .map(|reference| (reference.sequence_id, reference.element_index));
 
             rewrite(
                 self.get_element_mut(seq_id, elem_idx)
@@ -354,7 +343,7 @@ impl SequenceManager {
             let Some(this) = self.get_element(cur.0, cur.1) else {
                 return true;
             };
-            if this.postponed_element_index.is_some() || this.cross_postponed.is_some() {
+            if this.postponed.is_some() {
                 return false;
             }
             // The last-real-action check follows the raw

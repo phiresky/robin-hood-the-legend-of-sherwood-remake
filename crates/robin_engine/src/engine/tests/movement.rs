@@ -53,7 +53,7 @@ fn tick_movement_and_sequences(
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
 ) {
-    engine.tick_entity_movement(sim, assets);
+    engine.tick_actor_owner_envelopes(sim, assets);
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(sim, &mut display, assets);
 }
@@ -748,7 +748,15 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
 
     let sim = crate::sim_rng::test_context();
     for _ in 0..8 {
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
+        if engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated)
+        {
+            break;
+        }
     }
 
     assert_eq!(
@@ -886,7 +894,7 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
 
     let sim = crate::sim_rng::test_context();
     for _ in 0..8 {
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
     }
 
     assert_eq!(
@@ -2541,7 +2549,7 @@ fn rider_charge_approach_never_initializes_from_flags_alone() {
         vec![0, 0, 0],
     );
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging),
@@ -2569,7 +2577,7 @@ fn rider_charging_action_executes_without_rider_charge_flag() {
     }
     element.orders.front_mut().unwrap().move_flags = 0;
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     assert!(
         engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging),
@@ -2592,7 +2600,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
     let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .get_entity(rider)
@@ -2626,7 +2634,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
         .unwrap()
         .order_id = replacement_order_id;
 
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     assert_eq!(
         engine
@@ -2655,7 +2663,7 @@ fn rider_charge_uses_actual_sprite_waits_and_rewrites_same_order_on_actual_last_
 
     let mut observed_frames = Vec::new();
     for _ in 0..6 {
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
         observed_frames.push(engine.get_entity(rider).unwrap().sprite().current_frame);
     }
     assert_eq!(observed_frames, vec![0, 0, 0, 1, 1, 2]);
@@ -2699,7 +2707,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
     let victim_id = engine.add_test_entity(victim);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .get_entity(rider)
@@ -2723,7 +2731,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
         .unwrap()
         .element_data_mut()
         .set_layer(1);
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .get_entity(rider)
@@ -2748,7 +2756,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
         vec![20, 1],
     );
     let sim = crate::sim_rng::test_context();
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 
     let interrupted = engine
@@ -2762,7 +2770,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
     };
     *flags = crate::sequence::MoveFlags::empty();
     engine.set_actors_frozen(true);
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     engine.set_actors_frozen(false);
     assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
 
@@ -2777,7 +2785,7 @@ fn rider_charge_interruption_clears_state_and_new_charge_reinitializes() {
         .unwrap();
     order.order_type = crate::order::OrderType::RiderCharging;
     order.order_id = fresh_id;
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert!(engine.live_actor_animation(rider) == Some(crate::order::OrderType::RiderCharging));
 }
 
@@ -2793,7 +2801,7 @@ fn rider_charge_frozen_all_still_initializes_and_runs_polygon_on_frozen_frame() 
     );
     engine.set_actors_frozen(true);
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
     let entity = engine.get_entity(rider).unwrap();
     assert_eq!(entity.sprite().current_frame, 0);
@@ -2868,7 +2876,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     assert_eq!(
         engine
             .get_entity(rider)
@@ -2918,7 +2926,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
         .unwrap()
         .order_id = fresh_id;
 
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let entity = engine.get_entity(rider).unwrap();
     assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
@@ -2949,8 +2957,8 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
     let sim = crate::sim_rng::test_context();
     engine.set_actors_frozen(true);
 
-    engine.tick_entity_movement(&sim, &assets);
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     {
         let entity = engine.get_entity(rider).unwrap();
         assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
@@ -2964,7 +2972,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
     }
 
     engine.set_actors_frozen(false);
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let entity = engine.get_entity(rider).unwrap();
     assert_eq!(entity.sprite().last_processed_order_id, order_id.get());
@@ -3230,6 +3238,152 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
 }
 
 #[test]
+fn arrival_crossing_script_replacement_keeps_its_live_in_progress_motion() {
+    use crate::engine::test_support::asm::*;
+    use crate::natives::NativeFn;
+    use crate::order::OrderType;
+    use crate::scb::{ClassEntry, Function, SCB_VERSION, ScbFile};
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let (owner, outgoing, _) = install_rider_charge_fixture(
+        &mut engine,
+        &mut assets,
+        OrderType::RiderCharging,
+        vec![20, 20],
+    );
+    let order = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(outgoing, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap();
+    order.target_x = 102.0;
+    order.target_y = 100.0;
+    order.tolerance = 0.0;
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let function = |name: &str, address, parameters| Function {
+        name: name.into(),
+        address,
+        num_parameters: parameters,
+        size_of_return_value: 0,
+        size_of_parameters: parameters * 4,
+        size_of_volatile: 0,
+        size_of_temporary: 8,
+    };
+    engine.scripts.mission = Some(
+        crate::engine::MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![
+                empty_startup_class("crossing.scs".into()),
+                ClassEntry {
+                    source_file: "crossing.scs".into(),
+                    class_name: "Crossing".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![function("Initialize", 0, 0), function("Enter", 2, 1)],
+                    quads: vec![
+                        q_begin_function(0, 8),
+                        q_return(),
+                        q_begin_function(0, 8),
+                        q_aff1_get_param(0xc000, -4),
+                        q_aff0_iconstant(0xc004, crate::element::ActionState::Waiting as i32),
+                        q_native_param(0xc000),
+                        q_native_param(0xc004),
+                        q_native_call(NativeFn::SetActorActionState as u32),
+                        q_return(),
+                    ],
+                },
+            ],
+        })
+        .unwrap(),
+    );
+    engine.attach_script_bindings(&assets);
+    engine.world.fast_grid_mut().size_map(8, 8);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let mut bounding_box = crate::coordinates::MapBBox::new();
+    bounding_box.expand_point(MapPoint::new(101.0, 90.0));
+    bounding_box.expand_point(MapPoint::new(120.0, 110.0));
+    let grid_index = engine.world.fast_grid_mut().add_sector(
+        crate::fast_find_grid::GridSector {
+            points: vec![
+                MapPoint::new(101.0, 90.0),
+                MapPoint::new(120.0, 90.0),
+                MapPoint::new(120.0, 110.0),
+                MapPoint::new(101.0, 110.0),
+            ],
+            bounding_box,
+            sector_type: crate::sector::SectorType::SCRIPT,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(0),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: vec![],
+            gate_indices: vec![],
+            underlying_sector: None,
+        },
+        0,
+    );
+    engine
+        .world
+        .fast_grid_mut()
+        .add_sector_lines_for_script(grid_index, 0, 0, true);
+    assets.scripts.zone_grid_indices = std::sync::Arc::new(vec![grid_index]);
+    engine
+        .script_domains
+        .zones
+        .scripts
+        .push(crate::sector::ScriptSectorData {
+            sector_index: crate::fast_find_grid::SectorIndex::new(grid_index),
+            script_associated: true,
+            script_class_name: Some("Crossing".into()),
+            ..Default::default()
+        });
+    engine.initialize_zone_scripts(&sim, &assets);
+
+    tick_production_owner_coordinator(&mut engine, &sim, &assets);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        MapPoint::new(102.0, 100.0)
+    );
+    let (replacement, _, order) = engine
+        .orders
+        .sequence_manager
+        .current_order_for_actor(&engine.world.entities, owner)
+        .expect("crossing callback installs its animation order");
+    assert_ne!(replacement, outgoing);
+    assert_eq!(
+        order.order_type,
+        OrderType::WaitingUpright,
+        "the terminating movement must not advance the callback's new order"
+    );
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .continuation
+            .motion_state,
+        crate::sprite::MotionState::InProgress
+    );
+}
+
+#[test]
 fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
     use crate::engine::movement::capture_post_execute_crossings;
     use crate::order::OrderType;
@@ -3281,52 +3435,6 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
         old_id,
         "the completed order was legitimately assigned a fresh ID during Execute"
     );
-}
-
-#[test]
-fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
-    use crate::engine::movement::{
-        PostExecuteOrderReplacement, install_post_execute_order_replacement,
-    };
-    use crate::order::OrderType;
-
-    let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    let (rider, sequence, _) =
-        install_rider_charge_fixture(&mut engine, &mut assets, OrderType::RiderCharging, vec![0]);
-    let movement = engine
-        .orders
-        .sequence_manager
-        .get_element_mut(sequence, 0)
-        .expect("rider movement remains installed");
-    let charge = movement
-        .orders
-        .front_mut()
-        .expect("fixture installs a charge order");
-    charge.target_x = 102.0;
-    charge.target_y = 100.0;
-    charge.tolerance = 0.0;
-
-    let replacement_id = engine.orders.allocate_order_id();
-    install_post_execute_order_replacement(PostExecuteOrderReplacement {
-        owner: rider,
-        seq_id: sequence,
-        elem_idx: 0,
-        expected_order_type: OrderType::RunningUpright,
-        order_type: OrderType::WaitingUpright,
-        order_id: replacement_id,
-    });
-
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-
-    let current = engine
-        .orders
-        .sequence_manager
-        .get_element(sequence, 0)
-        .and_then(|element| element.current_order())
-        .expect("callback replacement must remain selected");
-    assert_eq!(current.order_id, replacement_id);
-    assert_eq!(current.order_type, OrderType::WaitingUpright);
 }
 
 #[test]
@@ -3632,7 +3740,7 @@ fn rider_charge_requires_transition_animation() {
         .element_data_mut()
         .sprite
         .conversion = std::sync::Arc::new(crate::engine::test_support::unmapped_conversion());
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 }
 
 #[test]
@@ -3649,7 +3757,7 @@ fn rider_charge_requires_weapon_profile() {
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .hth_weapons
         .clear();
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 }
 
 #[test]
@@ -3739,7 +3847,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
             .action_state,
         ActionState::Waiting
     );
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     let entity = engine.get_entity(mover_id).unwrap();
     assert_eq!(
@@ -3861,11 +3969,8 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
         Some((sequence_id, 0)),
     );
 
-    engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
-    engine.tick_actor_animation_action_change_slots(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
     let entity = engine.get_entity(mover_id).unwrap();
     assert_eq!(entity.element_data().position_map(), position);
@@ -4089,6 +4194,13 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .unwrap(),
             Some((sequence_id, 0)),
         );
+        let seek_position = seek_target.map(|target| {
+            engine
+                .get_entity(target)
+                .expect("seek target exists")
+                .element_data()
+                .position_map()
+        });
         let actor = engine
             .get_entity_mut(owner)
             .expect("movement owner exists")
@@ -4101,6 +4213,11 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             // distance (the unadapted interaction radius), not the
             // movement element's path tolerance.
             actor.seek_distance = 15.0;
+            actor.seek_target = seek_target;
+            actor.continuation.seek_to_point = false;
+            actor.last_seek_target_position = seek_position.expect("seek target position");
+            actor.seek_refresh_wait = 25;
+            actor.wait_time = 25;
         }
         sequence_id
     }
@@ -4110,6 +4227,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         let sim = &sim_context;
         let mut engine = EngineInner::new();
         let target_before_movement = MapPoint::new(10.0, 0.0);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
         let target_destination = MapPoint::new(30.0, 0.0);
 
         let mut seeker = make_test_pc(Posture::Upright);
@@ -4166,8 +4284,8 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         // advancing on a newly-seen order. Prime that start tick, then use
         // the next production movement tick as the ordering observation.
         let assets = LevelAssets::new();
-        engine.tick_entity_movement(sim, &assets);
-        engine.tick_entity_movement(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
 
         let seeker_after_crossing_tolerance = engine
             .get_entity(seeker_id)
@@ -4184,7 +4302,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         // Entity-target seeking does not re-sample tolerance after its
         // committed step. The next actor tick observes the now-in-range
         // position and terminates without another movement commit.
-        engine.tick_entity_movement(sim, &assets);
+        engine.tick_actor_owner_envelopes(sim, &assets);
 
         Observation {
             seeker_slot: seeker_id.index(),
@@ -4267,6 +4385,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     let mut engine = EngineInner::new();
     let destination = MapPoint::new(10.0, 0.0);
 
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+
     let mut mover = make_test_pc(Posture::Upright);
     mover.element_data_mut().active = true;
     mover
@@ -4337,8 +4457,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     // A newly-seen motion order spends one tick in MotionState::Start.
     // On the next tick the destination is within one animation step. The
     // original game still applies actor repulsion before checking arrival.
-    engine.tick_entity_movement(sim, &assets);
-    engine.tick_entity_movement(sim, &assets);
+    engine.tick_actor_owner_envelopes(sim, &assets);
+    engine.tick_actor_owner_envelopes(sim, &assets);
 
     let mover_position = engine
         .get_entity(mover_id)
@@ -4483,7 +4603,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     actor.action_state = ActionState::Moving;
 
     let sim = crate::sim_rng::test_context();
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
     {
         let pi = engine
             .get_entity_mut(mover_id)
@@ -4492,7 +4612,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
         pi.deviated = true;
         pi.blocked_count = 1;
     }
-    engine.tick_entity_movement(&sim, &assets);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let mover = engine.get_entity(mover_id).unwrap();
     assert_eq!(

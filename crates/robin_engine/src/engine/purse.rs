@@ -149,33 +149,14 @@ impl EngineInner {
         let new = purse.element.position();
         let shield = bow_shot::projectile_shield_holder(
             &self.world.entities,
-            purse.projectile.shooter,
+            &self.world.actor_registry_ids,
             old,
             new,
             purse.projectile.velocity_increment,
         );
 
         if let Some(holder) = shield {
-            let future_id =
-                EntityId::new(self.world.entities.len() as u32, EntityIdKind::Projectile);
-            self.process_projectile_tick_results(
-                sim,
-                assets,
-                vec![bow_shot::ArrowTickResult {
-                    arrow: future_id,
-                    hit_target: None,
-                    shield_hit: Some(holder),
-                    fx_target_hit: None,
-                    despawn: false,
-                    damage: 0,
-                    impact_fx: Some(FX_PURSE_IMPACT),
-                    impact_pos: self
-                        .expect_entity(holder, "purse primer shield holder")
-                        .element_data()
-                        .position_map(),
-                    human_hit_old_position: None,
-                }],
-            );
+            self.on_projectile_shield_hit(sim, assets, holder, Some(FX_PURSE_IMPACT));
         }
         // TODO(original parity): projectile human-victim selection excludes purses
         // in its target-point switch and reads an uninitialized point.
@@ -348,30 +329,13 @@ impl EngineInner {
         let exhausted = coin.advance_projectile_hourglass();
         let shield = bow_shot::projectile_shield_holder(
             &self.world.entities,
-            coin.projectile.shooter,
+            &self.world.actor_registry_ids,
             coin.element.sprite.position_iface.old_position(),
             coin.element.position(),
             coin.projectile.velocity_increment,
         );
         if let Some(holder) = shield {
-            self.process_projectile_tick_results(
-                sim,
-                assets,
-                vec![bow_shot::ArrowTickResult {
-                    arrow: future_id,
-                    hit_target: None,
-                    shield_hit: Some(holder),
-                    fx_target_hit: None,
-                    despawn: false,
-                    damage: 0,
-                    impact_fx: None,
-                    impact_pos: self
-                        .expect_entity(holder, "coin primer shield holder")
-                        .element_data()
-                        .position_map(),
-                    human_hit_old_position: None,
-                }],
-            );
+            self.on_projectile_shield_hit(sim, assets, holder, None);
         }
         if exhausted && shield.is_none() {
             let material = coin.element.material();
@@ -616,11 +580,8 @@ impl EngineInner {
         };
         // ── Phase 1: trajectory advancement + impact detection ──────
         //
-        // Pop trajectory waypoints and interpolate per frame until the
-        // trajectory list is empty.  We replicate the minimum needed for
-        // purses/coins inline here — the bow_shot::tick_arrows path
-        // already filters us out by `object_type != Arrow`, so no double
-        // motion update.
+        // Purses and coins share trajectory advancement while retaining
+        // their concrete landing callbacks.
 
         enum ImpactKind {
             PurseLanded { pos: WorldPoint3D, layer: u16 },
@@ -669,7 +630,6 @@ impl EngineInner {
                 (
                     impact,
                     Some((
-                        proj.projectile.shooter,
                         proj.element.sprite.position_iface.old_position(),
                         proj.element.position(),
                         proj.projectile.velocity_increment,
@@ -681,34 +641,21 @@ impl EngineInner {
         // Projectile ticking checks shields after movement and returns
         // before obstacle impact. Shield impact does nothing for purses or coins;
         // only the impact sound/parry side effect and early return apply.
-        if let Some((shooter, old, new, increment)) = segment
+        if let Some((old, new, increment)) = segment
             && let Some(holder) = crate::bow_shot::projectile_shield_holder(
                 &self.world.entities,
-                shooter,
+                &self.world.actor_registry_ids,
                 old,
                 new,
                 increment,
             )
         {
             impact = None;
-            self.process_projectile_tick_results(
+            self.on_projectile_shield_hit(
                 sim,
                 assets,
-                vec![crate::bow_shot::ArrowTickResult {
-                    arrow: id,
-                    hit_target: None,
-                    shield_hit: Some(holder),
-                    fx_target_hit: None,
-                    despawn: false,
-                    damage: 0,
-                    impact_fx: (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
-                    impact_pos: self
-                        .get_entity(holder)
-                        .expect("projectile shield holder vanished during update")
-                        .element_data()
-                        .position_map(),
-                    human_hit_old_position: None,
-                }],
+                holder,
+                (object_type == ObjectType::Purse).then_some(FX_PURSE_IMPACT),
             );
         }
         // TODO(original parity): Purse victim selection has undefined legacy behavior

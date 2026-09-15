@@ -15,7 +15,13 @@ fn inactive_civilian(position: MapPoint) -> Entity {
         element,
         actor: Default::default(),
         human: Default::default(),
-        npc: Default::default(),
+        npc: crate::element::NpcData {
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Friendly(Box::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         civilian: Default::default(),
     })
 }
@@ -182,17 +188,17 @@ fn production_walk_mobile_observations(actor_before: bool) -> Vec<f32> {
         ..Default::default()
     };
     let mut observations = Vec::new();
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim_context,
         &assets,
         |engine, owner| {
-            engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner);
+            if engine
+                .get_entity(owner)
+                .is_some_and(|entity| entity.actor_data().is_some())
+            {
+                observations.push(engine.first_live_mobile_polygon_point(0).x);
+            }
         },
-        |engine, _| {
-            observations.push(engine.first_live_mobile_polygon_point(0).x);
-        },
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
     );
     observations
 }
@@ -230,12 +236,11 @@ fn production_walk_runs_multiple_mobiles_once_across_a_hole_and_visits_spawned_t
     };
     let visited = std::cell::RefCell::new(Vec::new());
     let spawned = std::cell::Cell::new(None);
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim_context,
         &assets,
         |engine, owner| {
             visited.borrow_mut().push(owner);
-            engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner);
             if owner == first {
                 let tail = engine.add_test_entity(Entity::Fx(ElementFx {
                     element: {
@@ -248,9 +253,6 @@ fn production_walk_runs_multiple_mobiles_once_across_a_hole_and_visits_spawned_t
                 spawned.set(Some(tail));
             }
         },
-        |_, _| {},
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
     );
     assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
     assert_eq!(engine.world.mobile_elements[1].position.x, 2.0);
@@ -281,22 +283,15 @@ fn mobile_boundary_precedes_static_dispatch_in_live_owner_walk() {
     };
 
     let trace = std::cell::RefCell::new(Vec::new());
-    engine.tick_actor_animation_action_change_slots_with_hooks(
-        &sim_context,
-        &assets,
-        |engine, owner| {
-            if engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner) {
-                trace.borrow_mut().push("mobile");
-                return;
-            }
-            if owner == static_fx {
-                trace.borrow_mut().push("static");
-            }
-        },
-        |_, _| {},
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
-    );
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim_context, &assets, |_, owner| {
+        if owner == child {
+            trace.borrow_mut().push("mobile");
+            return;
+        }
+        if owner == static_fx {
+            trace.borrow_mut().push("static");
+        }
+    });
     assert_eq!(*trace.borrow(), vec!["mobile", "static"]);
 }
 
@@ -307,6 +302,9 @@ fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
     let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
     let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
     let third = engine.add_test_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
+    for child in [first, second, third] {
+        engine.world.mobile_elements.push(mobile(vec![child]));
+    }
     engine.world.install_original_creation_orders(
         [(first, 80), (second, 42), (third, 61)]
             .into_iter()
@@ -315,13 +313,16 @@ fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
     );
 
     let visited = std::cell::RefCell::new(Vec::new());
-    engine.tick_actor_animation_action_change_slots_with_hooks(
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &sim_context,
-        &LevelAssets::default(),
+        &LevelAssets {
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
         |_, owner| visited.borrow_mut().push(owner),
-        |_, _| {},
-        |_, _, _, _, _, _, _| {},
-        |_, _, _| {},
     );
 
     assert_eq!(*visited.borrow(), vec![second, third, first]);

@@ -332,7 +332,7 @@ mod suite {
             ActionState::Waiting,
         );
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         assert_eq!(
             engine
@@ -362,7 +362,7 @@ mod suite {
             .unwrap()
             .shield_face_point = Some(MapPoint::new(100.0, 0.0));
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         let entity = engine.get_entity(owner).unwrap();
         assert!(
@@ -429,7 +429,7 @@ mod suite {
         );
         engine.set_actors_frozen(true);
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &assets);
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
 
         let entity = engine.get_entity(owner).unwrap();
         assert_eq!(
@@ -554,7 +554,7 @@ mod suite {
         let (mut engine, owner, sequence) =
             install_blocked_upright_movement(action, initial_action_state);
 
-        engine.tick_entity_movement(
+        engine.tick_actor_owner_envelopes(
             &crate::sim_rng::test_context(),
             &assets_with_test_pc_profile(),
         );
@@ -790,8 +790,8 @@ mod suite {
                 .get_element(movement_sequence, 0)
                 .unwrap()
                 .state,
-            SequenceState::Impossible,
-            "the captured resumed MoveOk must be rejected after Execute returns ABORTED"
+            SequenceState::Interrupted,
+            "the sword guard stops the movement before returning ABORTED to the owner"
         );
     }
 
@@ -862,7 +862,7 @@ mod suite {
                 .get_element(movement_sequence, 0)
                 .unwrap()
                 .state,
-            SequenceState::Impossible
+            SequenceState::Interrupted
         );
         assert!(
             engine.selected_seek_refresh_decision(owner).is_none(),
@@ -964,7 +964,7 @@ mod suite {
         position_iface.compute_increment_all(true);
         position_iface.blocked_count = 51;
 
-        engine.tick_entity_movement(
+        engine.tick_actor_owner_envelopes(
             &crate::sim_rng::test_context(),
             &assets_with_test_pc_profile(),
         );
@@ -1007,7 +1007,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
 
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
 
         let owner_entity = engine.get_entity(owner).unwrap();
         assert_eq!(
@@ -1116,7 +1116,7 @@ mod suite {
             .sequence_manager
             .get_element_mut(movement_sequence, 0)
             .unwrap()
-            .cross_postponed = Some((turn_sequence, 0));
+            .postponed = Some(crate::sequence::SequenceElementRef::new(turn_sequence, 0));
 
         let unrelated_sequence = engine.launch_element(
             &crate::sim_rng::test_context(),
@@ -1164,7 +1164,8 @@ mod suite {
                 .sequence_manager
                 .get_element(movement_sequence, 0)
                 .unwrap()
-                .cross_postponed,
+                .postponed
+                .map(|link| (link.sequence_id, link.element_index)),
             None,
             "the interrupted Turn must not remain inheritable by QuitSwordfight"
         );
@@ -1185,7 +1186,9 @@ mod suite {
             })
             .expect("the orphan guard must register QuitSwordfight");
         assert_eq!(
-            quit.cross_postponed, None,
+            quit.postponed
+                .map(|link| (link.sequence_id, link.element_index)),
+            None,
             "QuitSwordfight must not inherit the interrupted Turn"
         );
         assert_eq!(
@@ -1226,7 +1229,7 @@ mod suite {
     fn forced_sword_movement_without_opponents_still_performs_motion() {
         let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(true);
 
-        engine.tick_entity_movement(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
 
         let owner_entity = engine.get_entity(owner).unwrap();
         assert_ne!(
@@ -1319,7 +1322,7 @@ mod suite {
             .opponents
             .push(opponent);
 
-        engine.tick_entity_movement(
+        engine.tick_actor_owner_envelopes(
             &crate::sim_rng::test_context(),
             &assets_with_test_pc_profile(),
         );
@@ -1416,13 +1419,13 @@ mod suite {
 
         let sim = crate::sim_rng::test_context();
         let assets = assets_with_test_pc_profile();
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
 
         let first = engine.get_entity(owner).unwrap().position_iface();
         assert_eq!(first.get_direction().as_u8(), 10);
         assert_eq!(first.v48_serialized_state().direction_count, 2);
 
-        engine.tick_entity_movement(&sim, &assets);
+        engine.tick_actor_owner_envelopes(&sim, &assets);
 
         assert_eq!(
             engine

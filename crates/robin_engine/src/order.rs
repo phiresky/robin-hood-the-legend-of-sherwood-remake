@@ -518,11 +518,6 @@ pub enum OrderCompletion {
     /// sequence normally at the later termination edge.
     UnlockDoor { door_id: crate::gate::DoorIndex },
 
-    /// Resume `advance_door_pass` on the actor — the door-pass chain
-    /// continues with the next step after a transition animation (crouch
-    /// down, climb ladder, etc.) plays out.
-    ResumeDoorPass,
-
     /// Advance to the next step of an `ActiveJump`.
     NextJumpStep,
 
@@ -654,7 +649,7 @@ impl Order {
     }
 
     /// Override the default `AdvanceElement` completion with a custom
-    /// side-effect hook (UnlockDoor, ResumeDoorPass, NextJumpStep,
+    /// side-effect hook (UnlockDoor, NextJumpStep,
     /// WaspStruggleCycle).
     pub fn with_completion(mut self, completion: OrderCompletion) -> Self {
         self.completion = completion;
