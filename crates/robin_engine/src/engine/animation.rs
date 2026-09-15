@@ -2838,7 +2838,7 @@ impl EngineInner {
         assets: &crate::engine::types::LevelAssets,
         patch_idx: crate::patch::PatchIndex,
     ) {
-        let effects = {
+        {
             let patch = self
                 .script_domains
                 .interactables
@@ -2848,8 +2848,8 @@ impl EngineInner {
                     panic!("completed patch animation references missing patch {patch_idx}")
                 });
             patch.in_transition = false;
-            patch.apply_final(false)
-        };
+        }
+        self.apply_patch_final(sim, assets, patch_idx, false);
 
         for door in self.script_domains.interactables.doors.iter_mut() {
             if door.patch_index == Some(patch_idx) {
@@ -2864,10 +2864,8 @@ impl EngineInner {
 
         tracing::debug!(
             %patch_idx,
-            num_effects = effects.len(),
             "Patch transition animation completed → apply final state"
         );
-        self.process_patch_effects(sim, assets, patch_idx, effects);
     }
 
     /// Run the existing generic actor animation/`Execute` dispatch for one

@@ -637,7 +637,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(sequence_id, element_index, order);
-        self.element_in_progress(sim, assets, &mut Vec::new(), sequence_id, element_index);
     }
 
     // ─── Tiredness tick ──────────────────────────────────────────────

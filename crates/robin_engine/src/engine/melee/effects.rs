@@ -592,7 +592,6 @@ impl EngineInner {
             // FallingShoulders and FallingBackUpright with
             // direction computation disabled.
             self.push_translated_damage_order((seq_id, elem_idx), anim);
-            self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         } else {
             self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
         }

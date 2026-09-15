@@ -2047,7 +2047,7 @@ fn hourglass_locked_skips_logic() {
 }
 
 #[test]
-fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
+fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
     use crate::element::Command;
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
@@ -2076,13 +2076,7 @@ fn explicit_quit_dispatch_unlinks_but_defers_state_change_to_lowering_start() {
         &assets,
         SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
     );
-    engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, sequence, 0);
-    // The InstructOwner dispatcher publishes the translated current order
-    // through the actor's installed-order mirror right after the
-    // per-command dispatch; mirror that boundary when calling the dispatch
-    // arm directly.
-    engine.publish_selected_order_for_instruct_owner(owner);
+    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
 
     assert!(
         engine

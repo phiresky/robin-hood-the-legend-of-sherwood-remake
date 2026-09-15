@@ -283,7 +283,6 @@ impl EngineInner {
                     actor.passing_door_directly = dp.position_direct;
                     actor.active_door_pass = Some(dp);
                 }
-                actor.sequence_element_started = true;
             }
         } else {
             tracing::warn!(

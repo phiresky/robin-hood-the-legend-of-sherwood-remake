@@ -1,14 +1,8 @@
-//! Patch effect processing.
-//!
-//! When a patch is applied, reset, or finalized, the `Patch` state machine
-//! produces a `Vec<PatchEffect>`. This module implements the engine-side
-//! execution of those effects: toggling sight obstacles, grid sectors/lines,
-//! pathfinder state, FX entity animations, background invalidation, and
-//! door rights.
+//! Direct patch transitions and their terrain, actor, animation, and render updates.
 
 use super::movement::MovePathOutcome;
 use super::*;
-use crate::patch::{PatchAnimation, PatchEffect};
+use crate::order::OrderType;
 
 fn initialize_patch_animation(
     sprite: &mut crate::sprite::Sprite,
@@ -24,160 +18,150 @@ fn initialize_patch_animation(
     Some(row)
 }
 
-/// Snapshot of the patch-level data needed to process effects.
-/// Extracted once before iterating effects to avoid repeated borrows.
-struct PatchContext {
-    door_indices: Vec<u32>,
-    old_sight_obstacle_indices: Vec<crate::sight_obstacle::SightObstacleIndex>,
-    new_sight_obstacle_indices: Vec<crate::sight_obstacle::SightObstacleIndex>,
-    old_sector_indices: Vec<u32>,
-    new_sector_indices: Vec<u32>,
-    old_line_indices: Vec<crate::fast_find_grid::LineIndex>,
-    new_line_indices: Vec<crate::fast_find_grid::LineIndex>,
-    old_mask_indices: Vec<crate::mask::MaskIndex>,
-    new_mask_indices: Vec<crate::mask::MaskIndex>,
-    use_changing_obstacles: bool,
-    pathfinder_layer: u16,
-    pathfinder_sector: u16,
-    pathfinder_changing_obstacles: u32,
-    /// Actor script handle for the patch's FX animation entity, if any.
-    animation_entity_handle: Option<i32>,
-    /// Whether this patch's final frame should be baked into the background.
-    integrate_in_background: bool,
-}
-
 impl EngineInner {
-    /// Process a list of patch effects produced by `Patch::apply()`,
-    /// `Patch::apply_final()`, or `Patch::force_reset()`.
-    ///
-    /// This is the central dispatch for all patch side effects. Called from:
-    /// - `apply_door_patch` (door_pass.rs) — when an actor passes through a door
-    /// - Deferred command processing (script.rs) — for script ApplyPatch/ResetPatch
-    pub(crate) fn process_patch_effects(
+    pub(crate) fn apply_patch(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        patch_index: crate::patch::PatchIndex,
-        effects: Vec<PatchEffect>,
+        index: crate::patch::PatchIndex,
     ) {
-        if effects.is_empty() {
-            return;
+        let i = usize::from(index);
+        let patch = &self.script_domains.interactables.patches[i];
+        if patch.animated && patch.in_transition {
+            self.execute_deactivate_animation(index);
+            self.apply_patch_final(sim, assets, index, false);
         }
-
-        // Snapshot patch data to avoid holding borrows across effect processing.
-        let ctx = match self.snapshot_patch_context(patch_index) {
-            Some(ctx) => ctx,
-            None => {
-                tracing::warn!(%patch_index, "process_patch_effects: patch not found");
+        let patch = &self.script_domains.interactables.patches[i];
+        if patch.applied {
+            if patch.definitive {
                 return;
             }
-        };
+            self.swap_patch_background(index, false);
+        }
+        let patch = &self.script_domains.interactables.patches[i];
+        if patch.animation_flags.transition_valid {
+            let reverse = patch.applied;
+            self.execute_start_animation(index, OrderType::PATCH_TRANSITION, reverse);
+            self.script_domains.interactables.patches[i].in_transition = true;
+        } else {
+            self.execute_deactivate_animation(index);
+            self.apply_patch_final(sim, assets, index, false);
+        }
+    }
 
-        for effect in effects {
-            match effect {
-                PatchEffect::SwapDoors => {
-                    self.execute_swap_doors(&ctx);
+    pub(crate) fn apply_patch_final(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        index: crate::patch::PatchIndex,
+        forced_reset: bool,
+    ) {
+        let i = usize::from(index);
+        if self.script_domains.interactables.patches[i].definitive {
+            self.script_domains.interactables.patches[i].active = false;
+        }
+        self.execute_swap_doors(index);
+        let patch = &self.script_domains.interactables.patches[i];
+        if patch.applied {
+            if !patch.definitive {
+                self.script_domains.interactables.patches[i].applied = false;
+                if self.script_domains.interactables.patches[i]
+                    .animation_flags
+                    .start_valid
+                {
+                    self.execute_start_animation(index, OrderType::PATCH_INITIAL, false);
+                } else {
+                    self.execute_deactivate_animation(index);
                 }
-                PatchEffect::SwapBackground { applied } => {
-                    // Skip SwapBackground entirely if the patch isn't
-                    // configured to bake into the background.
-                    if !ctx.integrate_in_background {
-                        continue;
-                    }
-
-                    if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = self.entity_id_for_actor_handle(handle)
-                    {
-                        if applied {
-                            // Bake the last transition frame into the
-                            // map surface; the engine queue picks up
-                            // the baked sprite on the next drain.
-                            // NOTE: sprite state is already at the
-                            // transition-last frame when
-                            // `SwapBackground { applied: true }` fires
-                            // from `Patch::apply_final`, so no
-                            // separate force-frame step is needed.
-                            self.queue_blit_fx_to_map(entity_id);
-                        } else {
-                            // Reverse: undo the blit via the saved
-                            // rectangle.
-                            self.queue_restore_fx_bg(entity_id);
-                        }
-                    }
-
-                    self.feedback.pending_side_effects.invalidate_background = true;
-                }
-                PatchEffect::SwapObjects {
-                    applied,
-                    forced_reset,
-                } => {
-                    self.execute_swap_objects(sim, assets, &ctx, applied, forced_reset);
-                }
-                PatchEffect::StartAnimation { anim, reverse } => {
-                    self.execute_start_animation(&ctx, anim, reverse);
-                }
-                PatchEffect::DeactivateAnimation => {
-                    self.execute_deactivate_animation(&ctx);
-                }
-                PatchEffect::RestoreBackground => {
-                    // Queue a restore for the patch's FX entity; the
-                    // drain will replay the saved rectangle and
-                    // re-compose affected mask textures.
-                    if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = self.entity_id_for_actor_handle(handle)
-                    {
-                        self.queue_restore_fx_bg(entity_id);
-                    }
-                    self.feedback.pending_side_effects.invalidate_background = true;
-                }
+                self.execute_swap_objects(sim, assets, index, false, forced_reset);
+            }
+        } else {
+            self.script_domains.interactables.patches[i].applied = true;
+            self.swap_patch_background(index, true);
+            self.execute_swap_objects(sim, assets, index, true, forced_reset);
+            if self.script_domains.interactables.patches[i]
+                .animation_flags
+                .end_valid
+            {
+                self.execute_start_animation(index, OrderType::PATCH_FINAL, false);
+            } else {
+                self.execute_deactivate_animation(index);
             }
         }
     }
 
-    /// Extract the patch and immutable script-binding data needed by effect processing.
-    fn snapshot_patch_context(
+    pub(crate) fn reset_patch(
         &mut self,
-        patch_index: crate::patch::PatchIndex,
-    ) -> Option<PatchContext> {
-        let script = self.scripts.mission.as_ref()?;
-        let animation_entity_handle = script
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        index: crate::patch::PatchIndex,
+    ) {
+        let i = usize::from(index);
+        if self.script_domains.interactables.patches[i].applied {
+            self.swap_patch_background(index, false);
+            if !self.script_domains.interactables.patches[i].in_transition {
+                self.execute_swap_doors(index);
+            }
+        }
+        let patch = &mut self.script_domains.interactables.patches[i];
+        patch.applied = false;
+        patch.active = patch.initially_active;
+        if patch.animated {
+            self.restore_patch_background(index);
+            if self.script_domains.interactables.patches[i]
+                .animation_flags
+                .start_valid
+            {
+                self.execute_start_animation(index, OrderType::PATCH_INITIAL, false);
+            } else {
+                self.execute_deactivate_animation(index);
+            }
+            self.script_domains.interactables.patches[i].in_transition = false;
+        }
+        self.execute_swap_objects(sim, assets, index, false, true);
+    }
+
+    fn patch_animation_handle(&self, index: crate::patch::PatchIndex) -> Option<i32> {
+        self.scripts
+            .mission
+            .as_ref()?
             .bindings
             .patch_animation_entities
-            .get(usize::from(patch_index))
+            .get(usize::from(index))
             .copied()
-            .flatten();
-        let patch = self
-            .script_domains
-            .interactables
-            .patches
-            .get(usize::from(patch_index))?;
+            .flatten()
+    }
 
-        Some(PatchContext {
-            door_indices: patch.door_indices.clone(),
-            old_sight_obstacle_indices: patch.old_sight_obstacle_indices.clone(),
-            new_sight_obstacle_indices: patch.new_sight_obstacle_indices.clone(),
-            old_sector_indices: patch.old_sector_indices.clone(),
-            new_sector_indices: patch.new_sector_indices.clone(),
-            old_line_indices: patch.old_line_indices.clone(),
-            new_line_indices: patch.new_line_indices.clone(),
-            old_mask_indices: patch.old_mask_indices.clone(),
-            new_mask_indices: patch.new_mask_indices.clone(),
-            use_changing_obstacles: patch.use_changing_obstacles,
-            pathfinder_layer: patch.pathfinder_layer,
-            pathfinder_sector: patch.pathfinder_sector,
-            pathfinder_changing_obstacles: patch.pathfinder_changing_obstacles,
-            animation_entity_handle,
-            integrate_in_background: patch.integrate_in_background,
-        })
+    fn restore_patch_background(&mut self, index: crate::patch::PatchIndex) {
+        if let Some(handle) = self.patch_animation_handle(index)
+            && let Some(entity) = self.entity_id_for_actor_handle(handle)
+        {
+            self.queue_restore_fx_bg(entity);
+        }
+        self.feedback.pending_side_effects.invalidate_background = true;
+    }
+
+    fn swap_patch_background(&mut self, index: crate::patch::PatchIndex, applied: bool) {
+        if !self.script_domains.interactables.patches[usize::from(index)].integrate_in_background {
+            return;
+        }
+        if applied {
+            if let Some(handle) = self.patch_animation_handle(index)
+                && let Some(entity) = self.entity_id_for_actor_handle(handle)
+            {
+                self.queue_blit_fx_to_map(entity);
+            }
+            self.feedback.pending_side_effects.invalidate_background = true;
+        } else {
+            self.restore_patch_background(index);
+        }
     }
 
     /// Execute SwapDoors: call `swap_rights_patch()` on each door in the patch.
-    fn execute_swap_doors(&mut self, ctx: &PatchContext) {
-        if ctx.door_indices.is_empty() {
-            return;
-        }
-        for &di in &ctx.door_indices {
-            if let Some(door) = self.script_domains.interactables.doors.get_mut(di as usize) {
+    fn execute_swap_doors(&mut self, index: crate::patch::PatchIndex) {
+        let interactables = &mut self.script_domains.interactables;
+        for &di in &interactables.patches[usize::from(index)].door_indices {
+            if let Some(door) = interactables.doors.get_mut(di as usize) {
                 door.swap_rights_patch();
             }
         }
@@ -189,41 +173,86 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        ctx: &PatchContext,
+        index: crate::patch::PatchIndex,
         applied: bool,
         forced_reset: bool,
     ) {
-        // Toggle sight obstacles
-        for &idx in &ctx.old_sight_obstacle_indices {
-            self.set_sight_obstacle_active(u32::from(idx), !applied);
-        }
-        for &idx in &ctx.new_sight_obstacle_indices {
-            self.set_sight_obstacle_active(u32::from(idx), applied);
-        }
-
-        // Toggle grid sectors
-        for &idx in &ctx.old_sector_indices {
-            self.world.fast_grid_mut().set_sector_active(idx, !applied);
-        }
-        for &idx in &ctx.new_sector_indices {
-            self.world.fast_grid_mut().set_sector_active(idx, applied);
-        }
-
-        // Toggle grid lines
-        for &idx in &ctx.old_line_indices {
-            self.world.fast_grid_mut().set_line_active(idx, !applied);
-        }
-        for &idx in &ctx.new_line_indices {
-            self.world.fast_grid_mut().set_line_active(idx, applied);
-        }
-
-        // Toggle sprite-occlusion masks.
-        for &idx in &ctx.old_mask_indices {
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .old_mask_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .old_mask_indices[offset];
             self.world.fast_grid_mut().set_mask_active(idx, !applied);
         }
-        for &idx in &ctx.new_mask_indices {
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .new_mask_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .new_mask_indices[offset];
             self.world.fast_grid_mut().set_mask_active(idx, applied);
         }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .old_sight_obstacle_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .old_sight_obstacle_indices[offset];
+            self.set_sight_obstacle_active(u32::from(idx), !applied);
+        }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .new_sight_obstacle_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .new_sight_obstacle_indices[offset];
+            self.set_sight_obstacle_active(u32::from(idx), applied);
+        }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .old_sector_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .old_sector_indices[offset];
+            self.world.fast_grid_mut().set_sector_active(idx, !applied);
+        }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .new_sector_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .new_sector_indices[offset];
+            self.world.fast_grid_mut().set_sector_active(idx, applied);
+        }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .old_line_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .old_line_indices[offset];
+            self.world.fast_grid_mut().set_line_active(idx, !applied);
+        }
+        for offset in 0..self.script_domains.interactables.patches[usize::from(index)]
+            .new_line_indices
+            .len()
+        {
+            let idx = self.script_domains.interactables.patches[usize::from(index)]
+                .new_line_indices[offset];
+            self.world.fast_grid_mut().set_line_active(idx, applied);
+        }
+        let patch = &self.script_domains.interactables.patches[usize::from(index)];
+        let (
+            use_changing_obstacles,
+            pathfinder_layer,
+            pathfinder_sector,
+            pathfinder_changing_obstacles,
+        ) = (
+            patch.use_changing_obstacles,
+            patch.pathfinder_layer,
+            patch.pathfinder_sector,
+            patch.pathfinder_changing_obstacles,
+        );
 
         // Pathfinder obstacle state change.  The stream-deserialised
         // `pathfinder_sector` is a cumulative obstacle count, not an
@@ -236,19 +265,19 @@ impl EngineInner {
         //     their paths, and if any appeared obstacle intersects the
         //     actor's move box, flag them unreachable + queue a lethal
         //     1000-damage sequence element.
-        if ctx.use_changing_obstacles {
+        if use_changing_obstacles {
             let area = self
                 .world
                 .pathfinder
                 .try_convert_sector(
                     assets.navigation.pathfinder_graph.as_ref(),
-                    ctx.pathfinder_sector,
+                    pathfinder_sector,
                 )
                 .unwrap_or_else(|| {
                     panic!(
                         "patch_effects: ConvertSector failed — no area mapping \
                          for pathfinder_sector={} (layer={})",
-                        ctx.pathfinder_sector, ctx.pathfinder_layer
+                        pathfinder_sector, pathfinder_layer
                     )
                 });
             let mut appeared = Vec::new();
@@ -256,9 +285,9 @@ impl EngineInner {
             let mut sector_toggles = Vec::new();
             self.world.pathfinder.toggle_obstacle_state(
                 assets.navigation.pathfinder_graph.as_ref(),
-                ctx.pathfinder_layer as usize,
+                pathfinder_layer as usize,
                 area as usize,
-                ctx.pathfinder_changing_obstacles as u16,
+                pathfinder_changing_obstacles as u16,
                 &mut appeared,
                 &mut line_toggles,
                 &mut sector_toggles,
@@ -279,8 +308,8 @@ impl EngineInner {
                 self.invalidate_paths_and_kill_crushed(
                     sim,
                     assets,
-                    ctx.pathfinder_layer,
-                    ctx.pathfinder_sector,
+                    pathfinder_layer,
+                    pathfinder_sector,
                     &appeared,
                 );
             }
@@ -303,10 +332,8 @@ impl EngineInner {
     ///                 launch_damage(actor, 1000, 1000);
     /// ```
     ///
-    /// `invalidate_movements` only acts when the actor has an active
-    /// Move/Seek `InProgress` element with non-empty orders (the path
-    /// has already been found and the actor is walking along it): it
-    /// clears the order list and re-runs path dispatch.  On
+    /// Movement invalidation retranslates the selected MoveOk element:
+    /// it clears the order list and re-runs path dispatch.  On
     /// re-translate success the new orders replace the cleared ones;
     /// on failure the element slides into `MOVE_WAITING` via
     /// `failed_path_requests` and times out after 100 frames.
@@ -323,96 +350,49 @@ impl EngineInner {
         sector: u16,
         appeared: &[crate::pathfinder::AppearedObstacle],
     ) {
-        // Phase 1: collect targets + whether each is crushed.  Borrows
-        // self immutably; mutations happen in phase 2.
-        //
-        // Every same-sector actor gets its in-progress path
-        // re-translated *before* the move box is read — an actor
-        // without a current move box still has its path re-translated.
-        // So the move-box check only gates the `crushed` computation,
-        // not target inclusion.
-        let targets: Vec<(EntityId, bool)> = self
-            .world
-            .entities
-            .actors()
-            .filter_map(|(id, entity)| {
-                let element = entity.element_data();
-                if element.layer() != layer {
-                    return None;
-                }
-                if element.sector() != crate::position_interface::SectorHandle::new(sector) {
-                    return None;
-                }
-                let pi = entity.position_iface();
-                let move_box_map = *pi.get_move_box_map();
-                let move_box_map_geo = move_box_map.to_geo();
-                let crushed = move_box_map.is_somewhere()
-                    && appeared.iter().any(|obs| {
-                        let obs_polygon_geo: Vec<_> =
-                            obs.polygon.iter().map(|p| p.to_geo()).collect();
-                        obs.bounding_box.is_somewhere()
-                            && obs.bounding_box.intersects_bbox(&move_box_map)
-                            && crate::geo2d::polygon_vertices_intersect_bbox(
-                                &obs_polygon_geo,
-                                &move_box_map_geo,
-                            )
-                    });
-                Some((id.into(), crushed))
-            })
-            .collect();
-
-        for (id, crushed) in targets {
-            // Invalidate movement: only acts on a Move/Seek InProgress
-            // element with non-empty orders.  Snapshot dest + action
-            // off the element, clear the orders, then re-run
+        let actor_slots = self.world.entities.len();
+        for slot in 0..actor_slots {
+            let Some((id, entity)) = self.world.entities.get_legacy_slot(slot as u32) else {
+                continue;
+            };
+            if entity.actor_data().is_none()
+                || entity.element_data().layer() != layer
+                || entity.element_data().sector()
+                    != crate::position_interface::SectorHandle::new(sector)
+            {
+                continue;
+            }
+            // Read destination and action from the selected movement,
+            // clear its orders, then re-run
             // `try_dispatch_move_path` to re-submit the path request.
-            let retranslate = self
-                .get_entity(id)
-                .and_then(|e| e.actor_data())
-                .map(|a| a.active_movement)
-                .filter(|am| am.is_active())
-                .and_then(|am| {
-                    let seq_id = am.sequence_id?;
-                    let elem_idx = am.element_index;
-                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
-                    if elem.owner != Some(id) {
-                        return None;
-                    }
-                    if !matches!(elem.state, crate::sequence::SequenceState::InProgress) {
-                        return None;
-                    }
-                    if !matches!(
-                        elem.command,
-                        crate::element::Command::Move
-                            | crate::element::Command::MoveOk
-                            | crate::element::Command::Seek
-                    ) {
-                        return None;
-                    }
-                    if elem.orders.is_empty() {
-                        return None;
-                    }
-                    let (dest, action) = match &elem.data {
-                        crate::sequence::SequenceElementData::Movement {
-                            destination,
-                            element: seek_target,
-                            action,
-                            flags,
-                            ..
-                        } => {
-                            let pt = if flags.contains(crate::sequence::MoveFlags::SEEK) {
-                                let tgt = (*seek_target)?;
-                                let te = self.get_entity(tgt)?;
-                                te.element_data().position_map()
-                            } else {
-                                *destination
-                            };
-                            (pt, *action)
+            let retranslate =
+                self.current_sequence_element_for_actor(id)
+                    .and_then(|(seq_id, elem_idx)| {
+                        let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+                        if elem.command != crate::element::Command::MoveOk {
+                            return None;
                         }
-                        _ => return None,
-                    };
-                    Some((seq_id, elem_idx, dest, action))
-                });
+                        let (dest, action) = match &elem.data {
+                            crate::sequence::SequenceElementData::Movement {
+                                destination,
+                                element: seek_target,
+                                action,
+                                flags,
+                                ..
+                            } => {
+                                let pt = if flags.contains(crate::sequence::MoveFlags::SEEK) {
+                                    let tgt = (*seek_target)?;
+                                    let te = self.get_entity(tgt)?;
+                                    te.element_data().position_map()
+                                } else {
+                                    *destination
+                                };
+                                (pt, *action)
+                            }
+                            _ => return None,
+                        };
+                        Some((seq_id, elem_idx, dest, action))
+                    });
 
             if let Some((seq_id, elem_idx, dest, action)) = retranslate {
                 crate::movement_diagnostics::record_parity_late_movement_retranslation(id);
@@ -424,6 +404,7 @@ impl EngineInner {
                     .sequence_manager
                     .get_element_mut(seq_id, elem_idx)
                 {
+                    elem.command = crate::element::Command::Move;
                     elem.orders.clear();
                 }
                 if let Some(entity) = self.get_entity_mut(id)
@@ -447,66 +428,80 @@ impl EngineInner {
                 // source is different, and first-point selection becomes enabled.
                 if !self.extract_move_instruction_owner(id) {
                     self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                    continue;
-                }
-                match self.try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action) {
-                    MovePathOutcome::Success | MovePathOutcome::Pending => {
-                        // Corrected original-game movement invalidation refreshes
-                        // actor order from the retranslated selected element. The
-                        // old order storage has been deleted, so retaining the
-                        // previous installed snapshot would reproduce its
-                        // former dangling-pointer allocator dependence.
-                        let installed_order = self
-                            .orders
-                            .sequence_manager
-                            .current_order_for_actor(&self.world.entities, id)
-                            .filter(|(live_seq, live_idx, _)| {
-                                *live_seq == seq_id && *live_idx == elem_idx
-                            })
-                            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                                order_id: order.order_id,
-                                order_type: order.order_type,
-                            });
-                        self.get_entity_mut(id)
-                            .and_then(crate::element::Entity::actor_data_mut)
-                            .expect("retranslated movement owner lost actor data")
-                            .installed_order = installed_order;
-                    }
-                    MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                        self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
-                    }
-                    MovePathOutcome::Failed => {
-                        // Source extraction failure already performed the
-                        // the original game's stop-and-wait effects and never enters the
-                        // failed-A* timeout list.
+                } else {
+                    match self
+                        .try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action)
+                    {
+                        MovePathOutcome::Success | MovePathOutcome::Pending => {
+                            // Corrected original-game movement invalidation refreshes
+                            // actor order from the retranslated selected element. The
+                            // old order storage has been deleted, so retaining the
+                            // previous installed snapshot would reproduce its
+                            // former dangling-pointer allocator dependence.
+                            let installed_order = self
+                                .orders
+                                .sequence_manager
+                                .current_order_for_actor(&self.world.entities, id)
+                                .filter(|(live_seq, live_idx, _)| {
+                                    *live_seq == seq_id && *live_idx == elem_idx
+                                })
+                                .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                                    order_id: order.order_id,
+                                    order_type: order.order_type,
+                                });
+                            self.get_entity_mut(id)
+                                .and_then(crate::element::Entity::actor_data_mut)
+                                .expect("retranslated movement owner lost actor data")
+                                .installed_order = installed_order;
+                        }
+                        MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
+                            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                        }
+                        MovePathOutcome::Failed => {
+                            // Source extraction failure already performed the
+                            // the original game's stop-and-wait effects and never enters the
+                            // failed-A* timeout list.
+                        }
                     }
                 }
             }
 
-            if crushed {
-                if let Some(entity) = self.get_entity_mut(id) {
-                    entity.element_data_mut().unreachable = true;
+            let Some(entity) = self.get_entity(id) else {
+                continue;
+            };
+            let move_box = *entity.position_iface().get_move_box_map();
+            let move_box_geo = move_box.to_geo();
+            for obstacle in appeared {
+                let polygon: Vec<_> = obstacle
+                    .polygon
+                    .iter()
+                    .map(|point| point.to_geo())
+                    .collect();
+                if move_box.is_somewhere()
+                    && obstacle.bounding_box.is_somewhere()
+                    && obstacle.bounding_box.intersects_bbox(&move_box)
+                    && crate::geo2d::polygon_vertices_intersect_bbox(&polygon, &move_box_geo)
+                {
+                    if let Some(entity) = self.get_entity_mut(id) {
+                        entity.element_data_mut().unreachable = true;
+                    }
+                    self.launch_damage(sim, assets, id, 1000, 1000);
                 }
-                self.launch_damage(sim, assets, id, 1000, 1000);
             }
         }
     }
 
     /// Execute StartAnimation: activate the patch's FX entity and set its
     /// animation row.
-    fn execute_start_animation(&mut self, ctx: &PatchContext, anim: PatchAnimation, reverse: bool) {
-        let handle = match ctx.animation_entity_handle {
+    fn execute_start_animation(
+        &mut self,
+        index: crate::patch::PatchIndex,
+        action: OrderType,
+        reverse: bool,
+    ) {
+        let handle = match self.patch_animation_handle(index) {
             Some(h) => h,
             None => return,
-        };
-
-        // Map `PatchAnimation` to an `OrderType` so the sprite's
-        // current conversion table can resolve the actual animation row
-        // via `row_for_action`.  These are not raw row indices.
-        let action = match anim {
-            PatchAnimation::Initial => crate::order::OrderType::PATCH_INITIAL,
-            PatchAnimation::Transition => crate::order::OrderType::PATCH_TRANSITION,
-            PatchAnimation::Final => crate::order::OrderType::PATCH_FINAL,
         };
 
         // Activate the entity and set the animation frame.
@@ -521,7 +516,6 @@ impl EngineInner {
                 let Some(_row) = initialize_patch_animation(sprite, action, reverse) else {
                     tracing::warn!(
                         handle,
-                        ?anim,
                         ?action,
                         profile = %sprite.frame_profile_name,
                         "patch_effects: StartAnimation on sprite without this animation — skipping"
@@ -531,12 +525,12 @@ impl EngineInner {
             }
         }
 
-        tracing::trace!(handle, ?anim, "patch_effects: StartAnimation");
+        tracing::trace!(handle, ?action, "patch_effects: StartAnimation");
     }
 
     /// Execute DeactivateAnimation: deactivate the patch's FX entity.
-    fn execute_deactivate_animation(&mut self, ctx: &PatchContext) {
-        let handle = match ctx.animation_entity_handle {
+    fn execute_deactivate_animation(&mut self, index: crate::patch::PatchIndex) {
+        let handle = match self.patch_animation_handle(index) {
             Some(h) => h,
             None => return,
         };
@@ -649,6 +643,151 @@ mod tests {
     use crate::sequence::{SequenceElement, SequencePriority};
     use crate::sprite::Sprite;
     use crate::sprite_script::SpriteScript;
+
+    fn patch_fixture(animated: bool, definitive: bool) -> (EngineInner, crate::patch::PatchIndex) {
+        let mut engine = EngineInner::new();
+        let old = engine.world.fast_grid_mut().add_line(
+            GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true),
+            0,
+        );
+        let new = engine.world.fast_grid_mut().add_line(
+            GridLine::new(MapPoint::new(0.0, 10.0), MapPoint::new(10.0, 10.0), true),
+            0,
+        );
+        engine.world.fast_grid_mut().set_line_active(new, false);
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                locked_pc: false,
+                locked_pc_after_patch: true,
+                ..Default::default()
+            });
+        engine
+            .script_domains
+            .interactables
+            .patches
+            .push(crate::patch::Patch {
+                active: true,
+                initially_active: true,
+                definitive,
+                animation_flags: crate::patch::AnimationFlags {
+                    start_valid: animated,
+                    transition_valid: animated,
+                    end_valid: animated,
+                },
+                door_indices: vec![0],
+                old_line_indices: vec![old],
+                new_line_indices: vec![new],
+                ..Default::default()
+            });
+        (engine, crate::patch::PatchIndex::new(0).unwrap())
+    }
+
+    fn assert_patch_terrain(engine: &EngineInner, applied: bool) {
+        let patch = &engine.script_domains.interactables.patches[0];
+        assert_eq!(patch.applied, applied);
+        assert_eq!(
+            engine
+                .world
+                .fast_grid
+                .is_line_active(patch.old_line_indices[0]),
+            !applied
+        );
+        assert_eq!(
+            engine
+                .world
+                .fast_grid
+                .is_line_active(patch.new_line_indices[0]),
+            applied
+        );
+        assert_eq!(
+            engine.script_domains.interactables.doors[0].locked_pc,
+            applied
+        );
+    }
+
+    #[test]
+    fn patch_transitions_update_canonical_terrain_and_door_rights() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        for animated in [false, true] {
+            for definitive in [false, true] {
+                let (mut engine, index) = patch_fixture(animated, definitive);
+                engine.apply_patch(&sim, &assets, index);
+                if animated {
+                    assert_patch_terrain(&engine, false);
+                    assert!(engine.script_domains.interactables.patches[0].in_transition);
+                    engine.finish_patch_transition_for(&sim, &assets, index);
+                }
+                assert_patch_terrain(&engine, true);
+                assert_eq!(
+                    engine.script_domains.interactables.patches[0].active,
+                    !definitive
+                );
+                engine.apply_patch(&sim, &assets, index);
+                if animated && !definitive {
+                    assert_patch_terrain(&engine, true);
+                    engine.finish_patch_transition_for(&sim, &assets, index);
+                }
+                assert_patch_terrain(&engine, definitive);
+                engine.reset_patch(&sim, &assets, index);
+                assert_patch_terrain(&engine, false);
+                assert!(engine.script_domains.interactables.patches[0].active);
+                assert!(!engine.script_domains.interactables.patches[0].in_transition);
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_patch_transition_finishes_before_starting_reverse() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let (mut engine, index) = patch_fixture(true, false);
+        engine.apply_patch(&sim, &assets, index);
+        engine.apply_patch(&sim, &assets, index);
+        assert_patch_terrain(&engine, true);
+        assert!(engine.script_domains.interactables.patches[0].in_transition);
+        engine.finish_patch_transition_for(&sim, &assets, index);
+        assert_patch_terrain(&engine, false);
+    }
+
+    #[test]
+    fn reset_during_forward_transition_does_not_toggle_doors() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let (mut engine, index) = patch_fixture(true, false);
+        engine.apply_patch(&sim, &assets, index);
+        engine.reset_patch(&sim, &assets, index);
+        assert_patch_terrain(&engine, false);
+        assert!(!engine.script_domains.interactables.patches[0].in_transition);
+    }
+
+    #[test]
+    fn configured_background_reversal_survives_save_between_transitions() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let (mut engine, index) = patch_fixture(true, true);
+        let patch = &mut engine.script_domains.interactables.patches[0];
+        patch.configure_background_reversal(true);
+        patch.repeat_activation = Some((123, "ActivatedBySword".into()));
+        for _ in 0..2 {
+            engine.apply_patch(&sim, &assets, index);
+            engine.finish_patch_transition_for(&sim, &assets, index);
+            assert_patch_terrain(&engine, true);
+            let patch = &mut engine.script_domains.interactables.patches[0];
+            *patch = serde_json::from_str(&serde_json::to_string(patch).unwrap()).unwrap();
+            assert_eq!(
+                patch.repeat_activation,
+                Some((123, "ActivatedBySword".into()))
+            );
+            engine.apply_patch(&sim, &assets, index);
+            engine.finish_patch_transition_for(&sim, &assets, index);
+            assert_patch_terrain(&engine, false);
+            assert!(engine.script_domains.interactables.patches[0].active);
+        }
+    }
 
     #[test]
     fn patch_animation_reset_preserves_original_first_tick_sentinel() {
@@ -851,6 +990,8 @@ mod tests {
             .expect("test entity is an actor")
             .active_movement = ActiveMovement::new(sequence, 0);
 
+        engine.select_sequence_element(owner, Some((sequence, 0)));
+
         let move_box = *engine
             .get_entity(owner)
             .expect("test PC exists")
@@ -875,12 +1016,23 @@ mod tests {
         );
         let expected = expected_box.center();
 
+        let obstacle = crate::pathfinder::AppearedObstacle {
+            bounding_box: crate::coordinates::MapBBox::from_coords(120.0, 124.0, 140.0, 128.0),
+            polygon: vec![
+                MapPoint::new(120.0, 124.0),
+                MapPoint::new(140.0, 124.0),
+                MapPoint::new(140.0, 128.0),
+                MapPoint::new(120.0, 128.0),
+            ],
+        };
+        assert!(obstacle.bounding_box.intersects_bbox(&move_box));
+        assert!(!obstacle.bounding_box.intersects_bbox(&expected_box));
         engine.invalidate_paths_and_kill_crushed(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             0,
             1,
-            &[],
+            &[obstacle],
         );
 
         let corrected = engine
@@ -890,5 +1042,6 @@ mod tests {
             .position_map();
         assert_eq!(corrected, expected);
         assert_ne!(corrected, start);
+        assert!(!engine.get_entity(owner).unwrap().element_data().unreachable);
     }
 }

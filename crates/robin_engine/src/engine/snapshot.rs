@@ -15,7 +15,7 @@ use super::{
 };
 
 const NATIVE_SNAPSHOT_MAGIC: &[u8; 4] = b"RHNS";
-const NATIVE_SNAPSHOT_VERSION: u32 = 1;
+const NATIVE_SNAPSHOT_VERSION: u32 = 2;
 const NATIVE_SNAPSHOT_HEADER_BYTES: usize = 8;
 
 /// Native codec form of the current nested [`EngineInner`] snapshot.

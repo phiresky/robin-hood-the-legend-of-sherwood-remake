@@ -1612,76 +1612,19 @@ impl EngineInner {
     /// the original game performs that assignment (update, accepted instruction,
     /// or corrected movement retranslation), never as a read-time fallback.
     pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
-        let selected_order = self
+        let installed_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(&self.world.entities, actor)
-            .map(|(seq_id, elem_idx, order)| {
-                (
-                    seq_id,
-                    elem_idx,
-                    crate::element::InstalledActorOrder {
-                        order_id: order.order_id,
-                        order_type: order.order_type,
-                    },
-                )
+            .map(|(_, _, order)| crate::element::InstalledActorOrder {
+                order_id: order.order_id,
+                order_type: order.order_type,
             });
-        self.publish_order_as_installed(actor, selected_order);
-    }
-
-    fn publish_order_as_installed(
-        &mut self,
-        actor: EntityId,
-        selected_order: Option<(
-            crate::sequence::SequenceId,
-            usize,
-            crate::element::InstalledActorOrder,
-        )>,
-    ) {
-        let installed_order = selected_order.map(|(_, _, order)| order);
         tracing::trace!(?actor, ?installed_order, "publishing installed order");
-        let waiting_sword_handoff = selected_order.and_then(|(seq_id, elem_idx, new_order)| {
-            (new_order.order_type == crate::order::OrderType::WaitingSword
-                && self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .is_some_and(|element| element.command == crate::element::Command::Wait))
-            .then(|| {
-                self.get_entity(actor)
-                    .and_then(Entity::actor_data)
-                    .and_then(|actor| actor.installed_order)
-                    .filter(|old_order| {
-                        old_order.order_type == crate::order::OrderType::WaitingSword
-                            && self
-                                .get_entity(actor)
-                                .and_then(Entity::actor_data)
-                                .and_then(|actor| actor.retained_waiting_sword_order_id)
-                                == Some(old_order.order_id)
-                    })
-                    .map(|old_order| (old_order.order_id, new_order.order_id))
-            })
-            .flatten()
-        });
-        let entity = self
-            .get_entity_mut(actor)
-            .expect("mpOrder publication owner disappeared");
-        entity
+        self.get_entity_mut(actor)
+            .expect("installed order publication owner disappeared")
             .actor_data_mut()
-            .expect("mpOrder publication owner lost actor data")
-            .retained_waiting_sword_order_id = None;
-        if let Some((old_order_id, new_order_id)) = waiting_sword_handoff {
-            if entity.sprite().last_processed_order_id == old_order_id.get() {
-                entity.sprite_mut().last_processed_order_id = new_order_id.get();
-            }
-            entity
-                .actor_data_mut()
-                .expect("mpOrder publication owner lost actor data")
-                .last_execute_order_id = Some(new_order_id);
-        }
-        entity
-            .actor_data_mut()
-            .expect("mpOrder publication owner lost actor data")
+            .expect("installed order publication owner lost actor data")
             .installed_order = installed_order;
     }
 
@@ -1971,7 +1914,6 @@ impl EngineInner {
         explicit_direction: Option<i16>,
         target_x: f32,
         target_y: f32,
-        retained_movement_goal: Option<crate::coordinates::MapPoint>,
     ) -> crate::sequence::SequenceId {
         let seq_id = self
             .orders
@@ -1989,15 +1931,6 @@ impl EngineInner {
                     crate::sequence::FieldValue::GeoPoint2D {
                         x: target_x,
                         y: target_y,
-                    },
-                );
-            }
-            if let Some(goal) = retained_movement_goal {
-                element.set_property(
-                    crate::sequence::Field::RetainedMovementGoal,
-                    crate::sequence::FieldValue::GeoPoint2D {
-                        x: goal.x,
-                        y: goal.y,
                     },
                 );
             }
@@ -2335,71 +2268,6 @@ impl EngineInner {
         {
             actor.selected_sequence_element = selection
                 .map(|(sequence, index)| crate::sequence::SequenceElementRef::new(sequence, index));
-        }
-    }
-
-    fn preserve_selected_movement_goal_for_replacement(
-        &mut self,
-        owner: EntityId,
-        current_seq: crate::sequence::SequenceId,
-        current_idx: usize,
-        replacement_seq: crate::sequence::SequenceId,
-        replacement_idx: usize,
-        replacement_command: crate::element::Command,
-    ) {
-        let goal = {
-            let mut cursor = (current_seq, current_idx);
-            let mut visited = std::collections::HashSet::new();
-            loop {
-                assert!(
-                    visited.insert(cursor),
-                    "cycle in cross-postponed sequence chain while preserving movement goal"
-                );
-                let Some(element) = self.orders.sequence_manager.get_element(cursor.0, cursor.1)
-                else {
-                    return;
-                };
-                if element.data.is_movement() {
-                    let Some(entity) = self.world.entities.get(owner) else {
-                        return;
-                    };
-                    break entity.position_iface().map_goal();
-                }
-                if let Some(goal) = element.retained_movement_goal {
-                    break goal;
-                }
-                let Some(postponed) = element.cross_postponed else {
-                    return;
-                };
-                cursor = postponed;
-            }
-        };
-        let Some(element) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(replacement_seq, replacement_idx)
-        else {
-            return;
-        };
-        if element.retained_movement_goal.is_some()
-            || element
-                .get_property(crate::sequence::Field::RetainedMovementGoal)
-                .is_some()
-        {
-            return;
-        }
-        element.retained_movement_goal = Some(goal);
-        if matches!(
-            replacement_command,
-            crate::element::Command::Turn | crate::element::Command::TurnFast
-        ) {
-            element.set_property(
-                crate::sequence::Field::RetainedMovementGoal,
-                crate::sequence::FieldValue::GeoPoint2D {
-                    x: goal.x,
-                    y: goal.y,
-                },
-            );
         }
     }
 

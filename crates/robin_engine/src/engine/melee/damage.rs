@@ -2971,10 +2971,7 @@ impl EngineInner {
         );
         let seq_id = self.launch_element(sim, assets, elem);
         let elem_idx = 0;
-        if !self.arbitrate_instruct(sim, assets, &mut Vec::new(), seq_id, elem_idx) {
-            return;
-        }
-        self.dispatch_receive_damage(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
+        self.instruct_owner(sim, assets, &mut Vec::new(), victim_id, seq_id, elem_idx);
     }
 
     /// Register a projectile damage sequence for the sequence-manager phase.

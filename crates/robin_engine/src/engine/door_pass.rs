@@ -556,14 +556,6 @@ struct BuiltDoorPass {
     sets_passing_door_directly: bool,
 }
 
-/// Whether PassDoor launch reaches the synchronous-successor splice in the
-/// sequence action loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PassDoorLaunchBarrier {
-    ReachSplice,
-    SkipSplice,
-}
-
 impl EngineInner {
     pub(super) fn instruct_pass_door(
         &mut self,
@@ -573,7 +565,7 @@ impl EngineInner {
         entity_id: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> PassDoorLaunchBarrier {
+    ) {
         let movement = self
             .orders
             .sequence_manager
@@ -668,7 +660,7 @@ impl EngineInner {
                 "PassDoor: actor not authorized"
             );
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
+            return;
         }
         let lift_type = match door.door_type {
             DoorType::LiftHigh | DoorType::LiftLow | DoorType::LiftHighCrenel => self
@@ -684,7 +676,7 @@ impl EngineInner {
                 "PassDoor: actor not authorized for lift type"
             );
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return PassDoorLaunchBarrier::SkipSplice;
+            return;
         }
 
         let mut built = self.build_door_pass(
@@ -775,7 +767,6 @@ impl EngineInner {
             ?direct,
             "PassDoor: started multi-step door pass"
         );
-        PassDoorLaunchBarrier::ReachSplice
     }
 }
 
@@ -1809,8 +1800,7 @@ impl EngineInner {
 
     /// Apply the patch associated with a door, if any.
     ///
-    /// Calls `Patch::apply()` and delegates effect processing to
-    /// `process_patch_effects` (patch_effects.rs).
+    /// Executes the patch transition and its terrain updates directly.
     fn apply_door_patch(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1861,23 +1851,13 @@ impl EngineInner {
             }
         }
 
-        // Apply the patch and collect effects.
-        let effects = {
-            let patch = match self.script_domains.interactables.patches.get_mut(patch_idx) {
-                Some(p) => p,
-                None => return,
-            };
-            patch.apply()
-        };
+        self.apply_patch(sim, assets, patch_index);
 
         tracing::debug!(
             door = %door_index,
             patch = patch_idx,
-            num_effects = effects.len(),
             "apply_door_patch: patch applied"
         );
-
-        self.process_patch_effects(sim, assets, patch_index, effects);
     }
 
     /// Reset `already_selected` and start a hulk flash on the carrier

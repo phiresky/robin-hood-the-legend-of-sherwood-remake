@@ -355,10 +355,18 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
         .unwrap();
     assert_eq!(element.state, SequenceState::InProgress);
     assert_eq!(
-        element.current_order().map(|order| order.order_type),
-        Some(OrderType::WaitingUprightBored)
+        element
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect::<Vec<_>>(),
+        [
+            OrderType::WaitingUpright,
+            OrderType::TransitionWaitingUprightWaitingUprightBored,
+            OrderType::WaitingUprightBored
+        ],
     );
-    assert!(!element.current_order().unwrap().compute_direction);
+    assert!(!element.orders.back().unwrap().compute_direction);
 
     // A timer may interrupt a seek while the actor-owned post-seek
     // pointers remain dormant. Once the timer itself is interrupted and
@@ -494,7 +502,7 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
 
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
-    let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
+    let owner = engine.add_test_entity(make_aiming_pc(ActionState::Bored));
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
     wait.set_property(Field::Timer, FieldValue::Integer(0));
     let seq_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);

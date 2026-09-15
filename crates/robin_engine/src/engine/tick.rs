@@ -11,7 +11,6 @@ use tick_action_change_step::ActionChangeSlotCtx;
 
 use super::movement::{CompletedPathWork, PathScheduleContext};
 #[cfg(test)]
-use super::sequence_runtime::OwnerActionBarrier;
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
@@ -1836,7 +1835,7 @@ impl EngineInner {
                 {
                     element.command = crate::element::Command::MoveOk;
                 }
-                self.finish_move_path(sim, assets, request, waypoints);
+                self.finish_move_path(sim, request, waypoints);
             }
             Some(CompletedPathWork::Failed(request)) => {
                 tracing::warn!(

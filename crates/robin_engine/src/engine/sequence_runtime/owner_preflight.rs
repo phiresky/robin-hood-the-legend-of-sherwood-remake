@@ -5,7 +5,6 @@ pub(super) struct PreparedOwnerInstruction {
     pub(super) owner: EntityId,
     pub(super) cmd: Command,
     pub(super) trace_path_owner: bool,
-    pub(super) satisfied_enter_swordfight_order: Option<crate::element::InstalledActorOrder>,
 }
 
 impl EngineInner {
@@ -249,51 +248,7 @@ impl EngineInner {
                 }
             }
         }
-        // A redundant EnterSwordfight still replaces and
-        // terminates the selected Wait element, but Original's
-        // actor keeps driving the already installed
-        // WaitingSword order until the fresh idle is published
-        // on the following frame. Preserve only that stable
-        // order; arbitration and its synchronous EventDone
-        // callbacks must continue to observe the ordinary
-        // replacement lifecycle.
-        let satisfied_enter_swordfight_order = (self.control.frame_counter > 0
-            && command == Some(crate::element::Command::EnterSwordfight))
-        .then(|| {
-            self.orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .and_then(|element| element.get_property(crate::sequence::Field::Opponent))
-                .and_then(|value| match value {
-                    crate::sequence::FieldValue::Element(opponent) => Some(*opponent),
-                    _ => None,
-                })
-                .and_then(|opponent| {
-                    self.get_entity(owner)
-                        .and_then(|entity| entity.human_data())
-                        .filter(|human| {
-                            human.opponents.contains(&opponent)
-                                && self
-                                    .current_sequence_element_for_actor(owner)
-                                    .and_then(|(sequence, index)| {
-                                        self.orders.sequence_manager.get_element(sequence, index)
-                                    })
-                                    .is_some_and(|element| {
-                                        element.command == crate::element::Command::Wait
-                                            && element.current_order().is_some_and(|order| {
-                                                order.order_type
-                                                    == crate::order::OrderType::WaitingSword
-                                            })
-                                    })
-                        })
-                        .and_then(|_| {
-                            self.get_entity(owner)
-                                .and_then(|entity| entity.actor_data())
-                                .and_then(|actor| actor.installed_order)
-                        })
-                })
-        })
-        .flatten();
+
         let trace_reactive_topology = matches!(
             command,
             Some(crate::element::Command::ParrySword)
@@ -390,7 +345,6 @@ impl EngineInner {
             owner,
             cmd,
             trace_path_owner,
-            satisfied_enter_swordfight_order,
         })
     }
 }

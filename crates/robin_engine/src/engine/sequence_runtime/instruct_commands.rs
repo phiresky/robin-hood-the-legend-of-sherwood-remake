@@ -10,7 +10,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -38,7 +38,7 @@ impl EngineInner {
             None => {
                 // No target — nothing we can do.
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             }
         };
         // Original rejects zero ammo here only for PCs.
@@ -49,7 +49,7 @@ impl EngineInner {
         let owner_is_pc = self.get_entity(owner).is_some_and(|entity| entity.is_pc());
         if owner_is_pc && ammo_count == 0 {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
 
         // Determine shoot mode via
@@ -73,34 +73,6 @@ impl EngineInner {
             // Impossible element. This is visible for
             // scripted training shots whose target has
             // moved outside the configured bow range.
-            let has_transition_orders = self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| !element.orders.is_empty());
-            if has_transition_orders {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            } else {
-                // Actor instruction stamps
-                // mmotionState=IN_PROGRESS before it
-                // discovers that Translate produced no
-                // current order. The element then
-                // terminates, but that acceptance edge
-                // remains visible for this frame.
-                self.world
-                    .entities
-                    .get_mut(owner)
-                    .and_then(Entity::actor_data_mut)
-                    .expect("accepted empty ShootBow lost its actor")
-                    .continuation
-                    .motion_state = crate::sprite::MotionState::InProgress;
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            }
-            // Fall through to the shared actor-order
-            // publication: the rejected body still leaves
-            // an accepted element whose transition prefix
-            // becomes the actor's current order this same
-            // frame.
         } else {
             match bow_shot::begin_bow_shot(
                 &mut self.world.entities,
@@ -114,15 +86,12 @@ impl EngineInner {
                 Some(shoot_mode),
                 &mut self.orders.next_order_id,
             ) {
-                BeginShotResult::Started => {
-                    self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-                }
+                BeginShotResult::Started => {}
                 BeginShotResult::Impossible => {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                 }
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_change_position(
@@ -133,7 +102,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -165,7 +134,7 @@ impl EngineInner {
                     elem_idx,
                     crate::sequence::CascadeFlags::NEXT_LEVEL,
                 );
-                return OwnerActionBarrier::Skip;
+                return;
             }
 
             self.finalize_special_move_position(
@@ -197,7 +166,6 @@ impl EngineInner {
             }
         }
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_swordstrike_thrust_a(
@@ -208,7 +176,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -237,7 +205,7 @@ impl EngineInner {
         // and never reaches the
         // motion is marked in progress
         // epilogue.
-        let barrier = match target {
+        match target {
             Some(target_id) => self.dispatch_sword_strike(
                 sim,
                 assets,
@@ -250,13 +218,8 @@ impl EngineInner {
             ),
             None => {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                OwnerActionBarrier::Skip
             }
         };
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_raise_shield(
@@ -268,7 +231,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let follow_up =
             self.dispatch_shield_command(sim, assets, active_scripts, owner, cmd, seq_id, elem_idx);
         if cmd == Command::RaiseShieldInstantly {
@@ -285,30 +248,6 @@ impl EngineInner {
             self.launch_element_inline(sim, assets, active_scripts, follow_up)
                 .unwrap_or_else(|error| panic!("shield follow-up launch failed: {error:?}"));
         }
-        // Human command translation terminates a redundant
-        // RAISE_SHIELD synchronously when the actor is
-        // already holding it. Actor instruction handling then sees
-        // that translation changed the selected sequence element and
-        // returns before its accepted-instruct
-        // MOTION_IN_PROGRESS epilogue. Preserve the
-        // preceding Execute edge (for example LookLeft's
-        // START) while still registering the PC's
-        // synchronous protectee Seek above.
-        let barrier = if cmd == Command::RaiseShield
-            && self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_none_or(|element| element.state != crate::sequence::SequenceState::InProgress)
-        {
-            OwnerActionBarrier::Skip
-        } else {
-            OwnerActionBarrier::Reach
-        };
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_hide_behind_shield(
@@ -318,7 +257,7 @@ impl EngineInner {
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -331,7 +270,7 @@ impl EngineInner {
         let posture_after = elem.posture_after_transition;
         let Some(holder) = antagonist else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let (is_holding, holder_protected) = self
             .get_entity(holder)
@@ -353,7 +292,7 @@ impl EngineInner {
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
-            return OwnerActionBarrier::Skip;
+            return;
         }
         if posture_after != crate::element::Posture::Crouched {
             let id = self.orders.allocate_order_id();
@@ -376,8 +315,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_swordstrike_down(
@@ -388,7 +325,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -401,7 +338,7 @@ impl EngineInner {
         let Some(target) = antagonist else {
             tracing::warn!(?seq_id, elem_idx, "SwordstrikeDown missing antagonist");
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let (tx, ty) = match (self.get_entity(owner), self.get_entity(target)) {
             (Some(_), Some(target_entity)) => {
@@ -411,7 +348,7 @@ impl EngineInner {
             _ => {
                 tracing::warn!(?owner, ?target, "SwordstrikeDown owner or target missing");
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             }
         };
         if let Some(entity) = self.world.entities.get_mut(owner)
@@ -430,8 +367,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_get_killed_at_bottom(
@@ -442,7 +377,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -460,7 +395,7 @@ impl EngineInner {
         let (damage, raw_life_points_after, died) = {
             let Some(victim) = self.world.entities.get_mut(owner) else {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             };
             let damage = victim
                 .human_and_life_points_mut()
@@ -468,7 +403,7 @@ impl EngineInner {
             let Some(damage) = damage else {
                 tracing::warn!(?owner, ?killer, "GetKilledAtBottom owner is not a human");
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             };
             let max_life_points = match victim {
                 crate::element::Entity::Pc(_) => crate::pc_status::LIFEPOINTS_PC,
@@ -553,14 +488,12 @@ impl EngineInner {
                 })
                 .unwrap_or(crate::order::OrderType::DyingUpright);
             self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
             if victim.is_dead() {
                 victim.set_posture(crate::element::Posture::DeadBack);
             }
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_take_corpse(
@@ -571,7 +504,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -593,7 +526,7 @@ impl EngineInner {
                     &mut self.orders.next_order_id,
                 ) {
                     AbilityBeginResult::Started => {
-                        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
+
                         // Freezing the target and
                         // starting its hulk belong to
                         // the pickup order's first
@@ -613,7 +546,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_drop_corpse(
@@ -624,7 +556,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         match abilities::begin_drop(
             &mut self.world.entities,
             &mut self.orders.sequence_manager,
@@ -634,7 +566,6 @@ impl EngineInner {
             &mut self.orders.next_order_id,
         ) {
             AbilityBeginResult::Started => {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 // Drop-transition init twin of
                 // the pickup building flash.
                 let carried_id = self
@@ -661,7 +592,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_hit_cmd(
@@ -673,7 +603,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let Some(target) = self
             .orders
             .sequence_manager
@@ -684,7 +614,7 @@ impl EngineInner {
             })
         else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let begin = match cmd {
             Command::HitCmd => abilities::begin_hit(
@@ -712,8 +642,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
             }
             AbilityBeginResult::Started => {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-
                 // Human command translation inserts the Hit/Strangle order before
                 // a moving antagonist's Think(EVENT_STOP). Think and all
                 // of its re-entrant effects finish in this stack frame,
@@ -739,7 +667,6 @@ impl EngineInner {
                 }
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_tie_cmd(
@@ -751,7 +678,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let ammo_available = match cmd {
             Command::HealCmd => self.has_ammo(owner, crate::profiles::Action::Heal),
             Command::EatCmd => self
@@ -770,7 +697,7 @@ impl EngineInner {
             Command::ThrowStone => self.has_ammo(owner, crate::profiles::Action::Stone),
             _ => true,
         };
-        let barrier = self.dispatch_direct_ability_command(
+        self.dispatch_direct_ability_command(
             sim,
             assets,
             active_scripts,
@@ -780,10 +707,6 @@ impl EngineInner {
             seq_id,
             elem_idx,
         );
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_climb_up_on_shoulders(
@@ -794,7 +717,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -808,7 +731,7 @@ impl EngineInner {
         };
         let Some(helper_id) = helper else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         // The headroom ray-cast inside `begin_climb_on_shoulders` reads the
         // sight obstacles beside the mutable entity table.
@@ -823,9 +746,7 @@ impl EngineInner {
             &mut self.orders.next_order_id,
             obstacles,
         ) {
-            crate::abilities::ClimbResult::Started => {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-            }
+            crate::abilities::ClimbResult::Started => {}
             crate::abilities::ClimbResult::Impossible => {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
@@ -844,7 +765,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_pay(
@@ -855,7 +775,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -885,9 +805,7 @@ impl EngineInner {
                     elem_idx,
                     &mut self.orders.next_order_id,
                 ) {
-                    AbilityBeginResult::Started => {
-                        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-                    }
+                    AbilityBeginResult::Started => {}
                     AbilityBeginResult::Impossible => {
                         self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     }
@@ -897,7 +815,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_drop_ammo(
@@ -908,7 +825,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -959,7 +876,7 @@ impl EngineInner {
         };
         let Some(action_id) = action_id else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let requested = amount.unwrap_or(1) as u16;
         let action = crate::profiles::Action::from_u32(action_id);
@@ -971,7 +888,7 @@ impl EngineInner {
         // not impossible.
         if !crate::inventory::action_uses_ammo(action) {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
         // Refuse the drop when no walkable cell
         // exists near the PC's hand: skip the
@@ -979,7 +896,7 @@ impl EngineInner {
         // terminate.
         if self.try_get_drop_position(owner).is_none() {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
         // Capture PC
         // position/layer/sector/obstacle for the
@@ -997,7 +914,7 @@ impl EngineInner {
         });
         let Some((pos, layer, sector, obstacle, direction, material)) = pc_snap else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         // Decrement PC ammo, clamped to current
         // count.
@@ -1007,7 +924,7 @@ impl EngineInner {
         });
         let Some(status_idx) = status_idx else {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         };
         let dropped = if let Some(campaign) = Some(&mut self.mission_domain.campaign)
             && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
@@ -1021,7 +938,7 @@ impl EngineInner {
         };
         if dropped == 0 {
             self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-            return OwnerActionBarrier::Skip;
+            return;
         }
         // Auto-disable the action slot when ammo
         // reaches 0.  `dropped` was clamped to the
@@ -1174,7 +1091,6 @@ impl EngineInner {
         }
 
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_unlock_door(
@@ -1185,7 +1101,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let id = required_unlock_door_id(
             self.orders.sequence_manager.get_element(seq_id, elem_idx),
             seq_id,
@@ -1214,8 +1130,6 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_enter_swordfight(
@@ -1226,18 +1140,18 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-        satisfied_enter_swordfight_order: Option<crate::element::InstalledActorOrder>,
-    ) -> OwnerActionBarrier {
-        let elem = self
+    ) {
+        let opponent = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
-            .expect("instructed sequence element disappeared");
-        let opponent = match elem.get_property(crate::sequence::Field::Opponent) {
-            Some(crate::sequence::FieldValue::Element(id)) => Some(*id),
-            _ => None,
-        };
-        let barrier = self.dispatch_enter_swordfight(
+            .expect("instructed sequence element disappeared")
+            .get_property(crate::sequence::Field::Opponent)
+            .and_then(|value| match value {
+                crate::sequence::FieldValue::Element(id) => Some(*id),
+                _ => None,
+            });
+        self.dispatch_enter_swordfight(
             sim,
             assets,
             active_scripts,
@@ -1246,18 +1160,6 @@ impl EngineInner {
             seq_id,
             elem_idx,
         );
-        if barrier == OwnerActionBarrier::Skip {
-            if let Some(retained_order) = satisfied_enter_swordfight_order {
-                let entity = self
-                    .get_entity_mut(owner)
-                    .expect("satisfied EnterSwordfight owner disappeared");
-                let actor = entity.actor_data_mut().unwrap();
-                actor.installed_order = Some(retained_order);
-                actor.retained_waiting_sword_order_id = Some(retained_order.order_id);
-            }
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_attentive_mode(
@@ -1269,14 +1171,14 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         self.trace_attentive_owner_handoff(
             "translate_before",
             owner,
             Some((seq_id, elem_idx)),
             format_args!("before attentive translator"),
         );
-        let barrier = self.dispatch_npc_attention_command(
+        self.dispatch_npc_attention_command(
             sim,
             assets,
             active_scripts,
@@ -1289,22 +1191,8 @@ impl EngineInner {
             "translate_after",
             owner,
             Some((seq_id, elem_idx)),
-            format_args!(
-                "{}",
-                match barrier {
-                    OwnerActionBarrier::Reach => {
-                        "attentive translator queued transition"
-                    }
-                    OwnerActionBarrier::Skip => {
-                        "attentive translator terminalized inline"
-                    }
-                }
-            ),
+            format_args!("{}", "attentive translator returned"),
         );
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_stealth_posture(
@@ -1316,7 +1204,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         if cmd == Command::EnterBeggar {
             // "To avoid beggar & run bug": the beggar
             // entry stops the actor from inside its own
@@ -1341,17 +1229,7 @@ impl EngineInner {
                 &resolver,
             );
         }
-        let barrier = self.dispatch_stealth_command(
-            sim,
-            assets,
-            active_scripts,
-            owner,
-            cmd,
-            seq_id,
-            elem_idx,
-        );
-        debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
-        OwnerActionBarrier::Reach
+        self.dispatch_stealth_command(sim, assets, active_scripts, owner, cmd, seq_id, elem_idx);
     }
 
     /// SwordstrikeTired pushes a `BeingWeakSword`
@@ -1368,7 +1246,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         if self.get_entity(owner).is_some() {
             self.push_new_order(
                 seq_id,
@@ -1377,11 +1255,9 @@ impl EngineInner {
                 0.0,
                 0.0,
             );
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
         } else {
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_climb_down_from_shoulders(
@@ -1392,7 +1268,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         // Owner is the climber; the carrier
         // (helper) is read from the climber's
         // `human.carrier` back-reference latched
@@ -1410,7 +1286,6 @@ impl EngineInner {
             &mut self.orders.next_order_id,
         ) {
             AbilityBeginResult::Started => {
-                self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
                 // Helper is frozen for the
                 // duration of the climb-down so
                 // it can't acquire a fresh
@@ -1425,7 +1300,6 @@ impl EngineInner {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
             }
         }
-        OwnerActionBarrier::Reach
     }
 
     /// Drop ale bottle.
@@ -1437,7 +1311,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
+    ) {
         let order_type = match self.get_entity(owner) {
             Some(entity)
                 if entity.element_data().posture() == crate::element::Posture::Crouched =>
@@ -1447,12 +1321,10 @@ impl EngineInner {
             Some(_) => crate::order::OrderType::DroppingAle,
             None => {
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                return OwnerActionBarrier::Skip;
+                return;
             }
         };
         self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
-        self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     /// Jump: build a step list covering the run-up,
@@ -1470,10 +1342,8 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-    ) -> OwnerActionBarrier {
-        if self.start_jump(sim, assets, owner, seq_id, elem_idx) {
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        } else {
+    ) {
+        if !self.start_jump(sim, assets, owner, seq_id, elem_idx) {
             tracing::warn!(
                 entity = ?owner,
                 seq = ?seq_id,
@@ -1482,7 +1352,6 @@ impl EngineInner {
             );
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }
-        OwnerActionBarrier::Reach
     }
 
     pub(super) fn instruct_activate_target(
@@ -1494,7 +1363,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -1525,7 +1394,6 @@ impl EngineInner {
             tracing::warn!("{method} (target {target_handle}): {error}");
         }
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        OwnerActionBarrier::Reach
     }
 
     /// Script-recorded PlayAnim / PlayAnimLoop /
@@ -1543,7 +1411,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -1567,7 +1435,7 @@ impl EngineInner {
                         *handle == crate::natives::ScriptHandleCodec::actor_handle(owner)
                     })
                 });
-        let barrier = self.dispatch_play_animation(
+        self.dispatch_play_animation(
             sim,
             assets,
             active_scripts,
@@ -1578,10 +1446,6 @@ impl EngineInner {
             elem_idx,
             preserve_trigger_visual,
         );
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
     }
 
     /// PC-side target interaction commands.  Each
@@ -1605,7 +1469,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         cmd: Command,
-    ) -> OwnerActionBarrier {
+    ) {
         let elem = self
             .orders
             .sequence_manager
@@ -1615,7 +1479,7 @@ impl EngineInner {
             crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
             _ => None,
         };
-        let barrier = self.dispatch_sequence_target_interaction(
+        self.dispatch_sequence_target_interaction(
             sim,
             assets,
             active_scripts,
@@ -1625,52 +1489,5 @@ impl EngineInner {
             seq_id,
             elem_idx,
         );
-        if barrier == OwnerActionBarrier::Skip {
-            return OwnerActionBarrier::Skip;
-        }
-        OwnerActionBarrier::Reach
-    }
-
-    /// Execute an animation carrier whose orders were authored at registration.
-    pub(super) fn instruct_generic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> OwnerActionBarrier {
-        let elem = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .expect("instructed sequence element disappeared");
-        if elem.orders.is_empty() {
-            // The carrier's animation may have completed
-            // while this element was postponed behind a
-            // higher-priority command.  There is no
-            // command-specific Translate body left to
-            // run. Original-game actor instruction handling nevertheless
-            // writes mmotionState=IN_PROGRESS immediately
-            // after Translate returns, before discovering
-            // that the current order is null and
-            // terminating the accepted element. Preserve
-            // that otherwise-invisible acceptance edge
-            // before the state change clears the selected element.
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("accepted empty Generic lost its actor")
-                .continuation
-                .motion_state = crate::sprite::MotionState::InProgress;
-            self.select_sequence_element(owner, None);
-            self.publish_selected_order_as_installed(owner);
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
-        } else {
-            self.element_in_progress(sim, assets, active_scripts, seq_id, elem_idx);
-        }
-        OwnerActionBarrier::Reach
     }
 }
