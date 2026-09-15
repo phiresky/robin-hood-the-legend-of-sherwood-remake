@@ -4802,10 +4802,6 @@ impl EngineInner {
                     selected.elem_idx,
                 );
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    let actor = entity
-                        .actor_data_mut()
-                        .expect("RiderCharging owner must remain an actor");
-                    actor.clear_path();
                     entity.position_iface_mut().reset_box_blocked();
                 }
             }
@@ -5075,7 +5071,6 @@ impl EngineInner {
                     );
                     actor.active_door_pass = None;
                 }
-                actor.clear_path();
                 // The movement Execute switches have no ABORTED
                 // state branch. The actor update marks the captured
                 // element Impossible, but the actor keeps whatever
@@ -5398,7 +5393,6 @@ impl EngineInner {
             // TERMINATED, so human action execution observes the sword
             // movement completion before the actor update advances
             // the selected element.
-            actor.clear_path();
             // The original game terminates the seek before starting the post-seek sequence
             // and launches the interaction without rewriting the
             // actor state. The interaction's generated transition
@@ -5499,7 +5493,6 @@ impl EngineInner {
                     // leave an end-transition order as the
                     // new current, which the animation driver
                     // will play next tick.
-                    actor.clear_path();
                     // Keep the movement action state until an
                     // optional end transition actually finishes.
                     // The actor's walking execution branch leaves
