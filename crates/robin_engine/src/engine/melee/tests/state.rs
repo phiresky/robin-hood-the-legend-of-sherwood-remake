@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal() {
+    use crate::element::InstalledActorOrder;
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = make_engine();
+    let victim = engine.add_test_entity(make_pc(wp(100.0, 100.0), None));
+    let order_id = engine.orders.allocate_order_id();
+    let goal = crate::coordinates::MapPoint::new(120.0, 130.0);
+    let entity = engine.get_entity_mut(victim).unwrap();
+    entity.set_posture(Posture::StuckUnderNet);
+    entity.position_iface_mut().set_map_goal(goal);
+    let actor = entity.actor_data_mut().unwrap();
+    actor.installed_order = Some(InstalledActorOrder {
+        order_id,
+        order_type: OrderType::WaitingSword,
+    });
+    actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
+
+    // A second net translates to an accepted instruction with no orders.
+    let sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new_damage(
+            1,
+            Command::ReceiveNet,
+            Some(victim),
+            None,
+            0,
+            0,
+        ));
+    engine
+        .orders
+        .sequence_manager
+        .set_translating_element(Some((
+            victim,
+            crate::sequence::SequenceElementRef::new(sequence, 0),
+        )));
+    engine.dispatch_receive_damage(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        &mut Vec::new(),
+        victim,
+        sequence,
+        0,
+    );
+
+    assert_eq!(
+        engine.actor_order_type(victim),
+        Some(OrderType::NonanimationEnd)
+    );
+    let entity = engine.get_entity(victim).unwrap();
+    assert_eq!(entity.position_iface().map_goal(), goal);
+    assert_eq!(
+        entity.actor_data().unwrap().continuation.motion_state,
+        crate::sprite::MotionState::InProgress,
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .state,
+        SequenceState::Terminated,
+    );
+}
+
+#[test]
 fn strike_collector_angles_and_push_width_keep_original_conversions() {
     let expected_angle = ((7.0_f64 / 360.0) * 2.0 * f64::from(std::f32::consts::PI)) as f32;
     assert_eq!(strike_profile_angle(7).to_bits(), expected_angle.to_bits());

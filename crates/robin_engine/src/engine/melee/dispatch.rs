@@ -1207,11 +1207,14 @@ impl EngineInner {
         // There is no actor instruction receiver (and therefore no motion field)
         // in that case, but its synthetic damage element still has to close.
         if let Some(victim) = self.world.entities.get_mut(victim_id) {
-            victim
+            let actor = victim
                 .actor_data_mut()
-                .expect("accepted damage victim lost actor state")
-                .continuation
-                .motion_state = crate::sprite::MotionState::InProgress;
+                .expect("accepted damage victim lost actor state");
+            actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
+            // Empty translation installs no order before completion callbacks.
+            // Those callbacks can immediately query the animation while deciding
+            // whether a nearby movement destination has already been reached.
+            actor.installed_order = None;
         }
         self.orders.sequence_manager.set_translating_element(None);
         self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
