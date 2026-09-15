@@ -3926,14 +3926,6 @@ impl<'a> OrderEmitter<'a> {
         crate::order::alloc_order_id(self.next_order_id)
     }
 
-    /// Raw counter for shared translation helpers in other modules that
-    /// allocate their own ids.
-    // TODO: route those helpers (abilities::begin_*, posture transitions) through
-    // `OrderEmitter` instead of the raw counter.
-    pub(in crate::engine) fn counter(&mut self) -> &mut u32 {
-        &mut *self.next_order_id
-    }
-
     /// Allocate one order and append it to `(seq_id, elem_idx)`. Direction
     /// policy is explicit: recovery orders keep `Order::new`'s ordinary `true`,
     /// whereas posture-local translators disable recomputation.

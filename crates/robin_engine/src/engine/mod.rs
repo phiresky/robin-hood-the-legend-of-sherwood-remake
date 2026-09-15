@@ -1628,21 +1628,6 @@ impl EngineInner {
             .installed_order = installed_order;
     }
 
-    /// Publish the actor instruction's order only when the instructed
-    /// owner actually uses the Actor implementation. `InstructOwner` also
-    /// carries valid non-actor owners, whose original-game entity kinds have no
-    /// actor order; a missing owner remains an invariant failure.
-    pub(crate) fn publish_selected_order_for_instruct_owner(&mut self, owner: EntityId) {
-        let is_actor = self
-            .get_entity(owner)
-            .unwrap_or_else(|| panic!("InstructOwner publication owner {owner:?} vanished"))
-            .actor_data()
-            .is_some();
-        if is_actor {
-            self.publish_selected_order_as_installed(owner);
-        }
-    }
-
     /// Original-game animation selection: the live sequence order,
     /// falling back to the sprite-driven animation while no order is selected.
     ///

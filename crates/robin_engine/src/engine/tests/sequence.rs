@@ -528,7 +528,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
             .get_entity_mut(actor)
             .unwrap()
             .element_data_mut()
-            .set_sector(sector);
+            .set_sector(Some(sector));
     }
     let assets = engine.test_runtime_assets();
     engine
