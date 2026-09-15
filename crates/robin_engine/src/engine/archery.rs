@@ -3663,6 +3663,11 @@ impl EngineInner {
                 carrier_direction,
                 ..
             } => {
+                crate::abilities::sync_terminal_corpse_drop_animation(
+                    &mut self.world.entities,
+                    &assets.profile_manager,
+                    carrier_id,
+                );
                 self.apply_completed_corpse_drop(
                     sim,
                     assets,
