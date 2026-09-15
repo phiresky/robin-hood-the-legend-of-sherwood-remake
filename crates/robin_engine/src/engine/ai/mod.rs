@@ -89,13 +89,7 @@ use super::*;
 use crate::ai::StimulusType;
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
-#[cfg(test)]
-use crate::element::PcId;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Human as _, SoldierId};
-#[cfg(test)]
-use crate::entities::Entities;
-#[cfg(test)]
-use serde::{Deserialize, Serialize};
 
 fn beam_door_waypoints_into_houses(
     paths: &mut [crate::level_data::RawHikingPath],
@@ -1239,58 +1233,6 @@ fn nearby_panic_civilian_reaches_visibility(active: bool, in_building: bool) -> 
     active && !in_building
 }
 
-/// Original's money-brawl inline panic sweep uses the civilian's 180-degree
-/// detector. Keep LOS lazy so actors outside the forward cone do not emit an
-/// obstacle query. The shared nearby-civilian panic callback must not use
-/// this helper: its source implementation explicitly uses 360 degrees.
-#[cfg(test)]
-fn brawl_panic_civilian_detects_source(
-    viewer: crate::ai::Position,
-    viewer_direction: u16,
-    source: crate::ai::Position,
-    sq_view_radius: f32,
-    los_clear: impl FnOnce() -> bool,
-) -> bool {
-    crate::ai_enemy::detects_position_180_raw(viewer, viewer_direction, source, sq_view_radius)
-        && los_clear()
-}
-
-#[cfg(test)]
-fn nearby_panic_civilian_detects_source(
-    use_180_degree_detection: bool,
-    viewer: crate::ai::Position,
-    viewer_direction: u16,
-    source: crate::ai::Position,
-    sq_view_radius: f32,
-    los_clear: impl FnOnce() -> bool,
-) -> bool {
-    if use_180_degree_detection {
-        brawl_panic_civilian_detects_source(
-            viewer,
-            viewer_direction,
-            source,
-            sq_view_radius,
-            los_clear,
-        )
-    } else {
-        // Shared NearbyCiviliansPanic is explicitly 360 degrees in Original.
-        los_clear()
-    }
-}
-
-/// Whether the installed actor order owns the sprite's exact completion
-/// boundary. A newly installed order can temporarily coexist with the prior
-/// sprite action and must not inherit that action's terminal frame/counter.
-fn installed_animation_has_reached_action_done(
-    concrete_animation: crate::order::OrderType,
-    sprite: &crate::sprite::Sprite,
-) -> bool {
-    sprite.last_action == concrete_animation
-        && (sprite.current_frame > sprite.action_done_frame
-            || (sprite.current_frame == sprite.action_done_frame
-                && sprite.frame_count >= sprite.action_done_counter))
-}
-
 #[cfg(test)]
 mod parity_tests {
     use super::*;
@@ -1474,139 +1416,6 @@ mod parity_tests {
         ));
         assert!(!nearby_panic_civilian_reaches_visibility(false, false));
         assert!(!nearby_panic_civilian_reaches_visibility(true, true));
-    }
-
-    #[test]
-    fn nearby_panic_uses_civilian_forward_half_plane_and_los() {
-        use std::cell::Cell;
-
-        let viewer = crate::ai::Position::default();
-        let position = |x, y| crate::ai::Position {
-            x,
-            y,
-            ..Default::default()
-        };
-        let los_calls = Cell::new(0);
-        let clear_los = || {
-            los_calls.set(los_calls.get() + 1);
-            true
-        };
-
-        // Direction 0 faces north (-Y). Ahead and either 180-degree boundary
-        // are accepted; directly behind is rejected without consulting LOS.
-        assert!(brawl_panic_civilian_detects_source(
-            viewer,
-            0,
-            position(0.0, -100.0),
-            40_000.0,
-            clear_los,
-        ));
-        assert!(brawl_panic_civilian_detects_source(
-            viewer,
-            0,
-            position(100.0, 0.0),
-            40_000.0,
-            clear_los,
-        ));
-        assert!(brawl_panic_civilian_detects_source(
-            viewer,
-            0,
-            position(-100.0, 0.0),
-            40_000.0,
-            clear_los,
-        ));
-        assert!(!brawl_panic_civilian_detects_source(
-            viewer,
-            0,
-            position(0.0, 100.0),
-            40_000.0,
-            clear_los,
-        ));
-        assert_eq!(los_calls.get(), 3);
-
-        // An actor in front still fails when opaque sight obstacles block it.
-        assert!(!brawl_panic_civilian_detects_source(
-            viewer,
-            0,
-            position(0.0, -100.0),
-            40_000.0,
-            || false,
-        ));
-    }
-
-    #[test]
-    fn generic_nearby_panic_keeps_360_degree_detection() {
-        let viewer = crate::ai::Position::default();
-        let behind = crate::ai::Position {
-            y: 100.0,
-            ..Default::default()
-        };
-
-        assert!(nearby_panic_civilian_detects_source(
-            false,
-            viewer,
-            0,
-            behind,
-            40_000.0,
-            || true,
-        ));
-        assert!(!nearby_panic_civilian_detects_source(
-            true,
-            viewer,
-            0,
-            behind,
-            40_000.0,
-            || true,
-        ));
-    }
-
-    #[test]
-    fn action_done_projection_requires_sprite_to_match_installed_animation() {
-        use crate::element::ActionState;
-        use crate::order::OrderType as OT;
-
-        let sprite = crate::sprite::Sprite {
-            last_action: OT::TransitionRunningAlertedWaitingAlerted,
-            current_frame: 5,
-            frame_count: 1,
-            action_done_frame: 5,
-            action_done_counter: 1,
-            ..Default::default()
-        };
-        let resolved = super::super::animation::soldier_movement_animation(
-            OT::TransitionRunningUprightWaitingUpright,
-            true,
-            ActionState::Waiting,
-        );
-        assert!(installed_animation_has_reached_action_done(
-            resolved, &sprite,
-        ));
-
-        let past_done = crate::sprite::Sprite {
-            current_frame: 6,
-            ..sprite.clone()
-        };
-        assert!(installed_animation_has_reached_action_done(
-            resolved, &past_done,
-        ));
-
-        let before_done = crate::sprite::Sprite {
-            current_frame: 4,
-            ..sprite.clone()
-        };
-        assert!(!installed_animation_has_reached_action_done(
-            resolved,
-            &before_done,
-        ));
-        let unrelated_prior = super::super::animation::soldier_movement_animation(
-            OT::TransitionWalkingUprightWaitingUpright,
-            true,
-            ActionState::Waiting,
-        );
-        assert!(
-            !installed_animation_has_reached_action_done(unrelated_prior, &sprite),
-            "a newly installed transition must not inherit the prior sprite's terminal frame"
-        );
     }
 
     fn lift_grid(
@@ -3057,7 +2866,6 @@ impl EngineInner {
                     crate::ai::StimulusType::EventPanic,
                     panic_center,
                 ),
-                None,
                 assets,
             );
         }

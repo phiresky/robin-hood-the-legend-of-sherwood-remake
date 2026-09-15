@@ -49,7 +49,7 @@ impl EngineInner {
             return;
         }
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
-        self.dispatch_think_with_drain(sim, npc_id, &stimulus, None, assets);
+        self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
     }
 
     /// Execute Original's route-arrival call stack without detaching the handler.
@@ -125,7 +125,6 @@ impl EngineInner {
                 assets,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
-                None,
             );
         }
         self.execute_ai_end_think(sim, assets, owner);
@@ -335,7 +334,6 @@ impl EngineInner {
                 sim,
                 npc_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventWaspAway),
-                None,
                 assets,
             );
         }
@@ -535,7 +533,6 @@ impl EngineInner {
                         sim,
                         npc_id,
                         &Stimulus::new(StimulusType::EventCouldntReachPoint),
-                        None,
                         assets,
                     );
                 }

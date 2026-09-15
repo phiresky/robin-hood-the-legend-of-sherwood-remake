@@ -2051,7 +2051,7 @@ impl EngineInner {
                     attacker_id.index(),
                 );
                 let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus, None);
+                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus);
                 if let Some(creation_order) = debug {
                     trace_reactive_sword(
                         frame,

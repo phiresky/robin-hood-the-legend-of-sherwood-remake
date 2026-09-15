@@ -1839,7 +1839,6 @@ mod suite {
                 from_halt: true,
             },
             &LevelAssets::new(),
-            &mut Vec::new(),
         );
         let entity = engine.get_entity(owner).unwrap();
 

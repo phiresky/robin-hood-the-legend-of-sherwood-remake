@@ -915,13 +915,7 @@ impl EngineInner {
                         crate::ai::StimulusType::EventEnterSwordfight,
                         initiator.index(),
                     );
-                    self.dispatch_think_with_drain(
-                        sim,
-                        opponent,
-                        &stimulus,
-                        Some(initiator),
-                        assets,
-                    );
+                    self.dispatch_think_with_drain(sim, opponent, &stimulus, assets);
                 }
             });
         }

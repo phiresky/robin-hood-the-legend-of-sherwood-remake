@@ -423,8 +423,7 @@ impl EngineInner {
             soldier,
             crate::sequence::SequencePriority::Preference,
         );
-        let ai = self
-            .get_entity_mut(soldier)
+        self.get_entity_mut(soldier)
             .and_then(Entity::enemy_ai_mut)
             .unwrap_or_else(|| panic!("selected tactical unit {soldier:?} has no enemy AI"));
     }
@@ -1050,7 +1049,6 @@ impl EngineInner {
                     id,
                     crate::sequence::SequencePriority::Preference,
                 );
-                if let Some(ai) = self.get_entity_mut(id).and_then(Entity::enemy_ai_mut) {}
             }
             self.set_tactical_ai_locked(sim, assets, id, stance != CombatStance::Aggressive);
         }

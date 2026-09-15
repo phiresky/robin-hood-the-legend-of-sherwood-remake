@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "netProtocol": 55,
-  "replaySchema": 46,
+  "replaySchema": 47,
   "ticketSchema": 3,
   "joinCodePrefix": "rhmp3-",
   "contentSchema": 2,

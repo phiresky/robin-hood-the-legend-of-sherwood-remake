@@ -3385,19 +3385,8 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        target: Option<crate::element::EntityId>,
     ) -> bool {
-        self.dispatch_filtered_stimulus_inner(sim, assets, entity_id, stimulus, target)
-    }
-
-    pub(super) fn dispatch_filtered_friendly_stimulus(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: crate::element::EntityId,
-        stimulus: &crate::ai::Stimulus,
-    ) -> bool {
-        self.dispatch_filtered_stimulus_inner(sim, assets, entity_id, stimulus, None)
+        self.dispatch_filtered_stimulus_inner(sim, assets, entity_id, stimulus)
     }
 
     pub(super) fn dispatch_filtered_stimulus_inner(
@@ -3406,7 +3395,6 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        target: Option<crate::element::EntityId>,
     ) -> bool {
         // The original game filters AI events before the main AI update
         // during AI initialization. Keep this diagnostic at that
@@ -3502,7 +3490,7 @@ impl EngineInner {
         let handled = if route_arrival {
             self.think_patrol_arrival(sim, assets, entity_id, stimulus)
         } else {
-            self.execute_ai_think(sim, assets, entity_id, stimulus, target)
+            self.execute_ai_think(sim, assets, entity_id, stimulus)
         };
         debug_snapshot(
             self,
@@ -3517,13 +3505,6 @@ impl EngineInner {
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
         handled
-    }
-
-    pub(super) fn debug_think_stimulus_matches(&self, owner: crate::element::EntityId) -> bool {
-        think_stimulus_debug_filter().is_some_and(|filter| {
-            self.control.frame_counter == filter.frame
-                && self.world.original_creation_order(owner) == filter.creation_order
-        })
     }
 
     pub(in crate::engine) fn execute_ai_consider_to_begin_parade(

@@ -869,7 +869,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
             .me = id.index();
     }
 
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
 
     let Entity::Soldier(self_soldier) =
         engine.get_entity_mut(self_id).expect("self fighter exists")
@@ -929,7 +929,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     dead_pc.element.active = true;
     dead_pc.pc.life_points = 0;
 
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
 
     assert!(engine.world.fighter_registry_ids.contains(&dead_pc_id));
     let entity = engine
@@ -1016,7 +1016,6 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &sim,
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        None,
         &assets,
     );
 
@@ -1465,7 +1464,6 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         &sim,
         target_id,
         &crate::ai::Stimulus::with_human(StimulusType::CallCoordinate, source_id.index()),
-        None,
         &assets,
     );
 
@@ -1499,7 +1497,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
 
 #[test]
 fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() {
-    use crate::ai::{AiState, StimulusType, Substate};
+    use crate::ai::{AiState, Substate};
     use crate::element::Camp;
 
     let sim = crate::sim_rng::test_context();
@@ -1531,7 +1529,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
 
     engine.execute_ai_break_phalanx(&sim, &assets, member_id, false, false);
 
-    let member = engine
+    engine
         .get_entity(member_id)
         .and_then(Entity::enemy_ai)
         .expect("phalanx-break member retains EnemyAi");

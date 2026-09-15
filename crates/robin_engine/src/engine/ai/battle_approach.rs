@@ -138,13 +138,7 @@ impl EngineInner {
             .launch_timer(delay, self.control.frame_counter);
     }
 
-    fn approach_focus(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: Option<EntityId>,
-    ) {
+    fn approach_focus(&mut self, owner: EntityId, target: Option<EntityId>) {
         self.execute_ai_focus(
             owner,
             target.map(|target| AiEntityHandle::new(target.index())),
@@ -223,7 +217,7 @@ impl EngineInner {
         self.launch_element(sim, assets, element);
 
         self.clear_live_combat_neighbours(owner);
-        self.approach_focus(sim, assets, owner, None);
+        self.approach_focus(owner, None);
         let vip = self.expect_entity(owner, "swordfight speech").is_vip();
         self.execute_ai_speech(
             sim,
@@ -401,7 +395,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingRunningToLadder,
             );
-            self.approach_focus(sim, assets, owner, Some(self.approach_primary(owner)));
+            self.approach_focus(owner, Some(self.approach_primary(owner)));
             self.duty_go_near(sim, assets, owner, entry, 30, GotoFlags::RUN);
             self.approach_timer(owner, 30);
             return;
@@ -450,7 +444,7 @@ impl EngineInner {
                 },
             );
         }
-        self.approach_focus(sim, assets, owner, Some(self.approach_primary(owner)));
+        self.approach_focus(owner, Some(self.approach_primary(owner)));
         if self
             .expect_entity(owner, "approach rider")
             .soldier_data()
@@ -524,7 +518,7 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("approach seek goal"))
             .seek_position = goal;
-        self.approach_focus(sim, assets, owner, Some(self.approach_primary(owner)));
+        self.approach_focus(owner, Some(self.approach_primary(owner)));
         let (state, flags, tolerance) = if !below {
             if charge {
                 (
@@ -687,10 +681,10 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("rider seek target"))
             .seek_position = position;
-        self.approach_focus(sim, assets, owner, Some(target));
+        self.approach_focus(owner, Some(target));
         let mut flags = GotoFlags::RUN | GotoFlags::RIDER_CHARGE;
         let state = if hit {
-            self.approach_focus(sim, assets, owner, None);
+            self.approach_focus(owner, None);
             self.execute_ai_speech(
                 sim,
                 assets,

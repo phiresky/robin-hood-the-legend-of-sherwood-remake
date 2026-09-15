@@ -2805,14 +2805,10 @@ impl EngineInner {
     /// the actor update after one execution call.
     fn apply_actor_post_execute_wait_modifier(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
         owner: EntityId,
         execute_result: &mut super::animation::ActorExecuteResult,
     ) {
         self.apply_actor_post_execute_wait_modifier_to_motion(
-            sim,
-            assets,
             owner,
             execute_result.entry_seq_id,
             execute_result.entry_elem_idx,
@@ -2822,8 +2818,6 @@ impl EngineInner {
 
     fn apply_actor_post_execute_wait_modifier_to_motion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
         owner: EntityId,
         entry_seq_id: crate::sequence::SequenceId,
         entry_elem_idx: usize,

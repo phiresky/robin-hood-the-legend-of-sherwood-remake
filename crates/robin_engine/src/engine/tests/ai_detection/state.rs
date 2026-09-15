@@ -602,9 +602,9 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
                 engine.refresh_npc_view_for_npc(receiver_id);
-                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, None, &assets);
+                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, &assets);
             } else {
-                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, None, &assets);
+                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, &assets);
                 engine.refresh_npc_view_for_npc(receiver_id);
             }
         });
@@ -692,7 +692,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     let npc = engine.get_entity(npc_id).unwrap();
     assert_eq!(npc.npc_data().unwrap().eye_status, EyeStatus::LookForward);
     assert!(!npc.human_data().unwrap().unconscious);
-    let ai = npc.ai_controller().unwrap();
+    npc.ai_controller().unwrap();
     assert!(
         engine
             .get_entity(observer_id)
@@ -708,7 +708,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
 #[test]
 fn consecutive_combat_callbacks_commit_unconscious_eyes_inline() {
     use crate::ai::{Stimulus, StimulusType};
-    use crate::element::{Camp, Entity, EyeStatus};
+    use crate::element::{Camp, EyeStatus};
 
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
@@ -875,7 +875,7 @@ fn nonserialized_primary_target_multiplicity_starts_empty_after_restore() {
     ai.base.current_substate = Substate::AttackingSwordfight;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
 
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
     engine.prepare_npc_owner_pass();
 
     assert!(engine.ai.global.primary_target_multiplicity_initialized);

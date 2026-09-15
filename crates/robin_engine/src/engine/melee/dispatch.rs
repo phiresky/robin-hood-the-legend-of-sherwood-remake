@@ -1380,13 +1380,13 @@ mod swordfight_preparation_tests {
 
 #[cfg(test)]
 mod shield_order_tests {
+    use crate::element::Command;
     use crate::element::{
         ActionState, ActorData, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData,
         Posture, SoldierData,
     };
     use crate::order::OrderType;
     use crate::sequence::{Sequence, SequenceElement};
-    use crate::{element::Command, sequence::SequenceState};
 
     fn lying_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {

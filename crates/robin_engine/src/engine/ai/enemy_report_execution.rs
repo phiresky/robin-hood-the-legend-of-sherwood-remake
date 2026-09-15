@@ -359,9 +359,9 @@ impl EngineInner {
                     .expect_ai_controller(owner, format_args!("report recipient"))
                     .my_reconnaissance_report
                     .report_type;
-                self.consider_live_ai_report(sim, assets, owner, donor, 7);
+                self.consider_live_ai_report(owner, donor, 7);
                 if !civilian {
-                    self.consider_live_ai_report(sim, assets, donor, owner, 0);
+                    self.consider_live_ai_report(donor, owner, 0);
                 }
                 let report = &self
                     .world
@@ -481,8 +481,6 @@ impl EngineInner {
     /// retained; body handles and the report metadata are read at their use sites.
     pub(in crate::engine) fn consider_live_ai_report(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
         recipient: EntityId,
         donor: EntityId,
         flags: u16,
@@ -590,13 +588,7 @@ mod tests {
                 detectable_type: DetectableType::Body,
                 ..Default::default()
             });
-        engine.consider_live_ai_report(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            recipient,
-            donor,
-            0,
-        );
+        engine.consider_live_ai_report(recipient, donor, 0);
         let recipient = engine.world.entities.get(recipient).unwrap();
         assert!(
             recipient.npc_data().unwrap().detectable_lists[DetectableType::Body as usize]
@@ -662,13 +654,7 @@ mod tests {
             .expect_ai_controller_mut(donor, format_args!("report donor fixture"))
             .my_reconnaissance_report
             .charly = Some(AiEntityHandle::new(charly.index()));
-        engine.consider_live_ai_report(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            recipient,
-            donor,
-            2,
-        );
+        engine.consider_live_ai_report(recipient, donor, 2);
         let report = &engine
             .world
             .entities

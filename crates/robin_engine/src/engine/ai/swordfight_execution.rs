@@ -997,7 +997,7 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("observation primary"))
             .primary_target = primary;
-        self.focus_live_combat_target(sim, assets, owner);
+        self.focus_live_combat_target(owner);
         let Some(primary) = primary else {
             self.execute_ai_get_battle_overview(sim, assets, owner, 0);
             return;
@@ -1055,12 +1055,7 @@ impl EngineInner {
         self.execute_observation_attack_or_step(sim, assets, owner);
     }
 
-    fn focus_live_combat_target(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn focus_live_combat_target(&mut self, owner: EntityId) {
         let ai = self
             .world
             .entities
@@ -1091,7 +1086,7 @@ impl EngineInner {
         .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
         self.execute_ai_direction_goal(owner, direction);
 
-        self.focus_live_combat_target(sim, assets, owner);
+        self.focus_live_combat_target(owner);
         self.stop_ai_owner(sim, assets, owner);
         self.duty_set_state(
             sim,
@@ -1328,7 +1323,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingObserveAndMove,
             );
-            self.focus_live_combat_target(sim, assets, owner);
+            self.focus_live_combat_target(owner);
             self.duty_go_to(sim, assets, owner, destination, GotoFlags::SWORD);
         } else {
             self.stand_observing_combat(sim, assets, owner);

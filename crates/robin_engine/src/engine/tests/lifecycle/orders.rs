@@ -1294,12 +1294,12 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 
     for _ in 0..10 {
         engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
-        if (engine
+        if engine
             .get_entity(attacker)
             .unwrap()
             .sprite()
             .last_motion_state
-            == Some(crate::sprite::MotionState::Done))
+            == Some(crate::sprite::MotionState::Done)
         {
             break;
         }
@@ -1445,7 +1445,6 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
 
 #[test]
 fn terminal_ability_owner_defers_exposed_generic_successor_until_next_hourglass() {
-    let assets = LevelAssets::default();
     use crate::element::{Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;

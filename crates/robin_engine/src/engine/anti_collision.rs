@@ -1141,7 +1141,7 @@ mod tests {
     }
 
     #[test]
-    fn split_owner_preserves_candidate_slot_order_and_only_invalidates_owner() {
+    fn split_owner_preserves_candidate_slot_order() {
         let mut entities = Entities::from_legacy_slots(vec![
             Some(pc(10.0, Posture::Upright)),
             None,
@@ -1171,9 +1171,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![map_pt(10.0, 0.0), map_pt(20.0, 0.0)]
         );
-        assert_eq!(entities.generation(PcId(2)), 1);
-        assert_eq!(entities.generation(PcId(0)), 0);
-        assert_eq!(entities.generation(PcId(3)), 0);
     }
 
     #[test]

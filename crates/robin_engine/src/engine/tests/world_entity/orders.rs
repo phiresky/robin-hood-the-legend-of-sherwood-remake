@@ -274,7 +274,7 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     engine.world.pc_ids = vec![first, second];
     assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
 
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
     assert_eq!(
         engine.world.original_pc_registry(),
         &[second, first],
@@ -543,7 +543,6 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
         &sim,
         officer_id,
         &Stimulus::with_human(StimulusType::CallReport, soldier_id.index()),
-        None,
         &assets,
     );
 

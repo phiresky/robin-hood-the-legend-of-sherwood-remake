@@ -332,8 +332,6 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
 
 #[test]
 fn condolation_reenters_think_before_dispatch_returns() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::ai::Substate;
     use crate::element::Command;
     use crate::sequence::SequenceElement;
@@ -389,8 +387,6 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -478,7 +474,6 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::OnWall));
@@ -522,7 +517,6 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -672,7 +666,6 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     use crate::order::OrderType;
     use crate::sequence::SequenceElement;
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -793,7 +786,6 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -844,7 +836,6 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
     use crate::order::OrderType;
     use crate::sequence::{CascadeFlags, SequenceElement};
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
@@ -887,8 +878,6 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
 
 #[test]
 fn condolation_followup_arbitrates_before_parent_sequence_successor() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::ai::{AiState, Substate};
     use crate::element::Command;
     use crate::sequence::{Sequence, SequenceAction, SequenceElement};
@@ -974,8 +963,6 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
 
 #[test]
 fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     use crate::element::Command;
     use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceState};
 
@@ -1043,8 +1030,6 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     use crate::element::Command;
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));

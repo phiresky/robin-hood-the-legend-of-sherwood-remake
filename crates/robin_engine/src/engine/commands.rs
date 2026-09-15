@@ -22,7 +22,7 @@ pub(super) use object_use::is_pc_takable;
 pub use object_use::{coin_pickup_target, object_pickup_command};
 
 use super::{CameraDisplayState, EngineInner, LevelAssets};
-use crate::element::{Command, Entity, EntityId};
+use crate::element::{Command, EntityId};
 use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use crate::titbit::QuickAction;
 

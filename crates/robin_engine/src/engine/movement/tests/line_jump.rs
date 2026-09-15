@@ -3,7 +3,7 @@ mod suite {
     use super::super::*;
     use crate::element::{
         ActionState, ActorData, ActorSoldier, Command, ElementData, ElementKind, Entity, HumanData,
-        NpcData, Posture, SoldierData,
+        NpcData, Posture,
     };
     use crate::sequence::{
         Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,

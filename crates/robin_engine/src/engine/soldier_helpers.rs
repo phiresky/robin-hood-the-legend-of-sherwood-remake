@@ -419,7 +419,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         card: CondolationCard,
         assets: &LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) {
         use crate::sequence::SequenceState;
         #[cfg(test)]
@@ -778,7 +777,7 @@ impl EngineInner {
         if let Some(st) = stimulus {
             observe_condolation_stimulus(owner, st);
             if let Some((seq_id, elem_idx)) = take_condolation_nested_termination(owner, st) {
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }
         }
 
@@ -1495,7 +1494,6 @@ mod tests {
 
     #[test]
     fn condolations_leave_registered_normal_move_for_manager_update() {
-        let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {

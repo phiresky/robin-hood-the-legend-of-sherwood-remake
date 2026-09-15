@@ -220,7 +220,7 @@ impl EngineInner {
             if self.world.entities.get(npc_id).is_none() {
                 break;
             }
-            let target_override = match stimulus.info {
+            match stimulus.info {
                 crate::ai::StimulusInfo::Human(handle)
                     if matches!(
                         stimulus.stimulus_type,
@@ -230,9 +230,9 @@ impl EngineInner {
                             | crate::ai::StimulusType::EventEnemyNear
                     ) =>
                 {
-                    Some(self.expect_entity_id_for_index(handle.get(), "queued detection target"))
+                    self.expect_entity_id_for_index(handle.get(), "queued detection target");
                 }
-                _ => None,
+                _ => {}
             };
             // Production reaches this FIFO from detection refresh in the NPC
             // tail, after the actor's Execute slot has already run. Face/Turn
@@ -272,7 +272,7 @@ impl EngineInner {
                     "delivering shadow event to AI"
                 );
             }
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, target_override, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
             if trace_shadow_delivery {
                 let npc = self.world.entities.expect_ai_actor_data(
                     npc_id,
@@ -346,7 +346,7 @@ impl EngineInner {
                 ai.stimulus_queue.remove(0)
             };
 
-            let target_override = match stimulus.info {
+            match stimulus.info {
                 crate::ai::StimulusInfo::Human(handle)
                     if matches!(
                         stimulus.stimulus_type,
@@ -356,18 +356,18 @@ impl EngineInner {
                             | crate::ai::StimulusType::EventEnemyNear
                     ) =>
                 {
-                    Some(self.entity_id_for_index(handle.get()).unwrap_or_else(|| {
+                    self.entity_id_for_index(handle.get()).unwrap_or_else(|| {
                         panic!(
                             "retained {:?} for NPC {} references missing entity {}",
                             stimulus.stimulus_type,
                             npc_id.index(),
                             handle
                         )
-                    }))
+                    });
                 }
-                _ => None,
+                _ => {}
             };
-            self.dispatch_think_with_drain(sim, npc_id, &stimulus, target_override, assets);
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
         }
     }
 }

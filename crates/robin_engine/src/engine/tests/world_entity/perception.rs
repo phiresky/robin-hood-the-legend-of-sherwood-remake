@@ -1160,7 +1160,6 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
         &sim_context,
         civilian_entity_id,
         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer),
-        None,
         &assets,
     );
     let soldier = accepted
@@ -1312,7 +1311,6 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        None,
         &assets,
     );
 
@@ -1359,7 +1357,6 @@ fn review_officer_sees_soldier_accepts_officer_rank_target() {
         &sim,
         officer_id,
         &Stimulus::with_human(StimulusType::EventSeesSoldier, target_id.index()),
-        None,
         &assets,
     );
     assert_eq!(
@@ -1479,7 +1476,6 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
         sim,
         reporter_id,
         &Stimulus::with_human(StimulusType::EventSeesSoldier, officer_id.index()),
-        None,
         &assets,
     );
 
@@ -1496,7 +1492,6 @@ fn review_soldier_alert_records_sender_even_when_later_call_is_refused() {
         sim,
         reporter_id,
         &Stimulus::with_human(StimulusType::CallAlert, callback_officer_id.index()),
-        None,
         &assets
     ));
 
@@ -1570,7 +1565,6 @@ fn blipped_report_speech_callback_precedes_give_report_state_and_timer() {
         &sim,
         soldier_id,
         &Stimulus::new(StimulusType::EventReachPoint),
-        None,
         &assets,
     );
 
@@ -1637,7 +1631,6 @@ fn review2_call_instruction_uses_refusal_to_prune_group_synchronously() {
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        None,
         &assets,
     );
 
@@ -1681,7 +1674,6 @@ fn review2_accepted_group_instruction_closes_officer_state_callback() {
         &sim,
         officer_id,
         &Stimulus::new(StimulusType::EventDone),
-        None,
         &assets,
     );
 
@@ -2017,7 +2009,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
 
 #[test]
 fn final_review_alert_all_refused_resumes_caller_failure() {
-    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+    use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
@@ -2040,16 +2032,23 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
         ai.current_substate = Substate::AttackingSwordfight;
     }
 
-    engine.execute_ai_alert_soldiers_with_failure(
+    {
+        let ai = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        ai.set_ai_state(AiState::Seeking);
+        ai.current_substate = Substate::SeekingArrowJustWatching;
+        ai.seek_position = Position {
+            x: 100.0,
+            ..Default::default()
+        };
+    }
+    engine.execute_ai_handler_body(
         &sim,
         &assets,
         officer_id,
-        Position {
-            x: 100.0,
-            ..Default::default()
-        },
-        0,
-        AlertSoldiersFailureContinuation::ReturnToDuty,
+        &Stimulus::new(StimulusType::EventMyTalk1),
     );
 
     let officer = engine
@@ -2084,7 +2083,7 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
 
 #[test]
 fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
-    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Position, Substate};
+    use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
     use crate::profiles::ProfileRank;
 
     let sim = crate::sim_rng::test_context();
@@ -2134,16 +2133,23 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
         ai.current_substate = Substate::AttackingSwordfight;
     }
 
-    engine.execute_ai_alert_soldiers_with_failure(
+    {
+        let ai = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap();
+        ai.set_ai_state(AiState::Seeking);
+        ai.current_substate = Substate::SeekingArrowJustWatching;
+        ai.seek_position = Position {
+            x: 300.0,
+            ..Default::default()
+        };
+    }
+    engine.execute_ai_handler_body(
         &sim,
         &assets,
         officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
-        0,
-        AlertSoldiersFailureContinuation::ReturnToDuty,
+        &Stimulus::new(StimulusType::EventMyTalk1),
     );
 
     let officer = engine
@@ -2173,14 +2179,19 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
 
 #[test]
 fn search_charly_caller_timer_follows_inline_alert_completion() {
-    use crate::ai::{AiState, AlertSoldiersFailureContinuation, Substate};
+    use crate::ai::{AiEntityHandle, AiState, Stimulus, StimulusType, Substate};
 
-    let sim = crate::sim_rng::test_context();
-    for suspended_substate in [
-        Substate::DefaultLookingForCharly,
-        Substate::DefaultLookingSidewardsForCharly,
-    ] {
-        let (mut engine, officer_id, _soldier_id, assets) = setup_review2_officer_and_soldier();
+    for look_sidewards in [false, true] {
+        let seed = (0..10_000)
+            .find(|seed| {
+                let context = crate::sim_rng::SimulationContext::with_seed(*seed);
+                let draw =
+                    crate::sim_rng::u32(&context, crate::sim_rng::RngSite::CharlySorrow, 0..5000);
+                (draw < 1011) == look_sidewards
+            })
+            .unwrap();
+        let sim = crate::sim_rng::SimulationContext::with_seed(seed);
+        let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
         {
             let ai = &mut engine
                 .get_entity_mut(officer_id)
@@ -2188,26 +2199,18 @@ fn search_charly_caller_timer_follows_inline_alert_completion() {
                 .expect("alert caller has EnemyAi")
                 .base;
             ai.set_ai_state(AiState::Default);
-            ai.current_substate = suspended_substate;
+            ai.current_substate = Substate::DefaultLookingForCharly;
+            ai.sorrow_level = 1001;
+            ai.delta_sorrow_level = 0;
+            ai.checkpoint_charly = Some(AiEntityHandle::new(soldier_id.index()));
         }
-        let position = engine.live_ai_position(officer_id);
         let frame = engine.control.frame_counter;
-        engine.execute_ai_alert_soldiers_with_failure(
+        engine.execute_ai_officer_rpc(
             &sim,
             &assets,
             officer_id,
-            position,
-            0,
-            AlertSoldiersFailureContinuation::SeekMissedCharly { center: position },
+            &Stimulus::new(StimulusType::EventTimer),
         );
-        engine
-            .world
-            .entities
-            .expect_ai_controller_mut(officer_id, format_args!("search timer tail"))
-            .launch_timer(
-                crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32,
-                frame,
-            );
 
         let officer = engine
             .get_entity(officer_id)
@@ -2415,8 +2418,6 @@ fn review2_alerted_soldier_accepts_a_later_live_reconnaissance_report() {
         ..Default::default()
     };
     engine.consider_live_ai_report(
-        &sim,
-        &assets,
         soldier_id,
         second_id,
         crate::ai_enemy::ReportUpdateFlags::UPDATE_TYPE.bits(),

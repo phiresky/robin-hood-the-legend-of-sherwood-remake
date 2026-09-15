@@ -2,7 +2,6 @@ use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{
     ActionState, ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, Posture,
-    SoldierData,
 };
 use crate::fast_find_grid::GridLine;
 use crate::order::{Order, OrderType};

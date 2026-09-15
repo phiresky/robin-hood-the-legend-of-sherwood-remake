@@ -620,7 +620,7 @@ fn timer_tick_decrements_and_removes() {
 
 #[test]
 fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::element::{Command, Posture};
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 

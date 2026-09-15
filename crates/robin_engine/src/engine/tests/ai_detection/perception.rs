@@ -973,7 +973,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
     });
 
     crate::sim_rng::with_seed(0xA013_2600, |sim| {
-        engine.dispatch_think_with_drain(sim, subordinate_id, &stimulus, None, &assets);
+        engine.dispatch_think_with_drain(sim, subordinate_id, &stimulus, &assets);
     });
 
     let chief = engine.get_entity(chief_id).unwrap().enemy_ai().unwrap();
@@ -1137,7 +1137,6 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
             &sim,
             owner_id,
             &Stimulus::new(StimulusType::EventDone),
-            None,
             &assets,
         );
     });

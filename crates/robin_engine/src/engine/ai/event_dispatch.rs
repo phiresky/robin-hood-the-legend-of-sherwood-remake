@@ -162,7 +162,7 @@ impl EngineInner {
         // primary target. Think and every order/script callback it creates
         // close here, before the actor update can complete this movement or
         // the mutable legacy walk can advance to the next owner.
-        self.dispatch_think_with_drain(sim, entity_id, &stimulus, None, assets);
+        self.dispatch_think_with_drain(sim, entity_id, &stimulus, assets);
         self.observe_galopp_dispatch(entity_id);
     }
 
@@ -479,7 +479,7 @@ impl EngineInner {
                     continue;
                 };
                 let stimulus = crate::ai::Stimulus::new(stimulus_type);
-                engine.dispatch_think_with_drain(sim, owner, &stimulus, None, assets);
+                engine.dispatch_think_with_drain(sim, owner, &stimulus, assets);
             }
         });
     }

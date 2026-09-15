@@ -210,63 +210,6 @@ pub(crate) fn soldier_detects_detection_point_360(
     .visible
 }
 
-/// Map-space form of all-around detection: both points are rebuilt from AI
-/// positions plus ground Z (`GroundPoint::from_map_and_z`). That projection
-/// round trip is not bit-identical to the stored 3D points used by
-/// [`soldier_detects_detection_point_360`], which is why the eye point is an
-/// explicit input of the shared [`detects_360`] core rather than recomputed
-/// there.
-#[track_caller]
-pub(crate) fn soldier_detects_target_360(
-    viewer_position: Position,
-    viewer_ground_z: f32,
-    viewer_is_rider: bool,
-    viewer_radius: u16,
-    viewer_in_building: bool,
-    target_position: Position,
-    target_ground_z: f32,
-    target_posture: crate::element::Posture,
-    target_is_rider: bool,
-    target_direction: i16,
-    target_in_building: bool,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> bool {
-    if viewer_in_building || target_in_building {
-        return false;
-    }
-    let target_xy = crate::stealth::detection_point_xy(
-        crate::coordinates::MapPoint::new(target_position.x, target_position.y),
-        target_posture,
-        target_direction,
-    );
-    let viewer_z = viewer_ground_z
-        + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, viewer_is_rider);
-    let target_z =
-        target_ground_z + crate::stealth::detection_z_for_posture(target_posture, target_is_rider);
-    let viewer_ground = crate::coordinates::GroundPoint::from_map_and_z(
-        crate::coordinates::MapPoint::new(viewer_position.x, viewer_position.y),
-        viewer_ground_z,
-    );
-    let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
-    detects_360(
-        Viewer360 {
-            eye: crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
-            sq_radius: (viewer_radius as f32).powi(2),
-            in_building: viewer_in_building,
-        },
-        Target360 {
-            detection: crate::coordinates::WorldPoint3D::new(
-                target_ground.x,
-                target_ground.y,
-                target_z,
-            ),
-            in_building: target_in_building,
-        },
-        obstacles,
-    )
-    .visible
-}
-
 pub fn soldier_is_able_to_help_state(
     is_able_to_fight: bool,
     ai_state: AiState,
@@ -290,26 +233,6 @@ pub fn soldier_is_able_to_help_state(
                 | Substate::SeekingHeardstepsReactiontime
                 | Substate::SeekingBodyReactiontime
         ),
-    }
-}
-
-/// Forward-half-plane detection using live position and direction values.
-pub(crate) fn detects_position_180_raw(
-    viewer_pos: Position,
-    viewer_direction: u16,
-    target: Position,
-    sq_standard_view_radius: f32,
-) -> bool {
-    let dx = target.x - viewer_pos.x;
-    let dy = (target.y - viewer_pos.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let sq_distance = dx * dx + dy * dy;
-    if sq_distance > sq_standard_view_radius {
-        return false;
-    }
-
-    match half_plane_180(dx, dy, sq_distance, viewer_direction) {
-        HalfPlane180::Beside => true,
-        HalfPlane180::NotBeside { forward_dot } => forward_dot >= 0.0,
     }
 }
 
@@ -358,44 +281,6 @@ pub(crate) fn half_plane_180(dx: f32, dy: f32, sq_distance: f32, direction: u16)
 // Combat distance helpers (2-D vector math lives in `super::map_vec_ext`)
 // ---------------------------------------------------------------------------
 
-/// The AI's own squared distance metric: a stretched **3D** norm.
-///
-/// The elements' world-space points are subtracted, the Y component is
-/// stretched by `INVERSE_ASPECT_RATIO`, and all three components are
-/// squared. Positions in the AI snapshots are map-space, so world Y is
-/// recovered as `map_y + elevation`.
-///
-/// A flat 2D `square_norm` is not a substitute: it both under-reports
-/// screen-vertical separation and ignores height, so a soldier on a
-/// rampart reads as adjacent to one on the ground below.
-pub(super) fn ai_square_distance(
-    target: &Position,
-    target_elevation: f32,
-    me: &Position,
-    me_elevation: f32,
-) -> f32 {
-    let dx = target.x - me.x;
-    let dz = target_elevation - me_elevation;
-    let dy = ((target.y + target_elevation) - (me.y + me_elevation))
-        * crate::position_interface::INVERSE_ASPECT_RATIO;
-    dx * dx + dy * dy + dz * dz
-}
-
-/// Squared distance over two raw element world points.
-///
-/// Use this when the original-game path receives an element reference directly.
-/// AI-facing `Position()` may snap a door-passing actor to a gate endpoint,
-/// whereas squared distance reads the actor body's stored position.
-pub(super) fn ai_square_distance_world(
-    target: &crate::coordinates::WorldPoint3D,
-    me: &crate::coordinates::WorldPoint3D,
-) -> f32 {
-    let dx = target.x - me.x;
-    let dy = (target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-    let dz = target.z - me.z;
-    dx * dx + dy * dy + dz * dz
-}
-
 /// Score a building-door candidate exactly like Original
 /// Nearest-door selection narrows maximum norm to 16 bits, then applies both penalties with
 /// wrapping 16-bit arithmetic.
@@ -417,49 +302,6 @@ pub(crate) fn legacy_nearest_door_distance(
 
 #[cfg(test)]
 mod raw_element_distance_tests;
-
-/// The AI's stretched **3D** Chebyshev distance.
-///
-/// The world-space points are subtracted, the Y component is stretched by
-/// `INVERSE_ASPECT_RATIO`, and the largest absolute component wins.
-/// Snapshot positions are map-space, so world Y is recovered as
-/// `map_y + elevation` exactly as [`ai_square_distance`] does.
-///
-/// A 2D max-norm over raw map coordinates is not a substitute. Map Y
-/// already carries the elevation as a projection offset, so a friend one
-/// layer up reads as roughly twice their true separation and drops out of
-/// every consideration radius that should have contained them.
-pub(super) fn ai_max_norm_distance(
-    target: &Position,
-    target_elevation: f32,
-    me: &Position,
-    me_elevation: f32,
-) -> f32 {
-    let dx = (target.x - me.x).abs();
-    let dz = (target_elevation - me_elevation).abs();
-    let dy = (((target.y + target_elevation) - (me.y + me_elevation))
-        * crate::position_interface::INVERSE_ASPECT_RATIO)
-        .abs();
-    dx.max(dy).max(dz)
-}
-
-/// Maximum-norm distance over two already-resolved **world** points.
-///
-/// AI maximum-norm distance
-/// in the original game subtracts the two
-/// raw element world points, stretches Y by
-/// `INVERSE_ASPECT_RATIO` and takes the 3D Chebyshev norm. Use this variant
-/// wherever the raw body points are available: AI `Position()` snaps a
-/// door-passing actor to the gate endpoint and is not interchangeable.
-pub(super) fn ai_max_norm_distance_world(
-    target: &crate::coordinates::WorldPoint3D,
-    me: &crate::coordinates::WorldPoint3D,
-) -> f32 {
-    let dx = (target.x - me.x).abs();
-    let dy = ((target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs();
-    let dz = (target.z - me.z).abs();
-    dx.max(dy).max(dz)
-}
 
 /// Convert a raw 2D map-space vector `(target - me)` to a 0–15 sector.
 /// Thin alias over [`crate::position_interface::vector_to_sector_0_to_15_iso`].
@@ -550,62 +392,6 @@ pub fn propose_good_step_back_goal(
     }
 
     None
-}
-
-/// Check if a fighter's substate is one of the 13 stationary/observing
-/// combat substates used by combat-observation step selection.
-/// Only friends in these substates contribute to the left/right dispersion
-/// calculation.
-pub(super) fn is_observing_combat_substate(substate: Substate) -> bool {
-    use crate::ai::Substate;
-    matches!(
-        substate,
-        Substate::AttackingObserve
-            | Substate::AttackingObserveAndMove
-            | Substate::AttackingProtectingWithShield
-            | Substate::AttackingAdvancingWithShield
-            | Substate::AttackingBowRunningBehindShieldBearer
-            | Substate::AttackingBowCorrectingPosition
-            | Substate::AttackingPhalanx
-            | Substate::AttackingRunningToPhalanx
-            | Substate::AttackingBowShooting
-            | Substate::AttackingBowLoading
-            | Substate::AttackingBowAiming
-            | Substate::AttackingBowObserving
-            | Substate::AttackingBowObservingLoading
-    )
-}
-
-/// The three substates the attack-opportunity gate in
-/// swordfight observation reconsideration checks: a friend already approaching
-/// the same target preempts our opportunistic charge.
-pub(super) fn is_walking_running_charging_substate(substate: Substate) -> bool {
-    use crate::ai::Substate;
-    matches!(
-        substate,
-        Substate::AttackingWalkingToEnemy
-            | Substate::AttackingRunningToEnemy
-            | Substate::AttackingChargingEnemy
-    )
-}
-
-/// Check if straight-line movement is authorized between two positions.
-/// Returns `true` if no grid is available (conservative: allow movement).
-pub(super) fn check_straight_movement(
-    grid: Option<&crate::fast_find_grid::FastFindGrid>,
-    from: &Position,
-    to: &Position,
-    move_box: &crate::coordinates::MoveBox,
-) -> bool {
-    match grid {
-        Some(g) => g.is_straight_movement_authorized(
-            crate::coordinates::MapPoint::new(from.x, from.y),
-            crate::coordinates::MapPoint::new(to.x, to.y),
-            from.level,
-            move_box,
-        ),
-        None => true,
-    }
 }
 
 // ---------------------------------------------------------------------------

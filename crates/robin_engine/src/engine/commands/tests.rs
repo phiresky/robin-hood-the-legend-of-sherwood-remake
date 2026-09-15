@@ -5023,8 +5023,6 @@ fn drop_ale_seek_tolerance_uses_sprite_action_distance() {
 
 #[test]
 fn mapped_interaction_seek_tolerance_uses_uword_sprite_action_distance() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
     {
         let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -5514,8 +5512,6 @@ fn same_command_against_human_keeps_generic_entity_seek() {
 
 #[test]
 fn pay_seek_faces_the_beggar_action_point() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
     {
         let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -5666,8 +5662,6 @@ fn swordstrike_down_uses_original_literal_seek_distance() {
 
 #[test]
 fn shoot_bow_interaction_launches_without_seek() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
     {
         let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
@@ -5701,8 +5695,6 @@ fn shoot_bow_interaction_launches_without_seek() {
 
 #[test]
 fn mapped_interaction_missing_sprite_action_distance_noops() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 

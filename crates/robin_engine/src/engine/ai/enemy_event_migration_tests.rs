@@ -58,7 +58,6 @@ fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, kind: 
         assets,
         owner,
         &Stimulus::new(kind),
-        None,
     );
 }
 
@@ -84,7 +83,6 @@ fn repeated_view_during_battle_preserves_first_enemy_insertion_order() {
                 &assets,
                 owner,
                 &stimulus,
-                None,
             );
         }
         let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
@@ -106,7 +104,6 @@ fn misses_charly_notification_does_not_start_a_search() {
             &assets,
             owner,
             &Stimulus::new(StimulusType::EventMissesCharly),
-            None,
         );
         assert!(!handled);
         let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();

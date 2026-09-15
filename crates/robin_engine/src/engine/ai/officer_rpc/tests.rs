@@ -139,9 +139,7 @@ fn tower_alert_finishes_recipient_callback_and_battle_decision_inline() {
 
 #[test]
 fn officer_half_plane_detection_reads_officers_live_facing() {
-    let (mut engine, _, officer, target) = fixture();
-    let origin = engine.live_ai_position(officer);
-    let target = engine.live_ai_position(target);
+    let (mut engine, assets, officer, target) = fixture();
     for (direction, seen) in [(4, true), (12, false)] {
         engine
             .world
@@ -150,22 +148,7 @@ fn officer_half_plane_detection_reads_officers_live_facing() {
             .unwrap()
             .element_data_mut()
             .set_direction_instantly(direction);
-        let direction = engine
-            .world
-            .entities
-            .get(officer)
-            .unwrap()
-            .element_data()
-            .direction();
-        assert_eq!(
-            crate::ai_enemy::detects_position_180_raw(
-                origin,
-                direction as u16,
-                target,
-                350.0 * 350.0
-            ),
-            seen
-        );
+        assert_eq!(engine.live_ai_detects_180(&assets, officer, target), seen);
     }
 }
 

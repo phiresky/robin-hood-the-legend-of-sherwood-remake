@@ -79,13 +79,6 @@ fn sober_drunk_combat_gate_preserves_original_draws_and_short_circuit() {
 }
 
 #[test]
-fn swordfight_range_checks_use_original_uword_truncation() {
-    assert_eq!(original_uword_norm(MapVec::new(90.7, 0.0)), 90);
-    assert_eq!(original_uword_norm(MapVec::new(91.0, 0.0)), 91);
-    assert!(original_uword_norm(MapVec::new(90.7, 0.0)) <= 90);
-}
-
-#[test]
 fn swordfight_facing_guard_uses_ground_positions_before_rng() {
     // Schema-14 task 168 frame 2155: projected map positions misleadingly
     // put PC252 in Soldier137's facing sector because their elevations

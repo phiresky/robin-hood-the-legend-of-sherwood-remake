@@ -117,12 +117,7 @@ impl EngineInner {
         })
     }
 
-    fn focus_battle_primary(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn focus_battle_primary(&mut self, owner: EntityId) {
         let ai = self
             .world
             .entities
@@ -157,7 +152,7 @@ impl EngineInner {
             owner,
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
         );
-        self.focus_battle_primary(sim, assets, owner);
+        self.focus_battle_primary(owner);
         self.battle_state_timer(
             sim,
             assets,
@@ -594,7 +589,7 @@ impl EngineInner {
                     } else {
                         self.launch_ai_raise_sword(sim, assets, owner);
                     }
-                    self.focus_battle_primary(sim, assets, owner);
+                    self.focus_battle_primary(owner);
                     self.battle_state_timer(
                         sim,
                         assets,
@@ -800,7 +795,7 @@ impl EngineInner {
             owner,
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
         );
-        self.focus_battle_primary(sim, assets, owner);
+        self.focus_battle_primary(owner);
         let ai = self
             .world
             .entities

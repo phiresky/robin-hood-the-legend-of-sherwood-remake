@@ -260,7 +260,6 @@ impl EngineInner {
             order_action,
             move_seq_id,
             move_elem_idx,
-            active_move_flags,
             ..
         } = selected_order;
         let entity = self.expect_entity(entity_id, "movement owner");
@@ -348,7 +347,6 @@ impl EngineInner {
             .element_data_mut();
         let dx = goal.x - elem.position_map().x;
         let dy = goal.y - elem.position_map().y;
-        let dist = (dx * dx + dy * dy).sqrt();
         // Combat movement: face opponent, select directional
         // animation.  `compute_direction=false` (don't auto-face
         // movement direction), face toward opponent, pick

@@ -139,12 +139,6 @@ fn roll_destination_box(
     move_box.translated(destination)
 }
 
-/// Fatal push translation clears movement bookkeeping but leaves the actor's
-/// live action state alone. The original game's push-damage translation only authors the
-/// falling order; pushed falling changes the state when that order
-/// reaches the actor's update slot.
-fn clear_fatal_push_path(actor: &mut crate::element::ActorData) {}
-
 impl EngineInner {
     /// Original-game possible-victim collection used by
     /// the MotionState::Start warning pass. This is intentionally separate
@@ -921,9 +915,6 @@ impl EngineInner {
             // owns the dead rider's posture transition on animation Start.
             if is_dead && !death_cascade_already_applied {
                 let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
-                    if let Some(actor) = entity.actor_data_mut() {
-                        clear_fatal_push_path(actor);
-                    }
                     if let Some(npc) = entity.ai_actor_data_mut() {
                         crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
                         npc.alerted = false;
@@ -1649,18 +1640,6 @@ mod tests {
             Some(crate::order::OrderType::FallingPushedWithSword)
         );
         assert_eq!(translated_push_posture(anims.is_some(), true, false), None);
-    }
-
-    #[test]
-    fn fatal_animated_push_preserves_action_until_fall_execute() {
-        let mut actor = crate::element::ActorData {
-            action_state: ActionState::WaitingSword,
-            ..Default::default()
-        };
-
-        clear_fatal_push_path(&mut actor);
-
-        assert_eq!(actor.action_state, ActionState::WaitingSword);
     }
 
     #[test]

@@ -164,7 +164,7 @@ impl EngineInner {
                     .expect_ai_controller(owner, format_args!("brawl dismissal count"))
                     .list_us
                     .len();
-                self.remaining_wondering_forget_coins(sim, assets, owner);
+                self.remaining_wondering_forget_coins(owner);
                 for index in 0..count {
                     let ai = self
                         .world
@@ -294,7 +294,7 @@ impl EngineInner {
                 }
             }
             (WonderingSoldierLookingOfficerWhoFinishedBrawl, EventTimer) => {
-                self.remaining_wondering_forget_coins(sim, assets, owner);
+                self.remaining_wondering_forget_coins(owner);
                 self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
             }
             (WonderingApproachingBrawlVictim, EventReachPoint) => {
@@ -341,12 +341,7 @@ impl EngineInner {
             .launch_timer(frames, frame);
     }
 
-    fn remaining_wondering_forget_coins(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn remaining_wondering_forget_coins(&mut self, owner: EntityId) {
         self.forget_ai_nearby_coins_live(owner);
     }
 

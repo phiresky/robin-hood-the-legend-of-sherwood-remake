@@ -6,9 +6,7 @@ use crate::engine::EngineInner;
 use crate::engine::types::LevelAssets;
 use crate::natives::ScriptHandleCodec;
 use crate::order::OrderType;
-use crate::sequence::{
-    Field, FieldValue, Sequence, SequenceAction, SequenceElement, SequenceState,
-};
+use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 
 mod helpers;
 mod script_fixture;

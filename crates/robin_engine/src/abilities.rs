@@ -635,7 +635,7 @@ pub fn begin_untie(
     if actor_entity.is_dead() || !actor_entity.is_pc() {
         return BeginResult::Impossible;
     }
-    let Some(actor) = actor_entity.actor_data_mut() else {
+    let Some(_) = actor_entity.actor_data_mut() else {
         return BeginResult::Impossible;
     };
     let order_id = alloc_order_id(order_id_counter);

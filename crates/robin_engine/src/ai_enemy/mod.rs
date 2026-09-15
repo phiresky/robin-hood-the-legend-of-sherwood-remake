@@ -51,35 +51,6 @@ pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
     decision_path_debug_gate().matches_required([Some(frame), Some(owner)])
 }
 
-/// Master switch for the opt-in primary-target selection/swap diagnostic.
-///
-/// Keep this separate from [`primary_swap_debug_matches`] so every call site
-/// can return before reading AI/entity state when diagnostics are disabled.
-pub(crate) fn primary_swap_debug_enabled() -> bool {
-    primary_swap_debug_gate().enabled()
-}
-
-fn primary_swap_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
-    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
-        std::sync::OnceLock::new();
-    GATE.get_or_init(|| {
-        crate::ai::parity_gate::required_parity_gate(
-            "PARITY_DEBUG_PRIMARY_SWAP",
-            [
-                "PARITY_DEBUG_PRIMARY_SWAP_FRAME",
-                "PARITY_DEBUG_PRIMARY_SWAP_OWNER",
-            ],
-        )
-    })
-}
-
-/// Apply the required exact frame/owner gate for primary-target diagnostics.
-/// Invalid or incomplete enabled configurations fail loudly rather than
-/// accidentally producing a broad trace.
-pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
-    primary_swap_debug_gate().matches_required([Some(frame), Some(owner)])
-}
-
 // ---------------------------------------------------------------------------
 // EnemyAi — extends AiController with soldier-specific state
 // ---------------------------------------------------------------------------
@@ -309,14 +280,6 @@ impl AiRole for EnemyAi {
 }
 
 impl EnemyAi {
-    /// Unwrap a field the current substate requires to be set, panicking with
-    /// the owner, the field (`what`, e.g. "an antagonist") and the substate
-    /// `context` otherwise.
-    #[track_caller]
-    fn required<T>(&self, value: Option<T>, what: &'static str, context: &'static str) -> T {
-        value.unwrap_or_else(|| panic!("enemy AI {} requires {what} while {context}", self.base.me))
-    }
-
     pub fn new(owner: NpcHandle) -> Self {
         // The derived malignity constructor overrides two fields after
         // the base-class defaults: `attitude = Hostile` and
@@ -381,16 +344,6 @@ impl EnemyAi {
 
     pub fn is_archer(&self) -> bool {
         self.is_archer_unit
-    }
-
-    // -----------------------------------------------------------------------
-    // Helper methods (internal)
-    // -----------------------------------------------------------------------
-
-    fn clear_swordstrike_experiences(&mut self) {
-        self.known_enemy_strike_1 = None;
-        self.known_enemy_strike_2 = None;
-        self.known_enemy_strike_3 = None;
     }
 }
 

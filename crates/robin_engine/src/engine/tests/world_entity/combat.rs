@@ -543,7 +543,7 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
             .base
             .me = id.index();
     }
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
     engine.apply_update_left_combat_neighbour(
         owner.index(),
         None,
@@ -684,10 +684,10 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 
 #[test]
 fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark() {
-    use crate::ai::{AiState, Position, Remark, Substate};
+    use crate::ai::{AiState, Decision, Remark, Substate};
 
     let sim = crate::sim_rng::test_context();
-    let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
+    let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     {
         let base = &mut engine
             .get_entity_mut(soldier_id)
@@ -698,20 +698,33 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
         base.current_substate = Substate::FleeingRunToDoor;
     };
 
-    engine.execute_ai_combat_alert_decision(
+    let mut enemy = make_test_pc(crate::element::Posture::Upright);
+    enemy.element_data_mut().active = true;
+    enemy
+        .element_data_mut()
+        .set_position_map(MapPoint::new(300.0, 0.0));
+    let enemy_id = engine.add_test_entity(enemy);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap()
+        .list_them = vec![enemy_id.index()];
+    engine.execute_live_battle_decision(
         &sim,
         &assets,
         officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
+        Decision::AlertSoldiers,
+        Substate::AttackingReactiontime,
+        0,
+        false,
     );
 
     let officer = engine
         .get_entity(officer_id)
         .and_then(Entity::enemy_ai)
         .expect("combat-alert caller retains EnemyAi");
+    assert!(officer.base.friends_are_alerted);
     assert!(officer.alerted_us.is_empty());
     assert_eq!(officer.base.current_state, AiState::Attacking);
     assert_eq!(officer.base.current_substate, Substate::AttackingReserve);
@@ -736,7 +749,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
 
 #[test]
 fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
-    use crate::ai::{AiState, Position, Remark, Substate};
+    use crate::ai::{AiState, Decision, Remark, Substate};
     use crate::profiles::ProfileRank;
 
     let sim = crate::sim_rng::test_context();
@@ -787,20 +800,33 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         base.current_substate = Substate::FleeingRunToDoor;
     };
 
-    engine.execute_ai_combat_alert_decision(
+    let mut enemy = make_test_pc(crate::element::Posture::Upright);
+    enemy.element_data_mut().active = true;
+    enemy
+        .element_data_mut()
+        .set_position_map(MapPoint::new(300.0, 0.0));
+    let enemy_id = engine.add_test_entity(enemy);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine
+        .get_entity_mut(officer_id)
+        .and_then(Entity::enemy_ai_mut)
+        .unwrap()
+        .list_them = vec![enemy_id.index()];
+    engine.execute_live_battle_decision(
         &sim,
         &assets,
         officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
+        Decision::AlertSoldiers,
+        Substate::AttackingReactiontime,
+        0,
+        false,
     );
 
     let officer = engine
         .get_entity(officer_id)
         .and_then(Entity::enemy_ai)
         .expect("partial-refusal caller retains EnemyAi");
+    assert!(officer.base.friends_are_alerted);
     assert_eq!(
         officer.base.current_substate,
         Substate::AttackingOfficerGivingOrders

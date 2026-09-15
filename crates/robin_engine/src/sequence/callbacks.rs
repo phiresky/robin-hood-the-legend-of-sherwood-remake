@@ -341,52 +341,6 @@ impl SequenceManager {
         self.set_cross_postponed_link(cur, Some(src_next));
         self.set_cross_postponed_link((src_seq, src_idx), None);
     }
-
-    /// Locate the old route's queued assertion when both the old and released
-    /// routes have an immediate `AssertPosition -> Move` frontier.
-    pub(super) fn cross_postponed_assert_move_frontier(
-        &self,
-        ready_sequence_id: SequenceId,
-        released_sequence_id: SequenceId,
-        released_index: usize,
-    ) -> Option<usize> {
-        let released_sequence = self.get_sequence(released_sequence_id)?;
-        if released_index != 0 || released_sequence.elements.len() != 2 {
-            // The f693 handoff is the complete two-element replacement
-            // `AssertPosition -> Move`. A routed replacement has further
-            // door/assertion work and Original leaves the ordinary
-            // Ready-before-postponed FIFO intact; reordering that shape lets
-            // the old route's Move interrupt the already-admitted route.
-            return None;
-        }
-        let released = self.get_element(released_sequence_id, released_index)?;
-        let released_move = self.get_element(released_sequence_id, released_index + 1)?;
-        if released.command != Command::AssertPosition
-            || released_move.command != Command::Move
-            || released_move.command_level != released.command_level + 1
-            || released.owner.is_none()
-            || released_move.owner != released.owner
-        {
-            return None;
-        }
-
-        self.elements_to_go.iter().enumerate().rev().find_map(
-            |(position, (sequence_id, element_index))| {
-                if *sequence_id != ready_sequence_id {
-                    return None;
-                }
-                let ready = self.get_element(*sequence_id, *element_index)?;
-                let ready_move = self.get_element(*sequence_id, *element_index + 1)?;
-                (ready.command == Command::AssertPosition
-                    && ready.state == SequenceState::Todo
-                    && ready.owner == released.owner
-                    && ready_move.command == Command::Move
-                    && ready_move.command_level == ready.command_level + 1
-                    && ready_move.owner == ready.owner)
-                    .then_some(position)
-            },
-        )
-    }
 }
 
 impl crate::engine::EngineInner {
@@ -890,7 +844,7 @@ impl crate::engine::EngineInner {
                 card.from_halt = true;
             }
 
-            self.send_condolation_card(sim, card, assets, active_scripts);
+            self.send_condolation_card(sim, card, assets);
         }
 
         self.complete_sequence_state_tail(sim, assets, active_scripts, seq_id, effects);

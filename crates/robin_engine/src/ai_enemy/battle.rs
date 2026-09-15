@@ -126,9 +126,6 @@ impl EnemyAi {
 
 /// Accepted output of [`rider_charge_goal_geometry`].
 pub(crate) struct RiderChargeGeometry {
-    pub forward_dot: f32,
-    pub sq_norm: f32,
-    pub cos_alpha: f32,
     /// `vMeToHitPoint` — map-space vector from the rider to the hit point.
     pub me_to_hit: (f32, f32),
     /// `vMeToHitPointNormalized` — `me_to_hit / hit_norm_len`.
@@ -139,13 +136,13 @@ pub(crate) struct RiderChargeGeometry {
     pub goal: (f32, f32),
 }
 
-/// Rejection reasons, carrying the value each debug print reports.
+/// Rejection reasons for charge geometry.
 pub(crate) enum RiderChargeReject {
-    Behind { forward_dot: f32 },
-    TooNear { norm: f32, sq_norm: f32 },
-    ZeroOrthogonal { ortho_len: f32 },
-    ZeroHitVector { hp_len: f32 },
-    ZeroHitNorm { hit_norm_len: f32 },
+    Behind,
+    TooNear,
+    ZeroOrthogonal,
+    ZeroHitVector,
+    ZeroHitNorm,
 }
 
 /// Pure geometry core of rider attack destination selection.
@@ -190,14 +187,14 @@ pub(crate) fn rider_charge_goal_geometry(
     // Is the enemy before me?
     let forward_dot = nose_sy.dot(MapVec::new(me_to_enemy_sy.0, me_to_enemy_sy.1));
     if forward_dot < 0.0 {
-        return Err(RiderChargeReject::Behind { forward_dot });
+        return Err(RiderChargeReject::Behind);
     }
 
     // fMeToEnemySquareNorm / fMeToEnemyNorm.
     let sq_norm = me_to_enemy_sy.0 * me_to_enemy_sy.0 + me_to_enemy_sy.1 * me_to_enemy_sy.1;
     let norm = sq_norm.sqrt();
     if norm < EnemyAi::RIDER_CHARGE_LATERAL_DISTANCE {
-        return Err(RiderChargeReject::TooNear { norm, sq_norm });
+        return Err(RiderChargeReject::TooNear);
     }
 
     // fCosAlpha = sqrt( 1.0f - RIDER_CHARGE_SQR_LATERAL_DISTANCE / fMeToEnemySquareNorm )
@@ -207,7 +204,7 @@ pub(crate) fn rider_charge_goal_geometry(
     let ortho = (me_to_enemy_sy.1, -me_to_enemy_sy.0);
     let ortho_len = (ortho.0 * ortho.0 + ortho.1 * ortho.1).sqrt();
     if ortho_len < f32::EPSILON {
-        return Err(RiderChargeReject::ZeroOrthogonal { ortho_len });
+        return Err(RiderChargeReject::ZeroOrthogonal);
     }
     let ortho_norm = (ortho.0 / ortho_len, ortho.1 / ortho_len);
     // operator*=: one rounded scalar, then k1 * component.
@@ -221,7 +218,7 @@ pub(crate) fn rider_charge_goal_geometry(
     );
     let hp_len = (hit_point_sy.0 * hit_point_sy.0 + hit_point_sy.1 * hit_point_sy.1).sqrt();
     if hp_len < f32::EPSILON {
-        return Err(RiderChargeReject::ZeroHitVector { hp_len });
+        return Err(RiderChargeReject::ZeroHitVector);
     }
     let hp_norm = (hit_point_sy.0 / hp_len, hit_point_sy.1 / hp_len);
     // operator*=: one rounded scalar, then k2 * component.
@@ -235,7 +232,7 @@ pub(crate) fn rider_charge_goal_geometry(
     // ptGoal = ptMe + vMeToHitPoint + vHitPointToGoal.
     let hit_norm_len = (me_to_hit.0 * me_to_hit.0 + me_to_hit.1 * me_to_hit.1).sqrt();
     if hit_norm_len < f32::EPSILON {
-        return Err(RiderChargeReject::ZeroHitNorm { hit_norm_len });
+        return Err(RiderChargeReject::ZeroHitNorm);
     }
     let hit_dir = (me_to_hit.0 / hit_norm_len, me_to_hit.1 / hit_norm_len);
     let goal = (
@@ -244,9 +241,6 @@ pub(crate) fn rider_charge_goal_geometry(
     );
 
     Ok(RiderChargeGeometry {
-        forward_dot,
-        sq_norm,
-        cos_alpha,
         me_to_hit,
         hit_dir,
         hit_norm_len,

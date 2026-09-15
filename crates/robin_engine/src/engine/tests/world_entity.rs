@@ -190,24 +190,6 @@ fn exclamation_for(
         })
 }
 
-fn make_alert_soldier_owner(engine: &mut EngineInner) -> EntityId {
-    use crate::element::AiBrain;
-
-    let owner = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(owner)
-        .expect("soldier-alert test civilian exists")
-    else {
-        panic!("soldier-alert test owner changed kind")
-    };
-    civilian.element.active = true;
-    civilian.npc.life_points = 100;
-    civilian.civilian.cached_camp = crate::element::Camp::Lacklandists;
-    civilian.npc.ai_brain =
-        AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
-    owner
-}
-
 fn check_detectable_snapshot_and_drain_matrix() {
     #[derive(Debug)]
     enum Operation {
@@ -433,7 +415,6 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         sim,
         charly_id,
         &Stimulus::new(StimulusType::EventTimer),
-        None,
         &assets,
     );
     engine
@@ -542,7 +523,7 @@ fn run_synchronous_civilian_alert(
         } else {
             Stimulus::new(trigger)
         };
-        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, None, &assets);
+        engine.dispatch_think_with_drain(sim, civilian_id, &stimulus, &assets);
     }
     engine
 }

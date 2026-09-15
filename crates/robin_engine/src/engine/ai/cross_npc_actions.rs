@@ -326,7 +326,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        target: Option<EntityId>,
         assets: &LevelAssets,
     ) -> bool {
         let had_ai_at_entry = self
@@ -335,7 +334,7 @@ impl EngineInner {
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled = self.dispatch_filtered_stimulus_inner(sim, assets, npc_id, stimulus, target);
+        let handled = self.dispatch_filtered_stimulus_inner(sim, assets, npc_id, stimulus);
 
         // PCs can participate in direct swordfights but have no NPC AI
         // controller or AI-owned recovery effects to drain.

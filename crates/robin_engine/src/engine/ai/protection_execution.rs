@@ -108,12 +108,7 @@ impl EngineInner {
         self.launch_ai_raise_shield(sim, assets, owner, point);
     }
 
-    fn shield_focus_primary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn shield_focus_primary(&mut self, owner: EntityId) {
         let ai = self
             .world
             .entities
@@ -154,7 +149,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingPhalanx,
             );
-            self.shield_focus_primary(sim, assets, owner);
+            self.shield_focus_primary(owner);
             self.shield_timer(owner, 5);
             return;
         }
@@ -281,7 +276,7 @@ impl EngineInner {
             Substate::AttackingPhalanx,
         );
         self.shield_raise_at_primary(sim, assets, owner);
-        self.shield_focus_primary(sim, assets, owner);
+        self.shield_focus_primary(owner);
         self.shield_timer(owner, 20);
     }
 

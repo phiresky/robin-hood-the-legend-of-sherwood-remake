@@ -825,12 +825,12 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     for branch in [&mut in_range, &mut out_of_range] {
         for _ in 0..10 {
             branch.tick_selected_ability(&sim, &assets, attacker, branch.actors_frozen());
-            if (branch
+            if branch
                 .get_entity(attacker)
                 .unwrap()
                 .sprite()
                 .last_motion_state
-                == Some(crate::sprite::MotionState::Done))
+                == Some(crate::sprite::MotionState::Done)
             {
                 break;
             }
@@ -1343,7 +1343,6 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
     use crate::element::{Command, Posture};
     use crate::sequence::SequenceElement;
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let seq = engine

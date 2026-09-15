@@ -1,5 +1,4 @@
 use super::battle_decision_observation_tests::fixture;
-use super::*;
 use crate::ai::{AiEntityHandle, AiState, Position, SeekPoint, Stimulus, StimulusType, Substate};
 
 #[test]
@@ -30,7 +29,6 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
                 &assets,
                 owner,
                 &stimulus,
-                None,
             );
             let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
             assert_eq!(
@@ -65,7 +63,6 @@ fn failed_body_route_examines_queued_body_before_searching() {
         &assets,
         owner,
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
-        None,
     );
     let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
     assert_eq!(
@@ -124,13 +121,7 @@ fn body_route_failure_and_lost_roof_target_search_from_live_owner() {
         } else {
             Stimulus::with_human(StimulusType::EventOutOfView, target.index())
         };
-        engine.execute_ai_handler_body(
-            &crate::sim_rng::test_context(),
-            &assets,
-            owner,
-            &stimulus,
-            None,
-        );
+        engine.execute_ai_handler_body(&crate::sim_rng::test_context(), &assets, owner, &stimulus);
         let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
         assert_eq!(ai.seek_center, live_position);
         assert_eq!(ai.actual_seek_point, Some(0));

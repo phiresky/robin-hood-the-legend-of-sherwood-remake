@@ -38,12 +38,7 @@ impl EngineInner {
         self.duty_face_position_at_elevation(sim, assets, owner, position, elevation);
     }
 
-    fn cover_focus_primary(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn cover_focus_primary(&mut self, owner: EntityId) {
         let ai = self
             .world
             .entities
@@ -278,7 +273,7 @@ impl EngineInner {
             }
         } else {
             self.cover_face_primary(sim, assets, owner);
-            self.cover_focus_primary(sim, assets, owner);
+            self.cover_focus_primary(owner);
             self.duty_set_state(
                 sim,
                 assets,
@@ -371,7 +366,7 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("archer observer target"))
             .primary_target = target;
-        self.cover_focus_primary(sim, assets, owner);
+        self.cover_focus_primary(owner);
         if self
             .expect_entity(owner, "archer observer action")
             .actor_data()

@@ -651,7 +651,7 @@ fn lazy_stop_priority_preserves_already_resolved_none_and_other_priorities() {
 
 #[test]
 fn movement_stop_resolves_priority_before_deciding_to_rewrite() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1012,7 +1012,7 @@ fn wait_completion_instructs_next_level_before_returning() {
 
 #[test]
 fn manager_element_terminated_advances() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -1112,7 +1112,7 @@ fn live_hourglass_places_normal_successor_after_older_fifo_work() {
 
 #[test]
 fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1163,7 +1163,7 @@ fn released_cross_postponed_action_keeps_owner_fifo_behind_ready_successor() {
 
 #[test]
 fn released_cross_postponed_assertions_keep_ready_before_postponed_fifo() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1236,7 +1236,7 @@ fn released_cross_postponed_assertions_keep_ready_before_postponed_fifo() {
 
 #[test]
 fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1288,7 +1288,7 @@ fn released_multi_door_route_keeps_ready_before_postponed_fifo() {
 
 #[test]
 fn released_same_sequence_postponed_action_clears_blocker_edge() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1382,7 +1382,7 @@ fn finishing_condolation_stops_at_nested_card_before_cascade_continues() {
 
 #[test]
 fn stop_owner_interrupts_actor_work_postponed_by_injury() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1471,7 +1471,7 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
 
 #[test]
 fn split_stop_scans_work_registered_by_selected_element_callback() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1527,12 +1527,12 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     pending_card_look.priority = SequencePriority::Normal;
     let pending_card_look_seq = engine.launch_element(&test_context(), &assets, pending_card_look);
     for root in pending_snapshot {
-        engine.stop_pending_element_from_root(
+        engine.stop_pending_roots(
             &sim,
             &assets,
             &mut Vec::new(),
             owner,
-            root,
+            [root],
             SequencePriority::Preference,
             &resolver,
         );
@@ -1634,7 +1634,7 @@ fn stop_owner_completes_deep_cross_postponed_chain() {
 
 #[test]
 fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1850,12 +1850,12 @@ fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
     }
 
     for &sequence in &roots {
-        engine.stop_pending_element_from_root(
+        engine.stop_pending_roots(
             &sim,
             &assets,
             &mut Vec::new(),
             owner,
-            (sequence, 0),
+            [(sequence, 0)],
             SequencePriority::Preference,
             &|_, element| element.priority,
         );
@@ -1880,7 +1880,7 @@ fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
 
 #[test]
 fn stop_owner_walks_nested_cross_postponed_graph() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -1974,7 +1974,7 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
 
 #[test]
 fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -2055,7 +2055,7 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
 
 #[test]
 fn stop_owner_does_not_scan_unselected_postponed_branches() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -2127,7 +2127,7 @@ fn stop_owner_does_not_scan_unselected_postponed_branches() {
 
 #[test]
 fn postpone_element_consumes_its_existing_manager_registration() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -2160,7 +2160,7 @@ fn postpone_element_consumes_its_existing_manager_registration() {
 
 #[test]
 fn manager_friday_evening_cleanup() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -2245,8 +2245,8 @@ fn cleanup_severs_inbound_links_only_when_their_target_is_deleted() {
 }
 
 #[test]
-fn manager_terminate_sequence() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+fn interrupting_first_element_cascades_through_sequence() {
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -2254,7 +2254,14 @@ fn manager_terminate_sequence() {
     seq.append_element(make_simple_element(2, Command::Turn, Some(fixture_owner_0)));
     let seq_id = engine.launch_sequence(&test_context(), &assets, seq);
 
-    assert!(engine.terminate_sequence(&sim, &assets, &mut Vec::new(), seq_id));
+    engine.element_interrupted(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        seq_id,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
 
     // Both elements should be interrupted
     let s = engine.orders.sequence_manager.get_sequence(seq_id).unwrap();
@@ -2520,7 +2527,7 @@ fn element_about_to_be_launched() {
 
 #[test]
 fn pending_command_query_follows_only_current_elements_postponed_successor() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -2636,28 +2643,6 @@ fn pending_command_query_ignores_element_during_translation() {
     );
 }
 
-#[test]
-fn cancel_pending_move_commands() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
-    let sim = test_context();
-
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(1, Command::Move, Some(fixture_owner_0)));
-    seq.append_element(make_simple_element(1, Command::Turn, Some(fixture_owner_0)));
-    let _seq_id = engine.launch_sequence(&test_context(), &assets, seq);
-
-    engine.cancel_pending_move_commands(&sim, &assets, &mut Vec::new(), fixture_owner_0);
-
-    // Only Turn should remain (Move was cancelled)
-    let actions = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
-        .collect::<Vec<_>>();
-    assert_eq!(actions.len(), 1);
-    match &actions[0] {
-        SequenceAction::InstructOwner { element_index, .. } => assert_eq!(*element_index, 1),
-        other => panic!("expected element 1, got {:?}", other),
-    }
-}
-
 // ──────────────────────────────────────────────────────────
 //  Movement transition rewriters
 // ──────────────────────────────────────────────────────────
@@ -2740,7 +2725,7 @@ fn make_fast_preserves_unrelated_orders() {
 
 #[test]
 fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -2797,7 +2782,7 @@ fn make_fast_rewrites_only_the_selected_elements_linked_chain() {
 
 #[test]
 fn make_fast_rewrites_a_terminal_same_owner_follower() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -3269,7 +3254,7 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
 
 #[test]
 fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
     let owner = fixture_owner_0;
 
@@ -3356,7 +3341,7 @@ fn stop_movement_rewrite_does_not_cancel_path_for_move_waiting() {
     // `Interrupted` (default switch branch).  A successful rewrite
     // keeps the element in INPROGRESS and the path request stays
     // alive.
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -3396,7 +3381,7 @@ fn stop_movement_cancels_path_on_interrupt() {
     // With an action that has no waiting-transition variant, the
     // element falls into the default branch and gets interrupted;
     // a MoveWaiting command goes through path cancellation.
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -3438,7 +3423,7 @@ fn stop_movement_cancels_path_on_interrupt() {
 
 #[test]
 fn stop_movement_interrupts_element_with_unknown_action() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let mut seq = Sequence::new();
@@ -3716,7 +3701,7 @@ fn graph_rewrites_preserve_stored_edges_hidden_from_live_queries() {
     let id = mgr.insert_sequence(sequence);
     mgr.get_element_mut(id, 0).unwrap().next_link_severed = true;
 
-    assert_eq!(mgr.following_element_ref(id, 0), None);
+    assert_eq!(mgr.unsevered_following_ref(id, 0), None);
     assert_eq!(mgr.next_element_in_chain(id, 0), None);
     assert!(mgr.is_last_real_action(id, 0));
     assert_eq!(mgr.rewrite_following_ref(id, 0), Some((id, 1)));
@@ -3725,29 +3710,6 @@ fn graph_rewrites_preserve_stored_edges_hidden_from_live_queries() {
         movement_action(mgr.get_element(id, 1).unwrap()),
         OrderType::WalkingCrouched
     );
-}
-
-#[test]
-#[should_panic(expected = "following pointer crosses sequences")]
-fn local_following_query_rejects_cross_sequence_link() {
-    let mut mgr = SequenceManager::new();
-    let root = mgr.insert_element(SequenceElement::new(1, Command::Wait, None));
-    let next = mgr.insert_element(SequenceElement::new(1, Command::Wait, None));
-    mgr.get_element_mut(root, 0).unwrap().legacy_v48 =
-        Some(loaded_v48_state(Some(SequenceElementRef::new(next, 0))));
-    mgr.following_element_ref(root, 0);
-}
-
-#[test]
-#[should_panic(expected = "following pointer targets missing element")]
-fn local_following_query_rejects_dangling_link() {
-    let mut sequence = Sequence::new();
-    sequence.append_element(SequenceElement::new(1, Command::Wait, None));
-    sequence.elements[0].legacy_v48 = Some(loaded_v48_state(Some(SequenceElementRef::new(
-        sequence.id,
-        7,
-    ))));
-    sequence.following_element_index(0);
 }
 
 #[test]
@@ -3858,7 +3820,7 @@ fn last_real_action_stops_at_halt_severed_following_edge() {
 
 #[test]
 fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -3909,7 +3871,7 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
 
 #[test]
 fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;
@@ -3970,7 +3932,7 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
 
 #[test]
 fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
-    let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
+    let (mut engine, assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
 
     let owner = fixture_owner_0;

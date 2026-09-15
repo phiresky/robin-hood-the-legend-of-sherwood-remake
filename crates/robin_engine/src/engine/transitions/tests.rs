@@ -166,15 +166,7 @@ fn transition_stages_observe_live_state_without_reordering_effects() {
     );
     assert_eq!(
         target.stage(&mut engine, |engine| {
-            make_posture_transition_actor(
-                engine,
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                seq_id,
-                elem_idx,
-                owner,
-                CP::MUST_BE_UPRIGHT,
-            )
+            make_posture_transition_actor(engine, seq_id, elem_idx, CP::MUST_BE_UPRIGHT)
         }),
         Ok(true)
     );

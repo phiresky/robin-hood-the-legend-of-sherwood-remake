@@ -49,7 +49,7 @@ impl EngineInner {
                 panic!("civilian soldier sighting requires a human target");
             };
             self.reporting_civilian_mut(owner).base.antagonist = Some(target);
-            self.clear_reporting_friends(sim, assets, owner);
+            self.clear_reporting_friends(owner);
             self.civilian_call_alert(sim, assets, owner, false);
             return Some(false);
         }
@@ -556,12 +556,7 @@ impl EngineInner {
         self.duty_set_state(sim, assets, owner, AiState::Seeking, substate);
     }
 
-    fn clear_reporting_friends(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn clear_reporting_friends(&mut self, owner: EntityId) {
         self.execute_ai_delete_detectable_type(owner, crate::element::DetectableType::Friend);
     }
 
@@ -593,7 +588,7 @@ impl EngineInner {
             return;
         }
         if reached {
-            self.clear_reporting_friends(sim, assets, owner);
+            self.clear_reporting_friends(owner);
         }
         self.reporting_state(
             sim,

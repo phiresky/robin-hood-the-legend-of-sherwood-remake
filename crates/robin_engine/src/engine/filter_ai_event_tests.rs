@@ -348,7 +348,6 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         &assets,
         actor,
         &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReturnToDuty),
-        None,
     );
     // The Think boundary only registers the launched Turn with the sequence
     // manager; the manager's own update dispatches it later in the frame.
@@ -723,13 +722,8 @@ fn dispatch_handles_registered_actor_when_filter_blocks_and_skips_think() {
 
     // EventView with no human info → source=0 → script blocks.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
-    let handled = engine.dispatch_filtered_stimulus(
-        sim,
-        &LevelAssets::new(),
-        sensitive_entity_id,
-        &stim,
-        None,
-    );
+    let handled =
+        engine.dispatch_filtered_stimulus(sim, &LevelAssets::new(), sensitive_entity_id, &stim);
     assert!(
         handled,
         "the dispatch wrapper handles a registered actor even when its script refuses Think"
@@ -6315,7 +6309,6 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
             &assets,
             owner,
             &Stimulus::with_human(StimulusType::EventView, entering_primary.index()),
-            Some(entering_primary),
         )
     });
     assert!(
@@ -6778,7 +6771,7 @@ fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
     );
     engine.initialize(&mut assets);
 
-    let ai = engine
+    engine
         .world
         .entities
         .get(civilian)
@@ -7176,7 +7169,6 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
                     &assets,
                     owner,
                     &Stimulus::new(StimulusType::EventFitAgain),
-                    None,
                 )
             })
         });
@@ -7284,7 +7276,6 @@ fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move(
         &assets,
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
-        None,
     );
     assert!(
         !handled,
@@ -7411,7 +7402,6 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
         &assets,
         owner,
         &Stimulus::new(StimulusType::EventReachPoint),
-        None,
     );
     let ai = engine
         .world

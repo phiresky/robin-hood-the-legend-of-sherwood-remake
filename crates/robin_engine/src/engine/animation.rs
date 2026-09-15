@@ -717,7 +717,6 @@ pub(super) fn apply_actor_walk_start_side_effect(
 /// overrides still take priority.
 pub(super) fn apply_npc_execute_side_effects(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
@@ -2029,8 +2028,6 @@ fn apply_shield_transition_side_effect(
 /// titbit is removed before the transition returns.
 fn apply_pc_disguise_exit_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     anim_type: OrderType,
     motion: MotionState,
     command: Option<Command>,

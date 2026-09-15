@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod suite {
     use super::super::{both_sword_ranges_contain_distance, should_snap_arrival};
-    use crate::coordinates::MapPoint;
-    use crate::element::{EntityId, PcId};
 
     #[test]
     fn exact_goal_without_a_committed_step_does_not_snap() {

@@ -1369,11 +1369,8 @@ fn dispatch_make_action_transition(
 /// this base for every posture they don't handle.
 fn make_posture_transition_actor(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
-    _owner: EntityId,
     flags: CP,
 ) -> bool {
     let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
@@ -1487,8 +1484,6 @@ fn make_posture_transition_actor(
 
 fn make_posture_transition_human(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1509,15 +1504,13 @@ fn make_posture_transition_human(
         return true;
     }
 
-    make_posture_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_posture_transition_actor(engine, seq_id, elem_idx, flags)
 }
 
 /// Only `SITTING` is handled here; `LYING` / `DODGED` are deferred
 /// to the base.
 fn make_posture_transition_npc(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1536,13 +1529,11 @@ fn make_posture_transition_npc(
         return true;
     }
 
-    make_posture_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
 }
 
 fn make_posture_transition_soldier(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     owner: EntityId,
@@ -1569,7 +1560,7 @@ fn make_posture_transition_soldier(
         return true;
     }
 
-    make_posture_transition_npc(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
 }
 
 fn make_posture_transition_pc(
@@ -1764,7 +1755,7 @@ fn make_posture_transition_pc(
         }
     }
 
-    make_posture_transition_human(engine, sim, assets, seq_id, elem_idx, owner, flags)
+    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
 }
 
 fn dispatch_make_posture_transition(
@@ -1782,12 +1773,12 @@ fn dispatch_make_posture_transition(
             make_posture_transition_pc(engine, sim, assets, seq_id, elem_idx, owner, flags)
         }
         ElementKind::ActorSoldier => {
-            make_posture_transition_soldier(engine, sim, assets, seq_id, elem_idx, owner, flags)
+            make_posture_transition_soldier(engine, seq_id, elem_idx, owner, flags)
         }
         ElementKind::ActorCivilian => {
-            make_posture_transition_npc(engine, sim, assets, seq_id, elem_idx, owner, flags)
+            make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
         }
-        _ => make_posture_transition_actor(engine, sim, assets, seq_id, elem_idx, owner, flags),
+        _ => make_posture_transition_actor(engine, seq_id, elem_idx, flags),
     }
 }
 
@@ -1797,8 +1788,6 @@ fn dispatch_make_posture_transition(
 
 fn make_final_action_transition_actor(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     flags: EA,
@@ -1891,8 +1880,6 @@ fn make_final_action_transition_actor(
 
 fn make_final_action_transition_human(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
     seq_id: SequenceId,
     elem_idx: usize,
     flags: EA,
@@ -1995,7 +1982,7 @@ fn make_final_action_transition_human(
         return true;
     }
 
-    make_final_action_transition_actor(engine, sim, assets, seq_id, elem_idx, flags)
+    make_final_action_transition_actor(engine, seq_id, elem_idx, flags)
 }
 
 /// Soldier-specific "alerted" auto-insert — a soldier receiving a
@@ -2086,7 +2073,7 @@ fn make_final_action_transition_soldier(
         return true;
     }
 
-    make_final_action_transition_human(engine, sim, assets, seq_id, elem_idx, flags)
+    make_final_action_transition_human(engine, seq_id, elem_idx, flags)
 }
 
 fn dispatch_make_final_action_transition(
@@ -2112,9 +2099,9 @@ fn dispatch_make_final_action_transition(
             flags,
         ),
         ElementKind::ActorPc | ElementKind::ActorCivilian => {
-            make_final_action_transition_human(engine, sim, assets, seq_id, elem_idx, flags)
+            make_final_action_transition_human(engine, seq_id, elem_idx, flags)
         }
-        _ => make_final_action_transition_actor(engine, sim, assets, seq_id, elem_idx, flags),
+        _ => make_final_action_transition_actor(engine, seq_id, elem_idx, flags),
     }
 }
 

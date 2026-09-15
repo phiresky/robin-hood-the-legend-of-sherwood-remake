@@ -416,7 +416,6 @@ fn interrupted_mid_grab_installs_wait_without_executing_the_dropped_body() {
         0,
         CascadeFlags::NEXT_LEVEL,
     );
-    let sim = crate::sim_rng::test_context();
 
     let body_entity = engine.get_entity(body).unwrap();
     assert_eq!(body_entity.element_data().position_map(), carrier_position);

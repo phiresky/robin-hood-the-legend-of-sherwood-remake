@@ -16,12 +16,7 @@ impl EngineInner {
             && self.world.weather.is_forest_level
             && !entity.soldier_data().is_some_and(|soldier| soldier.rider)
     }
-    fn alert_transient_question(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn alert_transient_question(&mut self, owner: EntityId) {
         let frame = self.control.frame_counter;
         self.observation_ai_mut(owner).base.set_transient_emoticon(
             EmoticonType::QuestionMark,
@@ -29,13 +24,7 @@ impl EngineInner {
             frame,
         );
     }
-    fn alert_focus_point(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        position: Position,
-    ) {
+    fn alert_focus_point(&mut self, assets: &LevelAssets, owner: EntityId, position: Position) {
         self.execute_ai_focus_point(assets, owner, position);
     }
     fn alert_face_seek_position(
@@ -115,7 +104,7 @@ impl EngineInner {
                 ai.base.seek_position = origin;
                 ai.investigating_distraction = true;
                 self.observation_say(sim, assets, owner, Remark::HearsNoise);
-                self.observation_emoticon(sim, assets, owner);
+                self.observation_emoticon(owner);
                 self.duty_set_state(
                     sim,
                     assets,
@@ -144,7 +133,7 @@ impl EngineInner {
                         .whistle
                         > 0;
                 if !look {
-                    self.observation_emoticon(sim, assets, owner);
+                    self.observation_emoticon(owner);
                     self.duty_set_state(
                         sim,
                         assets,
@@ -182,7 +171,7 @@ impl EngineInner {
                     self.alert_face_noise_position(sim, assets, owner, noise);
                     self.observation_timer(owner, 1);
                 } else {
-                    self.observation_emoticon(sim, assets, owner);
+                    self.observation_emoticon(owner);
                     self.observation_say(sim, assets, owner, Remark::HearsNoise);
                     self.duty_set_state(
                         sim,
@@ -248,7 +237,7 @@ impl EngineInner {
                         AiState::Seeking,
                         Substate::SeekingHeardstepsPreReactiontime,
                     );
-                    self.observation_emoticon(sim, assets, owner);
+                    self.observation_emoticon(owner);
                     self.observation_ai_mut(owner).base.seek_position = origin;
                     if noise.noise_type != NoiseType::Aaargh
                         && self.observation_ai(owner).base.current_state == AiState::Default
@@ -271,7 +260,7 @@ impl EngineInner {
                 if noise.noise_type == NoiseType::Zonk {
                     self.observation_say(sim, assets, owner, Remark::Arrow);
                 }
-                self.observation_emoticon(sim, assets, owner);
+                self.observation_emoticon(owner);
                 self.duty_set_state(
                     sim,
                     assets,
@@ -315,7 +304,7 @@ impl EngineInner {
         position: Position,
     ) {
         if !self.alert_is_forest_merry_man(owner) {
-            self.alert_transient_question(sim, assets, owner);
+            self.alert_transient_question(owner);
         }
         self.observation_stop(sim, assets, owner);
         self.duty_set_state(
@@ -326,7 +315,7 @@ impl EngineInner {
             Substate::WonderingWatching,
         );
         self.observation_ai_mut(owner).base.seek_position = position;
-        self.alert_focus_point(sim, assets, owner, position);
+        self.alert_focus_point(assets, owner, position);
         self.alert_face_seek_position(sim, assets, owner);
         self.observation_timer(owner, 100);
     }
@@ -337,7 +326,7 @@ impl EngineInner {
         owner: EntityId,
         hint: &Hint,
     ) {
-        self.alert_transient_question(sim, assets, owner);
+        self.alert_transient_question(owner);
         self.observation_ai_mut(owner)
             .base
             .my_reconnaissance_report
@@ -361,7 +350,7 @@ impl EngineInner {
         }
         self.observation_ai_mut(owner).base.seek_position = hint.seek_point;
         let position = self.observation_ai(owner).base.seek_position;
-        self.alert_focus_point(sim, assets, owner, position);
+        self.alert_focus_point(assets, owner, position);
         let teller =
             self.expect_human_id_for_ai_handle(hint.who_tells_me.get(), "tower alert caller");
         self.observation_face_entity(sim, assets, owner, teller, false);
@@ -401,7 +390,7 @@ impl EngineInner {
         owner: EntityId,
         position: Position,
     ) {
-        self.alert_transient_question(sim, assets, owner);
+        self.alert_transient_question(owner);
         self.duty_set_state(
             sim,
             assets,
@@ -410,7 +399,7 @@ impl EngineInner {
             Substate::SeekingCombatAlertReactiontime,
         );
         self.observation_ai_mut(owner).base.seek_position = position;
-        self.alert_focus_point(sim, assets, owner, position);
+        self.alert_focus_point(assets, owner, position);
         self.alert_face_seek_position(sim, assets, owner);
         self.execute_ai_react_live(
             sim,

@@ -637,10 +637,6 @@ fn non_enemy_visibility_blocked_with_relationship(
     eye_status.is_blind() || !viewer_hostile_to_player || type_gate_blocked
 }
 
-fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
-    dead || unconscious
-}
-
 fn apply_enemy_beggar_disguise_with_relationship(
     viewer_hostile_to_player: bool,
     target_is_pc: bool,
@@ -789,7 +785,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventEnemyNear,
                 target_handle,
             );
-            self.execute_ai_callback_for_target(sim, assets, npc_id, &stimulus, Some(target_id));
+            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
         }
     }
 
@@ -2625,14 +2621,6 @@ mod tests {
         );
         assert_eq!(visibility, 16.0);
         assert!(got_beggar_trick);
-    }
-
-    #[test]
-    fn missed_friend_and_beggar_reject_dead_or_unconscious_before_cadence() {
-        assert!(!missed_friend_or_beggar_target_blocked(false, false));
-        assert!(missed_friend_or_beggar_target_blocked(true, false));
-        assert!(missed_friend_or_beggar_target_blocked(false, true));
-        assert!(missed_friend_or_beggar_target_blocked(true, true));
     }
 
     #[test]

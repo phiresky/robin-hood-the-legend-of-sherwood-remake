@@ -260,7 +260,7 @@ impl EngineInner {
                 self.observation_ai_mut(owner).base.friend_in_trouble = Some(friend);
                 let friend = self.expect_human_id_for_ai_handle(friend.get(), "brawling friend");
                 self.observation_face_entity(sim, assets, owner, friend, false);
-                self.observation_emoticon(sim, assets, owner);
+                self.observation_emoticon(owner);
                 let next = if self.observation_ai(owner).base.blood_alcohol == 0 {
                     Substate::WonderingOfficerSeeingBrawl
                 } else {

@@ -281,7 +281,7 @@ impl EngineInner {
                     .current_waypoint_index;
                 let mut event = Stimulus::new(StimulusType::EventSyncCharly);
                 event.info = StimulusInfo::Index(waypoint.into());
-                self.dispatch_think_with_drain(sim, id, &event, None, assets);
+                self.dispatch_think_with_drain(sim, id, &event, assets);
             }
             if self.default_ai(id).current_substate != Substate::DefaultSynchronizing {
                 self.default_ai_mut(owner)

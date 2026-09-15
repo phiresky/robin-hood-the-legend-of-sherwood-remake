@@ -345,7 +345,7 @@ fn selection_mark_skips_hidden_and_building_pcs() {
 
 #[test]
 fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::gate::{Door, DoorIndex};
     use crate::order::OrderType;
@@ -353,7 +353,7 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     use crate::sequence::{SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let friend = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
@@ -479,7 +479,7 @@ fn live_ai_position_preserves_exact_duplicate_target_sector() {
     use crate::sector::{SectorNumber, SectorType};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let friend = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
@@ -544,7 +544,7 @@ fn live_ai_position_preserves_exact_duplicate_target_sector() {
 
 #[test]
 fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::element::{ElementBonus, ElementData, ElementKind, ObjectData, ObjectType};
     use crate::gate::{Door, DoorIndex};
@@ -617,7 +617,7 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 
 #[test]
 fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fallback() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::coordinates::MapPoint;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex};
@@ -805,7 +805,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
 
 #[test]
 fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::ai::{AlertLevel, Substate};
     use crate::ai_enemy::SeekFlags;
     use crate::coordinates::MapPoint;

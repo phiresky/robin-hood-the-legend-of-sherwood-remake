@@ -131,21 +131,10 @@ impl EngineInner {
             ai.base.forgotten_objects.push(object.get());
         }
     }
-    fn observation_focus(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: Option<AiEntityHandle>,
-    ) {
+    fn observation_focus(&mut self, owner: EntityId, target: Option<AiEntityHandle>) {
         self.execute_ai_focus(owner, target);
     }
-    pub(super) fn observation_emoticon(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(super) fn observation_emoticon(&mut self, owner: EntityId) {
         self.observation_ai_mut(owner)
             .base
             .set_emoticon(EmoticonType::QuestionMark);
@@ -273,7 +262,7 @@ impl EngineInner {
                 Substate::AttackingReactiontimeRunning,
             );
             self.observation_ai_mut(owner).base.primary_target = Some(AiEntityHandle::new(target));
-            self.observation_focus(sim, assets, owner, Some(AiEntityHandle::new(target)));
+            self.observation_focus(owner, Some(AiEntityHandle::new(target)));
             self.reinitialize_live_ai_enemies(owner);
             let position = self.live_ai_position(enemy);
             let a = self
@@ -301,7 +290,7 @@ impl EngineInner {
             self.observation_stop(sim, assets, owner);
             self.observation_say(sim, assets, owner, Remark::SeesEnemy);
             self.observation_ai_mut(owner).base.primary_target = Some(AiEntityHandle::new(target));
-            self.observation_focus(sim, assets, owner, Some(AiEntityHandle::new(target)));
+            self.observation_focus(owner, Some(AiEntityHandle::new(target)));
             self.reinitialize_live_ai_enemies(owner);
             let primary = self
                 .observation_ai(owner)
@@ -432,7 +421,7 @@ impl EngineInner {
             return;
         }
         if !seeking {
-            self.observation_emoticon(sim, assets, owner);
+            self.observation_emoticon(owner);
         }
         let substate = if !seeking && rank == ProfileRank::Officer {
             Substate::SeekingArrowJustWatching
@@ -453,7 +442,7 @@ impl EngineInner {
             return;
         }
         let object = self.observation_ai(owner).base.interesting_object;
-        self.observation_focus(sim, assets, owner, object);
+        self.observation_focus(owner, object);
         self.execute_ai_look_there(sim, assets, owner, origin, 200);
         if rank == ProfileRank::Officer {
             self.observation_timer(owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
@@ -499,7 +488,7 @@ impl EngineInner {
                 self.observation_ai_mut(owner).base.interesting_object =
                     Some(AiEntityHandle::new(object));
                 self.observation_face_object(sim, assets, owner, target);
-                self.observation_emoticon(sim, assets, owner);
+                self.observation_emoticon(owner);
                 self.duty_set_state(
                     sim,
                     assets,
@@ -508,7 +497,7 @@ impl EngineInner {
                     Substate::WonderingMoneyReactiontime,
                 );
                 let object = self.observation_ai(owner).base.interesting_object;
-                self.observation_focus(sim, assets, owner, object);
+                self.observation_focus(owner, object);
                 let delay = if self.observation_ai(owner).get_rank(&assets.profile_manager)
                     == ProfileRank::Officer
                 {
@@ -527,10 +516,10 @@ impl EngineInner {
 
                 self.observation_say(sim, assets, owner, Remark::SeesObject);
                 self.observation_face_object(sim, assets, owner, target);
-                self.observation_emoticon(sim, assets, owner);
+                self.observation_emoticon(owner);
                 self.observation_ai_mut(owner).base.interesting_object =
                     Some(AiEntityHandle::new(object));
-                self.observation_focus(sim, assets, owner, Some(AiEntityHandle::new(object)));
+                self.observation_focus(owner, Some(AiEntityHandle::new(object)));
                 self.duty_set_state(
                     sim,
                     assets,

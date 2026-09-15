@@ -69,12 +69,7 @@ impl EngineInner {
         self.duty_set_state(sim, assets, owner, AiState::Attacking, substate);
         self.combat_event_timer(owner, delay);
     }
-    fn combat_event_focus(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn combat_event_focus(&mut self, owner: EntityId) {
         let target = self.combat_event_ai(owner).base.primary_target;
         self.execute_ai_focus(owner, target);
     }
@@ -446,7 +441,7 @@ impl EngineInner {
             }
             (AttackingRunningToLadder, EventReachPoint) => {
                 self.combat_event_face_primary(sim, assets, owner);
-                self.combat_event_focus(sim, assets, owner);
+                self.combat_event_focus(owner);
                 self.combat_event_state(sim, assets, owner, AttackingWaitingAtLadder, 1);
             }
             (AttackingRunningToLadder, EventTimer) => {
@@ -466,7 +461,7 @@ impl EngineInner {
                     .is_lift()
                 {
                     self.combat_event_face_primary(sim, assets, owner);
-                    self.combat_event_focus(sim, assets, owner);
+                    self.combat_event_focus(owner);
                     self.combat_event_timer(owner, 20);
                 } else {
                     self.execute_ai_reconsider_enemy_approach(sim, assets, owner, false);
@@ -564,7 +559,7 @@ impl EngineInner {
                 }
             }
             (AttackingTooProudToAttackOverview, EventDone) => {
-                self.combat_event_focus(sim, assets, owner);
+                self.combat_event_focus(owner);
                 self.combat_event_timer(owner, 5);
             }
             (AttackingTooProudToAttackOverview, EventTimer) => {
@@ -680,7 +675,6 @@ impl EngineInner {
                         sim,
                         owner,
                         &crate::ai::Stimulus::new(EventReachPoint),
-                        Option::None,
                         assets,
                     );
                 }
@@ -916,7 +910,6 @@ impl EngineInner {
                         sim,
                         friend,
                         &crate::ai::Stimulus::new(StimulusType::CallCoordinate),
-                        Some(owner),
                         assets,
                     );
                 }

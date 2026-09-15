@@ -441,7 +441,7 @@ fn live_combat_position_recovers_exact_duplicate_pc_sector() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let assets = engine.test_runtime_assets();
+    engine.test_runtime_assets();
 
     let square = |min: f32, max: f32| GridSector {
         points: vec![
@@ -538,7 +538,7 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
 
 #[test]
 fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
@@ -664,7 +664,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
 
 #[test]
 fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::gate::{Door, DoorIndex, DoorType};
@@ -791,7 +791,6 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         &sim,
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        None,
         &assets,
     );
 

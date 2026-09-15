@@ -29,19 +29,6 @@ impl SequenceManager {
         Some((next.sequence_id, next.element_index))
     }
 
-    /// Resolve a local cascade's following reference, preserving loaded v48
-    /// non-adjacent links and treating severed links as null. Cross-sequence
-    /// targets are rejected because cascade effects currently use local indices.
-    pub(crate) fn following_element_ref(
-        &self,
-        sequence_id: SequenceId,
-        element_index: usize,
-    ) -> Option<(SequenceId, usize)> {
-        self.get_sequence(sequence_id)
-            .and_then(|sequence| sequence.following_element_index(element_index))
-            .map(|following_index| (sequence_id, following_index))
-    }
-
     /// Ordered queue and selected-owner views used by the schema-13 parity
     /// snapshot. References remain in native IDs here; the engine facade maps
     /// them to manager insertion ordinals before exposing the snapshot.

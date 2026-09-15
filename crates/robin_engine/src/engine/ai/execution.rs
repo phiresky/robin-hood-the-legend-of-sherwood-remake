@@ -65,7 +65,7 @@ impl EngineInner {
                 ai.stimulus_queue.remove(0)
             };
             if stimulus.stimulus_type != StimulusType::EventAfterScriptGoOn {
-                let target = match stimulus.info {
+                match stimulus.info {
                     crate::ai::StimulusInfo::Human(handle)
                         if matches!(
                             stimulus.stimulus_type,
@@ -75,14 +75,12 @@ impl EngineInner {
                                 | StimulusType::EventEnemyNear
                         ) =>
                     {
-                        Some(
-                            self.entity_id_for_index(handle.get())
-                                .expect("retained event target"),
-                        )
+                        self.entity_id_for_index(handle.get())
+                            .expect("retained event target");
                     }
-                    _ => None,
+                    _ => {}
                 };
-                self.execute_ai_callback_for_target(sim, assets, owner, &stimulus, target);
+                self.execute_ai_callback(sim, assets, owner, &stimulus);
             }
         }
         let ai = self
@@ -270,18 +268,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        self.execute_ai_callback_for_target(sim, assets, owner, stimulus, None)
-    }
-
-    pub(in crate::engine) fn execute_ai_callback_for_target(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &crate::ai::Stimulus,
-        target: Option<EntityId>,
-    ) -> bool {
-        self.dispatch_think_with_drain(sim, owner, stimulus, target, assets)
+        self.dispatch_think_with_drain(sim, owner, stimulus, assets)
     }
 
     /// Run the body of an already admitted decision without entering a new frame.
@@ -291,7 +278,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
-        target: Option<EntityId>,
     ) -> bool {
         let enemy_owner = self
             .world
@@ -459,7 +445,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
-        target: Option<EntityId>,
     ) -> bool {
         // Direct human interactions can address a PC without an AI brain.
         if self
@@ -493,7 +478,7 @@ impl EngineInner {
             self.execute_ai_after_script(sim, assets, owner);
             false
         } else {
-            self.execute_ai_handler_body(sim, assets, owner, stimulus, target)
+            self.execute_ai_handler_body(sim, assets, owner, stimulus)
         };
         self.execute_ai_end_think(sim, assets, owner);
         if let Some(enemy) = self.world.entities.get(owner).and_then(Entity::enemy_ai) {

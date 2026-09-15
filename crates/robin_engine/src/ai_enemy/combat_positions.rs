@@ -11,7 +11,6 @@ use crate::sim_rng::SimulationContext;
 
 use super::EnemyAi;
 use super::util::vec_to_sector;
-use crate::coordinates::MapVec;
 
 /// Us / them aggregates built by `reconsider_swordfight`.
 #[derive(Clone, Copy)]
@@ -19,10 +18,6 @@ pub(crate) struct SwordfightLists {
     pub(crate) nearest_friend_solo: Option<AiEntityHandle>,
     pub(crate) number_of_swordfighting_enemies: u16,
     pub(crate) number_of_friends: u16,
-}
-
-fn original_uword_norm(delta: MapVec) -> u16 {
-    (delta.x * delta.x + delta.y * delta.y).sqrt() as u16
 }
 
 pub(crate) fn is_facing_swordfight_target(

@@ -144,7 +144,7 @@ fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
 
 #[test]
 fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
-    let mut assets = LevelAssets::new();
+    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));

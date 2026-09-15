@@ -100,8 +100,6 @@ fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
 
 #[test]
 fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion() {
-    let sim = crate::sim_rng::test_context();
-    let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let id = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
         Posture::Upright,
@@ -130,8 +128,6 @@ fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion()
             .expect("hidden indicator");
         apply_pc_disguise_exit_side_effect(
             &mut engine,
-            &sim,
-            &assets,
             OrderType::TransitionWaitingCapeWaitingUpright,
             MotionState::Done,
             Some(command),

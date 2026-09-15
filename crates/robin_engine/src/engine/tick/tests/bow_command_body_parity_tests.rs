@@ -1,7 +1,7 @@
 use super::*;
 use crate::element::{
     ActionState, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData,
-    NpcData, PcData, Posture, SoldierData,
+    NpcData, PcData, Posture,
 };
 use crate::order::OrderType;
 use crate::sequence::{SequenceElement, SequenceId, SequenceState};

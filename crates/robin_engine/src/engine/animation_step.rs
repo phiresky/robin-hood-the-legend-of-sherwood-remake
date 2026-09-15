@@ -1588,7 +1588,6 @@ impl EngineInner {
             );
             apply_npc_execute_side_effects(
                 self,
-                sim,
                 assets,
                 anim_type,
                 motion_state,
@@ -1729,8 +1728,6 @@ impl EngineInner {
             }
             apply_pc_disguise_exit_side_effect(
                 self,
-                sim,
-                assets,
                 anim_type,
                 motion_state,
                 cur_command,

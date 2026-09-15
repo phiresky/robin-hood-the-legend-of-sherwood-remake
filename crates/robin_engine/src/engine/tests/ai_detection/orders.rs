@@ -340,7 +340,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         seq,
         0,
     );
-    let actor = engine
+    engine
         .get_entity_mut(listener)
         .unwrap()
         .actor_data_mut()
@@ -685,7 +685,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     });
 
     crate::sim_rng::with_seed(0xA013_2640, |sim| {
-        engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus, None);
+        engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus);
     });
 
     let chief = engine

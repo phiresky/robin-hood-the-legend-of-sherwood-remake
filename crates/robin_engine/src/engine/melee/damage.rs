@@ -2939,6 +2939,7 @@ impl EngineInner {
     ///
     /// Sets posture to Dead, quits swordfight, closes eyes for NPCs,
     /// and flags the entity as dead for the game state checks.
+    #[cfg(test)]
     pub(crate) fn handle_death(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

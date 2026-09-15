@@ -3148,7 +3148,7 @@ fn save_restore_attaches_before_fixups_and_requests_redraw() {
     let mut display = super::super::HostDisplayState::default();
 
     let observed_fixups = std::cell::Cell::new(false);
-    let mut live =
+    let live =
         Engine::restore_from_snapshot_with_observer(&mut display, snapshot, &assets, |inner| {
             observed_fixups.set(true);
             assert!(

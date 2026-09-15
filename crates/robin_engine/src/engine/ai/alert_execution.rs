@@ -279,21 +279,6 @@ impl EngineInner {
         }
         .alert_officer()
     }
-    pub(in crate::engine) fn execute_ai_alert_soldiers_with_failure(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-        flags: u16,
-        failure: crate::ai::AlertSoldiersFailureContinuation,
-    ) {
-        if self.execute_ai_alert_soldiers(sim, assets, owner, center, flags) {
-            return;
-        }
-        self.execute_failed_ai_alert(sim, assets, owner, failure);
-    }
-
     fn execute_failed_ai_alert(
         &mut self,
         sim: &SimulationContext,
@@ -443,40 +428,6 @@ impl EngineInner {
             owner,
         }
         .command_soldiers_to_attack(center)
-    }
-
-    pub(in crate::engine) fn execute_ai_combat_alert_decision(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-    ) {
-        let accepted = self.execute_ai_command_soldiers_to_attack(sim, assets, owner, center);
-        if accepted {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: crate::ai::Remark::OfficerGivesAttackOrder,
-                    flags: 0,
-                },
-            );
-        } else {
-            self.execute_ai_battle_reserve(sim, assets, owner);
-        }
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat alert decision log"))
-            .register_log_line(
-                crate::ai::LogLineType::BattleDecision,
-                if accepted {
-                    crate::ai::Decision::AlertSoldiers
-                } else {
-                    crate::ai::Decision::Reserve
-                } as u16,
-            );
     }
 }
 
@@ -1129,8 +1080,6 @@ impl AlertExecution<'_> {
                 .unwrap_or(self.enemy().alerted_us.len());
             self.enemy_mut().alerted_us.insert(insertion, handle);
             self.engine.consider_live_ai_report(
-                self.sim,
-                self.assets,
                 target,
                 self.owner,
                 ReportUpdateFlags::UPDATE_CHARLY.bits() | ReportUpdateFlags::UPDATE_TYPE.bits(),

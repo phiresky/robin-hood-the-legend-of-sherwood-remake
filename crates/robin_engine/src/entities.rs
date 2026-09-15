@@ -36,15 +36,6 @@ macro_rules! typed_entity_accessors {
 #[serde(transparent)]
 pub struct Entities {
     slots: Vec<Option<Entity>>,
-    /// Transient per-slot invalidation counters for derived runtime caches.
-    ///
-    /// A mutable borrow is conservatively treated as a mutation. The counters
-    /// are deliberately absent from saves and deterministic state hashes: they
-    /// describe cache freshness, not gameplay state.
-    #[serde(skip)]
-    #[state_hash(skip)]
-    #[bitcode(skip)]
-    generations: Vec<u64>,
 }
 
 /// Read-only access to the entity slots around a separately borrowed owner.
@@ -97,14 +88,12 @@ impl Entities {
     /// loaders, compatibility DTOs, and parity fixtures should manufacture
     /// raw slots. Runtime code should use typed IDs and entity accessors.
     pub fn from_legacy_slots(slots: Vec<Option<Entity>>) -> Self {
-        let generations = vec![0; slots.len()];
-        Self { slots, generations }
+        Self { slots }
     }
 
     /// In-memory equivalent of a save/load round trip, used by
     /// `WorldState::persisted_clone` (which also runs without serialization
-    /// for replay/rollback save markers). Sprites drop their runtime-only state;
-    /// generations restart empty.
+    /// for replay/rollback save markers). Sprites drop their runtime-only state.
     pub(crate) fn persisted_projection(&self) -> Self {
         let slots = self
             .slots
@@ -118,10 +107,7 @@ impl Entities {
                 })
             })
             .collect();
-        Self {
-            slots,
-            generations: Vec::new(),
-        }
+        Self { slots }
     }
 
     /// Exact sparse slots used by the current native engine snapshot codec.
@@ -131,8 +117,7 @@ impl Entities {
 
     /// Restore exact sparse slots from the current native snapshot codec.
     pub(crate) fn from_snapshot_slots(slots: Vec<Option<Entity>>) -> Self {
-        let generations = vec![0; slots.len()];
-        Self { slots, generations }
+        Self { slots }
     }
 
     pub fn len(&self) -> usize {
@@ -144,48 +129,11 @@ impl Entities {
     }
 
     pub fn push(&mut self, entity: Option<Entity>) {
-        self.ensure_generation_slots();
-        self.generations.push(u64::from(entity.is_some()));
         self.slots.push(entity);
     }
 
     pub fn resize(&mut self, new_len: usize, value: Option<Entity>) {
-        let old_len = self.slots.len();
         self.slots.resize(new_len, value);
-        self.generations.resize(new_len, 0);
-        if new_len > old_len {
-            let initial = u64::from(self.slots[old_len..].iter().any(Option::is_some));
-            self.generations[old_len..].fill(initial);
-        }
-    }
-
-    /// Monotonic runtime generation for a slot's entity value.
-    ///
-    /// Deserialized entity stores start at generation zero. Any subsequent
-    /// mutable access advances the addressed slot before handing out `&mut`.
-    pub(crate) fn generation<I: Into<EntityId>>(&self, id: I) -> u64 {
-        self.generations
-            .get(id.into().index() as usize)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    fn ensure_generation_slots(&mut self) {
-        self.generations.resize(self.slots.len(), 0);
-    }
-
-    fn bump_generation(&mut self, index: usize) {
-        self.ensure_generation_slots();
-        self.generations[index] = self.generations[index].wrapping_add(1);
-    }
-
-    fn slots_mut(&mut self) -> impl Iterator<Item = (usize, &mut Option<Entity>, &mut u64)> + '_ {
-        self.ensure_generation_slots();
-        self.slots
-            .iter_mut()
-            .zip(self.generations.iter_mut())
-            .enumerate()
-            .map(|(index, (slot, generation))| (index, slot, generation))
     }
 
     /// Resolve an original-game raw element-array slot to the typed ID for
@@ -212,11 +160,6 @@ impl Entities {
     /// Mutably access an entity through an original-game raw element-array
     /// slot. Prefer typed accessors outside legacy parsing/script boundaries.
     pub fn get_legacy_slot_mut(&mut self, slot: u32) -> Option<(EntityId, &mut Entity)> {
-        let index = slot as usize;
-        if self.slots.get(index)?.is_none() {
-            return None;
-        }
-        self.bump_generation(index);
         let entity = self.slots.get_mut(slot as usize)?.as_mut()?;
         let id = EntityId::new(slot, entity.entity_id_kind());
         Some((id, entity))
@@ -237,7 +180,6 @@ impl Entities {
         if !Self::slot_matches_id(self.slots.get(index)?, id) {
             return None;
         }
-        self.bump_generation(index);
         self.slots.get_mut(index)
     }
 
@@ -259,7 +201,6 @@ impl Entities {
         let id = id.into();
         self.get(id)?;
         let index = id.index() as usize;
-        self.bump_generation(index);
         let (before, rest) = self.slots.split_at_mut(index);
         let (owner, after) = rest.split_first_mut()?;
         Some((
@@ -337,11 +278,9 @@ impl Entities {
     }
 
     pub fn occupied_mut(&mut self) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
-        self.slots_mut().filter_map(|(idx, slot, generation)| {
-            slot.as_mut().map(|entity| {
-                *generation = generation.wrapping_add(1);
-                (EntityId::new(idx as u32, entity.entity_id_kind()), entity)
-            })
+        self.slots.iter_mut().enumerate().filter_map(|(idx, slot)| {
+            slot.as_mut()
+                .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
         })
     }
 
@@ -355,18 +294,15 @@ impl Entities {
     }
 
     pub fn actors_mut(&mut self) -> impl Iterator<Item = (ActorId, &mut Entity)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(entity @ Entity::Pc(_)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((ActorId::Pc(PcId(idx as u32)), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(entity @ Entity::Pc(_)) => Some((ActorId::Pc(PcId(idx as u32)), entity)),
                 Some(entity @ Entity::Soldier(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((ActorId::Soldier(SoldierId(idx as u32)), entity))
                 }
                 Some(entity @ Entity::Civilian(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((ActorId::Civilian(CivilianId(idx as u32)), entity))
                 }
                 _ => None,
@@ -383,18 +319,15 @@ impl Entities {
     }
 
     pub fn humans_mut(&mut self) -> impl Iterator<Item = (HumanId, &mut Entity)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(entity @ Entity::Pc(_)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((HumanId::Pc(PcId(idx as u32)), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(entity @ Entity::Pc(_)) => Some((HumanId::Pc(PcId(idx as u32)), entity)),
                 Some(entity @ Entity::Soldier(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((HumanId::Soldier(SoldierId(idx as u32)), entity))
                 }
                 Some(entity @ Entity::Civilian(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((HumanId::Civilian(CivilianId(idx as u32)), entity))
                 }
                 _ => None,
@@ -424,14 +357,14 @@ impl Entities {
     }
 
     pub fn npcs_mut(&mut self) -> impl Iterator<Item = (NpcId, &mut Entity)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
                 Some(entity @ Entity::Soldier(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((NpcId::Soldier(SoldierId(idx as u32)), entity))
                 }
                 Some(entity @ Entity::Civilian(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((NpcId::Civilian(CivilianId(idx as u32)), entity))
                 }
                 _ => None,
@@ -449,24 +382,20 @@ impl Entities {
     }
 
     pub fn objects_mut(&mut self) -> impl Iterator<Item = (ObjectId, &mut Entity)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
                 Some(entity @ Entity::Bonus(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((ObjectId::Bonus(BonusId(idx as u32)), entity))
                 }
                 Some(entity @ Entity::Scroll(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((ObjectId::Scroll(ScrollId(idx as u32)), entity))
                 }
                 Some(entity @ Entity::Projectile(_)) => {
-                    *generation = generation.wrapping_add(1);
                     Some((ObjectId::Projectile(ProjectileId(idx as u32)), entity))
                 }
-                Some(entity @ Entity::Net(_)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((ObjectId::Net(NetId(idx as u32)), entity))
-                }
+                Some(entity @ Entity::Net(_)) => Some((ObjectId::Net(NetId(idx as u32)), entity)),
                 _ => None,
             })
     }
@@ -482,12 +411,11 @@ impl Entities {
     }
 
     pub fn pcs_mut(&mut self) -> impl Iterator<Item = (PcId, &mut ActorPc)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Pc(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((PcId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Pc(entity)) => Some((PcId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -520,12 +448,11 @@ impl Entities {
     }
 
     pub fn soldiers_mut(&mut self) -> impl Iterator<Item = (SoldierId, &mut ActorSoldier)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Soldier(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((SoldierId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Soldier(entity)) => Some((SoldierId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -541,12 +468,11 @@ impl Entities {
     }
 
     pub fn civilians_mut(&mut self) -> impl Iterator<Item = (CivilianId, &mut ActorCivilian)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Civilian(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((CivilianId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Civilian(entity)) => Some((CivilianId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -562,12 +488,11 @@ impl Entities {
     }
 
     pub fn fxs_mut(&mut self) -> impl Iterator<Item = (FxId, &mut ElementFx)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Fx(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((FxId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Fx(entity)) => Some((FxId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -603,12 +528,11 @@ impl Entities {
     }
 
     pub fn scrolls_mut(&mut self) -> impl Iterator<Item = (ScrollId, &mut ElementScroll)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Scroll(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((ScrollId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Scroll(entity)) => Some((ScrollId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -626,12 +550,11 @@ impl Entities {
     pub fn projectiles_mut(
         &mut self,
     ) -> impl Iterator<Item = (ProjectileId, &mut ElementProjectile)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Projectile(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((ProjectileId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Projectile(entity)) => Some((ProjectileId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -647,12 +570,11 @@ impl Entities {
     }
 
     pub fn nets_mut(&mut self) -> impl Iterator<Item = (NetId, &mut ElementNet)> + '_ {
-        self.slots_mut()
-            .filter_map(|(idx, slot, generation)| match slot {
-                Some(Entity::Net(entity)) => {
-                    *generation = generation.wrapping_add(1);
-                    Some((NetId(idx as u32), entity))
-                }
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Net(entity)) => Some((NetId(idx as u32), entity)),
                 _ => None,
             })
     }
@@ -734,7 +656,7 @@ impl<I: Into<EntityId>> std::ops::IndexMut<I> for Entities {
 }
 
 #[cfg(test)]
-mod generation_tests {
+mod persistence_tests {
     use super::*;
     use robin_util::state_hash::StateHash;
     use std::hash::Hasher;
@@ -746,43 +668,39 @@ mod generation_tests {
     }
 
     #[test]
-    fn mutation_generations_are_transient_cache_state() {
+    fn borrowing_slots_preserves_serialization_and_hash() {
         let mut entities = Entities::from_legacy_slots(vec![None]);
         let id = PcId(0);
         let serialized = serde_json::to_value(&entities).expect("serialize entity slots");
         let state_hash = hash(&entities);
 
         let _slot = &mut entities[id];
-        assert_eq!(entities.generation(id), 1);
         assert_eq!(serde_json::to_value(&entities).unwrap(), serialized);
         assert_eq!(hash(&entities), state_hash);
 
         let restored: Entities = serde_json::from_value(serialized).expect("restore entity slots");
-        assert_eq!(restored.generation(id), 0);
+        assert_eq!(restored.len(), 1);
+        assert!(restored[id].is_none());
     }
 
-    fn assert_restored_append_generations(restored: Entities) {
+    fn assert_restored_appends(restored: Entities) {
         for occupied_first in [true, false] {
             let mut entities = restored.clone();
-            let generations = |entities: &Entities| {
-                (0..entities.len())
-                    .map(|index| entities.generation(ScrollId(index as u32)))
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(generations(&entities), [0, 0]);
-
             for occupied in [occupied_first, !occupied_first] {
                 entities.push(occupied.then(|| Entity::Scroll(ElementScroll::default())));
             }
-            let mut expected = vec![0, 0, u64::from(occupied_first), u64::from(!occupied_first)];
-            assert_eq!(generations(&entities), expected);
+            assert_eq!(entities.len(), 4);
+            for (index, occupied) in [true, false, occupied_first, !occupied_first]
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(entities[ScrollId(index as u32)].is_some(), occupied);
+            }
 
             let serialized = serde_json::to_value(&entities).unwrap();
             let state_hash = hash(&entities);
             for index in [0, 2, 1, 3] {
                 let _slot = &mut entities[ScrollId(index as u32)];
-                expected[index] += 1;
-                assert_eq!(generations(&entities), expected);
             }
             assert_eq!(serde_json::to_value(&entities).unwrap(), serialized);
             assert_eq!(hash(&entities), state_hash);
@@ -790,21 +708,19 @@ mod generation_tests {
     }
 
     #[test]
-    fn append_after_serde_restore_keeps_generations_aligned() {
+    fn append_after_serde_restore_preserves_sparse_slots() {
         let entities =
             Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
         let restored = serde_json::from_value(serde_json::to_value(&entities).unwrap()).unwrap();
-        assert_restored_append_generations(restored);
+        assert_restored_appends(restored);
     }
 
     #[test]
-    fn append_after_persisted_restore_keeps_generations_aligned() {
-        let mut entities =
+    fn append_after_persisted_restore_preserves_sparse_slots() {
+        let entities =
             Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
-        let _slot = &mut entities[ScrollId(0)];
-        assert_eq!(entities.generation(ScrollId(0)), 1);
         let restored = entities.persisted_projection();
-        assert_restored_append_generations(restored);
+        assert_restored_appends(restored);
     }
 }
 
@@ -885,22 +801,6 @@ mod tests {
             entities.push(Some(entity(kind)));
         }
         entities
-    }
-
-    #[test]
-    fn typed_mutable_iteration_only_invalidates_matching_slots() {
-        let mut entities = all_kinds();
-        for (_, soldier) in entities.soldiers_mut() {
-            let _ = soldier;
-        }
-        for (index, kind) in KINDS.into_iter().enumerate() {
-            let id = EntityId::new(index as u32, kind);
-            assert_eq!(
-                entities.generation(id),
-                1 + u64::from(kind == EntityIdKind::Soldier),
-                "unexpected invalidation for {kind:?}"
-            );
-        }
     }
 
     #[test]
@@ -1165,35 +1065,7 @@ impl Entities {
 #[cfg(test)]
 mod required_ai_access_tests {
     use super::*;
-    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
-
-    #[test]
-    fn typed_ai_access_preserves_one_arena_generation_increment_per_borrow() {
-        let mut entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
-            crate::element::Camp::Lacklandists,
-        ))]);
-        let id = entities.id_at_legacy_slot(0).unwrap();
-        let before = entities.generation(id);
-        entities.expect_ai_controller_mut(id, format_args!("controller test"));
-        assert_eq!(entities.generation(id), before + 1);
-        entities.expect_enemy_ai_mut(id, format_args!("enemy test"));
-        assert_eq!(entities.generation(id), before + 2);
-        entities.expect_ai_actor_data_mut(id, format_args!("actor test"));
-        assert_eq!(entities.generation(id), before + 3);
-    }
-
-    #[test]
-    fn immutable_typed_ai_access_does_not_touch_the_arena_generation() {
-        let entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
-            crate::element::Camp::Lacklandists,
-        ))]);
-        let id = entities.id_at_legacy_slot(0).unwrap();
-        let before = entities.generation(id);
-        entities.expect_ai_controller(id, format_args!("controller test"));
-        entities.expect_enemy_ai(id, format_args!("enemy test"));
-        entities.expect_ai_actor_data(id, format_args!("actor test"));
-        assert_eq!(entities.generation(id), before);
-    }
+    use crate::engine::test_support::actors::make_test_pc;
 
     #[test]
     #[should_panic(expected = "has no required enemy AI")]
@@ -1211,25 +1083,6 @@ mod required_ai_access_tests {
             Entities::from_legacy_slots(vec![Some(make_test_pc(crate::element::Posture::Upright))]);
         let id = entities.id_at_legacy_slot(0).unwrap();
         entities.expect_ai_controller_mut(id, format_args!("NPC dispatch"));
-    }
-
-    #[test]
-    fn typed_entity_access_preserves_one_arena_generation_increment_per_borrow() {
-        let mut entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
-            crate::element::Camp::Lacklandists,
-        ))]);
-        let id = entities.id_at_legacy_slot(0).unwrap();
-        let before = entities.generation(id);
-        entities.expect_entity(id, format_args!("entity test"));
-        entities.expect_human_data(id, format_args!("human test"));
-        entities.expect_actor_data(id, format_args!("actor test"));
-        assert_eq!(entities.generation(id), before);
-        entities.expect_entity_mut(id, format_args!("entity test"));
-        assert_eq!(entities.generation(id), before + 1);
-        entities.expect_human_data_mut(id, format_args!("human test"));
-        assert_eq!(entities.generation(id), before + 2);
-        entities.expect_actor_data_mut(id, format_args!("actor test"));
-        assert_eq!(entities.generation(id), before + 3);
     }
 
     #[test]

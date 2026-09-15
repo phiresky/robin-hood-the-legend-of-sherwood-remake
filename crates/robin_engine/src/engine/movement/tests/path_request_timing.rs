@@ -40,8 +40,7 @@ mod suite {
     fn reachable_postponed_move_resumes_directly_at_terminal_door_handoff() {
         let assets = LevelAssets::new();
         use crate::element::{
-            ActorData, ActorSoldier, Command, ElementData, ElementKind, HumanData, NpcData,
-            Posture, SoldierData,
+            ActorData, ActorSoldier, Command, ElementData, ElementKind, HumanData, NpcData, Posture,
         };
         use crate::sequence::{Sequence, SequenceElement, SequenceElementData};
 

@@ -471,8 +471,6 @@ impl EngineInner {
             // animation, exactly once.
             let motion_before_modifier = *motion;
             self.apply_actor_post_execute_wait_modifier_to_motion(
-                ctx.sim,
-                ctx.assets,
                 entity_id,
                 entry_seq_id,
                 entry_elem_idx,
@@ -691,7 +689,7 @@ impl EngineInner {
         // here is intentional: WaitingSword callbacks above may
         // have synchronously replaced it.
         if let Some(result) = execute_result.as_mut() {
-            self.apply_actor_post_execute_wait_modifier(sim, assets, entity_id, result);
+            self.apply_actor_post_execute_wait_modifier(entity_id, result);
         }
         // The base actor update calls line-crossing detection
         // after the complete execution chain and its wait

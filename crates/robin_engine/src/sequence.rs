@@ -2538,27 +2538,6 @@ impl Sequence {
         self.raw_following_ref(elem_idx)
     }
 
-    /// Cascades operate on local indices and must reject cross-sequence or
-    /// dangling imported edges rather than treating them as the end of a chain.
-    fn following_element_index(&self, elem_idx: usize) -> Option<usize> {
-        let next = self.unsevered_following_ref(elem_idx)?;
-        // TODO(legacy-sequence-runtime): promote cascade effects from
-        // element indices to SequenceElementRef if a real save ever
-        // contains a following pointer outside its mummy sequence.
-        assert_eq!(
-            next.sequence_id, self.id,
-            "loaded v48 following pointer crosses sequences: {:?}/{elem_idx} -> {:?}/{}",
-            self.id, next.sequence_id, next.element_index
-        );
-        assert!(
-            next.element_index < self.elements.len(),
-            "loaded v48 following pointer targets missing element: {:?}/{elem_idx} -> {}",
-            self.id,
-            next.element_index
-        );
-        Some(next.element_index)
-    }
-
     /// Select only the current node's Stop branch. The engine resolves its
     /// priority first, completes each recursive call, then rereads links.
     pub(crate) fn prepare_element_stop(
