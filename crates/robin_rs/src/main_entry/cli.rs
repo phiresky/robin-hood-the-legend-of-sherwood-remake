@@ -98,6 +98,21 @@ pub struct CliArgs {
     #[arg(long, value_parser = parse_replay_spec)]
     pub replay: Option<String>,
 
+    /// Replay an existing recording twice and publish upgraded engine hashes.
+    #[arg(long, value_name = "INPUT", requires = "upgraded_replay", conflicts_with_all = ["replay", "record", "mission", "server", "connect", "join"])]
+    #[serde(skip)]
+    pub upgrade_replay: Option<std::path::PathBuf>,
+
+    /// New JSONL recording to publish after successful replay verification.
+    #[arg(long, value_name = "OUTPUT", requires = "upgrade_replay")]
+    #[serde(skip)]
+    pub upgraded_replay: Option<std::path::PathBuf>,
+
+    /// Internal replay-upgrade worker output; records actual boundary hashes.
+    #[arg(long, hide = true, requires_all = ["headless", "replay"])]
+    #[serde(skip)]
+    pub replay_hash_output: Option<std::path::PathBuf>,
+
     /// Runtime rollback consistency checker: rewind a short window of
     /// engine state and re-simulate it to detect desyncs.
     /// On by default — pass `--rollback-check=false` to disable.
@@ -262,6 +277,9 @@ impl Default for CliArgs {
             debug_surfaces: false,
             record: None,
             replay: None,
+            upgrade_replay: None,
+            upgraded_replay: None,
+            replay_hash_output: None,
             rollback_check: true,
             sherwood: false,
             force_main_menu: false,

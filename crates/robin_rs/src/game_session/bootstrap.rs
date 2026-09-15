@@ -1267,13 +1267,13 @@ impl BuiltHeadlessMission {
     pub(super) async fn run(
         &mut self,
         args: &crate::main_entry::MissionRequest,
-    ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
+    ) -> Result<HeadlessMissionOutcome, MissionError> {
         self.mission.run(args).await
     }
 
     pub(super) fn finish(
         mut self,
-        outcome: Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError>,
+        outcome: Result<HeadlessMissionOutcome, MissionError>,
     ) -> MissionOutcome {
         if matches!(&outcome, Ok(outcome) if outcome.code == GameCode::LevelRestart) {
             self.mission
@@ -1285,9 +1285,7 @@ impl BuiltHeadlessMission {
             campaign,
             rng_seed,
             sim_config,
-            outcome
-                .map(|outcome| outcome.code)
-                .map_err(MissionError::from),
+            outcome.map(|outcome| outcome.code),
         )
     }
 }

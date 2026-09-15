@@ -29,6 +29,7 @@ pub mod bug_report;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_game_identity;
+pub mod replay_upgrade;
 pub mod runtime_contract;
 pub(crate) mod touch_input;
 pub mod version;
