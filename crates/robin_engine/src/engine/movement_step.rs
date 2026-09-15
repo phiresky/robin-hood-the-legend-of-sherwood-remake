@@ -1927,8 +1927,12 @@ impl MovementStepCtx<'_> {
         // Execute arm does not enter the Moving action state. Our
         // position update is staged below; fold that imminent arrival
         // into the state-effect result now.
-        let entity_target_seek =
-            active_move_flags.contains(MoveFlags::SEEK) && ft.target_id.is_some();
+        // The selected action decides whether seeking wraps sprite motion.
+        // Ladder and wall orders retain the route's SEEK flag but return their
+        // direct motion result, including START and DONE.
+        let entity_target_seek = active_move_flags.contains(MoveFlags::SEEK)
+            && ft.target_id.is_some()
+            && perform_seek_calls_per_execute(order_action) > 0;
         // The ordinary (non-TillLastFrame) arrival branch runs only when
         // the sprite actually advanced the actor, and it asks the position
         // interface rather than comparing straight-line distances. A
