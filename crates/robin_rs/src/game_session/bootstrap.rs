@@ -1299,55 +1299,6 @@ pub(super) enum HeadlessBuildOutcome {
 
 pub(super) struct HeadlessMissionBuilder;
 
-/// Export prepared mission inputs without constructing callbacks that open
-/// player saves. Official projection contexts deliberately disable persistence.
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub(crate) async fn export_official_mission_headless(
-    campaign: Campaign,
-    profiles: &ProfileManager,
-    mission_idx: usize,
-    location: MissionLocation,
-    args: &crate::main_entry::MissionRequest,
-    rng_seed: u64,
-    sim_config: engine_api::SimConfig,
-) -> Result<(), MissionError> {
-    if !args.config.cli.headless || args.config.simulation_content_export.is_none() {
-        return Err(MissionError::launch(
-            "official projection requires a headless export request",
-        ));
-    }
-    crate::lua_session::validate_launch_mode(&args.config.cli, false)?;
-    let mission_id = campaign.missions[mission_idx]
-        .profile(profiles)
-        .mission_filename
-        .clone();
-    super::ensure_shipping_mission(args, &mission_id, &campaign, profiles, false, |_| {}).await?;
-    let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
-    let loading = HeadlessLoadStage::begin(
-        &crate::multiplayer::MultiplayerCampaignSession::default(),
-        location,
-        args,
-        &mission_id,
-        rng_seed,
-        sim_config,
-        None,
-    )
-    .await?;
-    let bootstrap = loading
-        .load_level(
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            args,
-            rng_seed,
-            sim_config,
-        )
-        .map_err(|error| error.message)?;
-    drop(bootstrap);
-    Ok(())
-}
-
 impl HeadlessMissionBuilder {
     pub(super) async fn build(
         callbacks: &mut RustCallbacks,
@@ -1434,16 +1385,6 @@ impl HeadlessMissionBuilder {
                 ));
             }
         };
-        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-        if args.config.simulation_content_export.is_some() {
-            let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-            return HeadlessBuildOutcome::Finished(MissionOutcome::new(
-                campaign,
-                rng_seed,
-                sim_config,
-                Ok(robin_engine::game_operation::GameCode::Quit),
-            ));
-        }
         bootstrap.report_spellforge_startup();
         let bootstrap = match Box::new(bootstrap).prepare_audio(None, profiles) {
             Ok(bootstrap) => bootstrap,
@@ -1639,11 +1580,6 @@ impl InteractiveMissionBuilder {
 
         stage.bootstrap.report_spellforge_startup();
         timer.step("spellforge startup");
-        if let Some(net) = stage.bootstrap.host.transport.net()
-            && let Err(error) = net.install_ranked_session_setup(None)
-        {
-            tracing::warn!("could not clear the transport's pre-game ranking slot: {error}");
-        }
         let stage = match stage.prepare_audio(profiles) {
             Ok(stage) => stage,
             Err((bootstrap, error)) => {

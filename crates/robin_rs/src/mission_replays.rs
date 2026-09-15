@@ -59,6 +59,8 @@ impl RecordingIndex {
             }
         }
     }
+    /// Browser builds have no local recording directory to submit from.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn submit_recording(
         &self,
         path: &std::path::Path,
@@ -66,16 +68,9 @@ impl RecordingIndex {
             robin_engine::campaign_history::MissionAttemptKey,
             Option<i64>,
         ),
+        edition: robin_run_protocol::OfficialContentEditionV1,
     ) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            robin_util::sync::lock(&self.submissions).submit(path, expected)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (path, expected);
-            Err("Local replay submission is unavailable in this browser".into())
-        }
+        robin_util::sync::lock(&self.submissions).submit(path, expected, edition)
     }
     pub(crate) fn disabled() -> Self {
         Self {

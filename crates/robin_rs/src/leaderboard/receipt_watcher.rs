@@ -2,24 +2,22 @@
 //!
 //! `POST /submissions` only admits work to the verifier queue. This watcher
 //! keeps the submission id and its exact controller identity after the
-//! mission-end panel closes, obtains a fresh one-use owner challenge for each
-//! status read, and polls at most one native/browser task per game frame.
-//! Campaign-chain receipts are persisted only from an exact, authenticated
-//! terminal `Accepted` response.
+//! mission-end panel closes, signs a fresh timestamped owner-status request for
+//! each status read (a signed request is never cached across attempts, since
+//! the server only accepts recently signed requests), and polls at most one
+//! native/browser task per game frame.
 
 use crate::leaderboard::task::{PollTask, TryTake};
 use crate::leaderboard_http::HttpTransportError;
 use crate::leaderboard_preferences::LeaderboardPreferences;
 use crate::leaderboard_service::{
     LeaderboardApi, LeaderboardServiceError, decode_submission_owner_status,
-    decode_submission_owner_status_challenge,
 };
 use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 use robin_run_protocol::{
-    CampaignChainReceiptV1, OpaqueId, PublicKey32, SCHEMA_VERSION_V1, SubmissionAcceptedV1,
-    SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    SubmissionOwnerStatusResponseV1, Validate as _,
+    OpaqueId, PublicKey32, SCHEMA_VERSION_V2, SignedSubmissionOwnerStatusRequestV2,
+    SubmissionAcceptedV1, SubmissionLifecycleV1, SubmissionOwnerStatusRequestV2,
+    SubmissionOwnerStatusResponseV2, Validate as _,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -89,8 +87,8 @@ struct PendingSubmissionReceiptWatch {
     status_attempts: u32,
     consecutive_failures: u16,
     /// Authenticated terminal state is first committed to the pending store.
-    /// A crash or campaign-store failure can then finish local persistence
-    /// without another network response and without abandoning a verified run.
+    /// A crash can then finish local bookkeeping without another network
+    /// response and without abandoning a verified run.
     terminal_accepted: Option<VerifiedTerminalReceipt>,
 }
 
@@ -98,7 +96,6 @@ struct PendingSubmissionReceiptWatch {
 #[serde(deny_unknown_fields)]
 struct VerifiedTerminalReceipt {
     run_id: OpaqueId,
-    campaign_chain_receipt: Option<CampaignChainReceiptV1>,
 }
 
 impl PendingSubmissionReceiptWatch {
@@ -118,26 +115,11 @@ impl PendingSubmissionReceiptWatch {
             ));
         }
         if let Some(terminal) = &self.terminal_accepted {
-            let lifecycle = SubmissionLifecycleV1::Accepted {
+            SubmissionLifecycleV1::Accepted {
                 run_id: terminal.run_id.clone(),
-                campaign_chain_receipt: terminal.campaign_chain_receipt.clone(),
-            };
-            lifecycle
-                .validate()
-                .map_err(|error| ReceiptWatcherError::InvalidStore(error.to_string()))?;
-            if terminal
-                .campaign_chain_receipt
-                .as_ref()
-                .is_some_and(|receipt| {
-                    receipt.predecessor_run_id != terminal.run_id
-                        || receipt.campaign_controller_public_key != self.key.controller_public_key
-                })
-            {
-                return Err(ReceiptWatcherError::InvalidStore(
-                    "terminal campaign receipt differs from its verified run or controller"
-                        .to_owned(),
-                ));
             }
+            .validate()
+            .map_err(|error| ReceiptWatcherError::InvalidStore(error.to_string()))?;
         }
         Ok(())
     }
@@ -194,7 +176,6 @@ pub enum ReceiptWatcherNotice {
     Verified {
         submission_id: OpaqueId,
         run_id: OpaqueId,
-        campaign_receipt_persisted: bool,
     },
     Rejected {
         submission_id: OpaqueId,
@@ -266,27 +247,19 @@ fn poll_validated<T>(
 }
 
 trait ReceiptWatcherBackend: Send {
-    fn challenge(
-        &mut self,
-        request: SubmissionOwnerStatusChallengeRequestV1,
-    ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
-        ReceiptWatcherOperationError,
-    >;
-
     fn sign(
         &mut self,
-        challenge: SubmissionOwnerStatusChallengeV1,
+        request: SubmissionOwnerStatusRequestV2,
     ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        Box<ReceiptWatcherTask<SignedSubmissionOwnerStatusRequestV2>>,
         ReceiptWatcherOperationError,
     >;
 
     fn status(
         &mut self,
-        envelope: SubmissionOwnerStatusEnvelopeV1,
+        request: SignedSubmissionOwnerStatusRequestV2,
     ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV2>>,
         ReceiptWatcherOperationError,
     >;
 }
@@ -296,28 +269,18 @@ trait ReceiptWatcherPersistence: Send {
         &mut self,
         store: &PendingSubmissionReceiptStore,
     ) -> Result<(), ReceiptWatcherError>;
-
-    fn persist_campaign_receipt(
-        &mut self,
-        receipt: CampaignChainReceiptV1,
-    ) -> Result<(), ReceiptWatcherError>;
 }
 
 enum ActiveReceiptWatcherTask {
-    Challenge {
-        key: SubmissionReceiptWatchKey,
-        request: SubmissionOwnerStatusChallengeRequestV1,
-        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
-    },
     Sign {
         key: SubmissionReceiptWatchKey,
-        challenge: SubmissionOwnerStatusChallengeV1,
-        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        request: SubmissionOwnerStatusRequestV2,
+        task: Box<ReceiptWatcherTask<SignedSubmissionOwnerStatusRequestV2>>,
     },
     Status {
         key: SubmissionReceiptWatchKey,
-        envelope: SubmissionOwnerStatusEnvelopeV1,
-        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        signed: SignedSubmissionOwnerStatusRequestV2,
+        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV2>>,
     },
 }
 
@@ -545,8 +508,9 @@ impl SubmissionReceiptWatcher {
         self.notices.pop_front()
     }
 
-    /// Advance at most one already-running task, or start one due challenge.
+    /// Advance at most one already-running task, or start one due status read.
     /// No network wait or identity operation runs on the calling frame.
+    /// `now_unix_ms` is wall-clock epoch time and also stamps signed requests.
     pub fn poll(&mut self, now_unix_ms: u64) {
         if now_unix_ms == 0 || now_unix_ms < self.storage_retry_not_before_unix_ms {
             return;
@@ -556,53 +520,21 @@ impl SubmissionReceiptWatcher {
             return;
         };
         match active {
-            ActiveReceiptWatcherTask::Challenge {
+            ActiveReceiptWatcherTask::Sign {
                 key,
                 request,
                 mut task,
             } => {
-                match poll_validated(task.as_mut(), |challenge| {
-                    validate_challenge(&request, challenge)
+                match poll_validated(task.as_mut(), |signed| {
+                    validate_signed_request(&request, signed)
                 }) {
                     None => {
-                        self.active =
-                            Some(ActiveReceiptWatcherTask::Challenge { key, request, task })
+                        self.active = Some(ActiveReceiptWatcherTask::Sign { key, request, task })
                     }
-                    Some(Ok(challenge)) => match self.backend.sign(challenge.clone()) {
+                    Some(Ok(signed)) => match self.backend.status(signed.clone()) {
                         Ok(task) => {
-                            self.active = Some(ActiveReceiptWatcherTask::Sign {
-                                key,
-                                challenge,
-                                task,
-                            })
-                        }
-                        Err(error) => self.record_operation_error(&key, error, now_unix_ms),
-                    },
-                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-                }
-            }
-            ActiveReceiptWatcherTask::Sign {
-                key,
-                challenge,
-                mut task,
-            } => {
-                match poll_validated(task.as_mut(), |envelope| {
-                    validate_envelope(&challenge, envelope)
-                }) {
-                    None => {
-                        self.active = Some(ActiveReceiptWatcherTask::Sign {
-                            key,
-                            challenge,
-                            task,
-                        })
-                    }
-                    Some(Ok(envelope)) => match self.backend.status(envelope.clone()) {
-                        Ok(task) => {
-                            self.active = Some(ActiveReceiptWatcherTask::Status {
-                                key,
-                                envelope,
-                                task,
-                            })
+                            self.active =
+                                Some(ActiveReceiptWatcherTask::Status { key, signed, task })
                         }
                         Err(error) => self.record_operation_error(&key, error, now_unix_ms),
                     },
@@ -611,20 +543,16 @@ impl SubmissionReceiptWatcher {
             }
             ActiveReceiptWatcherTask::Status {
                 key,
-                envelope,
+                signed,
                 mut task,
             } => {
                 match poll_validated(task.as_mut(), |response| {
                     response
-                        .validate_against_envelope(&envelope)
+                        .validate_against_request(&signed)
                         .map_err(|error| format!("owner-status response mismatch: {error}"))
                 }) {
                     None => {
-                        self.active = Some(ActiveReceiptWatcherTask::Status {
-                            key,
-                            envelope,
-                            task,
-                        })
+                        self.active = Some(ActiveReceiptWatcherTask::Status { key, signed, task })
                     }
                     Some(Ok(response)) => self.handle_status(key, response, now_unix_ms),
                     Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
@@ -676,9 +604,12 @@ impl SubmissionReceiptWatcher {
             self.note_storage_failure(error, now_unix_ms);
             return;
         }
-        let request = SubmissionOwnerStatusChallengeRequestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            controller_public_key: key.controller_public_key,
+        // Signed afresh for every attempt: a retried read must never reuse a
+        // signature that may have left the server's acceptance window.
+        let request = SubmissionOwnerStatusRequestV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            public_key: key.controller_public_key,
+            signed_at_unix_ms: now_unix_ms,
             submission_id: key.submission_id.clone(),
         };
         if let Err(error) = request.validate() {
@@ -691,9 +622,9 @@ impl SubmissionReceiptWatcher {
             );
             return;
         }
-        match self.backend.challenge(request.clone()) {
+        match self.backend.sign(request.clone()) {
             Ok(task) => {
-                self.active = Some(ActiveReceiptWatcherTask::Challenge { key, request, task });
+                self.active = Some(ActiveReceiptWatcherTask::Sign { key, request, task });
             }
             Err(error) => self.record_operation_error(&key, error, now_unix_ms),
         }
@@ -702,7 +633,7 @@ impl SubmissionReceiptWatcher {
     fn handle_status(
         &mut self,
         key: SubmissionReceiptWatchKey,
-        response: SubmissionOwnerStatusResponseV1,
+        response: SubmissionOwnerStatusResponseV2,
         now_unix_ms: u64,
     ) {
         match response.state {
@@ -715,18 +646,12 @@ impl SubmissionReceiptWatcher {
             SubmissionLifecycleV1::RetryPending => {
                 self.schedule_lifecycle(&key, RETRY_PENDING_POLL_MS, now_unix_ms)
             }
-            SubmissionLifecycleV1::Accepted {
-                run_id,
-                campaign_chain_receipt,
-            } => {
+            SubmissionLifecycleV1::Accepted { run_id } => {
                 let mut updated = self.store.clone();
                 let Some(pending) = find_pending_mut(&mut updated, &key) else {
                     return;
                 };
-                pending.terminal_accepted = Some(VerifiedTerminalReceipt {
-                    run_id,
-                    campaign_chain_receipt,
-                });
+                pending.terminal_accepted = Some(VerifiedTerminalReceipt { run_id });
                 pending.consecutive_failures = 0;
                 if let Err(error) = self.commit_pending(updated) {
                     self.note_storage_failure(error, now_unix_ms);
@@ -763,18 +688,10 @@ impl SubmissionReceiptWatcher {
         else {
             return;
         };
-        let persisted_receipt = terminal.campaign_chain_receipt.is_some();
-        if let Some(receipt) = terminal.campaign_chain_receipt
-            && let Err(error) = self.persistence.persist_campaign_receipt(receipt)
-        {
-            self.note_storage_failure(error, now_unix_ms);
-            return;
-        }
         if self.remove_pending(key, now_unix_ms) {
             self.push_notice(ReceiptWatcherNotice::Verified {
                 submission_id: key.submission_id.clone(),
                 run_id: terminal.run_id,
-                campaign_receipt_persisted: persisted_receipt,
             });
         }
     }
@@ -918,30 +835,15 @@ fn bounded_next_attempt(
     now_unix_ms.saturating_add(delay_ms).min(deadline)
 }
 
-fn validate_challenge(
-    request: &SubmissionOwnerStatusChallengeRequestV1,
-    challenge: &SubmissionOwnerStatusChallengeV1,
+fn validate_signed_request(
+    request: &SubmissionOwnerStatusRequestV2,
+    signed: &SignedSubmissionOwnerStatusRequestV2,
 ) -> Result<(), String> {
-    challenge
+    signed
         .validate()
-        .map_err(|error| format!("owner-status challenge is invalid: {error}"))?;
-    if challenge.controller_public_key != request.controller_public_key
-        || challenge.submission_id != request.submission_id
-    {
-        return Err("owner-status challenge changed the submission or owner".to_owned());
-    }
-    Ok(())
-}
-
-fn validate_envelope(
-    challenge: &SubmissionOwnerStatusChallengeV1,
-    envelope: &SubmissionOwnerStatusEnvelopeV1,
-) -> Result<(), String> {
-    envelope
-        .validate()
-        .map_err(|error| format!("signed owner-status envelope is invalid: {error}"))?;
-    if &envelope.challenge != challenge {
-        return Err("identity signer changed the owner-status challenge".to_owned());
+        .map_err(|error| format!("signed owner-status request is invalid: {error}"))?;
+    if &signed.request != request {
+        return Err("identity signer changed the owner-status request".to_owned());
     }
     Ok(())
 }
@@ -955,19 +857,6 @@ impl ReceiptWatcherPersistence for DurableReceiptWatcherPersistence {
     ) -> Result<(), ReceiptWatcherError> {
         persist_pending_store(store)
     }
-
-    fn persist_campaign_receipt(
-        &mut self,
-        receipt: CampaignChainReceiptV1,
-    ) -> Result<(), ReceiptWatcherError> {
-        let mut store = crate::leaderboard_chains::load()
-            .map_err(|error| ReceiptWatcherError::InvalidStore(error.to_string()))?;
-        store
-            .accepted(receipt)
-            .map_err(|error| ReceiptWatcherError::InvalidStore(error.to_string()))?;
-        crate::leaderboard_chains::persist(&store)
-            .map_err(|error| ReceiptWatcherError::InvalidStore(error.to_string()))
-    }
 }
 
 struct HttpReceiptWatcherBackend {
@@ -975,33 +864,16 @@ struct HttpReceiptWatcherBackend {
 }
 
 impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
-    fn challenge(
-        &mut self,
-        request: SubmissionOwnerStatusChallengeRequestV1,
-    ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
-        ReceiptWatcherOperationError,
-    > {
-        let task = self
-            .api
-            .submission_owner_status_challenge(&request)
-            .map_err(classify_service_error)?;
-        Ok(Box::new(task.map(move |result| {
-            decode_submission_owner_status_challenge(result, &request)
-                .map_err(classify_service_error)
-        })))
-    }
-
     fn sign(
         &mut self,
-        challenge: SubmissionOwnerStatusChallengeV1,
+        request: SubmissionOwnerStatusRequestV2,
     ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        Box<ReceiptWatcherTask<SignedSubmissionOwnerStatusRequestV2>>,
         ReceiptWatcherOperationError,
     > {
         let task =
             PollTask::spawn_background("leaderboard-owner-status-sign", move || async move {
-                PlatformSigner::sign_submission_owner_status(challenge)
+                PlatformSigner::sign_submission_owner_status(request)
                     .await
                     .map_err(classify_signing_error)
             })
@@ -1019,17 +891,17 @@ impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
 
     fn status(
         &mut self,
-        envelope: SubmissionOwnerStatusEnvelopeV1,
+        signed: SignedSubmissionOwnerStatusRequestV2,
     ) -> Result<
-        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV2>>,
         ReceiptWatcherOperationError,
     > {
         let task = self
             .api
-            .submission_owner_status(&envelope)
+            .submission_owner_status(&signed)
             .map_err(classify_service_error)?;
         Ok(Box::new(task.map(move |result| {
-            decode_submission_owner_status(result, &envelope).map_err(classify_service_error)
+            decode_submission_owner_status(result, &signed).map_err(classify_service_error)
         })))
     }
 }
@@ -1061,7 +933,6 @@ fn classify_service_error(error: LeaderboardServiceError) -> ReceiptWatcherOpera
         | Error::BoardFilterMismatch
         | Error::BoardCursorMismatch
         | Error::ArtifactMismatch
-        | Error::MissingStartingCampaign
         | Error::InvalidCompactReplay(_)
         | Error::UnexpectedContentType { .. }
         | Error::RequestEncoding(_)
@@ -1135,11 +1006,9 @@ fn write_pending_store(encoded: &[u8]) -> Result<(), ReceiptWatcherError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leaderboard::test_fixtures::{ChainReceiptSpec, chain_receipt};
     use robin_run_protocol::{
-        ArtifactRefV1, CanonicalDocument as _, ChallengeNonce32, Digest32,
-        RANKED_CAMPAIGN_MEDIA_TYPE_V1, Signature64, SignatureAlgorithmV1, SubmissionFailureCodeV1,
-        VerificationRejectionCodeV1,
+        CanonicalDocument as _, SCHEMA_VERSION_V1, Signature64, SignatureAlgorithmV1,
+        SubmissionFailureCodeV1, VerificationRejectionCodeV1,
     };
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -1149,7 +1018,6 @@ mod tests {
     #[derive(Debug, Clone, Default)]
     struct PersistenceState {
         stores: Vec<PendingSubmissionReceiptStore>,
-        receipts: Vec<CampaignChainReceiptV1>,
     }
 
     struct MemoryPersistence(Arc<Mutex<PersistenceState>>);
@@ -1160,14 +1028,6 @@ mod tests {
             store: &PendingSubmissionReceiptStore,
         ) -> Result<(), ReceiptWatcherError> {
             self.0.lock().unwrap().stores.push(store.clone());
-            Ok(())
-        }
-
-        fn persist_campaign_receipt(
-            &mut self,
-            receipt: CampaignChainReceiptV1,
-        ) -> Result<(), ReceiptWatcherError> {
-            self.0.lock().unwrap().receipts.push(receipt);
             Ok(())
         }
     }
@@ -1181,9 +1041,8 @@ mod tests {
     }
 
     enum BackendStep {
-        Challenge(SubmissionOwnerStatusChallengeV1),
-        Envelope(SubmissionOwnerStatusEnvelopeV1),
-        Status(SubmissionOwnerStatusResponseV1),
+        Signed(SignedSubmissionOwnerStatusRequestV2),
+        Status(SubmissionOwnerStatusResponseV2),
         Error(ReceiptWatcherOperationError),
     }
 
@@ -1200,39 +1059,25 @@ mod tests {
     }
 
     impl ReceiptWatcherBackend for ScriptedBackend {
-        fn challenge(
-            &mut self,
-            _request: SubmissionOwnerStatusChallengeRequestV1,
-        ) -> Result<
-            Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
-            ReceiptWatcherOperationError,
-        > {
-            match self.next() {
-                BackendStep::Challenge(value) => Ok(Box::new(ReadyTask(Some(Ok(value))))),
-                BackendStep::Error(error) => Err(error),
-                _ => panic!("expected challenge step"),
-            }
-        }
-
         fn sign(
             &mut self,
-            _challenge: SubmissionOwnerStatusChallengeV1,
+            _request: SubmissionOwnerStatusRequestV2,
         ) -> Result<
-            Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+            Box<ReceiptWatcherTask<SignedSubmissionOwnerStatusRequestV2>>,
             ReceiptWatcherOperationError,
         > {
             match self.next() {
-                BackendStep::Envelope(value) => Ok(Box::new(ReadyTask(Some(Ok(value))))),
+                BackendStep::Signed(value) => Ok(Box::new(ReadyTask(Some(Ok(value))))),
                 BackendStep::Error(error) => Err(error),
-                _ => panic!("expected envelope step"),
+                _ => panic!("expected signing step"),
             }
         }
 
         fn status(
             &mut self,
-            _envelope: SubmissionOwnerStatusEnvelopeV1,
+            _signed: SignedSubmissionOwnerStatusRequestV2,
         ) -> Result<
-            Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+            Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV2>>,
             ReceiptWatcherOperationError,
         > {
             match self.next() {
@@ -1259,51 +1104,30 @@ mod tests {
         }
     }
 
-    fn challenge(key: &SubmissionReceiptWatchKey) -> SubmissionOwnerStatusChallengeV1 {
-        SubmissionOwnerStatusChallengeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            owner_status_challenge_id: OpaqueId::new("challenge-1").unwrap(),
-            owner_status_challenge_nonce: ChallengeNonce32::from_bytes([9; 32]),
-            expires_at_unix_ms: NOW + 60_000,
-            controller_public_key: key.controller_public_key,
-            submission_id: key.submission_id.clone(),
-        }
-    }
-
-    fn envelope(challenge: &SubmissionOwnerStatusChallengeV1) -> SubmissionOwnerStatusEnvelopeV1 {
-        SubmissionOwnerStatusEnvelopeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            challenge: challenge.clone(),
+    /// The request the watcher signs when polled at `NOW + 1`.
+    fn signed(key: &SubmissionReceiptWatchKey) -> SignedSubmissionOwnerStatusRequestV2 {
+        SignedSubmissionOwnerStatusRequestV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            request: SubmissionOwnerStatusRequestV2 {
+                schema_version: SCHEMA_VERSION_V2,
+                public_key: key.controller_public_key,
+                signed_at_unix_ms: NOW + 1,
+                submission_id: key.submission_id.clone(),
+            },
             algorithm: SignatureAlgorithmV1::Ed25519,
             signature: Signature64::from_bytes([7; 64]),
         }
     }
 
-    fn receipt(key: &SubmissionReceiptWatchKey, run_id: &OpaqueId) -> CampaignChainReceiptV1 {
-        chain_receipt(ChainReceiptSpec {
-            chain_id: "chain-1",
-            predecessor_run_id: run_id.clone(),
-            expected_starting_campaign: ArtifactRefV1 {
-                sha256: Digest32::from_bytes([2; 32]),
-                byte_length: 10,
-                media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-            },
-            rules_config_sha256: Digest32::from_bytes([3; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([4; 32]),
-            campaign_content_manifest_sha256: Digest32::from_bytes([5; 32]),
-            controller: key.controller_public_key,
-        })
-    }
-
     fn response(
-        envelope: &SubmissionOwnerStatusEnvelopeV1,
+        signed: &SignedSubmissionOwnerStatusRequestV2,
         state: SubmissionLifecycleV1,
-    ) -> SubmissionOwnerStatusResponseV1 {
-        SubmissionOwnerStatusResponseV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            submission_id: envelope.challenge.submission_id.clone(),
-            controller_public_key: envelope.challenge.controller_public_key,
-            owner_status_envelope_sha256: envelope.canonical_digest().unwrap(),
+    ) -> SubmissionOwnerStatusResponseV2 {
+        SubmissionOwnerStatusResponseV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            submission_id: signed.request.submission_id.clone(),
+            public_key: signed.request.public_key,
+            request_sha256: signed.canonical_digest().unwrap(),
             state,
         }
     }
@@ -1324,29 +1148,26 @@ mod tests {
         )
     }
 
+    /// Sign, read status, handle the response.
     fn drive_one_status(watcher: &mut SubmissionReceiptWatcher) {
-        watcher.poll(NOW + 1);
         watcher.poll(NOW + 1);
         watcher.poll(NOW + 1);
         watcher.poll(NOW + 1);
     }
 
     #[test]
-    fn verified_terminal_response_is_the_only_receipt_persistence_path() {
+    fn verified_terminal_response_is_committed_before_it_is_reported() {
         let watch_key = key("submission-1", 4);
-        let challenge = challenge(&watch_key);
-        let envelope = envelope(&challenge);
+        let signed = signed(&watch_key);
         let run_id = OpaqueId::new("run-1").unwrap();
         let status = response(
-            &envelope,
+            &signed,
             SubmissionLifecycleV1::Accepted {
                 run_id: run_id.clone(),
-                campaign_chain_receipt: Some(receipt(&watch_key, &run_id)),
             },
         );
         let (mut watcher, persistence) = watcher(vec![
-            BackendStep::Challenge(challenge),
-            BackendStep::Envelope(envelope),
+            BackendStep::Signed(signed),
             BackendStep::Status(status),
         ]);
         watcher
@@ -1361,7 +1182,6 @@ mod tests {
 
         assert_eq!(watcher.pending_count(), 0);
         let persisted = persistence.lock().unwrap();
-        assert_eq!(persisted.receipts.len(), 1);
         assert!(persisted.stores.iter().any(|store| {
             store
                 .pending
@@ -1374,28 +1194,23 @@ mod tests {
             Some(ReceiptWatcherNotice::Verified {
                 submission_id,
                 run_id: actual_run,
-                campaign_receipt_persisted: true,
             }) if submission_id == watch_key.submission_id && actual_run == run_id
         ));
     }
 
     #[test]
-    fn mismatched_status_fails_closed_without_persisting_receipt() {
+    fn mismatched_status_fails_closed_without_reporting_verification() {
         let watch_key = key("submission-1", 4);
-        let challenge = challenge(&watch_key);
-        let envelope = envelope(&challenge);
-        let run_id = OpaqueId::new("run-1").unwrap();
+        let signed = signed(&watch_key);
         let mut status = response(
-            &envelope,
+            &signed,
             SubmissionLifecycleV1::Accepted {
-                run_id: run_id.clone(),
-                campaign_chain_receipt: Some(receipt(&watch_key, &run_id)),
+                run_id: OpaqueId::new("run-1").unwrap(),
             },
         );
         status.submission_id = OpaqueId::new("substituted-submission").unwrap();
-        let (mut watcher, persistence) = watcher(vec![
-            BackendStep::Challenge(challenge),
-            BackendStep::Envelope(envelope),
+        let (mut watcher, _) = watcher(vec![
+            BackendStep::Signed(signed),
             BackendStep::Status(status),
         ]);
         watcher
@@ -1409,7 +1224,6 @@ mod tests {
         drive_one_status(&mut watcher);
 
         assert_eq!(watcher.pending_count(), 0);
-        assert!(persistence.lock().unwrap().receipts.is_empty());
         assert!(matches!(
             watcher.take_notice(),
             Some(ReceiptWatcherNotice::Abandoned { submission_id, .. })
@@ -1418,11 +1232,11 @@ mod tests {
     }
 
     #[test]
-    fn substituted_challenge_is_rejected_before_identity_signing() {
+    fn substituted_signed_request_is_rejected_before_status_read() {
         let watch_key = key("submission-1", 4);
-        let mut wrong = challenge(&watch_key);
-        wrong.submission_id = OpaqueId::new("foreign-submission").unwrap();
-        let (mut watcher, persistence) = watcher(vec![BackendStep::Challenge(wrong)]);
+        let mut wrong = signed(&watch_key);
+        wrong.request.submission_id = OpaqueId::new("foreign-submission").unwrap();
+        let (mut watcher, _) = watcher(vec![BackendStep::Signed(wrong)]);
         watcher
             .enqueue_accepted(
                 &accepted("submission-1"),
@@ -1435,7 +1249,6 @@ mod tests {
         watcher.poll(NOW + 1);
 
         assert_eq!(watcher.pending_count(), 0);
-        assert!(persistence.lock().unwrap().receipts.is_empty());
         assert!(matches!(
             watcher.take_notice(),
             Some(ReceiptWatcherNotice::Abandoned { .. })
@@ -1445,12 +1258,10 @@ mod tests {
     #[test]
     fn nonterminal_lifecycle_remains_durable_and_uses_lifecycle_delay() {
         let watch_key = key("submission-1", 4);
-        let challenge = challenge(&watch_key);
-        let envelope = envelope(&challenge);
-        let status = response(&envelope, SubmissionLifecycleV1::RetryPending);
-        let (mut watcher, persistence) = watcher(vec![
-            BackendStep::Challenge(challenge),
-            BackendStep::Envelope(envelope),
+        let signed = signed(&watch_key);
+        let status = response(&signed, SubmissionLifecycleV1::RetryPending);
+        let (mut watcher, _) = watcher(vec![
+            BackendStep::Signed(signed),
             BackendStep::Status(status),
         ]);
         watcher
@@ -1469,7 +1280,6 @@ mod tests {
             pending.next_attempt_at_unix_ms,
             NOW + 1 + RETRY_PENDING_POLL_MS
         );
-        assert!(persistence.lock().unwrap().receipts.is_empty());
     }
 
     #[test]
@@ -1514,7 +1324,6 @@ mod tests {
         let run_id = OpaqueId::new("run-1").unwrap();
         let terminal = VerifiedTerminalReceipt {
             run_id: run_id.clone(),
-            campaign_chain_receipt: Some(receipt(&watch_key, &run_id)),
         };
         let store = PendingSubmissionReceiptStore {
             format: PENDING_STORE_FORMAT,
@@ -1540,13 +1349,12 @@ mod tests {
         watcher.poll(NOW + MAX_PENDING_AGE_MS + 1);
 
         assert_eq!(watcher.pending_count(), 0);
-        assert_eq!(persistence.lock().unwrap().receipts.len(), 1);
+        assert!(!persistence.lock().unwrap().stores.is_empty());
         assert!(matches!(
             watcher.take_notice(),
             Some(ReceiptWatcherNotice::Verified {
                 submission_id,
                 run_id: actual_run,
-                campaign_receipt_persisted: true,
             }) if submission_id == watch_key.submission_id && actual_run == run_id
         ));
     }
@@ -1559,9 +1367,9 @@ mod tests {
     }
 
     #[test]
-    fn transient_errors_back_off_and_terminal_server_failures_do_not_write_receipts() {
+    fn transient_errors_back_off_and_terminal_server_failures_stop_tracking() {
         let watch_key = key("submission-1", 4);
-        let (mut transient_watcher, persistence) = watcher(vec![BackendStep::Error(
+        let (mut transient_watcher, _) = watcher(vec![BackendStep::Error(
             ReceiptWatcherOperationError::Transient("offline".to_owned()),
         )]);
         transient_watcher
@@ -1575,20 +1383,17 @@ mod tests {
         let pending = transient_watcher.store.pending.first().unwrap();
         assert_eq!(pending.consecutive_failures, 1);
         assert_eq!(pending.next_attempt_at_unix_ms, NOW + 1 + 1_000);
-        assert!(persistence.lock().unwrap().receipts.is_empty());
 
-        let terminal_challenge = challenge(&watch_key);
-        let terminal_envelope = envelope(&terminal_challenge);
+        let terminal_signed = signed(&watch_key);
         let terminal_status = response(
-            &terminal_envelope,
+            &terminal_signed,
             SubmissionLifecycleV1::Failed {
                 code: SubmissionFailureCodeV1::VerificationInfrastructure,
                 safe_message: "verification worker exhausted retries".to_owned(),
             },
         );
-        let (mut terminal, terminal_persistence) = watcher(vec![
-            BackendStep::Challenge(terminal_challenge),
-            BackendStep::Envelope(terminal_envelope),
+        let (mut terminal, _) = watcher(vec![
+            BackendStep::Signed(terminal_signed),
             BackendStep::Status(terminal_status),
         ]);
         terminal
@@ -1600,7 +1405,6 @@ mod tests {
             .unwrap();
         drive_one_status(&mut terminal);
         assert_eq!(terminal.pending_count(), 0);
-        assert!(terminal_persistence.lock().unwrap().receipts.is_empty());
         assert!(matches!(
             terminal.take_notice(),
             Some(ReceiptWatcherNotice::VerificationFailed { .. })
@@ -1610,18 +1414,16 @@ mod tests {
     #[test]
     fn rejection_is_terminal_and_unknown_store_fields_fail_closed() {
         let watch_key = key("submission-1", 4);
-        let challenge = challenge(&watch_key);
-        let envelope = envelope(&challenge);
+        let signed = signed(&watch_key);
         let status = response(
-            &envelope,
+            &signed,
             SubmissionLifecycleV1::Rejected {
                 code: VerificationRejectionCodeV1::MalformedReplay,
                 safe_message: "replay was rejected".to_owned(),
             },
         );
-        let (mut watcher, persistence) = watcher(vec![
-            BackendStep::Challenge(challenge),
-            BackendStep::Envelope(envelope),
+        let (mut watcher, _) = watcher(vec![
+            BackendStep::Signed(signed),
             BackendStep::Status(status),
         ]);
         watcher
@@ -1633,7 +1435,6 @@ mod tests {
             .unwrap();
         drive_one_status(&mut watcher);
         assert_eq!(watcher.pending_count(), 0);
-        assert!(persistence.lock().unwrap().receipts.is_empty());
 
         let mut value = serde_json::to_value(PendingSubmissionReceiptStore::default()).unwrap();
         value

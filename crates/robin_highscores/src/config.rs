@@ -1,30 +1,22 @@
-use anyhow::Context as _;
 use robin_run_protocol::{
-    BoardMetricV1, BuildManifestV1, CampaignContentManifestV1, CanonicalCampaignStatePinV1,
-    CanonicalDocument as _, CanonicalValue, CompetitionManifestV1, ContentManifestV1, Digest32,
-    ImmutablePolicyManifestV1, OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1,
-    OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublishedRulesetV1,
-    RulesConfigIdentityV1, RulesetBoardScopeV1, RulesetManifestV1, RulesetOperationalStatusV1,
-    Validate as _, VersionedBuildManifest, official_full_campaign_completion_policy_v1,
+    BoardSimulationPolicyV1, BoardV2, LeaderboardMetadataV2, OfficialContentEditionV1, OpaqueId,
+    SCHEMA_VERSION_V2, SIGNED_REQUEST_DEFAULT_MAX_AGE_MS,
+    SIGNED_REQUEST_DEFAULT_MAX_FUTURE_SKEW_MS, SignedRequestWindowV1, TickDurationV1,
+    Validate as _, ViewerContentRequirementV2,
 };
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 /// The API transport cap is the canonical compact codec's input cap. The API
 /// uses its allocation-free lexical preflight, but must never invoke base64,
 /// zstd, bitcode, or typed validation on hostile upload bytes.
 pub const HARD_MAX_REPLAY_BYTES: u64 =
     robin_replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS.max_input_bytes as u64;
-pub const HARD_MAX_CAMPAIGN_BYTES: u64 = 64 * 1024 * 1024;
 pub const HARD_MAX_METADATA_BYTES: usize = 256 * 1024;
 pub const HARD_MAX_PAGE_SIZE: u32 = 100;
-const HARD_MAX_OPERATOR_DOCUMENT_BYTES: u64 = 1024 * 1024;
+const HARD_MAX_OPERATOR_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -32,18 +24,7 @@ pub struct ServerConfig {
     pub bind: SocketAddr,
     pub database_path: PathBuf,
     pub replay_directory: PathBuf,
-    /// Shared private content-addressed campaign store used by the API,
-    /// verifier worker, and backup tooling. It must never be a public static
-    /// directory.
-    pub campaign_state_directory: PathBuf,
     pub cursor_secret_path: PathBuf,
-    /// Dedicated Ed25519 seed for scheduled-run grants. It must never be
-    /// reused as the cursor HMAC key or exposed to clients.
-    pub competition_run_grant_secret_path: PathBuf,
-    /// Dedicated Ed25519 seed for run pre-frame admission. It authorizes both
-    /// canonical fresh starts and server-recognized campaign continuations,
-    /// and must not be reused for competitions, cursors, or public identity.
-    pub run_preflight_grant_secret_path: PathBuf,
     pub moderation_bearer_token_path: Option<PathBuf>,
     pub moderation_operator_id: String,
     #[serde(skip)]
@@ -53,34 +34,30 @@ pub struct ServerConfig {
     /// peer must supply exactly one canonical IP address or the request fails
     /// closed; untrusted peers' forwarding headers are ignored.
     pub trusted_proxy_cidrs: Vec<String>,
-    pub challenge_requests_per_minute_per_ip: u32,
+    /// Per effective client address, per operation: username updates,
+    /// deletion requests and private submission status reads.
+    pub signed_requests_per_minute_per_ip: u32,
+    /// Submission attempts per effective client address, checked before the
+    /// body is parsed.
+    pub submissions_per_hour_per_ip: u32,
+    /// Submission attempts per uploader key, checked after signature
+    /// verification.
+    pub submissions_per_hour_per_key: u32,
+    /// Uploads holding a live reservation lease per uploader key.
+    pub max_concurrent_uploads_per_key: u32,
     pub abuse_reports_per_hour_per_ip: u32,
     pub abuse_reports_per_hour_per_key: u32,
     pub abuse_reports_per_hour_per_target: u32,
-    /// Exact operator-installed official demo/full-retail configurations.
-    /// Empty is a fail-closed configuration, not an allow-all wildcard.
-    pub admission_profiles: Vec<AdmissionProfile>,
-    pub competitions: Vec<CompetitionConfig>,
-    /// Absolute root containing immutable canonical JSON documents in the
-    /// documented per-kind subdirectories. Required when admission is enabled.
-    pub manifest_directory: Option<PathBuf>,
-    #[serde(skip)]
-    pub manifests: std::sync::Arc<ManifestRegistry>,
     pub max_replay_bytes: u64,
-    pub max_campaign_bytes: u64,
     pub max_metadata_bytes: usize,
     pub max_pending_submissions: u32,
     pub max_concurrent_requests: usize,
     pub max_concurrent_uploads: usize,
     pub upload_timeout_seconds: u64,
-    /// Durable retry window for an upload whose signed metadata has already
-    /// reserved and consumed its one-use challenge.
+    /// Durable window in which the uploader may resume a reserved or crash-
+    /// abandoned upload of the same replay.
     pub upload_reservation_ttl_seconds: u64,
     pub max_page_size: u32,
-    pub challenge_ttl_seconds: u64,
-    /// A run-preflight grant must remain usable for the complete mission, while
-    /// the short upload challenge is still minted only at mission end.
-    pub run_preflight_ttl_seconds: u64,
     pub database_busy_timeout_ms: u64,
     pub tombstone_retention_days: Option<u64>,
     pub rejected_replay_retention_hours: u64,
@@ -88,180 +65,51 @@ pub struct ServerConfig {
     /// Free bytes which must remain after the full bounded admission plan.
     /// Production validation keeps this at or above one GiB.
     pub minimum_storage_free_bytes: u64,
+    /// Acceptance window for `signed_at_unix_ms` of every player-signed
+    /// request. Kept after all scalar keys so it serializes as a TOML table.
+    pub signed_requests: SignedRequestConfig,
+    /// Ranked boards. Empty is fail-closed: metadata lists no boards and every
+    /// upload is rejected.
+    pub boards: Vec<BoardV2>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AdmissionProfile {
-    pub id: String,
-    pub content_subject: OfficialContentSubjectV1,
-    pub mission_display_name: String,
-    pub allowed_scopes: Vec<String>,
-    pub build_manifest_id: String,
-    pub content_manifest_id: String,
-    /// Required whenever this profile offers campaign play. This catalog binds
-    /// the exact per-field/HQ content manifests used by a full campaign.
-    pub campaign_content_manifest_id: Option<String>,
-    pub config_id: String,
-    pub ruleset_id: String,
-    pub template_id: String,
-    /// Exact deployment-private state pin for this profile's edition and
-    /// rules configuration. The path is deliberately separate from the
-    /// serializable artifact identity and may never be copied into public
-    /// metadata or protocol proofs.
-    pub canonical_campaign_state: CanonicalCampaignStatePinV1,
-    /// Present in installed operator profiles; absent in a run-specific custom
-    /// proposal, whose bytes are reconstructed and checked by the verifier.
-    pub canonical_campaign_state_path: Option<PathBuf>,
-    pub allowed_metrics: Vec<String>,
-    pub ruleset_display_name: String,
-    pub preset_id: String,
-    pub preset_name: String,
-    pub difficulty_id: String,
-    pub difficulty_name: String,
-    pub build_display_name: String,
-    pub viewer_engine_build: String,
-    pub viewer_available: bool,
-    pub viewer_unavailable_reason: Option<String>,
-    pub viewer_content_requirement: Option<ViewerContentRequirementConfig>,
-}
-
-/// Operator-facing viewer entitlement. The value is deliberately separate
-/// from the public launch DTO: its exact content digest comes from the
-/// authenticated content manifest, never from mutable configuration.
+/// `[signed_requests]`: how far a player's signing clock may lag behind or run
+/// ahead of the server when a request arrives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ViewerContentRequirementConfig {
-    BundledDemo,
-    UserLocalRetail,
+#[serde(default, deny_unknown_fields)]
+pub struct SignedRequestConfig {
+    pub max_age_seconds: u64,
+    pub max_future_skew_seconds: u64,
 }
 
-impl ViewerContentRequirementConfig {
-    pub(crate) const fn matches_edition(self, edition: OfficialContentEditionV1) -> bool {
-        matches!(
-            (edition, self),
-            (
-                OfficialContentEditionV1::Demo,
-                ViewerContentRequirementConfig::BundledDemo
-            ) | (
-                OfficialContentEditionV1::Full,
-                ViewerContentRequirementConfig::UserLocalRetail
-            )
-        )
-    }
-}
-
-impl AdmissionProfile {
-    pub fn mission_id(&self) -> &str {
-        self.content_subject.mission_id()
-    }
-}
-
-fn expected_admission_scopes(
-    edition: OfficialContentEditionV1,
-    subject: &OfficialContentSubjectV1,
-) -> &'static [&'static str] {
-    match (edition, subject) {
-        (OfficialContentEditionV1::Demo, _) => &["individual_level"],
-        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { mission_id })
-            if mission_id == OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1 =>
-        {
-            &[
-                "individual_level",
-                "campaign_genesis",
-                "campaign_continuation",
-            ]
-        }
-        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { .. }) => {
-            &["individual_level", "campaign_continuation"]
-        }
-        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::Headquarters { .. }) => {
-            &["campaign_continuation"]
+impl Default for SignedRequestConfig {
+    fn default() -> Self {
+        Self {
+            max_age_seconds: SIGNED_REQUEST_DEFAULT_MAX_AGE_MS / 1_000,
+            max_future_skew_seconds: SIGNED_REQUEST_DEFAULT_MAX_FUTURE_SKEW_MS / 1_000,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CompetitionConfig {
-    pub manifest_sha256: String,
-    pub admission_profile_id: String,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ManifestRegistry {
-    /// Public build documents keyed by the canonical digest of the exact
-    /// versioned document. `LoadedBuildManifest::semantics` is deliberately a
-    /// separate value: its V1 digest is not the identity of a V2 document.
-    pub builds: BTreeMap<Digest32, LoadedBuildManifest>,
-    pub content_manifests: BTreeMap<Digest32, ContentManifestV1>,
-    pub campaign_content_manifests: BTreeMap<Digest32, CampaignContentManifestV1>,
-    pub rules_configs: BTreeMap<Digest32, RulesConfigIdentityV1>,
-    pub rulesets: BTreeMap<Digest32, PublishedRulesetV1>,
-    pub competitions: BTreeMap<Digest32, CompetitionManifestV1>,
-    pub policies: BTreeMap<Digest32, ImmutablePolicyManifestV1>,
-}
-
-/// One immutable public build document and the normalized view consumed by
-/// existing verifier/admission code. Construction validates both views and
-/// records both identities so callers cannot accidentally substitute the V1
-/// projection digest for a V2 public-document digest.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadedBuildManifest {
-    public_document: VersionedBuildManifest,
-    public_digest: Digest32,
-    semantics: BuildManifestV1,
-    semantic_digest: Digest32,
-}
-
-impl LoadedBuildManifest {
-    pub fn new(public_document: VersionedBuildManifest) -> anyhow::Result<Self> {
-        public_document.validate()?;
-        let public_digest = public_document.canonical_digest()?;
-        let semantics = public_document.backend_visible_v1()?;
-        semantics.validate()?;
-        let semantic_digest = semantics.canonical_digest()?;
-        Ok(Self {
-            public_document,
-            public_digest,
-            semantics,
-            semantic_digest,
-        })
+impl SignedRequestConfig {
+    /// Validated bounds keep the millisecond products far from overflow.
+    pub fn window(self) -> SignedRequestWindowV1 {
+        SignedRequestWindowV1 {
+            max_age_ms: self.max_age_seconds.saturating_mul(1_000),
+            max_future_skew_ms: self.max_future_skew_seconds.saturating_mul(1_000),
+        }
     }
 
-    pub fn public_document(&self) -> &VersionedBuildManifest {
-        &self.public_document
-    }
-
-    pub fn public_digest(&self) -> Digest32 {
-        self.public_digest
-    }
-
-    pub fn semantics(&self) -> &BuildManifestV1 {
-        &self.semantics
-    }
-
-    pub fn semantic_digest(&self) -> Digest32 {
-        self.semantic_digest
-    }
-}
-
-impl Serialize for LoadedBuildManifest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.public_document.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for LoadedBuildManifest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let public_document = VersionedBuildManifest::deserialize(deserializer)?;
-        Self::new(public_document).map_err(serde::de::Error::custom)
+    fn validate(self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (30..=60 * 60).contains(&self.max_age_seconds),
+            "signed_requests.max_age_seconds must be between 30 seconds and one hour"
+        );
+        anyhow::ensure!(
+            self.max_future_skew_seconds <= 10 * 60,
+            "signed_requests.max_future_skew_seconds must not exceed ten minutes"
+        );
+        Ok(())
     }
 }
 
@@ -271,25 +119,20 @@ impl Default for ServerConfig {
             bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             database_path: PathBuf::from("data/highscores.sqlite3"),
             replay_directory: PathBuf::from("data/replays"),
-            campaign_state_directory: PathBuf::from("data/campaign-states"),
             cursor_secret_path: PathBuf::from("data/cursor-hmac.key"),
-            competition_run_grant_secret_path: PathBuf::from("data/competition-run-grant.key"),
-            run_preflight_grant_secret_path: PathBuf::from("data/run-preflight-grant.key"),
             moderation_bearer_token_path: None,
             moderation_operator_id: "operator".to_owned(),
             moderation_bearer_token: None,
             allowed_origins: Vec::new(),
             trusted_proxy_cidrs: Vec::new(),
-            challenge_requests_per_minute_per_ip: 120,
+            signed_requests_per_minute_per_ip: 120,
+            submissions_per_hour_per_ip: 120,
+            submissions_per_hour_per_key: 60,
+            max_concurrent_uploads_per_key: 2,
             abuse_reports_per_hour_per_ip: 10,
             abuse_reports_per_hour_per_key: 25,
             abuse_reports_per_hour_per_target: 10,
-            admission_profiles: Vec::new(),
-            competitions: Vec::new(),
-            manifest_directory: None,
-            manifests: std::sync::Arc::default(),
             max_replay_bytes: 16 * 1024 * 1024,
-            max_campaign_bytes: 16 * 1024 * 1024,
             max_metadata_bytes: 64 * 1024,
             max_pending_submissions: 10_000,
             max_concurrent_requests: 256,
@@ -297,14 +140,22 @@ impl Default for ServerConfig {
             upload_timeout_seconds: 120,
             upload_reservation_ttl_seconds: 30 * 60,
             max_page_size: 100,
-            challenge_ttl_seconds: 10 * 60,
-            run_preflight_ttl_seconds: 24 * 60 * 60,
             database_busy_timeout_ms: 5_000,
             tombstone_retention_days: Some(30),
             rejected_replay_retention_hours: 24,
             orphan_replay_retention_hours: 24,
             minimum_storage_free_bytes: 1024 * 1024 * 1024,
+            signed_requests: SignedRequestConfig::default(),
+            boards: Vec::new(),
         }
+    }
+}
+
+/// Exact duration of one simulation tick, taken from the compiled engine.
+pub fn simulation_tick_duration() -> TickDurationV1 {
+    TickDurationV1 {
+        numerator_micros: u64::from(robin_engine::engine::FRAME_TIME_MS) * 1_000,
+        denominator: 1,
     }
 }
 
@@ -324,13 +175,8 @@ impl ServerConfig {
         Self::load_with_secret_scope(path, ConfigSecretScope::Api)
     }
 
-    /// Load the public/runtime subset needed by the verification worker.
-    ///
-    /// The moderation-token path remains parsed so the worker validates the
-    /// same operator document as the API, but it is deliberately never opened
-    /// and the in-memory token is always `None`. Cursor, competition-grant,
-    /// and run-preflight-grant keys are likewise opened only by their explicit
-    /// API/admin methods.
+    /// Load the public/runtime subset needed by the verification worker. The
+    /// moderation-token path remains parsed but is never opened.
     pub fn load_for_worker(path: &Path) -> anyhow::Result<Self> {
         Self::load_with_secret_scope(path, ConfigSecretScope::Worker)
     }
@@ -338,10 +184,6 @@ impl ServerConfig {
     fn load_with_secret_scope(path: &Path, scope: ConfigSecretScope) -> anyhow::Result<Self> {
         let bytes = read_regular_file_no_symlinks(path, HARD_MAX_OPERATOR_DOCUMENT_BYTES)?;
         let mut config: Self = toml::from_str(std::str::from_utf8(&bytes)?)?;
-        config.manifests = match &config.manifest_directory {
-            Some(root) => std::sync::Arc::new(ManifestRegistry::load(root)?),
-            None => std::sync::Arc::default(),
-        };
         config.moderation_bearer_token = match scope {
             ConfigSecretScope::Api => config
                 .moderation_bearer_token_path
@@ -364,27 +206,52 @@ impl ServerConfig {
         self.validate_paths_and_secrets(scope)?;
         self.validate_cors_origins()?;
         self.validate_network_limits()?;
-        self.validate_build_and_campaign_registries()?;
-        let mut profile_ids = std::collections::HashSet::new();
-        for profile in &self.admission_profiles {
+        self.leaderboard_metadata()?;
+        Ok(())
+    }
+
+    /// The published board catalog, in canonical board-ID order. Loading a
+    /// configuration validates this exact document, so serving it cannot fail
+    /// for a loaded configuration.
+    pub fn leaderboard_metadata(&self) -> anyhow::Result<LeaderboardMetadataV2> {
+        let mut boards = self.boards.clone();
+        boards.sort_by(|left, right| left.board_id.cmp(&right.board_id));
+        for pair in boards.windows(2) {
             anyhow::ensure!(
-                profile_ids.insert(&profile.id),
-                "duplicate admission profile ID: {}",
-                profile.id
+                pair[0].board_id != pair[1].board_id,
+                "duplicate board ID: {}",
+                pair[0].board_id
             );
-            self.validate_profile(profile)?;
         }
-        self.validate_competitions(&profile_ids)
+        for board in &boards {
+            validate_board(board)?;
+        }
+        let metadata = LeaderboardMetadataV2 {
+            schema_version: SCHEMA_VERSION_V2,
+            tick_duration: simulation_tick_duration(),
+            boards,
+        };
+        metadata.validate()?;
+        Ok(metadata)
+    }
+
+    pub fn board(&self, board_id: &OpaqueId) -> Option<&BoardV2> {
+        self.boards.iter().find(|board| &board.board_id == board_id)
+    }
+
+    /// Board IDs whose runs are publicly visible. A run whose board was
+    /// removed from configuration is hidden rather than reinterpreted.
+    pub fn board_ids(&self) -> Vec<String> {
+        self.boards
+            .iter()
+            .map(|board| board.board_id.as_str().to_owned())
+            .collect()
     }
 
     fn validate_limits(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.max_replay_bytes > 0,
             "max_replay_bytes must be positive"
-        );
-        anyhow::ensure!(
-            self.max_campaign_bytes > 0,
-            "max_campaign_bytes must be positive"
         );
         anyhow::ensure!(
             self.tombstone_retention_days.is_none_or(|days| days >= 1),
@@ -406,10 +273,6 @@ impl ServerConfig {
         anyhow::ensure!(
             self.max_replay_bytes <= HARD_MAX_REPLAY_BYTES,
             "max_replay_bytes exceeds the compiled safety limit of {HARD_MAX_REPLAY_BYTES}"
-        );
-        anyhow::ensure!(
-            self.max_campaign_bytes <= HARD_MAX_CAMPAIGN_BYTES,
-            "max_campaign_bytes exceeds the compiled safety limit of {HARD_MAX_CAMPAIGN_BYTES}"
         );
         anyhow::ensure!(
             self.max_metadata_bytes > 0 && self.max_metadata_bytes <= HARD_MAX_METADATA_BYTES,
@@ -448,17 +311,13 @@ impl ServerConfig {
             "max_page_size must be in 1..={HARD_MAX_PAGE_SIZE}"
         );
         anyhow::ensure!(
-            self.challenge_ttl_seconds >= 30,
-            "challenge TTL is too short"
+            (1..=self.max_concurrent_uploads).contains(
+                &usize::try_from(self.max_concurrent_uploads_per_key)
+                    .map_err(|_| anyhow::anyhow!("max_concurrent_uploads_per_key overflows"))?
+            ),
+            "max_concurrent_uploads_per_key must be in 1..=max_concurrent_uploads"
         );
-        anyhow::ensure!(
-            self.challenge_ttl_seconds <= Duration::from_secs(24 * 60 * 60).as_secs(),
-            "challenge TTL must not exceed one day"
-        );
-        anyhow::ensure!(
-            (60..=7 * 24 * 60 * 60).contains(&self.run_preflight_ttl_seconds),
-            "run preflight TTL must be between one minute and seven days"
-        );
+        self.signed_requests.validate()?;
         Ok(())
     }
 
@@ -472,27 +331,8 @@ impl ServerConfig {
             "replay_directory must not be a filesystem root"
         );
         anyhow::ensure!(
-            self.campaign_state_directory.file_name().is_some(),
-            "campaign_state_directory must not be a filesystem root"
-        );
-        anyhow::ensure!(
-            self.replay_directory != self.campaign_state_directory,
-            "replay and campaign stores must be distinct directories"
-        );
-        anyhow::ensure!(
             self.cursor_secret_path.file_name().is_some(),
             "cursor_secret_path must name a file"
-        );
-        anyhow::ensure!(
-            self.competition_run_grant_secret_path.file_name().is_some()
-                && self.competition_run_grant_secret_path != self.cursor_secret_path,
-            "competition_run_grant_secret_path must name a distinct file"
-        );
-        anyhow::ensure!(
-            self.run_preflight_grant_secret_path.file_name().is_some()
-                && self.run_preflight_grant_secret_path != self.cursor_secret_path
-                && self.run_preflight_grant_secret_path != self.competition_run_grant_secret_path,
-            "run_preflight_grant_secret_path must name a distinct file"
         );
         anyhow::ensure!(
             !self.moderation_operator_id.is_empty() && self.moderation_operator_id.len() <= 128,
@@ -542,10 +382,22 @@ impl ServerConfig {
     }
 
     fn validate_network_limits(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            (1..=10_000).contains(&self.challenge_requests_per_minute_per_ip),
-            "challenge_requests_per_minute_per_ip must be in 1..=10000"
-        );
+        for (name, value) in [
+            (
+                "signed_requests_per_minute_per_ip",
+                self.signed_requests_per_minute_per_ip,
+            ),
+            (
+                "submissions_per_hour_per_ip",
+                self.submissions_per_hour_per_ip,
+            ),
+            (
+                "submissions_per_hour_per_key",
+                self.submissions_per_hour_per_key,
+            ),
+        ] {
+            anyhow::ensure!((1..=10_000).contains(&value), "{name} must be in 1..=10000");
+        }
         for (name, value) in [
             (
                 "abuse_reports_per_hour_per_ip",
@@ -570,460 +422,6 @@ impl ServerConfig {
         Ok(())
     }
 
-    fn validate_build_and_campaign_registries(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.admission_profiles.is_empty() || self.manifest_directory.is_some(),
-            "manifest_directory is required when admission profiles are configured"
-        );
-        let mut semantic_build_identities = BTreeMap::new();
-        for (public_digest, build) in &self.manifests.builds {
-            build.public_document().validate()?;
-            build.semantics().validate()?;
-            anyhow::ensure!(
-                build.public_digest() == *public_digest
-                    && build.public_document().canonical_digest()? == *public_digest
-                    && build.semantics().canonical_digest()? == build.semantic_digest(),
-                "build registry entry {public_digest} does not match its immutable identities"
-            );
-            anyhow::ensure!(
-                semantic_build_identities
-                    .insert(build.semantic_digest(), *public_digest)
-                    .is_none(),
-                "multiple public build documents normalize to semantic build identity {}",
-                build.semantic_digest()
-            );
-        }
-        for (catalog_digest, catalog) in &self.manifests.campaign_content_manifests {
-            for entry in &catalog.entries {
-                let content = self
-                    .manifests
-                    .content_manifests
-                    .get(&entry.content_manifest_sha256)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "campaign content catalog {catalog_digest} references a missing content manifest"
-                        )
-                    })?;
-                anyhow::ensure!(
-                    content.edition == catalog.edition && content.subject == entry.subject,
-                    "campaign content catalog {catalog_digest} entry does not match its exact edition and subject"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_competitions(
-        &self,
-        profile_ids: &std::collections::HashSet<&String>,
-    ) -> anyhow::Result<()> {
-        let mut competition_ids = std::collections::HashSet::new();
-        for competition in &self.competitions {
-            let manifest_sha256 = digest32(&competition.manifest_sha256, "competition manifest")?;
-            let manifest = self
-                .manifests
-                .competitions
-                .get(&manifest_sha256)
-                .ok_or_else(|| anyhow::anyhow!("configured competition manifest is missing"))?;
-            anyhow::ensure!(
-                competition_ids.insert(manifest_sha256),
-                "duplicate competition manifest: {}",
-                competition.manifest_sha256
-            );
-            anyhow::ensure!(
-                profile_ids.contains(&competition.admission_profile_id),
-                "competition {} references an unknown profile",
-                manifest.competition_id.as_str()
-            );
-            let profile = self
-                .admission_profiles
-                .iter()
-                .find(|profile| profile.id == competition.admission_profile_id)
-                .expect("profile membership checked above");
-            let expected_content = match manifest.subject {
-                robin_run_protocol::LeaderboardSubjectV1::Mission { .. } => {
-                    robin_run_protocol::RunContentIdentityV1::Mission {
-                        content_manifest_sha256: digest32(
-                            &profile.content_manifest_id,
-                            "content manifest",
-                        )?,
-                    }
-                }
-                robin_run_protocol::LeaderboardSubjectV1::FullCampaign => {
-                    robin_run_protocol::RunContentIdentityV1::FullCampaign {
-                        campaign_content_manifest_sha256: digest32(
-                            profile
-                                .campaign_content_manifest_id
-                                .as_deref()
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "full-campaign competition profile has no campaign catalog"
-                                    )
-                                })?,
-                            "campaign content manifest",
-                        )?,
-                    }
-                }
-            };
-            anyhow::ensure!(
-                manifest.content == expected_content
-                    && manifest.rules_config_sha256
-                        == digest32(&profile.config_id, "rules config")?
-                    && manifest.ruleset_manifest_sha256
-                        == digest32(&profile.ruleset_id, "ruleset manifest")?
-                    && manifest.canonical_campaign_state
-                        == profile.canonical_campaign_state.requirement,
-                "competition {} does not match its admission profile tuple",
-                manifest.competition_id.as_str()
-            );
-            anyhow::ensure!(
-                profile.allowed_metrics.iter().any(|metric| {
-                    matches!(
-                        (metric.as_str(), manifest.metric),
-                        ("original_score", BoardMetricV1::OriginalScore)
-                            | ("fastest_success", BoardMetricV1::FastestSuccess)
-                    )
-                }),
-                "competition {} metric is not enabled by its admission profile",
-                manifest.competition_id.as_str()
-            );
-        }
-        Ok(())
-    }
-
-    fn validate_profile(&self, profile: &AdmissionProfile) -> anyhow::Result<()> {
-        profile.content_subject.validate().map_err(|error| {
-            anyhow::anyhow!(
-                "invalid content subject in admission profile {}: {error}",
-                profile.id
-            )
-        })?;
-        OpaqueId::new(profile.template_id.clone()).map_err(|error| {
-            anyhow::anyhow!(
-                "invalid template ID in admission profile {}: {error}",
-                profile.id
-            )
-        })?;
-        anyhow::ensure!(
-            !profile.allowed_scopes.is_empty()
-                && profile.allowed_scopes.iter().all(|scope| matches!(
-                    scope.as_str(),
-                    "individual_level" | "campaign_genesis" | "campaign_continuation"
-                )),
-            "invalid allowed_scopes in admission profile {}",
-            profile.id
-        );
-        anyhow::ensure!(
-            !profile.allowed_metrics.is_empty()
-                && profile
-                    .allowed_metrics
-                    .iter()
-                    .all(|metric| matches!(metric.as_str(), "original_score" | "fastest_success")),
-            "invalid allowed_metrics in admission profile {}",
-            profile.id
-        );
-        for (kind, value) in [
-            ("build manifest", &profile.build_manifest_id),
-            ("content manifest", &profile.content_manifest_id),
-            ("config", &profile.config_id),
-            ("ruleset", &profile.ruleset_id),
-        ] {
-            anyhow::ensure!(
-                value.len() == 64
-                    && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    && value == &value.to_ascii_lowercase(),
-                "{kind} ID in profile {} must be 64 lowercase hexadecimal digits",
-                profile.id
-            );
-        }
-        let build = digest32(&profile.build_manifest_id, "build manifest")?;
-        let content = digest32(&profile.content_manifest_id, "content manifest")?;
-        let rules_config = digest32(&profile.config_id, "rules config")?;
-        let ruleset = digest32(&profile.ruleset_id, "ruleset manifest")?;
-        let loaded_build = self.manifests.builds.get(&build).ok_or_else(|| {
-            anyhow::anyhow!("profile {} references a missing build manifest", profile.id)
-        })?;
-        anyhow::ensure!(
-            loaded_build.public_digest() == build,
-            "profile {} resolved a build registry entry under the wrong public digest",
-            profile.id
-        );
-        let build_doc = loaded_build.semantics();
-        let content_doc = self
-            .manifests
-            .content_manifests
-            .get(&content)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "profile {} references a missing content manifest",
-                    profile.id
-                )
-            })?;
-        let rules_config_doc =
-            self.manifests
-                .rules_configs
-                .get(&rules_config)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("profile {} references a missing rules config", profile.id)
-                })?;
-        let published = self.manifests.rulesets.get(&ruleset).ok_or_else(|| {
-            anyhow::anyhow!("profile {} references a missing ruleset", profile.id)
-        })?;
-        validate_current_sim_config(rules_config_doc).map_err(|error| {
-            anyhow::anyhow!(
-                "profile {} references an invalid current SimConfig: {error}",
-                profile.id
-            )
-        })?;
-        published
-            .manifest
-            .validate_ranked_simulation_policy(rules_config_doc)
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "profile {} ruleset simulation-policy identity mismatch: {error}",
-                    profile.id
-                )
-            })?;
-        validate_current_ranked_build(loaded_build, published)?;
-        let has_individual = profile
-            .allowed_scopes
-            .iter()
-            .any(|scope| scope == "individual_level");
-        let has_campaign_genesis = profile
-            .allowed_scopes
-            .iter()
-            .any(|scope| scope == "campaign_genesis");
-        let has_campaign_continuation = profile
-            .allowed_scopes
-            .iter()
-            .any(|scope| scope == "campaign_continuation");
-        let expected_scopes = expected_admission_scopes(
-            profile.canonical_campaign_state.requirement.edition,
-            &profile.content_subject,
-        );
-        anyhow::ensure!(
-            profile
-                .allowed_scopes
-                .iter()
-                .map(String::as_str)
-                .eq(expected_scopes.iter().copied())
-                && (!has_individual
-                    || published
-                        .manifest
-                        .board_scopes
-                        .binary_search(&RulesetBoardScopeV1::IndividualLevel)
-                        .is_ok())
-                && (!(has_campaign_genesis || has_campaign_continuation)
-                    || (published
-                        .manifest
-                        .board_scopes
-                        .binary_search(&RulesetBoardScopeV1::CampaignMission)
-                        .is_ok()
-                        && published
-                            .manifest
-                            .board_scopes
-                            .binary_search(&RulesetBoardScopeV1::FullCampaign)
-                            .is_ok())),
-            "profile {} scopes do not match its exact edition/subject and immutable ruleset boards",
-            profile.id
-        );
-        anyhow::ensure!(
-            profile.allowed_metrics.iter().all(|metric| {
-                let metric = match metric.as_str() {
-                    "original_score" => BoardMetricV1::OriginalScore,
-                    "fastest_success" => BoardMetricV1::FastestSuccess,
-                    _ => return false,
-                };
-                published.manifest.metrics.binary_search(&metric).is_ok()
-            }),
-            "profile {} metrics do not match its immutable ruleset",
-            profile.id
-        );
-        anyhow::ensure!(
-            published.manifest.rules_config_sha256 == rules_config
-                && published.manifest.canonical_campaign_state
-                    == profile.canonical_campaign_state.requirement
-                && published
-                    .manifest
-                    .allowed_build_manifest_sha256
-                    .binary_search(&build)
-                    .is_ok()
-                && published
-                    .manifest
-                    .allowed_content_manifest_sha256
-                    .binary_search(&content)
-                    .is_ok()
-                && rules_config_doc.replay_schema_version == build_doc.replay_schema_version,
-            "profile {} does not match its immutable manifest tuple",
-            profile.id
-        );
-        profile
-            .canonical_campaign_state
-            .validate()
-            .map_err(|error| {
-                anyhow::anyhow!(
-                    "profile {} has an invalid canonical campaign-state pin: {error}",
-                    profile.id
-                )
-            })?;
-        anyhow::ensure!(
-            profile
-                .canonical_campaign_state
-                .requirement
-                .rules_config_sha256
-                == rules_config
-                && profile.canonical_campaign_state.requirement.edition == content_doc.edition,
-            "profile {} campaign-state authority differs from its config or edition",
-            profile.id
-        );
-        anyhow::ensure!(
-            profile.ruleset_display_name == published.manifest.display_name
-                && profile.preset_id == published.manifest.preset_id.as_str()
-                && profile.preset_name == published.manifest.preset_name
-                && profile.difficulty_id == published.manifest.difficulty_id.as_str()
-                && profile.difficulty_name == published.manifest.difficulty_name,
-            "profile {} labels do not match its digest-bound ruleset manifest",
-            profile.id
-        );
-        anyhow::ensure!(
-            content_doc.subject == profile.content_subject,
-            "profile {} does not bind its exact typed content subject",
-            profile.id
-        );
-        let offers_campaign = has_campaign_genesis || has_campaign_continuation;
-        let campaign_content = profile
-            .campaign_content_manifest_id
-            .as_deref()
-            .map(|value| digest32(value, "campaign content manifest"))
-            .transpose()?;
-        anyhow::ensure!(
-            offers_campaign == campaign_content.is_some(),
-            "profile {} must configure a campaign content manifest exactly for campaign scopes",
-            profile.id
-        );
-        if let Some(campaign_content) = campaign_content {
-            let catalog = self
-                .manifests
-                .campaign_content_manifests
-                .get(&campaign_content)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "profile {} campaign content manifest is missing",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                catalog.edition == content_doc.edition
-                    && catalog.content_for(&content_doc.subject) == Some(content),
-                "profile {} campaign catalog does not contain its exact edition/subject content",
-                profile.id
-            );
-            anyhow::ensure!(
-                published
-                    .manifest
-                    .allowed_campaign_content_manifest_sha256
-                    .binary_search(&campaign_content)
-                    .is_ok(),
-                "profile {} campaign catalog is not allowlisted by its ruleset",
-                profile.id
-            );
-            published
-                .manifest
-                .validate_campaign_completion_catalog(catalog)
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "profile {} campaign completion catalog is invalid: {error}",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                published.manifest.campaign_completion_policy.required()
-                    == Some(&official_full_campaign_completion_policy_v1()),
-                "profile {} does not publish the exact official H12 completion predicate",
-                profile.id
-            );
-        }
-        for policy in [
-            &published.manifest.input_provenance_policy,
-            &published.manifest.command_admission_policy,
-            &published.manifest.submission_admission_policy,
-            &published.manifest.verifier_policy,
-        ] {
-            let document = self
-                .manifests
-                .policies
-                .get(&policy.manifest_sha256)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "profile {} references a missing immutable policy",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                document.kind == policy.kind && document.version == policy.version,
-                "profile {} policy identity does not match its document",
-                profile.id
-            );
-        }
-        anyhow::ensure!(
-            profile.canonical_campaign_state.artifact.byte_length <= self.max_campaign_bytes,
-            "canonical campaign state in profile {} exceeds the server limit",
-            profile.id
-        );
-        let campaign_state_path = profile
-            .canonical_campaign_state_path
-            .as_deref()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "installed profile {} is missing its canonical campaign-state path",
-                    profile.id
-                )
-            })?;
-        anyhow::ensure!(
-            campaign_state_path.is_absolute(),
-            "canonical campaign-state path in profile {} must be absolute",
-            profile.id
-        );
-        let (actual_digest, actual_byte_length) =
-            hash_regular_file_no_symlinks(campaign_state_path, HARD_MAX_CAMPAIGN_BYTES).map_err(
-                |error| {
-                    anyhow::anyhow!(
-                        "canonical campaign-state path in profile {} is unsafe: {error}",
-                        profile.id
-                    )
-                },
-            )?;
-        anyhow::ensure!(
-            actual_digest
-                == profile
-                    .canonical_campaign_state
-                    .artifact
-                    .sha256
-                    .into_bytes()
-                && actual_byte_length == profile.canonical_campaign_state.artifact.byte_length,
-            "canonical campaign-state file in profile {} differs from its exact pin",
-            profile.id
-        );
-        anyhow::ensure!(
-            profile.viewer_available == profile.viewer_unavailable_reason.is_none(),
-            "profile {} viewer availability and reason disagree",
-            profile.id
-        );
-        anyhow::ensure!(
-            (profile.viewer_available
-                && profile
-                    .viewer_content_requirement
-                    .is_some_and(|requirement| {
-                        requirement.matches_edition(content_doc.edition)
-                    }))
-                || (!profile.viewer_available && profile.viewer_content_requirement.is_none()),
-            "profile {} viewer content requirement does not match its {:?} content edition",
-            profile.id,
-            content_doc.edition
-        );
-        Ok(())
-    }
-
     pub fn load_or_create_cursor_key(&self) -> anyhow::Result<[u8; 32]> {
         private_key(&self.cursor_secret_path, true, "cursor secret")
     }
@@ -1033,311 +431,44 @@ impl ServerConfig {
     pub fn load_cursor_key(&self) -> anyhow::Result<[u8; 32]> {
         private_key(&self.cursor_secret_path, false, "cursor secret")
     }
-
-    pub fn load_or_create_competition_run_grant_key(&self) -> anyhow::Result<[u8; 32]> {
-        private_key(
-            &self.competition_run_grant_secret_path,
-            true,
-            "competition run grant secret",
-        )
-    }
-
-    pub fn load_competition_run_grant_key(&self) -> anyhow::Result<[u8; 32]> {
-        private_key(
-            &self.competition_run_grant_secret_path,
-            false,
-            "competition run grant secret",
-        )
-    }
-
-    pub fn load_or_create_run_preflight_grant_key(&self) -> anyhow::Result<[u8; 32]> {
-        private_key(
-            &self.run_preflight_grant_secret_path,
-            true,
-            "run preflight grant secret",
-        )
-    }
-
-    pub fn load_run_preflight_grant_key(&self) -> anyhow::Result<[u8; 32]> {
-        private_key(
-            &self.run_preflight_grant_secret_path,
-            false,
-            "run preflight grant secret",
-        )
-    }
 }
 
-fn validate_current_ranked_build(
-    build: &LoadedBuildManifest,
-    published: &PublishedRulesetV1,
-) -> anyhow::Result<()> {
-    if matches!(
-        published.operational_status,
-        RulesetOperationalStatusV1::Active
-    ) && published.manifest.replay_schema_versions
-        == [robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1]
-    {
+/// Protocol validation plus the cross-field rules a board document cannot
+/// express on its own.
+fn validate_board(board: &BoardV2) -> anyhow::Result<()> {
+    board
+        .validate()
+        .map_err(|error| anyhow::anyhow!("invalid board {}: {error}", board.board_id))?;
+    anyhow::ensure!(
+        matches!(
+            (board.edition, board.viewer_content_requirement),
+            (
+                OfficialContentEditionV1::Demo,
+                ViewerContentRequirementV2::BundledDemo
+            ) | (
+                OfficialContentEditionV1::Full,
+                ViewerContentRequirementV2::UserLocalRetail
+            )
+        ),
+        "board {} viewer content requirement does not match its {:?} edition",
+        board.board_id,
+        board.edition
+    );
+    if let BoardSimulationPolicyV1::Fixed { policy } = board.simulation_policy {
         anyhow::ensure!(
-            matches!(build.public_document(), VersionedBuildManifest::V2(_)),
-            "active current-schema rulesets require a public BuildManifestV2"
-        );
-        anyhow::ensure!(
-            build.semantics().save_schema_version
-                == robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1,
-            "active current-schema rulesets require current save schema {}",
-            robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1
-        );
-        anyhow::ensure!(
-            build.semantics().network_protocol_version
-                == robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1
-                && published.manifest.network_protocol_versions
-                    == [robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1],
-            "active current-schema rulesets require exactly network protocol {}",
-            robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1
+            board.preset_id == policy.preset.preset_id()
+                && board.difficulty_id == policy.difficulty.difficulty_id(),
+            "board {} preset/difficulty labels do not match its fixed simulation policy",
+            board.board_id
         );
     }
     Ok(())
 }
 
-/// Prove that an operator rules document contains exactly the current engine's
-/// complete deterministic configuration: serde defaults and unknown fields
-/// are not allowed to silently normalize a board identity.
-fn validate_current_sim_config(rules: &RulesConfigIdentityV1) -> anyhow::Result<()> {
-    rules.validate()?;
-    anyhow::ensure!(
-        rules.replay_schema_version == robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-        "rules config replay schema is not current"
-    );
-    let input = CanonicalValue::Object(rules.sim_config.clone());
-    let config: robin_engine::engine::SimConfig = serde_json::from_value(
-        serde_json::to_value(&input).context("serialize canonical SimConfig")?,
-    )
-    .context("decode current SimConfig")?;
-    let canonical =
-        CanonicalValue::from_serializable(&config).context("canonicalize current SimConfig")?;
-    anyhow::ensure!(
-        canonical == input,
-        "SimConfig contains missing, unknown, or default-normalized fields"
-    );
-    Ok(())
-}
-
-impl ManifestRegistry {
-    fn load(root: &Path) -> anyhow::Result<Self> {
-        anyhow::ensure!(root.is_absolute(), "manifest_directory must be absolute");
-        let metadata = std::fs::symlink_metadata(root)?;
-        anyhow::ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "manifest_directory must be a non-symlink directory"
-        );
-        Ok(Self {
-            builds: load_build_documents(root)?,
-            content_manifests: load_documents(
-                root,
-                "content-manifests",
-                |document: &ContentManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            campaign_content_manifests: load_documents(
-                root,
-                "campaign-content-manifests",
-                |document: &CampaignContentManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            rules_configs: load_documents(
-                root,
-                "rules-configs",
-                |document: &RulesConfigIdentityV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            rulesets: load_published_rulesets(root)?,
-            competitions: load_documents(
-                root,
-                "competitions",
-                |document: &CompetitionManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            policies: load_documents(root, "policies", |document: &ImmutablePolicyManifestV1| {
-                document.validate()?;
-                Ok(document.canonical_digest()?)
-            })?,
-        })
-    }
-}
-
-fn load_build_documents(root: &Path) -> anyhow::Result<BTreeMap<Digest32, LoadedBuildManifest>> {
-    let public_documents = load_documents(root, "builds", |document: &VersionedBuildManifest| {
-        document.validate()?;
-        Ok(document.canonical_digest()?)
-    })?;
-    let mut builds = BTreeMap::new();
-    let mut semantic_identities = BTreeMap::new();
-    for (public_digest, public_document) in public_documents {
-        let loaded = LoadedBuildManifest::new(public_document)?;
-        anyhow::ensure!(
-            loaded.public_digest() == public_digest,
-            "loaded build document changed public identity"
-        );
-        anyhow::ensure!(
-            semantic_identities
-                .insert(loaded.semantic_digest(), public_digest)
-                .is_none(),
-            "multiple public build documents normalize to semantic build identity {}",
-            loaded.semantic_digest()
-        );
-        anyhow::ensure!(
-            builds.insert(public_digest, loaded).is_none(),
-            "duplicate public build manifest digest {public_digest}"
-        );
-    }
-    Ok(builds)
-}
-
-/// Load the exact split emitted by `robin_manifest_tool`: immutable ruleset
-/// semantics are digest-addressed separately from their mutable
-/// publication/quarantine wrappers. Serving never accepts an embedded
-/// replacement manifest merely because the wrapper names the expected digest.
-fn load_published_rulesets(root: &Path) -> anyhow::Result<BTreeMap<Digest32, PublishedRulesetV1>> {
-    let immutable = load_documents(root, "ruleset-manifests", |document: &RulesetManifestV1| {
-        document.validate()?;
-        Ok(document.canonical_digest()?)
-    })?;
-    let published = load_documents(
-        root,
-        "published-rulesets",
-        |document: &PublishedRulesetV1| {
-            document.validate()?;
-            Ok(document.ruleset_manifest_sha256)
-        },
-    )?;
-    anyhow::ensure!(
-        immutable.len() == published.len(),
-        "ruleset manifest and publication directories have different identity sets"
-    );
-    for (digest, publication) in &published {
-        let manifest = immutable.get(digest).ok_or_else(|| {
-            anyhow::anyhow!("published ruleset {digest} has no immutable manifest")
-        })?;
-        anyhow::ensure!(
-            &publication.manifest == manifest,
-            "published ruleset {digest} embeds a manifest that differs from the immutable document"
-        );
-    }
-    for digest in immutable.keys() {
-        anyhow::ensure!(
-            published.contains_key(digest),
-            "immutable ruleset {digest} has no publication status"
-        );
-    }
-    Ok(published)
-}
-
-fn load_documents<T, F>(
-    root: &Path,
-    kind: &str,
-    mut identity: F,
-) -> anyhow::Result<BTreeMap<Digest32, T>>
-where
-    T: DeserializeOwned,
-    F: FnMut(&T) -> anyhow::Result<Digest32>,
-{
-    let directory = root.join(kind);
-    let metadata = std::fs::symlink_metadata(&directory)?;
-    anyhow::ensure!(
-        metadata.is_dir() && !metadata.file_type().is_symlink(),
-        "{kind} manifest directory must be a non-symlink directory"
-    );
-    let mut documents = BTreeMap::new();
-    for entry in std::fs::read_dir(&directory)? {
-        let entry = entry?;
-        let metadata = std::fs::symlink_metadata(entry.path())?;
-        anyhow::ensure!(
-            metadata.is_file() && !metadata.file_type().is_symlink(),
-            "manifest entries must be regular non-symlink files"
-        );
-        let name = entry.file_name();
-        let name = name
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("manifest filename is not UTF-8"))?;
-        let stem = name
-            .strip_suffix(".json")
-            .ok_or_else(|| anyhow::anyhow!("manifest filename must end in .json"))?;
-        let expected = digest32(stem, "manifest filename")?;
-        let bytes = read_regular_file_no_symlinks(&entry.path(), HARD_MAX_OPERATOR_DOCUMENT_BYTES)?;
-        let document: T = serde_json::from_slice(&bytes)?;
-        let actual = identity(&document)?;
-        anyhow::ensure!(
-            actual == expected,
-            "manifest document digest does not match filename {name}"
-        );
-        anyhow::ensure!(
-            documents.insert(actual, document).is_none(),
-            "duplicate manifest digest {actual}"
-        );
-    }
-    Ok(documents)
-}
-
-use crate::secure_fs::{
-    open_regular_no_symlinks, read_bounded_no_symlinks as read_regular_file_no_symlinks,
-};
-
-fn hash_regular_file_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<([u8; 32], u64)> {
-    let mut file = open_regular_no_symlinks(path)?;
-    let initial_length = file.metadata()?.len();
-    anyhow::ensure!(
-        initial_length > 0 && initial_length <= limit,
-        "operator file is empty or exceeds its byte limit"
-    );
-    let mut hasher = Sha256::new();
-    let mut byte_length = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        byte_length = byte_length
-            .checked_add(u64::try_from(count)?)
-            .ok_or_else(|| anyhow::anyhow!("operator file size overflow"))?;
-        anyhow::ensure!(
-            byte_length <= limit,
-            "operator file grew beyond its byte limit"
-        );
-        hasher.update(&buffer[..count]);
-    }
-    anyhow::ensure!(
-        byte_length == initial_length,
-        "operator file changed length while hashing"
-    );
-    Ok((hasher.finalize().into(), byte_length))
-}
-
-fn digest32(value: &str, field: &str) -> anyhow::Result<Digest32> {
-    anyhow::ensure!(
-        value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
-        "{field} must be 64 lowercase hexadecimal digits"
-    );
-    let bytes = hex::decode(value)?;
-    Ok(Digest32::from_bytes(bytes.try_into().map_err(|_| {
-        anyhow::anyhow!("{field} must be 32 bytes")
-    })?))
-}
+use crate::secure_fs::read_bounded_no_symlinks as read_regular_file_no_symlinks;
 
 fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
     use rustix::fs::OFlags;
-    use std::io::Read as _;
     use std::os::unix::fs::PermissionsExt as _;
 
     anyhow::ensure!(
@@ -1387,7 +518,7 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
 
 fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Result<[u8; 32]> {
     use rustix::fs::{Mode, OFlags};
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
 
     let parent = path
@@ -1460,85 +591,153 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_run_protocol::{
+        BoardMetricV1, BoardMissionV2, RankedSimulationDifficultyV1, RankedSimulationPolicyV1,
+    };
 
-    fn empty_manifest_registry_directory() -> tempfile::TempDir {
-        let directory = tempfile::tempdir().unwrap();
-        for kind in [
-            "builds",
-            "content-manifests",
-            "campaign-content-manifests",
-            "rules-configs",
-            "ruleset-manifests",
-            "published-rulesets",
-            "competitions",
-            "policies",
-        ] {
-            std::fs::create_dir(directory.path().join(kind)).unwrap();
+    fn board(id: &str) -> BoardV2 {
+        BoardV2 {
+            board_id: OpaqueId::new(id).unwrap(),
+            display_name: "Demo / Standard / Normal".into(),
+            edition: OfficialContentEditionV1::Demo,
+            preset_id: "standard".into(),
+            preset_name: "Standard".into(),
+            difficulty_id: "normal".into(),
+            difficulty_name: "Normal".into(),
+            simulation_policy: BoardSimulationPolicyV1::Fixed {
+                policy: RankedSimulationPolicyV1::standard(RankedSimulationDifficultyV1::Medium),
+            },
+            allow_state_load: false,
+            metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
+            viewer_content_requirement: ViewerContentRequirementV2::BundledDemo,
+            missions: vec![BoardMissionV2 {
+                mission_id: "Dem_Lei_MP".into(),
+                display_name: "Leicester".into(),
+            }],
         }
-        directory
     }
 
     #[test]
-    fn viewer_content_requirements_are_exactly_bound_to_official_edition() {
-        assert!(
-            ViewerContentRequirementConfig::BundledDemo
-                .matches_edition(OfficialContentEditionV1::Demo)
-        );
-        assert!(
-            ViewerContentRequirementConfig::UserLocalRetail
-                .matches_edition(OfficialContentEditionV1::Full)
-        );
-        assert!(
-            !ViewerContentRequirementConfig::BundledDemo
-                .matches_edition(OfficialContentEditionV1::Full)
-        );
-        assert!(
-            !ViewerContentRequirementConfig::UserLocalRetail
-                .matches_edition(OfficialContentEditionV1::Demo)
-        );
-    }
-
-    #[test]
-    fn admission_scopes_bind_genesis_only_to_authentic_full_campaign_first_mission() {
-        let full_genesis = OfficialContentSubjectV1::FieldMission {
-            mission_id: OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1.to_owned(),
-        };
-        assert_eq!(
-            expected_admission_scopes(OfficialContentEditionV1::Full, &full_genesis),
-            [
-                "individual_level",
-                "campaign_genesis",
-                "campaign_continuation"
-            ]
-        );
-
-        let later_field = OfficialContentSubjectV1::FieldMission {
-            mission_id: "H12_Not_MP".to_owned(),
-        };
-        assert_eq!(
-            expected_admission_scopes(OfficialContentEditionV1::Full, &later_field),
-            ["individual_level", "campaign_continuation"]
-        );
-
-        let headquarters = OfficialContentSubjectV1::Headquarters {
-            mission_id: robin_run_protocol::OFFICIAL_FULL_HEADQUARTERS_MISSION_ID_V1.to_owned(),
-        };
-        assert_eq!(
-            expected_admission_scopes(OfficialContentEditionV1::Full, &headquarters),
-            ["campaign_continuation"]
-        );
-        assert_eq!(
-            expected_admission_scopes(OfficialContentEditionV1::Demo, &full_genesis),
-            ["individual_level"]
-        );
-    }
-
-    fn write_build_document(directory: &Path, digest: Digest32, document: &VersionedBuildManifest) {
+    fn boards_parse_from_toml_and_are_validated_at_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("server.toml");
         std::fs::write(
-            directory.join("builds").join(format!("{digest}.json")),
-            document.canonical_bytes().unwrap(),
+            &path,
+            r#"
+database_path = "/tmp/highscores.sqlite3"
+
+[[boards]]
+board_id = "full-any"
+display_name = "Full / Any settings"
+edition = "full"
+preset_id = "any"
+preset_name = "Any"
+difficulty_id = "any"
+difficulty_name = "Any"
+simulation_policy = { kind = "any_config" }
+allow_state_load = false
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "user_local_retail"
+missions = [{ mission_id = "H01_Lin_VL", display_name = "Lincoln" }]
+
+[[boards]]
+board_id = "demo-standard-normal"
+display_name = "Demo / Standard / Normal"
+edition = "demo"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "medium" } }
+allow_state_load = false
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [{ mission_id = "Dem_Lei_MP", display_name = "Leicester" }]
+"#,
         )
         .unwrap();
+        let config = ServerConfig::load_for_worker(&path).unwrap();
+        assert_eq!(config.boards.len(), 2);
+        let metadata = config.leaderboard_metadata().unwrap();
+        assert_eq!(
+            metadata
+                .boards
+                .iter()
+                .map(|board| board.board_id.as_str())
+                .collect::<Vec<_>>(),
+            ["demo-standard-normal", "full-any"]
+        );
+        assert_eq!(
+            config.boards[0].simulation_policy,
+            BoardSimulationPolicyV1::AnyConfig
+        );
+        assert_eq!(metadata.tick_duration.numerator_micros, 40_000);
+
+        let unknown = std::fs::read_to_string(&path).unwrap().replace(
+            "allow_state_load = false\nmetrics",
+            "surprise = 1\nallow_state_load = false\nmetrics",
+        );
+        std::fs::write(&path, unknown).unwrap();
+        assert!(ServerConfig::load_for_worker(&path).is_err());
+    }
+
+    #[test]
+    fn duplicate_invalid_and_mislabelled_boards_are_rejected() {
+        let config = ServerConfig {
+            boards: vec![board("demo-standard-normal")],
+            ..Default::default()
+        };
+        config.validate().unwrap();
+
+        let duplicate = ServerConfig {
+            boards: vec![board("demo-standard-normal"), board("demo-standard-normal")],
+            ..Default::default()
+        };
+        assert!(duplicate.validate().is_err());
+
+        let mut no_missions = board("empty");
+        no_missions.missions.clear();
+        assert!(
+            ServerConfig {
+                boards: vec![no_missions],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+
+        let mut wrong_viewer = board("wrong-viewer");
+        wrong_viewer.viewer_content_requirement = ViewerContentRequirementV2::UserLocalRetail;
+        assert!(
+            ServerConfig {
+                boards: vec![wrong_viewer],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+
+        let mut wrong_label = board("wrong-label");
+        wrong_label.difficulty_id = "hard".into();
+        assert!(
+            ServerConfig {
+                boards: vec![wrong_label],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+
+        let mut unsorted_metrics = board("unsorted");
+        unsorted_metrics.metrics.reverse();
+        assert!(
+            ServerConfig {
+                boards: vec![unsorted_metrics],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
@@ -1571,29 +770,55 @@ mod tests {
         };
         assert!(config.validate().is_err());
 
+        let mut config = ServerConfig::default();
+        config.max_concurrent_uploads_per_key = 0;
+        assert!(config.validate().is_err());
+        config.max_concurrent_uploads_per_key =
+            u32::try_from(config.max_concurrent_uploads + 1).unwrap();
+        assert!(config.validate().is_err());
+
         let config = ServerConfig {
-            allowed_origins: vec!["http://example.com".to_owned()],
+            submissions_per_hour_per_key: 0,
             ..Default::default()
         };
         assert!(config.validate().is_err());
 
-        let config = ServerConfig {
-            allowed_origins: vec!["http://localhost.evil.example".to_owned()],
-            ..Default::default()
-        };
-        assert!(config.validate().is_err());
+        for (max_age_seconds, max_future_skew_seconds, valid) in [
+            (300, 60, true),
+            (29, 60, false),
+            (3_601, 60, false),
+            (300, 601, false),
+        ] {
+            let config = ServerConfig {
+                signed_requests: SignedRequestConfig {
+                    max_age_seconds,
+                    max_future_skew_seconds,
+                },
+                ..Default::default()
+            };
+            assert_eq!(
+                config.validate().is_ok(),
+                valid,
+                "{max_age_seconds}/{max_future_skew_seconds}"
+            );
+        }
+        assert_eq!(
+            SignedRequestConfig::default().window(),
+            SignedRequestWindowV1::default()
+        );
 
-        let config = ServerConfig {
-            allowed_origins: vec!["http://127.0.0.1:3000".to_owned()],
-            ..Default::default()
-        };
-        assert!(config.validate().is_ok());
-
-        let config = ServerConfig {
-            allowed_origins: vec!["http://127.0.0.2:3000".to_owned()],
-            ..Default::default()
-        };
-        assert!(config.validate().is_err());
+        for (origin, valid) in [
+            ("http://example.com", false),
+            ("http://localhost.evil.example", false),
+            ("http://127.0.0.1:3000", true),
+            ("http://127.0.0.2:3000", false),
+        ] {
+            let config = ServerConfig {
+                allowed_origins: vec![origin.to_owned()],
+                ..Default::default()
+            };
+            assert_eq!(config.validate().is_ok(), valid, "{origin}");
+        }
     }
 
     #[test]
@@ -1606,15 +831,12 @@ mod tests {
         }
         let config = ServerConfig {
             cursor_secret_path: directory.path().join("cursor.key"),
-            competition_run_grant_secret_path: directory.path().join("grant.key"),
-            run_preflight_grant_secret_path: directory.path().join("preflight.key"),
             ..Default::default()
         };
         assert!(config.load_cursor_key().is_err());
         let first = config.load_or_create_cursor_key().unwrap();
         assert_eq!(config.load_cursor_key().unwrap(), first);
-        let second = config.load_or_create_cursor_key().unwrap();
-        assert_eq!(first, second);
+        assert_eq!(config.load_or_create_cursor_key().unwrap(), first);
         assert_eq!(std::fs::read(&config.cursor_secret_path).unwrap().len(), 32);
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -1627,13 +849,6 @@ mod tests {
                 0o400
             );
         }
-        let grant = config.load_or_create_competition_run_grant_key().unwrap();
-        assert_eq!(config.load_competition_run_grant_key().unwrap(), grant);
-        assert_ne!(grant, first);
-        let preflight = config.load_or_create_run_preflight_grant_key().unwrap();
-        assert_eq!(config.load_run_preflight_grant_key().unwrap(), preflight);
-        assert_ne!(preflight, first);
-        assert_ne!(preflight, grant);
     }
 
     #[test]
@@ -1654,39 +869,6 @@ mod tests {
         };
         assert!(config.load_or_create_cursor_key().is_err());
         assert_eq!(std::fs::read(target).unwrap(), [7_u8; 32]);
-    }
-
-    #[test]
-    fn operator_files_are_hashed_from_pinned_non_symlink_inodes() {
-        use std::os::unix::fs::symlink;
-
-        let directory = tempfile::tempdir().unwrap();
-        let file = directory.path().join("campaign.bin");
-        std::fs::write(&file, b"canonical campaign").unwrap();
-        assert_eq!(
-            hash_regular_file_no_symlinks(&file, HARD_MAX_CAMPAIGN_BYTES).unwrap(),
-            (
-                Sha256::digest(b"canonical campaign").into(),
-                b"canonical campaign".len() as u64,
-            )
-        );
-
-        let link = directory.path().join("campaign-link.bin");
-        symlink(&file, &link).unwrap();
-        assert!(hash_regular_file_no_symlinks(&link, HARD_MAX_CAMPAIGN_BYTES).is_err());
-
-        let real_parent = directory.path().join("real-parent");
-        std::fs::create_dir(&real_parent).unwrap();
-        std::fs::write(real_parent.join("campaign.bin"), b"canonical campaign").unwrap();
-        let parent_link = directory.path().join("parent-link");
-        symlink(&real_parent, &parent_link).unwrap();
-        assert!(
-            hash_regular_file_no_symlinks(
-                &parent_link.join("campaign.bin"),
-                HARD_MAX_CAMPAIGN_BYTES,
-            )
-            .is_err()
-        );
     }
 
     #[test]
@@ -1721,28 +903,41 @@ mod tests {
         let config = ServerConfig {
             moderation_bearer_token_path: Some(missing_token.clone()),
             cursor_secret_path: directory.path().join("cursor-key-must-not-be-opened"),
-            competition_run_grant_secret_path: directory
-                .path()
-                .join("grant-key-must-not-be-opened"),
-            run_preflight_grant_secret_path: directory
-                .path()
-                .join("preflight-key-must-not-be-opened"),
             ..Default::default()
         };
         let config_path = directory.path().join("server.toml");
         std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
 
-        // The API loader proves it tried to open the configured credential.
         assert!(ServerConfig::load(&config_path).is_err());
-
-        // The worker validates the same non-secret document and manifest
-        // surface without touching the API-only path.
         let worker = ServerConfig::load_for_worker(&config_path).unwrap();
         assert_eq!(
             worker.moderation_bearer_token_path.as_deref(),
             Some(missing_token.as_path())
         );
         assert!(worker.moderation_bearer_token.is_none());
+    }
+
+    #[test]
+    fn example_and_production_server_configs_load() {
+        for (name, text) in [
+            ("example", include_str!("../highscores-server.example.toml")),
+            ("production", include_str!("../ops/production/server.toml")),
+        ] {
+            let config: ServerConfig =
+                toml::from_str(text).unwrap_or_else(|error| panic!("{name}: {error}"));
+            config
+                .validate_for_secret_scope(ConfigSecretScope::Worker)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+        }
+        let production: ServerConfig =
+            toml::from_str(include_str!("../ops/production/server.toml")).unwrap();
+        let full_any = production
+            .board(&OpaqueId::new("full-any").unwrap())
+            .unwrap();
+        assert_eq!(full_any.missions.len(), 38);
+        assert!(full_any.mission("Sherwood").is_none());
+        assert!(full_any.mission("SherwoodOutro").is_some());
+        assert_eq!(production.boards.len(), 14);
     }
 
     #[test]
@@ -1763,10 +958,7 @@ mod tests {
         for path in [
             "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3",
             "/home/robinhood/.local/share/robin-highscores/replays",
-            "/home/robinhood/.local/share/robin-highscores/campaign-states",
             "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key",
-            "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key",
-            "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key",
             "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token",
         ] {
             assert!(
@@ -1784,7 +976,7 @@ mod tests {
             backup.contains("\nExecStart=%h/.local/opt/robin-highscores/current/ops/backup.sh\n")
         );
         let state_root = "%h/.local/share/robin-highscores";
-        for shared_path in ["database", "replays", "campaign-states"] {
+        for shared_path in ["database", "replays"] {
             let shared_path = format!("{state_root}/{shared_path}");
             assert!(
                 api.contains(&format!("ReadWritePaths={shared_path}\n")),
@@ -1795,6 +987,9 @@ mod tests {
                 "worker unit cannot write required shared state {shared_path}"
             );
         }
+        for unit in [api, worker, backup] {
+            assert!(!unit.contains("campaign-states"));
+        }
         // One writable mount: `cp -al` cannot hard-link across bind mounts.
         assert!(backup.contains(&format!("\nReadWritePaths={state_root}\n")));
         assert!(timer.contains("Persistent=true"));
@@ -1802,7 +997,7 @@ mod tests {
             assert_eq!(
                 service.matches("\nPrivateUsers=yes\n").count(),
                 1,
-                "{name} must use a private user namespace so the unprivileged user manager can apply its capability and device hardening"
+                "{name} must use a private user namespace"
             );
             assert!(service.contains("\nCapabilityBoundingSet=\n"));
             assert!(service.contains("\nAmbientCapabilities=\n"));
@@ -1843,8 +1038,9 @@ mod tests {
             "bwrap_program = \"/usr/bin/bwrap\"",
             "prlimit_program = \"/usr/bin/prlimit\"",
             "[verifier_launcher]",
-            "/home/robinhood/.local/opt/robin-highscores/releases/",
-            "/home/robinhood/.local/share/robin-highscores/raw-content/{demo,full}",
+            "/home/robinhood/.local/opt/robin-highscores/authority/bin/robin-replay-verifier",
+            "/home/robinhood/.local/share/robin-highscores/raw-content/demo",
+            "/home/robinhood/.local/share/robin-highscores/raw-content/full",
         ] {
             assert!(
                 worker_config.contains(contract),
@@ -1852,12 +1048,11 @@ mod tests {
             );
         }
         for obsolete in [
-            "broker_socket",
-            "broker_response_timeout",
+            "_sha256",
+            "catalog",
+            "campaign_state_directory",
+            "source-tree",
             "systemd-run",
-            "= \"/opt/robin-highscores",
-            "= \"/var/lib/robin-highscores",
-            "= \"/srv/robin-highscores",
         ] {
             assert!(
                 !worker_config.contains(obsolete),
@@ -1867,12 +1062,9 @@ mod tests {
         let worker_source = include_str!("bin/worker.rs");
         assert!(worker_source.contains("ServerConfig::load_for_worker"));
         assert!(!worker_source.contains(".load_cursor_key"));
-        assert!(!worker_source.contains(".load_competition_run_grant_key"));
-        assert!(!worker_source.contains(".load_run_preflight_grant_key"));
 
         let compiled_max = HARD_MAX_REPLAY_BYTES
-            .checked_add(HARD_MAX_CAMPAIGN_BYTES)
-            .and_then(|value| value.checked_add(HARD_MAX_METADATA_BYTES as u64))
+            .checked_add(HARD_MAX_METADATA_BYTES as u64)
             .and_then(|value| value.checked_add(1024 * 1024))
             .unwrap();
         assert!(compiled_max <= 130_u64 * 1024 * 1024);
@@ -1882,181 +1074,5 @@ mod tests {
         assert!(nginx.contains("proxy_set_header X-Forwarded-For $http_cf_connecting_ip;"));
         assert!(nginx.contains("location /"));
         assert!(nginx.contains("return 404;"));
-    }
-
-    #[test]
-    fn manifestctl_split_ruleset_layout_loads_and_cross_binds() {
-        let directory = empty_manifest_registry_directory();
-        let published = crate::test_support::published_ruleset_fixture();
-        let digest = published.ruleset_manifest_sha256;
-        std::fs::write(
-            directory
-                .path()
-                .join("ruleset-manifests")
-                .join(format!("{digest}.json")),
-            robin_run_protocol::canonical_json_bytes(&published.manifest).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            directory
-                .path()
-                .join("published-rulesets")
-                .join(format!("{digest}.json")),
-            robin_run_protocol::canonical_json_bytes(&published).unwrap(),
-        )
-        .unwrap();
-
-        let registry = ManifestRegistry::load(directory.path()).unwrap();
-        assert_eq!(registry.rulesets.get(&digest), Some(&published));
-
-        std::fs::remove_file(
-            directory
-                .path()
-                .join("ruleset-manifests")
-                .join(format!("{digest}.json")),
-        )
-        .unwrap();
-        assert!(ManifestRegistry::load(directory.path()).is_err());
-    }
-
-    #[test]
-    fn build_registry_preserves_exact_v2_identity_and_separate_semantics() {
-        let directory = empty_manifest_registry_directory();
-        let build = crate::test_support::viewer_build_v2();
-        let document = VersionedBuildManifest::V2(build.clone());
-        let public_digest = document.canonical_digest().unwrap();
-        let semantic = document.backend_visible_v1().unwrap();
-        let semantic_digest = semantic.canonical_digest().unwrap();
-        assert_ne!(public_digest, semantic_digest);
-        write_build_document(directory.path(), public_digest, &document);
-
-        let registry = ManifestRegistry::load(directory.path()).unwrap();
-        let loaded = registry.builds.get(&public_digest).unwrap();
-        assert_eq!(loaded.public_document(), &document);
-        assert_eq!(loaded.public_digest(), public_digest);
-        assert_eq!(loaded.semantics(), &semantic);
-        assert_eq!(loaded.semantic_digest(), semantic_digest);
-        assert!(!registry.builds.contains_key(&semantic_digest));
-        let decoded: LoadedBuildManifest =
-            serde_json::from_slice(&loaded.public_document().canonical_bytes().unwrap()).unwrap();
-        assert_eq!(&decoded, loaded);
-    }
-
-    #[test]
-    fn build_registry_rejects_wrong_filename_private_fields_and_duplicate_semantics() {
-        let build = crate::test_support::viewer_build_v2();
-        let document = VersionedBuildManifest::V2(build.clone());
-        let public_digest = document.canonical_digest().unwrap();
-
-        let wrong_name = empty_manifest_registry_directory();
-        write_build_document(wrong_name.path(), Digest32::from_bytes([99; 32]), &document);
-        assert!(ManifestRegistry::load(wrong_name.path()).is_err());
-
-        for private_field in [
-            "projection_exporter",
-            "projection_authority",
-            "projection_receipt",
-            "source_tree_manifest",
-            "unexpected_public_field",
-        ] {
-            let hostile = empty_manifest_registry_directory();
-            let mut value = serde_json::to_value(&document).unwrap();
-            value.as_object_mut().unwrap().insert(
-                private_field.to_owned(),
-                serde_json::json!({"sha256": Digest32::from_bytes([98; 32])}),
-            );
-            assert!(
-                serde_json::from_value::<VersionedBuildManifest>(value.clone()).is_err(),
-                "accepted private build field {private_field}"
-            );
-            std::fs::write(
-                hostile
-                    .path()
-                    .join("builds")
-                    .join(format!("{public_digest}.json")),
-                serde_json::to_vec(&value).unwrap(),
-            )
-            .unwrap();
-            assert!(
-                ManifestRegistry::load(hostile.path()).is_err(),
-                "loaded private build field {private_field}"
-            );
-        }
-
-        let nested_hostile = empty_manifest_registry_directory();
-        let mut nested = serde_json::to_value(&document).unwrap();
-        nested["viewer"]["engine"].as_object_mut().unwrap().insert(
-            "projection_exporter".to_owned(),
-            serde_json::json!({"artifact_sha256": Digest32::from_bytes([97; 32])}),
-        );
-        assert!(serde_json::from_value::<VersionedBuildManifest>(nested.clone()).is_err());
-        std::fs::write(
-            nested_hostile
-                .path()
-                .join("builds")
-                .join(format!("{public_digest}.json")),
-            serde_json::to_vec(&nested).unwrap(),
-        )
-        .unwrap();
-        assert!(ManifestRegistry::load(nested_hostile.path()).is_err());
-
-        let duplicate = empty_manifest_registry_directory();
-        write_build_document(duplicate.path(), public_digest, &document);
-        let historical = VersionedBuildManifest::V1(build.backend_visible_v1().unwrap());
-        let historical_digest = historical.canonical_digest().unwrap();
-        write_build_document(duplicate.path(), historical_digest, &historical);
-        assert!(ManifestRegistry::load(duplicate.path()).is_err());
-    }
-
-    #[test]
-    fn current_ranked_build_requires_v2_and_stale_build_requires_quarantine() {
-        let build_v2 = crate::test_support::viewer_build_v2();
-        let mut build = LoadedBuildManifest::new(VersionedBuildManifest::V2(build_v2)).unwrap();
-        assert_eq!(
-            build.semantics().save_schema_version,
-            robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1
-        );
-        let published = crate::test_support::published_ruleset_fixture();
-        validate_current_ranked_build(&build, &published).unwrap();
-
-        assert_eq!(
-            build.semantics().network_protocol_version,
-            robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1
-        );
-        let mut stale_network = build.public_document().clone();
-        match &mut stale_network {
-            VersionedBuildManifest::V2(stale) => stale.network_protocol_version -= 1,
-            VersionedBuildManifest::V1(_) => unreachable!(),
-        }
-        let stale_network = LoadedBuildManifest::new(stale_network).unwrap();
-        assert!(validate_current_ranked_build(&stale_network, &published).is_err());
-
-        let mut stale_ruleset_network = published.clone();
-        stale_ruleset_network.manifest.network_protocol_versions =
-            vec![robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1 - 1];
-        assert!(validate_current_ranked_build(&build, &stale_ruleset_network).is_err());
-
-        let mut stale = build.public_document().clone();
-        match &mut stale {
-            VersionedBuildManifest::V2(stale) => stale.save_schema_version -= 1,
-            VersionedBuildManifest::V1(_) => unreachable!(),
-        }
-        build = LoadedBuildManifest::new(stale).unwrap();
-        assert!(validate_current_ranked_build(&build, &published).is_err());
-        let mut quarantined = published;
-        quarantined.operational_status = RulesetOperationalStatusV1::Quarantined {
-            audit_id: robin_run_protocol::OpaqueId::new("stale-build-audit").unwrap(),
-            reason_code: "stale-save-schema".to_owned(),
-            since_unix_ms: 1,
-        };
-        validate_current_ranked_build(&build, &quarantined).unwrap();
-
-        let historical = LoadedBuildManifest::new(VersionedBuildManifest::V1(
-            crate::test_support::viewer_build(),
-        ))
-        .unwrap();
-        assert!(validate_current_ranked_build(&historical, &quarantined).is_ok());
-        quarantined.operational_status = RulesetOperationalStatusV1::Active;
-        assert!(validate_current_ranked_build(&historical, &quarantined).is_err());
     }
 }

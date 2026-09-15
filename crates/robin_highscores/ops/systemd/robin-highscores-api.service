@@ -11,8 +11,8 @@ EnvironmentFile=-%h/.config/robin-highscores/api.env
 WorkingDirectory=%h/.local/share/robin-highscores
 Restart=on-failure
 RestartSec=5s
-# Startup reconciles and collects the replay and campaign stores before
-# binding its listener and announcing READY=1.
+# Startup reconciles and collects the replay store before binding its listener
+# and announcing READY=1.
 TimeoutStartSec=15min
 TimeoutStopSec=30s
 UMask=0077
@@ -41,7 +41,6 @@ AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=%h/.local/share/robin-highscores/database
 ReadWritePaths=%h/.local/share/robin-highscores/replays
-ReadWritePaths=%h/.local/share/robin-highscores/campaign-states
 InaccessiblePaths=%h/.local/share/robin-highscores/backups
 InaccessiblePaths=%h/.local/share/robin-highscores/raw-content
 SystemCallArchitectures=native

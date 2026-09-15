@@ -131,7 +131,6 @@ mod tests {
     fn worker_store_and_launcher_jobs_use_the_completion_wrapper() {
         for source in [
             include_str!("secure_fs.rs"),
-            include_str!("campaign_store.rs"),
             include_str!("replay_store.rs"),
             include_str!("verifier.rs"),
         ] {

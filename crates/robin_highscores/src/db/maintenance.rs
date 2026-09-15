@@ -88,9 +88,7 @@ impl Database {
         let changed = sqlx::query(
             "UPDATE submissions SET tombstoned_at_ms = ?, purge_eligible_at_ms = ?, \
                  updated_at_ms = ? \
-             WHERE (status = 'rejected' \
-                    OR EXISTS (SELECT 1 FROM submission_terminal_failures f \
-                               WHERE f.submission_id = submissions.id)) \
+             WHERE status IN ('rejected', 'failed') \
                AND tombstoned_at_ms IS NULL AND updated_at_ms <= ?",
         )
         .bind(tombstoned_at)
@@ -144,123 +142,6 @@ impl Database {
             .map_err(|_| DbError::ResultInvariant("purge timestamp does not fit i64".to_owned()))?;
         let changed = sqlx::query(
             "UPDATE replay_objects SET purged_at_ms = ?, purge_state = 'purged', \
-                 purge_token = NULL, purge_claimed_at_ms = NULL \
-             WHERE sha256 = ? AND purge_state = 'purging' AND purge_token = ?",
-        )
-        .bind(now)
-        .bind(digest.as_slice())
-        .bind(claim_token)
-        .execute(&self.pool)
-        .await?;
-        Ok(changed.rows_affected() == 1)
-    }
-
-    pub async fn claim_campaign_gc_candidates(
-        &self,
-        now_unix_ms: u64,
-        orphan_before_unix_ms: u64,
-        limit: u32,
-    ) -> Result<Vec<CampaignGcCandidate>, DbError> {
-        if limit == 0 || limit > 1_000 {
-            return Err(DbError::ResultInvariant(
-                "campaign GC limit must be in 1..=1000".to_owned(),
-            ));
-        }
-        let now = i64::try_from(now_unix_ms)
-            .map_err(|_| DbError::ResultInvariant("GC timestamp exceeds i64".to_owned()))?;
-        let orphan_before = i64::try_from(orphan_before_unix_ms)
-            .map_err(|_| DbError::ResultInvariant("GC cutoff exceeds i64".to_owned()))?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let rows = sqlx::query(
-            "SELECT object.sha256, object.byte_length FROM campaign_objects object \
-             WHERE object.purge_state = 'live' \
-               AND NOT EXISTS (SELECT 1 FROM campaign_object_submission_references ref \
-                   JOIN submissions submission ON submission.id = ref.submission_id \
-                   WHERE ref.sha256 = object.sha256 AND submission.tombstoned_at_ms IS NULL) \
-               AND ((EXISTS (SELECT 1 FROM campaign_object_submission_references ref \
-                            WHERE ref.sha256 = object.sha256) \
-                     AND NOT EXISTS (SELECT 1 FROM campaign_object_submission_references ref \
-                         JOIN submissions submission ON submission.id = ref.submission_id \
-                         WHERE ref.sha256 = object.sha256 \
-                           AND (submission.purge_eligible_at_ms IS NULL \
-                                OR submission.purge_eligible_at_ms > ?))) \
-                    OR (NOT EXISTS (SELECT 1 FROM campaign_object_submission_references ref \
-                                   WHERE ref.sha256 = object.sha256) \
-                        AND object.created_at_ms <= ?)) \
-             ORDER BY object.created_at_ms, object.sha256 LIMIT ?",
-        )
-        .bind(now)
-        .bind(orphan_before)
-        .bind(i64::from(limit))
-        .fetch_all(&mut *tx)
-        .await?;
-        let mut claimed = Vec::with_capacity(rows.len());
-        for row in rows {
-            let sha256 = fixed_32(row.try_get("sha256")?)?;
-            let token = uuid::Uuid::now_v7().to_string();
-            let changed = sqlx::query(
-                "UPDATE campaign_objects SET purge_state = 'purging', purge_token = ?, \
-                     purge_claimed_at_ms = ? WHERE sha256 = ? AND purge_state = 'live' \
-                     AND NOT EXISTS (SELECT 1 FROM campaign_object_submission_references ref \
-                         JOIN submissions submission ON submission.id = ref.submission_id \
-                         WHERE ref.sha256 = campaign_objects.sha256 \
-                           AND submission.tombstoned_at_ms IS NULL)",
-            )
-            .bind(&token)
-            .bind(now)
-            .bind(sha256.as_slice())
-            .execute(&mut *tx)
-            .await?;
-            if changed.rows_affected() == 1 {
-                claimed.push(CampaignGcCandidate {
-                    sha256,
-                    byte_length: nonnegative_u64(row.try_get("byte_length")?, "byte_length")?,
-                    claim_token: token,
-                });
-            }
-        }
-        tx.commit().await?;
-        Ok(claimed)
-    }
-
-    pub async fn claimed_campaign_purges(
-        &self,
-        limit: u32,
-    ) -> Result<Vec<CampaignGcCandidate>, DbError> {
-        if limit == 0 || limit > 1_000 {
-            return Err(DbError::ResultInvariant(
-                "campaign GC limit must be in 1..=1000".to_owned(),
-            ));
-        }
-        let rows = sqlx::query(
-            "SELECT sha256, byte_length, purge_token FROM campaign_objects \
-             WHERE purge_state = 'purging' \
-             ORDER BY purge_claimed_at_ms, sha256 LIMIT ?",
-        )
-        .bind(i64::from(limit))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(CampaignGcCandidate {
-                    sha256: fixed_32(row.try_get("sha256")?)?,
-                    byte_length: nonnegative_u64(row.try_get("byte_length")?, "byte_length")?,
-                    claim_token: row.try_get("purge_token")?,
-                })
-            })
-            .collect()
-    }
-
-    pub async fn finish_campaign_purge(
-        &self,
-        digest: &[u8; 32],
-        claim_token: &str,
-        now_unix_ms: u64,
-    ) -> Result<bool, DbError> {
-        let now = i64::try_from(now_unix_ms)
-            .map_err(|_| DbError::ResultInvariant("purge timestamp exceeds i64".to_owned()))?;
-        let changed = sqlx::query(
-            "UPDATE campaign_objects SET purged_at_ms = ?, purge_state = 'purged', \
                  purge_token = NULL, purge_claimed_at_ms = NULL \
              WHERE sha256 = ? AND purge_state = 'purging' AND purge_token = ?",
         )

@@ -3,32 +3,26 @@ import assert from 'node:assert/strict';
 import { brotliCompressSync } from 'node:zlib';
 import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
 import { createHash } from 'node:crypto';
-import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { assembleDatadirCorpus } from './assemble-datadir-corpus.mjs';
 import { assembleRuntimeCorpus } from './assemble-runtime-corpus.mjs';
-import {
-    verifyDatadirDeploymentReceipt,
-    verifyDatadirReleaseAuthority,
-    writeDatadirDeploymentReceipt,
-    writeDatadirReleaseAuthority,
-} from './datadir-release-authority.mjs';
+import { readDatadirRelease, writeDatadirRelease } from './datadir-release.mjs';
 import { stageCloudflareHeaders } from './stage-cloudflare-headers.mjs';
 import {
     DEMO_CONTENT_MANIFEST_PATH,
     DEMO_PARENT_ROOT,
     DEMO_PATH,
     DEMO_ROOT,
-    retainedDemoDetails,
     verifyDatadirCorpus,
     verifyDemoWebContentPackage,
 } from './verify-datadir-corpus.mjs';
 import {
     CLOUDFLARE_ASSET_BYTES_LIMIT,
     CLOUDFLARE_FREE_ASSET_LIMIT,
-    DATADIR_BINDING_PATH,
+    LEGACY_DATADIR_RECEIPT_PATH,
     enforceCloudflareCapacity,
     verifyRuntimeCorpus,
 } from './verify-runtime-corpus.mjs';
@@ -36,9 +30,7 @@ import { authorRuntimeJavascriptModules } from './runtime-javascript-modules.mjs
 
 const short = '1234567890ab';
 const sourceCommit = `${short}${'c'.repeat(28)}`;
-const cargoLockSha256 = 'b'.repeat(64);
 const nativeContentSha256 = 'd'.repeat(64);
-const workerVersionId = '12345678-90ab-cdef-8123-456789abcdef';
 const contract = Object.freeze({ contentSchema: 2, netProtocol: 28, ticketSchema: 3 });
 
 function sha(bytes) {
@@ -54,10 +46,10 @@ const demoObjects = Object.freeze([
     { path: 'terrain/leicester-w30-4567890abcde.rhmission.zst', kind: 'shipping', bytes: Buffer.from('demo terrain') },
 ]);
 
-async function demoPackage({ edition = 'demo' } = {}) {
+async function demoPackage({ edition = 'demo', datadirText = 'exact Demo package' } = {}) {
     const root = await mkdtemp(resolve(tmpdir(), 'demo-web-content-'));
     const data = resolve(root, 'Data');
-    const datadir = Buffer.from('exact Demo package');
+    const datadir = Buffer.from(datadirText);
     await mkdir(data, { recursive: true });
     await writeFile(resolve(data, 'datadir.bin'), datadir);
     for (const object of demoObjects) {
@@ -153,23 +145,6 @@ async function rewriteRuntimeManifest(root, mutate) {
     await writeFile(latest, bytes);
 }
 
-async function datadirRelease() {
-    const root = await mkdtemp(resolve(tmpdir(), 'datadir-release-'));
-    const source = await demoPackage();
-    const dist = resolve(root, 'datadir-dist');
-    const inventory = resolve(root, 'datadir-inventory.json');
-    const authority = resolve(root, 'datadir-authority.json');
-    const receipt = resolve(root, 'datadir-deployment.json');
-    await assembleDatadirCorpus({ existing: null, demo: source.root, output: dist });
-    const authored = await writeDatadirReleaseAuthority({
-        root: dist, sourceCommit, cargoLockSha256, inventoryPath: inventory, authorityPath: authority,
-    });
-    const deployed = await writeDatadirDeploymentReceipt({
-        authorityPath: authority, workerVersionId, output: receipt,
-    });
-    return { root, source, dist, inventory, authority, receipt, authored, deployed };
-}
-
 test('Demo converter package and standalone datadir corpus are exact and Demo-only', async t => {
     const demo = await demoPackage();
     const full = await demoPackage({ edition: 'full' });
@@ -186,120 +161,93 @@ test('Demo converter package and standalone datadir corpus are exact and Demo-on
     await assert.rejects(verifyDemoWebContentPackage(linked.root), /symlink/u);
 });
 
-test('standalone datadir authority, inventory, and deployment receipt form one closed chain', async t => {
-    const release = await datadirRelease();
-    t.after(() => rm(release.root, { recursive: true, force: true }));
-
-    const corpus = await verifyDatadirCorpus(release.dist);
+test('datadir release describes the current Demo object of an assembled corpus', async t => {
+    const source = await demoPackage();
+    const root = await mkdtemp(resolve(tmpdir(), 'datadir-release-'));
+    t.after(() => Promise.all([source.root, root].map(path => rm(path, { recursive: true, force: true }))));
+    const dist = resolve(root, 'datadir-dist');
+    await assembleDatadirCorpus({ existing: null, demo: source.root, output: dist });
+    const corpus = await verifyDatadirCorpus(dist);
     assert.equal(corpus.assetCount, 8);
-    assert.equal(corpus.demo.datadir_url, `https://robinhood.phiresky.xyz/${DEMO_PATH}`);
-    const authority = await verifyDatadirReleaseAuthority({
-        root: release.dist,
-        inventoryPath: release.inventory,
-        authorityPath: release.authority,
-        expectedAuthoritySha256: release.authored.authoritySha256,
+
+    const output = resolve(root, 'datadir-release.json');
+    await writeDatadirRelease({ root: dist, output, retainedGenerations: [] });
+    assert.deepEqual(await readDatadirRelease(output), {
+        schema: 1,
+        url: `https://robinhood.phiresky.xyz/${DEMO_PATH}`,
+        sha256: sha(source.datadir),
+        byte_length: source.datadir.length,
+        native_content_sha256: nativeContentSha256,
     });
-    const receipt = await verifyDatadirDeploymentReceipt({
-        authorityPath: release.authority,
-        receiptPath: release.receipt,
-        expectedReceiptSha256: release.deployed.receiptSha256,
-    });
-    assert.equal(authority.inventorySha256, receipt.receipt.inventory_sha256);
-    assert.equal(receipt.receipt.worker_name, 'robinhood-datadir-assets');
-    assert.equal(receipt.receipt.worker_version_id, workerVersionId);
+    await assert.rejects(writeDatadirRelease({ root: dist, output, retainedGenerations: [] }), /EEXIST/u);
+    await rm(resolve(dist, DEMO_PATH));
+    await assert.rejects(writeDatadirRelease({ root: dist, output: resolve(root, 'other.json'), retainedGenerations: [] }));
 });
 
-test('runtime is wasm-only and requires the exact external authority plus deployed receipt', async t => {
+test('runtime corpus is wasm-only and assembles without any datadir document', async t => {
     const addition = await runtimeAddition();
-    const release = await datadirRelease();
     const root = await mkdtemp(resolve(tmpdir(), 'runtime-release-'));
     const output = resolve(root, 'runtime-dist');
     t.after(() => Promise.all([
         rm(addition, { recursive: true, force: true }),
-        rm(release.root, { recursive: true, force: true }),
         rm(root, { recursive: true, force: true }),
     ]));
 
-    await assert.rejects(verifyRuntimeCorpus(addition, { addition: true, expectedContract: contract }), /missing replay admission/);
     assert.equal((await verifyRuntimeCorpus(addition, { addition: true })).assetCount, 11);
-    const assembled = await assembleRuntimeCorpus({
-        existing: null,
-        addition,
-        datadirAuthority: release.authority,
-        datadirDeployment: release.receipt,
-        output,
-    });
-    assert.equal(assembled.assetCount, 12);
-    await assert.rejects(verifyRuntimeCorpus(output), /requires the external datadir/u);
-    assert.equal((await verifyRuntimeCorpus(output, {
-        datadirAuthorityPath: release.authority,
-    })).datadirDeployment.receipt.worker_version_id, workerVersionId);
+    await assert.rejects(verifyRuntimeCorpus(addition), /requires _headers/u);
+    const assembled = await assembleRuntimeCorpus({ existing: null, addition, output });
+    assert.equal(assembled.assetCount, 11);
+    assert.equal((await verifyRuntimeCorpus(output)).latest.short, short);
     const runtimeHandle = await open(output, 'r');
     try {
         const capability = `/proc/self/fd/${runtimeHandle.fd}/.`;
-        assert.equal((await verifyRuntimeCorpus(capability, {
-            datadirAuthorityPath: release.authority,
-        })).datadirDeployment.receipt.worker_version_id, workerVersionId);
+        assert.equal((await verifyRuntimeCorpus(capability)).latest.short, short);
         for (const malformed of [
             `/proc/self/fd/${runtimeHandle.fd}`,
             `/proc/self/fd/0${runtimeHandle.fd}/.`,
             `/proc/self/fd/${runtimeHandle.fd}//wasm`,
             `/proc/self/fd/${runtimeHandle.fd}/wasm/..`,
         ]) {
-            await assert.rejects(verifyRuntimeCorpus(malformed, {
-                datadirAuthorityPath: release.authority,
-            }), /retained-directory capability is not canonical/u);
+            await assert.rejects(verifyRuntimeCorpus(malformed), /retained-directory capability is not canonical/u);
         }
     } finally {
         await runtimeHandle.close();
     }
     const runtimeAlias = resolve(root, 'runtime-alias');
     await symlink(output, runtimeAlias);
-    await assert.rejects(verifyRuntimeCorpus(runtimeAlias, {
-        datadirAuthorityPath: release.authority,
-    }), /runtime corpus is not a real directory/u);
+    await assert.rejects(verifyRuntimeCorpus(runtimeAlias), /runtime corpus is not a real directory/u);
     await assert.rejects(readFile(resolve(output, DEMO_PATH)), /ENOENT/u);
-    assert.equal(
-        await readFile(resolve(output, DATADIR_BINDING_PATH), 'utf8'),
-        await readFile(release.receipt, 'utf8'),
-    );
+    await assert.rejects(readFile(resolve(output, LEGACY_DATADIR_RECEIPT_PATH)), /ENOENT/u);
 });
 
-test('runtime update retains immutable wasm versions and never imports the datadir corpus', async t => {
+test('runtime update retains immutable wasm versions and drops the legacy datadir receipt', async t => {
     const first = await runtimeAddition('111111111111');
     const second = await runtimeAddition('222222222222');
-    const release = await datadirRelease();
     const root = await mkdtemp(resolve(tmpdir(), 'runtime-update-'));
     const original = resolve(root, 'original');
     const updated = resolve(root, 'updated');
     t.after(() => Promise.all([
         rm(first, { recursive: true, force: true }), rm(second, { recursive: true, force: true }),
-        rm(release.root, { recursive: true, force: true }), rm(root, { recursive: true, force: true }),
+        rm(root, { recursive: true, force: true }),
     ]));
-    await assembleRuntimeCorpus({
-        existing: null, addition: first, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, output: original,
-    });
-    // The deployed corpus predates the current header policy (no CORP). Its
-    // `_headers` is discarded by assembly, so it must not block the release,
-    // while strict verification still rejects it and the output is current.
+    await assembleRuntimeCorpus({ existing: null, addition: first, output: original });
+    // The deployed corpus predates the current header policy (no CORP) and
+    // still carries the removed datadir receipt. Assembly discards both, so
+    // they must not block the release, while strict verification rejects them.
     const legacyHeaders = (await readFile(resolve(original, '_headers'), 'utf8'))
         .replace('  Cross-Origin-Resource-Policy: same-origin\n', '');
     await rm(resolve(original, '_headers'));
     await writeFile(resolve(original, '_headers'), legacyHeaders);
-    await assert.rejects(
-        verifyRuntimeCorpus(original, { datadirAuthorityPath: release.authority }),
-        /Cross-Origin-Resource-Policy/u,
-    );
-    const result = await assembleRuntimeCorpus({
-        existing: original, addition: second, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, output: updated,
-    });
-    assert.equal(result.assetCount, 22);
+    await assert.rejects(verifyRuntimeCorpus(original), /Cross-Origin-Resource-Policy/u);
+    await writeFile(resolve(original, LEGACY_DATADIR_RECEIPT_PATH), '{}');
+    await assert.rejects(verifyRuntimeCorpus(original, { priorUpload: false }), /undeclared or non-wasm path/u);
+    const result = await assembleRuntimeCorpus({ existing: original, addition: second, output: updated });
+    assert.equal(result.assetCount, 21);
     assert.match(await readFile(resolve(updated, '_headers'), 'utf8'), /Cross-Origin-Resource-Policy: same-origin/u);
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     await assert.rejects(readFile(resolve(updated, DEMO_CONTENT_MANIFEST_PATH)), /ENOENT/u);
+    await assert.rejects(readFile(resolve(updated, LEGACY_DATADIR_RECEIPT_PATH)), /ENOENT/u);
 });
 
 async function setTreeModes(path, directoryMode, fileMode) {
@@ -325,7 +273,6 @@ async function treeModes(path, prefix = '') {
 test('runtime update assembles onto a read-only archived corpus without making it writable', async t => {
     const first = await runtimeAddition('111111111111');
     const second = await runtimeAddition('222222222222');
-    const release = await datadirRelease();
     const root = await mkdtemp(resolve(tmpdir(), 'runtime-readonly-'));
     const original = resolve(root, 'original');
     const updated = resolve(root, 'updated');
@@ -333,21 +280,16 @@ test('runtime update assembles onto a read-only archived corpus without making i
         await setTreeModes(original, 0o755, 0o644).catch(() => {});
         await Promise.all([
             rm(first, { recursive: true, force: true }), rm(second, { recursive: true, force: true }),
-            rm(release.root, { recursive: true, force: true }), rm(root, { recursive: true, force: true }),
+            rm(root, { recursive: true, force: true }),
         ]);
     });
-    await assembleRuntimeCorpus({
-        existing: null, addition: first, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, output: original,
-    });
+    await assembleRuntimeCorpus({ existing: null, addition: first, output: original });
+    await writeFile(resolve(original, LEGACY_DATADIR_RECEIPT_PATH), '{}');
     await setTreeModes(original, 0o555, 0o444);
     const archivedModes = await treeModes(original);
 
-    const result = await assembleRuntimeCorpus({
-        existing: original, addition: second, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, output: updated,
-    });
-    assert.equal(result.assetCount, 22);
+    const result = await assembleRuntimeCorpus({ existing: original, addition: second, output: updated });
+    assert.equal(result.assetCount, 21);
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     assert.deepEqual(await treeModes(original), archivedModes);
@@ -355,25 +297,14 @@ test('runtime update assembles onto a read-only archived corpus without making i
 
     // A failed assembly removes its read-only-derived staging tree.
     const failed = resolve(root, 'failed');
-    await assert.rejects(assembleRuntimeCorpus({
-        existing: original, addition: first, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, output: failed,
-    }));
+    await assert.rejects(assembleRuntimeCorpus({ existing: original, addition: first, output: failed }));
     assert.deepEqual((await readdir(root)).filter(name => name.includes('assembling')), []);
     assert.deepEqual(await treeModes(original), archivedModes);
 });
 
-function canonicalJson(value) {
-    const sorted = item => (Array.isArray(item) ? item.map(sorted)
-        : item !== null && typeof item === 'object'
-            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sorted(item[key])]))
-            : item);
-    return JSON.stringify(sorted(value));
-}
-
 /** A published corpus holding only an earlier generation at the parent root. */
 async function retainedGenerationCorpus() {
-    const retained = await demoPackage();
+    const retained = await demoPackage({ datadirText: 'retained Demo package' });
     const root = await mkdtemp(resolve(tmpdir(), 'datadir-retained-'));
     const prior = resolve(root, 'prior');
     const manifestBytes = await readFile(resolve(retained.root, 'Data/robinhood-web-content.json'));
@@ -395,19 +326,7 @@ async function retainedGenerationCorpus() {
         await writeFile(path, object.bytes);
     }
     await stageCloudflareHeaders('datadir', prior);
-    // The prior deployment's authority named this generation as its Demo.
-    const authority = resolve(root, 'prior-datadir-authority.json');
-    await writeFile(authority, canonicalJson({
-        schema_version: 1,
-        source_commit: sourceCommit,
-        cargo_lock_sha256: cargoLockSha256,
-        inventory_sha256: 'f'.repeat(64),
-        worker_name: 'robinhood-datadir-assets',
-        route_pattern: 'robinhood.phiresky.xyz/datadirs/*',
-        public_root_url: 'https://robinhood.phiresky.xyz/datadirs/',
-        demo: retainedDemoDetails(generation),
-    }));
-    return { root, retained, prior, authority, retainedGenerations: [generation] };
+    return { root, retained, prior, retainedGenerations: [generation] };
 }
 
 test('datadir update adds the current generation beside every retained object', async t => {
@@ -441,48 +360,72 @@ test('runtime update keeps builds pinned to a retained generation and binds late
     const fixture = await retainedGenerationCorpus();
     const old = await runtimeAddition('777777777777');
     const addition = await runtimeAddition('888888888888');
-    const release = await datadirRelease();
-    t.after(() => Promise.all([fixture.root, fixture.retained.root, old, addition, release.root]
+    t.after(() => Promise.all([fixture.root, fixture.retained.root, old, addition]
         .map(path => rm(path, { recursive: true, force: true }))));
     const { retainedGenerations } = fixture;
+    const [generation] = retainedGenerations;
 
     await rewriteRuntimeManifest(old, document => {
-        document.multiplayerContent.demo.url = `https://robinhood.phiresky.xyz/${retainedGenerations[0].datadirPath}`;
+        document.multiplayerContent.demo = {
+            url: `https://robinhood.phiresky.xyz/${generation.datadirPath}`,
+            sha256: generation.datadirSha256,
+            byteLength: generation.datadirByteLength,
+            nativeContentSha256: generation.nativeContentSha256,
+        };
     });
+    // The prior upload's latest still names the generation the datadir
+    // rebuild has just retained.
     const priorRuntime = resolve(fixture.root, 'prior-runtime');
-    const priorReceipt = resolve(fixture.root, 'prior-datadir-deployment.json');
-    await writeDatadirDeploymentReceipt({
-        authorityPath: fixture.authority, workerVersionId, output: priorReceipt, retainedGenerations,
-    });
     await cp(resolve(old, 'wasm'), resolve(priorRuntime, 'wasm'), { recursive: true });
-    await copyFile(priorReceipt, resolve(priorRuntime, DATADIR_BINDING_PATH));
     await stageCloudflareHeaders('runtime', priorRuntime);
-    await verifyRuntimeCorpus(priorRuntime, { datadirAuthorityPath: fixture.authority, retainedGenerations });
-    await assert.rejects(
-        verifyRuntimeCorpus(priorRuntime, { datadirAuthorityPath: fixture.authority }),
-        /content_manifest_url|datadir_url|Demo URL/u,
-    );
+    await verifyRuntimeCorpus(priorRuntime, { retainedGenerations, priorUpload: true });
+    await assert.rejects(verifyRuntimeCorpus(priorRuntime, { retainedGenerations }), /select the current Demo datadir generation/u);
+    await assert.rejects(verifyRuntimeCorpus(priorRuntime, { priorUpload: true }), /Demo URL/u);
 
     const updated = resolve(fixture.root, 'updated-runtime');
-    const options = {
-        existing: priorRuntime, addition, datadirAuthority: release.authority,
-        datadirDeployment: release.receipt, retainedGenerations,
-    };
-    await assert.rejects(assembleRuntimeCorpus({ ...options, output: updated }), /authority_sha256/u);
-    const result = await assembleRuntimeCorpus({
-        ...options, output: updated, existingDatadirAuthority: fixture.authority,
-    });
+    const result = await assembleRuntimeCorpus({ existing: priorRuntime, addition, output: updated, retainedGenerations });
     assert.equal(result.latest.short, '888888888888');
     assert.equal(
         JSON.parse(await readFile(resolve(updated, 'wasm/777777777777/manifest.json'))).multiplayerContent.demo.url,
-        `https://robinhood.phiresky.xyz/${retainedGenerations[0].datadirPath}`,
+        `https://robinhood.phiresky.xyz/${generation.datadirPath}`,
     );
 
-    await copyFile(resolve(updated, 'wasm/777777777777/manifest.json'), resolve(updated, 'wasm/latest.json'));
+    // A retained build must keep the exact bytes it was published with.
+    const tampered = resolve(fixture.root, 'tampered-runtime');
+    await cp(priorRuntime, tampered, { recursive: true });
+    await rewriteRuntimeManifest(tampered, document => { document.multiplayerContent.demo.byteLength += 1; });
+    await assert.rejects(verifyRuntimeCorpus(tampered, { retainedGenerations, priorUpload: true }), /retained Demo byteLength/u);
+});
+
+test('two builds cannot name different bytes under the current Demo generation path', async t => {
+    const first = await runtimeAddition('aaaaaaaaaaaa');
+    const second = await runtimeAddition('bbbbbbbbbbbb');
+    const root = await mkdtemp(resolve(tmpdir(), 'runtime-generation-'));
+    t.after(() => Promise.all([first, second, root].map(path => rm(path, { recursive: true, force: true }))));
+    await rewriteRuntimeManifest(second, document => { document.multiplayerContent.demo.sha256 = 'f'.repeat(64); });
+    const original = resolve(root, 'original');
+    await assembleRuntimeCorpus({ existing: null, addition: first, output: original });
     await assert.rejects(
-        verifyRuntimeCorpus(updated, { datadirAuthorityPath: release.authority, retainedGenerations }),
-        /select the deployed Demo datadir generation/u,
+        assembleRuntimeCorpus({ existing: original, addition: second, output: resolve(root, 'updated') }),
+        /needs a new generation directory/u,
     );
+});
+
+test('builds published before audio timings joined the preload closure remain valid', async t => {
+    const root = await runtimeAddition();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const build = resolve(root, 'wasm', short);
+    await rm(resolve(build, 'Data/AudioDurations.json'));
+    await writeFile(resolve(build, 'preload-assets.json'), JSON.stringify([
+        { path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' },
+        { path: 'Data/Interface/UI/marker.png', url: 'Data/Interface/UI/marker.png' },
+    ]));
+    await verifyRuntimeCorpus(root, { addition: true });
+    await writeFile(resolve(build, 'preload-assets.json'), JSON.stringify([
+        { path: 'Data/Interface/UI/marker.png', url: 'Data/Interface/UI/marker.png' },
+        { path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' },
+    ]));
+    await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /begin with the optional audio timings and the font/u);
 });
 
 test('capacity gate enforces Cloudflare asset count and object limits', () => {
@@ -607,7 +550,7 @@ test('current runtime admission is independently hashed, memory-capped and inclu
         manifest.sha256.replayAdmissionWasm = sha(wasm);
         manifest.javascriptModules = claims;
     });
-    await verifyRuntimeCorpus(root, { addition: true, expectedContract: contract });
+    await verifyRuntimeCorpus(root, { addition: true });
     const unbounded = admissionFixture({ max: null });
     await writeFile(resolve(build, 'replay_admission_bg.wasm'), unbounded);
     await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /replayAdmissionWasm digest/);

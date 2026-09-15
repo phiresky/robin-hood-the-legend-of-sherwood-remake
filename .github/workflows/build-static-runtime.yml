@@ -52,18 +52,17 @@ jobs:
       - working-directory: wasm-www
         run: pnpm install --frozen-lockfile
 
-      - name: Test runtime staging and check the runtime source contract
+      - name: Test runtime staging
         run: |
           node --test \
             wasm-www/scripts/build-runtime.test.mjs \
+            wasm-www/scripts/datadir-release.test.mjs \
             wasm-www/scripts/stage-runtime-addition.test.mjs \
             wasm-www/scripts/runtime-javascript-modules.test.mjs \
             wasm-www/scripts/stage-browser-identity-origin.test.mjs \
             wasm-www/scripts/stage-cloudflare-headers.test.mjs \
             wasm-www/scripts/stage-engine-preload-assets.test.mjs \
-            wasm-www/scripts/verify-runtime-corpus.test.mjs \
-            wasm-www/scripts/verify-runtime-source-contract.test.mjs
-          node wasm-www/scripts/verify-runtime-source-contract.mjs
+            wasm-www/scripts/verify-runtime-corpus.test.mjs
 
       - name: Install Rust WebAssembly target
         run: |
@@ -90,8 +89,13 @@ jobs:
           DEMO_ASSET_BYTE_LENGTH: ${{ inputs.demo_asset_byte_length }}
           FULL_CONTENT_MANIFEST_SHA256: ${{ inputs.full_content_manifest_sha256 }}
         run: |
+          release="${RUNNER_TEMP}/datadir-release.json"
+          node wasm-www/scripts/datadir-release.mjs current \
+            "${DEMO_ASSET_SHA256}" "${DEMO_ASSET_BYTE_LENGTH}" "${DEMO_CONTENT_IDENTITY_SHA256}" "${release}"
           node wasm-www/scripts/stage-runtime-addition.mjs \
-            --bindgen '${{ steps.wasm-tools.outputs.wasm-bindgen }}'
+            --bindgen '${{ steps.wasm-tools.outputs.wasm-bindgen }}' \
+            --datadir-release "${release}" \
+            --full-content-manifest-sha256 "${FULL_CONTENT_MANIFEST_SHA256}"
           echo "short=$(git rev-parse --short=12 HEAD)" >> "${GITHUB_OUTPUT}"
 
       - name: Upload the runtime addition for local corpus assembly

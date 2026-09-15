@@ -1,49 +1,34 @@
-import type { DigestVerified } from './canonical.js';
 import { parsePublicSubmissionStatus, type PublicSubmissionStatus } from './submission-status.js';
 import { apiUrl } from './config.js';
 import { DEFAULT_NETWORK_DEADLINE_MS, NetworkDeadline } from '../network_deadline.js';
 import {
+    RANKED_REPLAY_MEDIA_TYPE,
     parseBoardMetadata,
     parseBoardPage,
-    parseCampaignSessionDetail,
     parsePlayerRunHistoryPage,
     parseRunDetail,
 } from './public-response.js';
 import {
-    parseAndVerifyCampaignContentManifest,
-} from './content-contract.js';
-import {
-    parseAndVerifyRulesConfigIdentity,
-    parseAndVerifyPublishedRuleset,
-    parseAndVerifyRulesetManifest,
-} from './ruleset-contract.js';
-import {
     parseAbuseReportAccepted,
-    parseDeletionChallenge,
     parseDeletionReceipt,
     parsePlayerProfile,
-    parseUsernameChallenge,
+    parseSubmissionOwnerStatusResponse,
 } from './account-contract.js';
 import {
     type BoardMetadata,
     type BoardPage,
-    type CampaignContentManifest,
-    type CampaignSessionDetail,
-    type RulesConfigIdentity,
-    type RulesetManifest,
     type AbuseReportAccepted,
     type AbuseReportCategory,
-    type DeletionChallenge,
-    type DeletionRequestEnvelope,
     type DeletionReceipt,
-    type DeletionTarget,
     type PlayerProfile,
     type PlayerRunHistoryPage,
     type RunDetail,
-    type UsernameChallenge,
-    type UsernameUpdateEnvelope,
+    type SignedDeletionRequest,
+    type SignedSubmissionOwnerStatusRequest,
+    type SignedUsernameUpdate,
+    type SubmissionOwnerStatus,
 } from './types.js';
-import { filtersToApiQuery, PAGE_SIZE, type BoardFilters } from './state.js';
+import { filtersToApiQuery, PAGE_SIZE, type SelectedBoardFilters } from './state.js';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
@@ -77,7 +62,7 @@ export class HighscoreApi {
         return parsePublicSubmissionStatus(await this.getJson(['submissions', id, 'public-status'], signal), id);
     }
 
-    async board(filters: BoardFilters, signal?: AbortSignal): Promise<BoardPage> {
+    async board(filters: SelectedBoardFilters, signal?: AbortSignal): Promise<BoardPage> {
         const page = parseBoardPage(await this.getJson(
             ['leaderboards'],
             signal,
@@ -94,76 +79,11 @@ export class HighscoreApi {
     }
 
     async run(id: string, signal?: AbortSignal): Promise<RunDetail> {
-        const document = await this.getJson(['runs', id], signal);
-        const run = parseRunDetail(document);
+        const run = parseRunDetail(await this.getJson(['runs', id], signal));
         if (run.runId !== id) {
             throw new PublicApiError(0, 'run_identity_mismatch', 'The run response did not match its requested identity.');
         }
         return run;
-    }
-
-    async campaignSession(
-        aggregateRunId: string,
-        ordinal: number,
-        signal?: AbortSignal,
-    ): Promise<CampaignSessionDetail> {
-        requireSessionOrdinal(ordinal);
-        const document = await this.getJson(
-            ['runs', aggregateRunId, 'sessions', String(ordinal)],
-            signal,
-        );
-        const detail = parseCampaignSessionDetail(document);
-        if (detail.aggregateRunId !== aggregateRunId || detail.ordinal !== ordinal) {
-            throw new PublicApiError(
-                0,
-                'campaign_session_identity_mismatch',
-                'The campaign session response did not match its requested aggregate and ordinal.',
-            );
-        }
-        return detail;
-    }
-
-    async campaignContentManifest(
-        sha256: string,
-        signal?: AbortSignal,
-    ): Promise<DigestVerified<CampaignContentManifest>> {
-        requireSha256(sha256, 'Campaign content manifest');
-        const document = await this.getJson(
-            ['campaign-content-manifests', sha256],
-            signal,
-            {},
-            'force-cache',
-        );
-        return await parseAndVerifyCampaignContentManifest(document, sha256);
-    }
-
-    async rulesConfig(sha256: string, signal?: AbortSignal): Promise<DigestVerified<RulesConfigIdentity>> {
-        requireSha256(sha256, 'Rules configuration');
-        const document = await this.getJson(['rules-configs', sha256], signal, {}, 'force-cache');
-        return await parseAndVerifyRulesConfigIdentity(document, sha256);
-    }
-
-    async rulesetManifest(sha256: string, signal?: AbortSignal): Promise<DigestVerified<RulesetManifest>> {
-        requireSha256(sha256, 'Ruleset manifest');
-        const [immutableDocument, publishedDocument] = await Promise.all([
-            this.getJson(['ruleset-manifests', sha256], signal, {}, 'force-cache'),
-            this.getJson(['published-rulesets', sha256], signal),
-        ]);
-        const [immutableManifest, published] = await Promise.all([
-            parseAndVerifyRulesetManifest(immutableDocument, sha256),
-            parseAndVerifyPublishedRuleset(publishedDocument, sha256),
-        ]);
-        if (published.operationalStatus.status !== 'active') {
-            throw new PublicApiError(
-                0,
-                'ruleset_quarantined',
-                'This immutable ruleset is quarantined and cannot be shown as an active ranked board.',
-            );
-        }
-        // Both documents independently canonical-hash to the requested route
-        // digest. This cross-binds mutable publication status to the exact
-        // immutable ranking policy without trusting either response's labels.
-        return immutableManifest;
     }
 
     async playerRuns(
@@ -188,51 +108,46 @@ export class HighscoreApi {
         return page;
     }
 
-    async usernameChallenge(publicKey: string, signal?: AbortSignal): Promise<UsernameChallenge> {
-        return parseUsernameChallenge(await this.sendJson(
-            ['username-challenges'],
-            'POST',
-            { schema_version: 1, public_key: publicKey },
-            signal,
-        ));
-    }
-
     async updateUsername(
         publicKey: string,
-        envelope: UsernameUpdateEnvelope,
+        signed: SignedUsernameUpdate,
         signal?: AbortSignal,
     ): Promise<PlayerProfile> {
+        requireSha256(publicKey, 'Player public key');
+        if (signed.request.public_key !== publicKey) {
+            throw new PublicApiError(0, 'signed_request_mismatch', 'The signed rename is for a different player.');
+        }
         return parsePlayerProfile(await this.sendJson(
             ['players', publicKey, 'username'],
             'PUT',
-            envelope,
-            signal,
-        ));
-    }
-
-    async deletionChallenge(
-        publicKey: string,
-        target: DeletionTarget,
-        signal?: AbortSignal,
-    ): Promise<DeletionChallenge> {
-        return parseDeletionChallenge(await this.sendJson(
-            ['deletion-challenges'],
-            'POST',
-            { schema_version: 1, public_key: publicKey, target },
+            signed,
             signal,
         ));
     }
 
     async requestDeletion(
-        envelope: DeletionRequestEnvelope,
+        signed: SignedDeletionRequest,
         signal?: AbortSignal,
     ): Promise<DeletionReceipt> {
         return parseDeletionReceipt(await this.sendJson(
             ['deletion-requests'],
             'POST',
-            envelope,
+            signed,
             signal,
         ));
+    }
+
+    /** Private lifecycle of one owned submission; the response must answer this exact request. */
+    async submissionOwnerStatus(
+        signed: SignedSubmissionOwnerStatusRequest,
+        signal?: AbortSignal,
+    ): Promise<SubmissionOwnerStatus> {
+        return parseSubmissionOwnerStatusResponse(await this.sendJson(
+            ['submissions', signed.request.submission_id, 'private-status'],
+            'POST',
+            signed,
+            signal,
+        ), signed);
     }
 
     async report(
@@ -254,43 +169,12 @@ export class HighscoreApi {
         return apiUrl(this.base, ['runs', id, 'replay']);
     }
 
-    campaignSessionReplayUrl(aggregateRunId: string, ordinal: number): string {
-        requireSessionOrdinal(ordinal);
-        return apiUrl(this.base, ['runs', aggregateRunId, 'sessions', String(ordinal), 'replay']);
-    }
-
     async replayBytes(id: string, signal?: AbortSignal): Promise<Uint8Array> {
-        return await this.replayBytesAt(this.replayUrl(id), signal);
-    }
-
-    async campaignSessionReplayBytes(
-        aggregateRunId: string,
-        ordinal: number,
-        signal?: AbortSignal,
-    ): Promise<Uint8Array> {
-        return await this.replayBytesAt(
-            this.campaignSessionReplayUrl(aggregateRunId, ordinal),
-            signal,
-        );
-    }
-
-    private async replayBytesAt(
-        url: string,
-        signal?: AbortSignal,
-    ): Promise<Uint8Array> {
         const deadline = new NetworkDeadline(signal, 'Replay request', this.#requestTimeoutMs);
         try {
-            const response = await deadline.race(fetch(
-                url,
-                requestInit(deadline.signal),
-            ));
+            const response = await deadline.race(fetch(this.replayUrl(id), requestInit(deadline.signal)));
             await requireSuccess(response, deadline);
-            requireExactMediaType(
-                response,
-                'application/x-robin-rhrec+compact',
-                'Replay',
-                deadline,
-            );
+            requireExactMediaType(response, RANKED_REPLAY_MEDIA_TYPE, 'Replay', deadline);
             return await readBounded(response, MAX_REPLAY_BYTES, 'Replay', deadline);
         } catch (error) {
             throw publicDeadlineError(deadline, error);
@@ -303,10 +187,9 @@ export class HighscoreApi {
         path: readonly string[],
         signal?: AbortSignal,
         params: Readonly<Record<string, string | number | null | undefined>> = {},
-        cache: RequestCache = 'no-store',
     ): Promise<unknown> {
         return this.requestJson(apiUrl(this.base, path, params), signal,
-            requestSignal => requestInit(requestSignal, 'application/json', cache));
+            requestSignal => requestInit(requestSignal, 'application/json'));
     }
 
     private async sendJson(
@@ -363,12 +246,6 @@ function requireHistoryCursor(value: string | null): void {
     }
 }
 
-function requireSessionOrdinal(value: number): void {
-    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
-        throw new PublicApiError(0, 'invalid_session_ordinal', 'Campaign session ordinal is invalid.');
-    }
-}
-
 function requireExactMediaType(
     response: Response,
     expected: string,
@@ -380,21 +257,17 @@ function requireExactMediaType(
     throw new PublicApiError(
         0,
         'unexpected_media_type',
-        `${label} response did not use its authenticated media type.`,
+        `${label} response did not use its expected media type.`,
     );
 }
 
-function requestInit(
-    signal: AbortSignal | undefined,
-    accept?: string,
-    cache: RequestCache = 'no-store',
-): RequestInit {
+function requestInit(signal: AbortSignal | undefined, accept?: string): RequestInit {
     return {
         method: 'GET',
         ...(accept === undefined ? {} : { headers: { accept } }),
         credentials: 'omit',
         mode: 'cors',
-        cache,
+        cache: 'no-store',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
         ...(signal === undefined ? {} : { signal }),

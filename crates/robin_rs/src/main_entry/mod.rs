@@ -26,8 +26,6 @@ mod run;
 
 pub use error::LaunchError;
 
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub use crate::official_projection_export::SimulationContentExportRequest;
 #[cfg(target_arch = "wasm32")]
 pub use cli::set_pending_browser_join;
 pub use cli::{CliArgs, RHREC_EXT, parse_cli, parse_cli_from, try_parse_cli_from};
@@ -38,8 +36,6 @@ pub use launch::{
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use init::register_language_data_paths_with_files;
-#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-pub use init::rust_init_official_projection;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use init::rust_init_with_roots;
 pub use init::{

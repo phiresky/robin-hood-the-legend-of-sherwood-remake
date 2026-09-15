@@ -68,11 +68,12 @@ EOF
 
 current() { basename "$(readlink "$root/current")"; }
 
-# Authority release: oldest directory in releases/, looks like a service release.
+# Verifier release: oldest directory in releases/, just the static verifier.
 authority_commit=0000000
-mkdir -p "$root/releases/$authority_commit/bin" "$root/releases/$authority_commit/private"
-printf '#!/bin/sh\n' >"$root/releases/$authority_commit/bin/robin-highscores-server"
+mkdir -p "$root/releases/$authority_commit/bin"
 printf '#!/bin/sh\n' >"$root/releases/$authority_commit/bin/robin-replay-verifier"
+chmod +x "$root/releases/$authority_commit/bin/robin-replay-verifier"
+echo "$authority_commit" >"$root/releases/$authority_commit/SOURCE_COMMIT"
 touch -d '2020-01-01' "$root/releases/$authority_commit"
 ln -s "$root/releases/$authority_commit" "$root/authority"
 
@@ -83,6 +84,16 @@ if "$ops/deploy.sh" "$(make_release 1111111 2)" >"$work/out" 2>&1; then
 fi
 grep -q "authority must be a symlink" "$work/out" || fail "missing authority message"
 mv "$root/authority.off" "$root/authority"
+
+# --- a verifier release without its verifier is refused -------------------------------
+chmod -x "$root/releases/$authority_commit/bin/robin-replay-verifier"
+: >"$STUB_LOG"
+if "$ops/deploy.sh" "$work/tarballs/1111111.tar" >"$work/out" 2>&1; then
+    fail "deploy with a broken verifier release succeeded"
+fi
+grep -q "has no executable bin/robin-replay-verifier" "$work/out" || { cat "$work/out"; fail "no verifier message"; }
+! grep -q systemctl "$STUB_LOG" || fail "systemctl called for a broken verifier release"
+chmod +x "$root/releases/$authority_commit/bin/robin-replay-verifier"
 
 # --- success (first deploy) -----------------------------------------------------------
 : >"$STUB_LOG"
@@ -128,8 +139,6 @@ grep -q "copy $state/backups/pre-deploy-3333333-.*/highscores.sqlite3 over datab
 [[ "$(<"$STUB_DB")" == 3 ]] || fail "stub database was not migrated"
 
 # --- rollback refuses a schema the target does not support ---------------------------
-# Operator "restores" by keeping the migrated DB and redeploying 3333333; its
-# directory survived the failed deploy and is replaced.
 "$ops/deploy.sh" "$work/tarballs/3333333.tar" >"$work/out" 2>&1 || { cat "$work/out"; fail "redeploy 3333333"; }
 [[ "$(current)" == 3333333 ]] || fail "3333333 not live"
 : >"$STUB_LOG"
@@ -139,23 +148,24 @@ fi
 grep -q "database schema is 3 but 1111111 requires 2" "$work/out" || { cat "$work/out"; fail "no schema refusal"; }
 ! grep -q systemctl "$STUB_LOG" || fail "rollback refusal touched services"
 if "$ops/rollback.sh" "$authority_commit" >"$work/out" 2>&1; then
-    fail "rollback to the authority release succeeded"
+    fail "rollback to the verifier release succeeded"
 fi
+grep -q "verifier release" "$work/out" || { cat "$work/out"; fail "no verifier release refusal"; }
 
-# --- refusing to replace the authority release --------------------------------------
+# --- refusing to replace the verifier release ------------------------------------------
 if "$ops/deploy.sh" "$(make_release $authority_commit 3)" >"$work/out" 2>&1; then
-    fail "deploy over authority succeeded"
+    fail "deploy over the verifier release succeeded"
 fi
-grep -q "is the authority release" "$work/out" || { cat "$work/out"; fail "no authority refusal"; }
-[[ -e "$root/releases/$authority_commit/bin/robin-replay-verifier" ]] || fail "authority release modified"
+grep -q "is the verifier release named by authority" "$work/out" || { cat "$work/out"; fail "no authority refusal"; }
+[[ -x "$root/releases/$authority_commit/bin/robin-replay-verifier" ]] || fail "verifier release modified"
 
-# --- prune keeps 3 service releases and never the authority target ------------------
+# --- prune keeps 3 service releases and never the verifier release ---------------------
 for commit in 4444444 5555555 6666666; do
     "$ops/deploy.sh" "$(make_release $commit 3)" >"$work/out" 2>&1 || { cat "$work/out"; fail "deploy $commit"; }
 done
 [[ "$(current)" == 6666666 ]] || fail "current is not 6666666"
-[[ -d "$root/releases/$authority_commit" && -e "$root/releases/$authority_commit/bin/robin-replay-verifier" ]] ||
-    fail "prune removed the authority release"
+[[ -x "$root/releases/$authority_commit/bin/robin-replay-verifier" ]] ||
+    fail "prune removed the verifier release"
 remaining=$(cd "$root/releases" && ls -1d */ | tr -d / | sort | tr '\n' ' ')
 [[ "$remaining" == "$authority_commit 4444444 5555555 6666666 " ]] || fail "unexpected releases after prune: $remaining"
 

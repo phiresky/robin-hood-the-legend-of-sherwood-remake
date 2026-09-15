@@ -5,20 +5,41 @@ const REQUEST_ID_RE = /^[0-9a-f]{32}$/u;
 const PUBLIC_KEY_RE = /^[0-9a-f]{64}$/u;
 const MAX_COMPLETED_REQUESTS = 256;
 
+/**
+ * Every sign operation's payloadJson is the claim itself; there is no server
+ * challenge. The wasm vault checks the claim key against the vault key,
+ * validates the claim and signs `domain || canonical_json(claim)`.
+ * - sign_username_update: `UsernameUpdateV2` -> signed_document `SignedRequestV2`.
+ * - sign_submission: `SubmissionV3` -> participant_signature `{ public_key, signature }`.
+ * - sign_submission_owner_status: `SubmissionOwnerStatusRequestV2` -> signed_document `SignedRequestV2`.
+ * - sign_deletion_request: `DeletionRequestV2` -> signed_document `SignedRequestV2`.
+ */
 const SIGNING_LIMITS = {
     sign_username_update: 4 * 1024,
     sign_submission: 128 * 1024,
-    sign_multiplayer_leaderboard_request: 4 * 1024,
-    sign_named_seat_join: 8 * 1024,
-    sign_replay_session_genesis: 64 * 1024,
-    sign_competition_run_grant_request: 128 * 1024,
-    sign_fresh_run_preflight_request: 128 * 1024,
-    sign_campaign_continuation_preflight_as_host: 128 * 1024,
-    sign_campaign_continuation_preflight_as_controller: 128 * 1024,
-    sign_campaign_continuation: 128 * 1024,
     sign_submission_owner_status: 8 * 1024,
     sign_deletion_request: 8 * 1024,
 } as const;
+
+type SigningOperation = keyof typeof SIGNING_LIMITS;
+
+/** Top-level claim shape per operation; deep validation stays in the Rust vault. */
+const CLAIM_SHAPES: Readonly<Record<SigningOperation, {
+    readonly schemaVersion: number;
+    readonly keyField: string;
+    readonly fields: readonly string[];
+}>> = {
+    sign_username_update: { schemaVersion: 2, keyField: 'public_key', fields: ['username'] },
+    sign_submission: {
+        schemaVersion: 3,
+        keyField: 'uploader_public_key',
+        fields: ['public_disclosure', 'board_id', 'mission_id', 'replay', 'requested_metrics'],
+    },
+    sign_submission_owner_status: { schemaVersion: 2, keyField: 'public_key', fields: ['submission_id'] },
+    sign_deletion_request: { schemaVersion: 2, keyField: 'public_key', fields: ['target'] },
+};
+
+const SIGNATURE_RE = /^[0-9a-f]{128}$/u;
 
 export type LeaderboardIdentityOperation =
     | 'status'
@@ -51,14 +72,6 @@ export type LeaderboardIdentityBridgeModule = {
     readonly robinhoodLeaderboardPublicKey: (parentOrigin: string) => Promise<string>;
     readonly robinhoodSignUsernameUpdate: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignSubmissionClaim: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignMultiplayerLeaderboardRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignNamedSeatJoin: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignReplaySessionGenesis: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCompetitionRunGrantRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignFreshRunPreflightRequest: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuationPreflightAsHost: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuationPreflightAsController: (parentOrigin: string, json: string) => Promise<string>;
-    readonly robinhoodSignCampaignContinuation: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignSubmissionOwnerStatus: (parentOrigin: string, json: string) => Promise<string>;
     readonly robinhoodSignDeletionRequest: (parentOrigin: string, json: string) => Promise<string>;
 };
@@ -91,21 +104,46 @@ function exactKeys(object: Record<string, unknown>, keys: readonly string[]): bo
         && actual.every((key, index) => key === expected[index]);
 }
 
-function payloadBytes(value: unknown, maximum: number, operation: string): string {
+function payloadClaim(value: unknown, operation: SigningOperation): Record<string, unknown> {
+    const maximum = SIGNING_LIMITS[operation];
     if (typeof value !== 'string' || value.length === 0) {
         fail('invalid_payload', `${operation} payload must be non-empty JSON`);
     }
     if (new TextEncoder().encode(value).byteLength > maximum) {
         fail('payload_too_large', `${operation} payload exceeds ${maximum} bytes`);
     }
+    let claim: Record<string, unknown> | null;
     try {
-        const parsed = JSON.parse(value) as unknown;
-        if (ownRecord(parsed) === null) fail('invalid_payload', `${operation} payload must be a JSON object`);
-    } catch (error) {
-        if (error instanceof ProtocolError) throw error;
+        claim = ownRecord(JSON.parse(value) as unknown);
+    } catch {
         fail('invalid_payload', `${operation} payload is not valid JSON`);
     }
-    return value;
+    if (claim === null) fail('invalid_payload', `${operation} payload must be a JSON object`);
+    const shape = CLAIM_SHAPES[operation];
+    if (!exactKeys(claim, ['schema_version', shape.keyField, 'signed_at_unix_ms', ...shape.fields])) {
+        fail('invalid_claim', `${operation} claim has missing or unknown fields`);
+    }
+    if (claim.schema_version !== shape.schemaVersion) {
+        fail('invalid_claim', `${operation} claim schema_version must be ${shape.schemaVersion}`);
+    }
+    const key = claim[shape.keyField];
+    if (typeof key !== 'string' || !PUBLIC_KEY_RE.test(key) || /^0+$/u.test(key)) {
+        fail('invalid_claim', `${operation} claim ${shape.keyField} is invalid`);
+    }
+    const signedAt = claim.signed_at_unix_ms;
+    if (typeof signedAt !== 'number' || !Number.isSafeInteger(signedAt) || signedAt <= 0) {
+        fail('invalid_claim', `${operation} claim signed_at_unix_ms must be a positive integer`);
+    }
+    return claim;
+}
+
+/** Sorted-key JSON used only to compare a returned claim with the requested one. */
+function canonicalForComparison(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(canonicalForComparison).join(',')}]`;
+    const record = ownRecord(value);
+    if (record === null) return JSON.stringify(value);
+    return `{${Object.keys(record).sort()
+        .map(key => `${JSON.stringify(key)}:${canonicalForComparison(record[key])}`).join(',')}}`;
 }
 
 export function decodeLeaderboardIdentityRequest(value: unknown): LeaderboardIdentityRequest {
@@ -124,13 +162,13 @@ export function decodeLeaderboardIdentityRequest(value: unknown): LeaderboardIde
         }
         return object as LeaderboardIdentityRequest;
     }
-    if (typeof operation !== 'string' || !(operation in SIGNING_LIMITS)) {
+    if (typeof operation !== 'string' || !Object.hasOwn(SIGNING_LIMITS, operation)) {
         fail('invalid_operation', 'Leaderboard identity operation is unsupported');
     }
     if (!exactKeys(object, ['protocol', 'requestId', 'operation', 'payloadJson'])) {
         fail('invalid_request', `${operation} request has invalid fields`);
     }
-    payloadBytes(object.payloadJson, SIGNING_LIMITS[operation as keyof typeof SIGNING_LIMITS], operation);
+    payloadClaim(object.payloadJson, operation as SigningOperation);
     return object as LeaderboardIdentityRequest;
 }
 
@@ -163,12 +201,44 @@ function statusResult(json: string): { readonly kind: 'status'; readonly publicK
     return { kind: 'status', publicKey: publicKey(value.publicKey) };
 }
 
-function signedDocument(json: string, maximum: number): {
+function signature(value: unknown, label: string): string {
+    if (typeof value !== 'string' || !SIGNATURE_RE.test(value) || /^0+$/u.test(value)) {
+        fail('invalid_bridge_result', `${label} signature is invalid`);
+    }
+    return value;
+}
+
+/** Result must be `SignedRequestV2` over exactly the requested claim. */
+function signedDocument(json: string, operation: SigningOperation, claim: Record<string, unknown>): {
     readonly kind: 'signed_document';
     readonly documentJson: string;
 } {
-    bridgeJson(json, maximum, 'signed identity document');
+    const document = bridgeJson(json, SIGNING_LIMITS[operation], 'signed identity document');
+    if (!exactKeys(document, ['schema_version', 'request', 'algorithm', 'signature'])
+        || document.schema_version !== 2
+        || document.algorithm !== 'ed25519') {
+        fail('invalid_bridge_result', 'Signed identity document has invalid fields');
+    }
+    signature(document.signature, 'signed identity document');
+    if (canonicalForComparison(document.request) !== canonicalForComparison(claim)) {
+        fail('invalid_bridge_result', 'Signed identity document does not sign the requested claim');
+    }
     return { kind: 'signed_document', documentJson: json };
+}
+
+function participantSignature(json: string, claim: Record<string, unknown>): {
+    readonly kind: 'participant_signature';
+    readonly participantSignatureJson: string;
+} {
+    const value = bridgeJson(json, SIGNING_LIMITS.sign_submission, 'participant signature');
+    if (!exactKeys(value, ['public_key', 'signature'])) {
+        fail('invalid_bridge_result', 'Participant signature has invalid fields');
+    }
+    if (publicKey(value.public_key) !== claim.uploader_public_key) {
+        fail('invalid_bridge_result', 'Participant signature is not by the claimed uploader');
+    }
+    signature(value.signature, 'participant');
+    return { kind: 'participant_signature', participantSignatureJson: json };
 }
 
 async function execute(
@@ -176,7 +246,6 @@ async function execute(
     bridge: LeaderboardIdentityBridgeModule,
     parentOrigin: string,
 ): Promise<unknown> {
-    const payload = request.payloadJson as string;
     switch (request.operation) {
         case 'status':
             return statusResult(await bridge.robinhoodLeaderboardIdentityStatus(parentOrigin));
@@ -184,86 +253,26 @@ async function execute(
             return { kind: 'public_key', publicKey: publicKey(
                 await bridge.robinhoodLeaderboardPublicKey(parentOrigin),
             ) };
+    }
+    const operation = request.operation;
+    const payload = request.payloadJson as string;
+    const claim = payloadClaim(payload, operation);
+    switch (operation) {
         case 'sign_username_update':
             return signedDocument(
-                await bridge.robinhoodSignUsernameUpdate(parentOrigin, payload),
-                SIGNING_LIMITS.sign_username_update,
+                await bridge.robinhoodSignUsernameUpdate(parentOrigin, payload), operation, claim,
             );
-        case 'sign_submission': {
-            const json = await bridge.robinhoodSignSubmissionClaim(parentOrigin, payload);
-            bridgeJson(json, SIGNING_LIMITS.sign_submission, 'participant signature');
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_multiplayer_leaderboard_request': {
-            const json = await bridge.robinhoodSignMultiplayerLeaderboardRequest(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_multiplayer_leaderboard_request,
-                'multiplayer participant signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_named_seat_join':
-            return signedDocument(
-                await bridge.robinhoodSignNamedSeatJoin(parentOrigin, payload),
-                SIGNING_LIMITS.sign_named_seat_join,
-            );
-        case 'sign_replay_session_genesis':
-            return signedDocument(
-                await bridge.robinhoodSignReplaySessionGenesis(parentOrigin, payload),
-                SIGNING_LIMITS.sign_replay_session_genesis,
-            );
-        case 'sign_competition_run_grant_request':
-            return signedDocument(
-                await bridge.robinhoodSignCompetitionRunGrantRequest(parentOrigin, payload),
-                SIGNING_LIMITS.sign_competition_run_grant_request,
-            );
-        case 'sign_fresh_run_preflight_request':
-            return signedDocument(
-                await bridge.robinhoodSignFreshRunPreflightRequest(parentOrigin, payload),
-                SIGNING_LIMITS.sign_fresh_run_preflight_request,
-            );
-        case 'sign_campaign_continuation_preflight_as_host': {
-            const json = await bridge.robinhoodSignCampaignContinuationPreflightAsHost(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_campaign_continuation_preflight_as_host,
-                'campaign continuation preflight host signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_campaign_continuation_preflight_as_controller': {
-            const json = await bridge.robinhoodSignCampaignContinuationPreflightAsController(
-                parentOrigin,
-                payload,
-            );
-            bridgeJson(
-                json,
-                SIGNING_LIMITS.sign_campaign_continuation_preflight_as_controller,
-                'campaign continuation preflight controller signature',
-            );
-            return { kind: 'participant_signature', participantSignatureJson: json };
-        }
-        case 'sign_campaign_continuation':
-            return signedDocument(
-                await bridge.robinhoodSignCampaignContinuation(parentOrigin, payload),
-                SIGNING_LIMITS.sign_campaign_continuation,
+        case 'sign_submission':
+            return participantSignature(
+                await bridge.robinhoodSignSubmissionClaim(parentOrigin, payload), claim,
             );
         case 'sign_submission_owner_status':
             return signedDocument(
-                await bridge.robinhoodSignSubmissionOwnerStatus(parentOrigin, payload),
-                SIGNING_LIMITS.sign_submission_owner_status,
+                await bridge.robinhoodSignSubmissionOwnerStatus(parentOrigin, payload), operation, claim,
             );
         case 'sign_deletion_request':
             return signedDocument(
-                await bridge.robinhoodSignDeletionRequest(parentOrigin, payload),
-                SIGNING_LIMITS.sign_deletion_request,
+                await bridge.robinhoodSignDeletionRequest(parentOrigin, payload), operation, claim,
             );
     }
 }

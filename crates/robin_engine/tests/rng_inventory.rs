@@ -46,10 +46,6 @@ const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
         2,
     ),
     (
-        "crates/robin_rs/src/leaderboard/ranked_session.rs|rand::random",
-        2,
-    ),
-    (
         "crates/robin_rs/src/native_game_identity.rs|rand::random",
         1,
     ),

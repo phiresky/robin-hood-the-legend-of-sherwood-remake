@@ -2,8 +2,8 @@
 //!
 //! Wire documents remain owned by `robin_run_protocol`. This layer owns route
 //! construction, bounded transport selection, response validation, and the
-//! invariant that the one replay byte string is uploaded, authenticated,
-//! decoded, retained, and downloaded unchanged.
+//! invariant that the one replay byte string is uploaded, signed, verified,
+//! retained, and downloaded unchanged.
 
 use crate::leaderboard_http::{
     HttpRequest, HttpResponse, HttpTask, HttpTransportError, LeaderboardHttpClient,
@@ -14,14 +14,9 @@ use crate::leaderboard_preferences::{
 #[cfg(test)]
 use robin_run_protocol::ReplayArtifactV1;
 use robin_run_protocol::{
-    CampaignContentManifestV1, CampaignContinuationPreflightGrantV1,
-    CampaignContinuationPreflightRequestV1, ContentManifestV1, Digest32, FreshRunPreflightGrantV1,
-    FreshRunPreflightRequestV1, LeaderboardMetadataV1, LeaderboardPageV1, LeaderboardQueryV1,
-    PublishedRulesetV1, RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1,
-    RulesConfigIdentityV1, SignedSubmissionV1, SubmissionAcceptedV1, SubmissionOfferRequestV1,
-    SubmissionOfferV1, SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1, Validate,
-    VersionedBuildManifest,
+    Digest32, LeaderboardMetadataV2, LeaderboardPageV2, LeaderboardQueryV2,
+    RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
+    SubmissionAcceptedV1, SubmissionOwnerStatusResponseV2, Validate,
 };
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -44,13 +39,11 @@ pub enum LeaderboardServiceError {
     BoardFilterMismatch,
     #[error("leaderboard response does not echo the exact requested page cursor")]
     BoardCursorMismatch,
-    #[error("signed artifacts do not match the exact bytes selected for upload")]
+    #[error("signed replay artifact does not match the exact bytes selected for upload")]
     ArtifactMismatch,
     #[error("leaderboard artifact response has no Content-Type header")]
     #[cfg(test)]
     MissingContentType,
-    #[error("starting campaign is mandatory for every ranked run")]
-    MissingStartingCampaign,
     #[error("replay is not the canonical current compact-bitcode artifact: {0}")]
     InvalidCompactReplay(String),
     #[error("leaderboard success response is not JSON (Content-Type was {found:?})")]
@@ -83,30 +76,7 @@ impl LeaderboardApi {
         self.spawn(HttpRequest::get_json(self.route("leaderboard-metadata")?))
     }
 
-    pub fn content_manifest(&self, digest: Digest32) -> Result<HttpTask, LeaderboardServiceError> {
-        self.immutable_document("content-manifests", digest)
-    }
-
-    pub fn campaign_content_manifest(
-        &self,
-        digest: Digest32,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.immutable_document("campaign-content-manifests", digest)
-    }
-
-    pub fn rules_config(&self, digest: Digest32) -> Result<HttpTask, LeaderboardServiceError> {
-        self.immutable_document("rules-configs", digest)
-    }
-
-    pub fn published_ruleset(&self, digest: Digest32) -> Result<HttpTask, LeaderboardServiceError> {
-        self.immutable_document("published-rulesets", digest)
-    }
-
-    pub fn build_manifest(&self, digest: Digest32) -> Result<HttpTask, LeaderboardServiceError> {
-        self.immutable_document("builds", digest)
-    }
-
-    pub fn board(&self, query: &LeaderboardQueryV1) -> Result<HttpTask, LeaderboardServiceError> {
+    pub fn board(&self, query: &LeaderboardQueryV2) -> Result<HttpTask, LeaderboardServiceError> {
         query.validate().map_err(invalid_protocol)?;
         let query = serde_urlencoded::to_string(query)
             .map_err(|error| LeaderboardServiceError::RequestEncoding(error.to_string()))?;
@@ -116,48 +86,20 @@ impl LeaderboardApi {
         )))
     }
 
-    pub fn submission_offer(
-        &self,
-        request: &SubmissionOfferRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("submission-offers", request)
-    }
-
-    pub fn fresh_run_preflight_grant(
-        &self,
-        request: &FreshRunPreflightRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("fresh-run-preflight-grants", request)
-    }
-
-    pub fn campaign_continuation_preflight_grant(
-        &self,
-        request: &CampaignContinuationPreflightRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("campaign-continuation-preflight-grants", request)
-    }
-
+    /// Upload one signed submission together with the exact replay bytes its
+    /// artifact reference names. The submission must be freshly signed: the
+    /// server only accepts recent `signed_at_unix_ms` values.
     pub fn submit(
         &self,
-        submission: &SignedSubmissionV1,
+        submission: &SignedSubmissionV3,
         exact_replay_bytes: Arc<[u8]>,
-        exact_starting_campaign_bytes: Arc<[u8]>,
     ) -> Result<HttpTask, LeaderboardServiceError> {
         submission.validate().map_err(invalid_protocol)?;
-        if exact_starting_campaign_bytes.is_empty() {
-            return Err(LeaderboardServiceError::MissingStartingCampaign);
-        }
         validate_canonical_replay_bytes(&exact_replay_bytes)?;
-        let artifacts = &submission.submission.artifacts;
-        if artifacts.replay.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
-            || u64::try_from(exact_replay_bytes.len()).ok()
-                != Some(artifacts.replay.artifact.byte_length)
-            || Digest32::digest_bytes(&exact_replay_bytes) != artifacts.replay.artifact.sha256
-            || artifacts.starting_campaign.media_type != RANKED_CAMPAIGN_MEDIA_TYPE_V1
-            || u64::try_from(exact_starting_campaign_bytes.len()).ok()
-                != Some(artifacts.starting_campaign.byte_length)
-            || Digest32::digest_bytes(&exact_starting_campaign_bytes)
-                != artifacts.starting_campaign.sha256
+        let artifact = &submission.request.replay.artifact;
+        if artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
+            || u64::try_from(exact_replay_bytes.len()).ok() != Some(artifact.byte_length)
+            || Digest32::digest_bytes(&exact_replay_bytes) != artifact.sha256
         {
             return Err(LeaderboardServiceError::ArtifactMismatch);
         }
@@ -168,28 +110,20 @@ impl LeaderboardApi {
             self.route("submissions")?,
             submission_json,
             exact_replay_bytes,
-            exact_starting_campaign_bytes,
         )?)
     }
 
-    pub fn submission_owner_status_challenge(
-        &self,
-        request: &SubmissionOwnerStatusChallengeRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("submission-owner-status-challenges", request)
-    }
-
+    /// Read one submission's private lifecycle with a freshly signed request.
     pub fn submission_owner_status(
         &self,
-        envelope: &SubmissionOwnerStatusEnvelopeV1,
+        request: &SignedSubmissionOwnerStatusRequestV2,
     ) -> Result<HttpTask, LeaderboardServiceError> {
-        envelope.validate().map_err(invalid_protocol)?;
         self.post_json(
             &format!(
                 "submissions/{}/private-status",
-                path_segment(envelope.challenge.submission_id.as_str())
+                path_segment(request.request.submission_id.as_str())
             ),
-            envelope,
+            request,
         )
     }
 
@@ -198,34 +132,14 @@ impl LeaderboardApi {
         route: &str,
         request: &T,
     ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.request_json(reqwest::Method::POST, route, request)
-    }
-
-    fn immutable_document(
-        &self,
-        collection: &str,
-        digest: Digest32,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        if digest.is_zero() {
-            return Err(LeaderboardServiceError::InvalidProtocol(
-                "immutable document route digest is zero".to_owned(),
-            ));
-        }
-        self.spawn(HttpRequest::get_json(
-            self.route(&format!("{collection}/{digest}"))?,
-        ))
-    }
-
-    fn request_json<T: serde::Serialize + Validate>(
-        &self,
-        method: reqwest::Method,
-        route: &str,
-        request: &T,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
         request.validate().map_err(invalid_protocol)?;
         let json = serde_json::to_vec(request)
             .map_err(|error| LeaderboardServiceError::RequestEncoding(error.to_string()))?;
-        self.spawn(HttpRequest::json(method, self.route(route)?, json))
+        self.spawn(HttpRequest::json(
+            reqwest::Method::POST,
+            self.route(route)?,
+            json,
+        ))
     }
 
     fn route(&self, suffix: &str) -> Result<String, LeaderboardServiceError> {
@@ -243,87 +157,16 @@ fn path_segment(value: &str) -> String {
 
 pub fn decode_metadata(
     result: Result<HttpResponse, HttpTransportError>,
-) -> Result<LeaderboardMetadataV1, LeaderboardServiceError> {
+) -> Result<LeaderboardMetadataV2, LeaderboardServiceError> {
     decode_validated_json(result)
-}
-
-pub fn decode_content_manifest(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-) -> Result<ContentManifestV1, LeaderboardServiceError> {
-    decode_addressed_json(result, expected, "content manifest")
-}
-
-pub fn decode_campaign_content_manifest(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-) -> Result<CampaignContentManifestV1, LeaderboardServiceError> {
-    decode_addressed_json(result, expected, "campaign content manifest")
-}
-
-pub fn decode_rules_config(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-) -> Result<RulesConfigIdentityV1, LeaderboardServiceError> {
-    decode_addressed_json(result, expected, "rules config")
-}
-
-pub fn decode_published_ruleset(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-) -> Result<PublishedRulesetV1, LeaderboardServiceError> {
-    let published: PublishedRulesetV1 = decode_validated_json(result)?;
-    if published.ruleset_manifest_sha256 != expected
-        || canonical_digest(&published.manifest)? != expected
-    {
-        return Err(address_mismatch("published ruleset"));
-    }
-    Ok(published)
-}
-
-pub fn decode_build_manifest(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-) -> Result<VersionedBuildManifest, LeaderboardServiceError> {
-    decode_addressed_json(result, expected, "build manifest")
-}
-
-fn decode_addressed_json<T>(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: Digest32,
-    label: &'static str,
-) -> Result<T, LeaderboardServiceError>
-where
-    T: DeserializeOwned + serde::Serialize + Validate,
-{
-    let document: T = decode_validated_json(result)?;
-    if canonical_digest(&document)? != expected {
-        return Err(address_mismatch(label));
-    }
-    Ok(document)
-}
-
-fn canonical_digest(
-    document: &(impl serde::Serialize + ?Sized),
-) -> Result<Digest32, LeaderboardServiceError> {
-    robin_run_protocol::canonical_json_bytes(document)
-        .map(|bytes| Digest32::digest_bytes(&bytes))
-        .map_err(|error| LeaderboardServiceError::InvalidProtocol(error.to_string()))
-}
-
-fn address_mismatch(label: &str) -> LeaderboardServiceError {
-    LeaderboardServiceError::InvalidProtocol(format!(
-        "{label} canonical digest does not match its immutable route"
-    ))
 }
 
 pub fn decode_board(
     result: Result<HttpResponse, HttpTransportError>,
-    requested_query: &LeaderboardQueryV1,
-) -> Result<LeaderboardPageV1, LeaderboardServiceError> {
-    let page: LeaderboardPageV1 = decode_validated_json(result)?;
-    let requested_filter = requested_query.filter().map_err(invalid_protocol)?;
-    if page.filter != requested_filter {
+    requested_query: &LeaderboardQueryV2,
+) -> Result<LeaderboardPageV2, LeaderboardServiceError> {
+    let page: LeaderboardPageV2 = decode_validated_json(result)?;
+    if page.filter != requested_query.filter() {
         return Err(LeaderboardServiceError::BoardFilterMismatch);
     }
     if requested_query.cursor.as_deref()
@@ -388,58 +231,19 @@ fn decode_replay_download(
     })
 }
 
-pub fn decode_offer(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<SubmissionOfferV1, LeaderboardServiceError> {
-    decode_validated_json(result)
-}
-
-pub fn decode_fresh_run_preflight_grant(
-    result: Result<HttpResponse, HttpTransportError>,
-    request: &FreshRunPreflightRequestV1,
-) -> Result<FreshRunPreflightGrantV1, LeaderboardServiceError> {
-    let grant: FreshRunPreflightGrantV1 = decode_validated_json(result)?;
-    grant.validate_request(request).map_err(invalid_protocol)?;
-    Ok(grant)
-}
-
-pub fn decode_campaign_continuation_preflight_grant(
-    result: Result<HttpResponse, HttpTransportError>,
-    request: &CampaignContinuationPreflightRequestV1,
-) -> Result<CampaignContinuationPreflightGrantV1, LeaderboardServiceError> {
-    let grant: CampaignContinuationPreflightGrantV1 = decode_validated_json(result)?;
-    grant.validate_request(request).map_err(invalid_protocol)?;
-    Ok(grant)
-}
-
 pub fn decode_submission_accepted(
     result: Result<HttpResponse, HttpTransportError>,
 ) -> Result<SubmissionAcceptedV1, LeaderboardServiceError> {
     decode_validated_json_with_status(result, 202)
 }
 
-pub fn decode_submission_owner_status_challenge(
-    result: Result<HttpResponse, HttpTransportError>,
-    request: &SubmissionOwnerStatusChallengeRequestV1,
-) -> Result<SubmissionOwnerStatusChallengeV1, LeaderboardServiceError> {
-    let challenge: SubmissionOwnerStatusChallengeV1 = decode_validated_json(result)?;
-    if challenge.controller_public_key != request.controller_public_key
-        || challenge.submission_id != request.submission_id
-    {
-        return Err(LeaderboardServiceError::InvalidProtocol(
-            "owner-status challenge does not match the request".to_owned(),
-        ));
-    }
-    Ok(challenge)
-}
-
 pub fn decode_submission_owner_status(
     result: Result<HttpResponse, HttpTransportError>,
-    envelope: &SubmissionOwnerStatusEnvelopeV1,
-) -> Result<SubmissionOwnerStatusResponseV1, LeaderboardServiceError> {
-    let response: SubmissionOwnerStatusResponseV1 = decode_validated_json(result)?;
+    request: &SignedSubmissionOwnerStatusRequestV2,
+) -> Result<SubmissionOwnerStatusResponseV2, LeaderboardServiceError> {
+    let response: SubmissionOwnerStatusResponseV2 = decode_validated_json(result)?;
     response
-        .validate_against_envelope(envelope)
+        .validate_against_request(request)
         .map_err(invalid_protocol)?;
     Ok(response)
 }
@@ -529,8 +333,7 @@ fn invalid_protocol(error: impl std::fmt::Display) -> LeaderboardServiceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_engine::replay::{ReplayData, ReplayFile, ReplayHeader};
-    use std::collections::BTreeMap;
+    use crate::leaderboard::test_fixtures::{MISSION_ID, single_frame_replay};
 
     fn response(status: u16, media_type: &str, body: Vec<u8>) -> HttpResponse {
         HttpResponse {
@@ -541,43 +344,28 @@ mod tests {
     }
 
     fn compact_fixture() -> Vec<u8> {
-        let replay = ReplayData::try_from(ReplayFile {
-            header: ReplayHeader {
-                mission_id: "m01s01".to_owned(),
-                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                    "m01s01", "m01s01", "m01s01",
-                )
-                .expect("valid built-in leaderboard-service test descriptor"),
-                rng_seed: 7,
-                sim_config: robin_engine::engine::SimConfig::default(),
-                spellforge_package: None,
-                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
-                total_frames: 0,
-                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
-                campaign: bitcode::encode(&robin_engine::campaign::Campaign::default()),
-            },
-            frames: BTreeMap::new(),
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        });
-        let replay = replay.expect("valid service replay fixture");
+        let replay =
+            single_frame_replay(bitcode::encode(&robin_engine::campaign::Campaign::default()));
         robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
             .unwrap()
             .into_bytes()
     }
 
-    #[test]
-    fn replay_download_requires_mime_length_digest_and_canonical_decode() {
-        let bytes = compact_fixture();
-        let expected = ReplayArtifactV1 {
+    fn artifact(bytes: &[u8]) -> ReplayArtifactV1 {
+        ReplayArtifactV1 {
             artifact: robin_run_protocol::ArtifactRefV1 {
-                sha256: Digest32::digest_bytes(&bytes),
+                sha256: Digest32::digest_bytes(bytes),
                 byte_length: bytes.len() as u64,
                 media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
             },
             replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-        };
+        }
+    }
+
+    #[test]
+    fn replay_download_requires_mime_length_digest_and_canonical_decode() {
+        let bytes = compact_fixture();
+        let expected = artifact(&bytes);
         let decoded = decode_replay_download(
             Ok(response(200, RANKED_REPLAY_MEDIA_TYPE_V1, bytes.clone())),
             &expected,
@@ -594,14 +382,7 @@ mod tests {
         ));
         let mut corrupt = compact_fixture();
         corrupt.push(b' ');
-        let corrupt_expected = ReplayArtifactV1 {
-            artifact: robin_run_protocol::ArtifactRefV1 {
-                sha256: Digest32::digest_bytes(&corrupt),
-                byte_length: corrupt.len() as u64,
-                media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
-            },
-            replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-        };
+        let corrupt_expected = artifact(&corrupt);
         assert!(matches!(
             decode_replay_download(
                 Ok(response(200, RANKED_REPLAY_MEDIA_TYPE_V1, corrupt)),
@@ -617,6 +398,48 @@ mod tests {
         assert!(matches!(
             decode_metadata(Ok(response)),
             Err(LeaderboardServiceError::UnexpectedContentType { .. })
+        ));
+    }
+
+    #[test]
+    fn board_pages_must_echo_the_exact_query_filter_and_cursor() {
+        let query = LeaderboardQueryV2 {
+            schema_version: robin_run_protocol::SCHEMA_VERSION_V2,
+            board_id: robin_run_protocol::OpaqueId::new("demo-standard-normal").unwrap(),
+            mission_id: MISSION_ID.to_owned(),
+            metric: robin_run_protocol::BoardMetricV1::OriginalScore,
+            max_concurrent_players: Some(1),
+            player_public_key: None,
+            limit: DEFAULT_BOARD_PAGE_LIMIT,
+            cursor: None,
+        };
+        let page = LeaderboardPageV2 {
+            schema_version: robin_run_protocol::SCHEMA_VERSION_V2,
+            filter: query.filter(),
+            accepted_sequence_watermark: 0,
+            previous_cursor: None,
+            entries: Vec::new(),
+            next_cursor: None,
+        };
+        let json = |page: &LeaderboardPageV2| {
+            Ok(response(
+                200,
+                "application/json",
+                serde_json::to_vec(page).unwrap(),
+            ))
+        };
+        assert_eq!(decode_board(json(&page), &query).unwrap(), page);
+        let mut other = page.clone();
+        other.filter.mission_id = "Demo_Lin".to_owned();
+        assert!(matches!(
+            decode_board(json(&other), &query),
+            Err(LeaderboardServiceError::BoardFilterMismatch)
+        ));
+        let mut paged = query.clone();
+        paged.cursor = Some("token".to_owned());
+        assert!(matches!(
+            decode_board(json(&page), &paged),
+            Err(LeaderboardServiceError::BoardCursorMismatch)
         ));
     }
 

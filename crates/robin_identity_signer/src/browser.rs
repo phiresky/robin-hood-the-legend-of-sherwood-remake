@@ -1,33 +1,23 @@
 //! Typed operations in the isolated signer document; never linked into the game.
 use crate::{LeaderboardSigningError, authorize_context, decode_json};
-use robin_run_protocol::DomainSignedClaim as _;
-use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use robin_run_protocol::{
-    CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
-    CampaignContinuationPreflightRequestClaimV1, CompetitionRunGrantRequestClaimV1,
-    CompetitionRunGrantRequestV1, DeletionRequestEnvelopeV1, FreshRunPreflightRequestClaimV1,
-    FreshRunPreflightRequestV1, LeaderboardCoSignRequestV1, ParticipantSignatureV1, PublicKey32,
-    Signature64, SignatureAlgorithmV1, SubmissionEnvelopeV1, SubmissionOfferV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, UsernameUpdateEnvelopeV1,
-    Validate,
-};
-use robin_run_protocol::{
-    NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1, ReplaySessionGenesisClaimV1,
-    ReplaySessionGenesisV1,
+    PublicKey32, SCHEMA_VERSION_V2, Signature64, SignatureAlgorithmV1, SignedDeletionRequestV2,
+    SignedRequestClaim, SignedRequestV2, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
+    SignedUsernameUpdateV2, Validate,
 };
 
 const MAX_USERNAME_BYTES: usize = 4 * 1024;
 const MAX_DELETION_BYTES: usize = 8 * 1024;
 const MAX_OWNER_STATUS_BYTES: usize = 8 * 1024;
-const MAX_RANKED_DOCUMENT_BYTES: usize = 128 * 1024;
-const MAX_NAMED_SEAT_JOIN_BYTES: usize = 8 * 1024;
-const MAX_REPLAY_SESSION_GENESIS_BYTES: usize = 64 * 1024;
+const MAX_SUBMISSION_BYTES: usize = 128 * 1024;
 
+/// Uploader signature over `SignedSubmissionV3::signing_bytes`. The JSON
+/// shape is `{ "public_key": hex, "signature": hex }`.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BrowserCampaignContinuationSigningInput {
-    offer: SubmissionOfferV1,
-    claim: CampaignContinuationAuthorizationClaimV1,
+struct SubmissionSignature {
+    public_key: PublicKey32,
+    signature: Signature64,
 }
 
 pub const LEADERBOARD_WEB_ORIGIN_ENV: &str = "ROBINHOOD_LEADERBOARD_WEB_ORIGIN";
@@ -37,11 +27,6 @@ const DEFAULT_WEB_ORIGIN: &str = "https://robinhood.phiresky.xyz";
 const DEFAULT_SIGNER_ORIGIN: &str = "https://identity.robinhood.phiresky.xyz";
 const DEPLOYMENT_WEB_ORIGIN: Option<&str> = option_env!("ROBINHOOD_LEADERBOARD_WEB_ORIGIN");
 const DEPLOYMENT_SIGNER_ORIGIN: Option<&str> = option_env!("ROBINHOOD_IDENTITY_SIGNER_ORIGIN");
-fn canonical(
-    result: Result<Vec<u8>, robin_run_protocol::CanonicalError>,
-) -> Result<Vec<u8>, LeaderboardSigningError> {
-    result.map_err(|error| LeaderboardSigningError::Canonical(error.to_string()))
-}
 
 fn canonical_document(
     error: robin_run_protocol::CanonicalDocumentError,
@@ -185,358 +170,94 @@ pub async fn browser_public_key(parent_origin: String) -> Result<String, wasm_bi
         .map_err(wasm_error)
 }
 
+/// Decode one player claim, require it to name this signer's key and sign
+/// its domain-separated canonical bytes with the vault operation `operation`.
+async fn sign_claim<T: SignedRequestClaim>(
+    parent_origin: &str,
+    json: &str,
+    maximum: usize,
+    operation: &str,
+) -> Result<SignedRequestV2<T>, LeaderboardSigningError> {
+    authorize_browser_call(parent_origin)?;
+    let claim: T = decode_json(json, maximum)?;
+    // `signing_bytes` validates the claim before canonicalizing it.
+    let bytes = SignedRequestV2::<T>::signing_bytes(&claim).map_err(|error| match error {
+        robin_run_protocol::CanonicalDocumentError::Validation(error) => invalid_claim(error),
+        other => canonical_document(other),
+    })?;
+    if claim.signer_public_key() != secure_public_key().await? {
+        return Err(LeaderboardSigningError::WrongIdentity);
+    }
+    let signed = SignedRequestV2 {
+        schema_version: SCHEMA_VERSION_V2,
+        request: claim,
+        algorithm: SignatureAlgorithmV1::Ed25519,
+        signature: secure_signature(operation, &bytes).await?,
+    };
+    signed.validate().map_err(invalid_claim)?;
+    Ok(signed)
+}
+
+/// Sign one `UsernameUpdateV2` claim. Returns the `SignedUsernameUpdateV2`
+/// document JSON.
 pub async fn browser_sign_username_update(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let mut envelope: UsernameUpdateEnvelopeV1 =
-        decode_json(&json, MAX_USERNAME_BYTES).map_err(wasm_error)?;
-    envelope
-        .validate_signing_claim()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if envelope.public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    envelope.signature = secure_signature(
-        "username_update",
-        &canonical(envelope.signing_bytes()).map_err(wasm_error)?,
-    )
-    .await
-    .map_err(wasm_error)?;
-    envelope
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&envelope)
-}
-
-pub async fn browser_sign_competition_run_grant_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let claim: CompetitionRunGrantRequestClaimV1 =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    claim
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if claim.host_public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let host_signature = secure_signature(
-        "competition_run_grant_request",
-        &canonical(claim.signing_bytes()).map_err(wasm_error)?,
-    )
-    .await
-    .map_err(wasm_error)?;
-    let signed = CompetitionRunGrantRequestV1 {
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature,
-    };
-    signed
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&signed)
-}
-
-pub async fn browser_sign_fresh_run_preflight_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let claim: FreshRunPreflightRequestClaimV1 =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    claim
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if claim.host_public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let signed = FreshRunPreflightRequestV1 {
-        host_signature: secure_signature(
-            "fresh_run_preflight_request",
-            &canonical(claim.signing_bytes()).map_err(wasm_error)?,
-        )
-        .await
-        .map_err(wasm_error)?,
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-    };
-    signed
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&signed)
-}
-
-async fn browser_sign_campaign_continuation_preflight(
-    parent_origin: String,
-    json: String,
-    controller: bool,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let claim: CampaignContinuationPreflightRequestClaimV1 =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    claim
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    let public_key = secure_public_key().await.map_err(wasm_error)?;
-    let (expected_key, operation, bytes) = if controller {
-        (
-            claim.campaign_controller_public_key,
-            "campaign_continuation_preflight_controller",
-            claim.controller_signing_bytes(),
-        )
-    } else {
-        (
-            claim.host_public_key,
-            "campaign_continuation_preflight_host",
-            claim.host_signing_bytes(),
-        )
-    };
-    if expected_key != public_key {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let signed = ParticipantSignatureV1 {
-        public_key,
-        signature: secure_signature(operation, &canonical(bytes).map_err(wasm_error)?)
+    let signed: SignedUsernameUpdateV2 =
+        sign_claim(&parent_origin, &json, MAX_USERNAME_BYTES, "username_update")
             .await
-            .map_err(wasm_error)?,
-    };
+            .map_err(wasm_error)?;
     encode_json(&signed)
 }
 
-pub async fn browser_sign_campaign_continuation_preflight_as_host(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    browser_sign_campaign_continuation_preflight(parent_origin, json, false).await
-}
-
-pub async fn browser_sign_campaign_continuation_preflight_as_controller(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    browser_sign_campaign_continuation_preflight(parent_origin, json, true).await
-}
-
+/// Sign one exact `SubmissionV3` as its uploader. Returns
+/// `{ "public_key", "signature" }` over `SignedSubmissionV3::signing_bytes`;
+/// the game assembles and locally verifies the `SignedSubmissionV3`.
 pub async fn browser_sign_submission_claim(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let envelope: SubmissionEnvelopeV1 =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    envelope
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    let public_key = secure_public_key().await.map_err(wasm_error)?;
-    if !envelope
-        .offer
-        .participant_claims
-        .iter()
-        .any(|claim| claim.public_key == public_key)
-    {
-        return Err(wasm_error(LeaderboardSigningError::IdentityNotClaimed));
-    }
-    let participant = ParticipantSignatureV1 {
-        public_key,
-        signature: secure_signature(
-            "submission",
-            &envelope
-                .signing_bytes()
-                .map_err(canonical_document)
-                .map_err(wasm_error)?,
-        )
-        .await
-        .map_err(wasm_error)?,
-    };
-    encode_json(&participant)
-}
-
-/// Isolated-browser counterpart to `sign_multiplayer_leaderboard_request`.
-/// It accepts only the closed protocol request and signs its fixed payload.
-pub async fn browser_sign_multiplayer_leaderboard_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let request: LeaderboardCoSignRequestV1 =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    let bytes = request
-        .signing_bytes()
-        .map_err(invalid_claim)
-        .map_err(wasm_error)?;
-    let operation = match request.instance.purpose {
-        LeaderboardCoSignPurposeV1::CampaignContinuation => "multiplayer_campaign_continuation",
-        LeaderboardCoSignPurposeV1::Submission => "multiplayer_submission",
-    };
-    let participant = ParticipantSignatureV1 {
-        public_key: secure_public_key().await.map_err(wasm_error)?,
-        signature: secure_signature(operation, &bytes)
+    let signed: SignedSubmissionV3 =
+        sign_claim(&parent_origin, &json, MAX_SUBMISSION_BYTES, "submission")
             .await
-            .map_err(wasm_error)?,
-    };
-    encode_json(&participant)
+            .map_err(wasm_error)?;
+    encode_json(&SubmissionSignature {
+        public_key: signed.request.uploader_public_key,
+        signature: signed.signature,
+    })
 }
 
-/// Sign one exact named-seat join claim in the isolated durable-identity
-/// document. Rust owns canonicalization and the closed claim schema; neither
-/// the game document nor TypeScript receives a generic signing primitive.
-pub async fn browser_sign_named_seat_join(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let claim: NamedSeatJoinClaimV1 =
-        decode_json(&json, MAX_NAMED_SEAT_JOIN_BYTES).map_err(wasm_error)?;
-    claim
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if claim.public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let signed = NamedSeatJoinAttestationV1 {
-        signature: secure_signature(
-            "named_seat_join",
-            &canonical(claim.signing_bytes()).map_err(wasm_error)?,
-        )
-        .await
-        .map_err(wasm_error)?,
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-    };
-    signed
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&signed)
-}
-
-/// Sign only the closed, validated host genesis claim. The isolated document
-/// never accepts a caller-supplied domain or arbitrary message.
-pub async fn browser_sign_replay_session_genesis(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let claim: ReplaySessionGenesisClaimV1 =
-        decode_json(&json, MAX_REPLAY_SESSION_GENESIS_BYTES).map_err(wasm_error)?;
-    claim
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if claim.host_public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let signed = ReplaySessionGenesisV1 {
-        host_signature: Some(
-            secure_signature(
-                "replay_session_genesis",
-                &canonical(claim.signing_bytes()).map_err(wasm_error)?,
-            )
-            .await
-            .map_err(wasm_error)?,
-        ),
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-    };
-    signed
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&signed)
-}
-
-pub async fn browser_sign_campaign_continuation(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let input: BrowserCampaignContinuationSigningInput =
-        decode_json(&json, MAX_RANKED_DOCUMENT_BYTES).map_err(wasm_error)?;
-    let request = input
-        .claim
-        .co_sign_request(&input.offer)
-        .map_err(canonical_document)
-        .map_err(wasm_error)?;
-    if input.claim.campaign_controller_public_key
-        != secure_public_key().await.map_err(wasm_error)?
-    {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let signature = secure_signature(
-        "campaign_continuation",
-        &request
-            .signing_bytes()
-            .map_err(invalid_claim)
-            .map_err(wasm_error)?,
-    )
-    .await
-    .map_err(wasm_error)?;
-    let signed = CampaignContinuationAuthorizationV1 {
-        claim: input.claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        signature,
-    };
-    signed
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&signed)
-}
-
+/// Sign one `SubmissionOwnerStatusRequestV2` claim. Returns the
+/// `SignedSubmissionOwnerStatusRequestV2` document JSON.
 pub async fn browser_sign_submission_owner_status(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let challenge: SubmissionOwnerStatusChallengeV1 =
-        decode_json(&json, MAX_OWNER_STATUS_BYTES).map_err(wasm_error)?;
-    challenge
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if challenge.controller_public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    let mut envelope = SubmissionOwnerStatusEnvelopeV1 {
-        schema_version: challenge.schema_version,
-        challenge,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        signature: Signature64::from_bytes([0; 64]),
-    };
-    envelope
-        .validate_signing_claim()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    envelope.signature = secure_signature(
+    let signed: SignedSubmissionOwnerStatusRequestV2 = sign_claim(
+        &parent_origin,
+        &json,
+        MAX_OWNER_STATUS_BYTES,
         "submission_owner_status",
-        &canonical(envelope.signing_bytes()).map_err(wasm_error)?,
     )
     .await
     .map_err(wasm_error)?;
-    envelope
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&envelope)
+    encode_json(&signed)
 }
 
+/// Sign one `DeletionRequestV2` claim. Returns the `SignedDeletionRequestV2`
+/// document JSON.
 pub async fn browser_sign_deletion_request(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
-    authorize_browser_call(&parent_origin).map_err(wasm_error)?;
-    let mut envelope: DeletionRequestEnvelopeV1 =
-        decode_json(&json, MAX_DELETION_BYTES).map_err(wasm_error)?;
-    envelope
-        .validate_signing_claim()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    if envelope.challenge.public_key != secure_public_key().await.map_err(wasm_error)? {
-        return Err(wasm_error(LeaderboardSigningError::WrongIdentity));
-    }
-    envelope.signature = secure_signature(
+    let signed: SignedDeletionRequestV2 = sign_claim(
+        &parent_origin,
+        &json,
+        MAX_DELETION_BYTES,
         "deletion_request",
-        &canonical(envelope.signing_bytes()).map_err(wasm_error)?,
     )
     .await
     .map_err(wasm_error)?;
-    envelope
-        .validate()
-        .map_err(|error| wasm_error(invalid_claim(error)))?;
-    encode_json(&envelope)
+    encode_json(&signed)
 }

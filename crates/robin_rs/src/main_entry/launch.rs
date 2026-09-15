@@ -67,11 +67,6 @@ pub struct LaunchConfig {
     /// redeemed the invitation. The host remains authoritative.
     #[serde(skip)]
     pub browser_join_redeemed: bool,
-    /// Authority installed only by the native official projection exporter.
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    #[serde(skip)]
-    pub simulation_content_export:
-        Option<crate::official_projection_export::SimulationContentExportRequest>,
     /// Developer-tool one-shot capture policy.
     #[serde(skip)]
     pub capture: MissionStartCapture,
@@ -104,8 +99,6 @@ impl From<CliArgs> for LaunchConfig {
             cli,
             global_options,
             browser_join_redeemed: false,
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            simulation_content_export: None,
             capture: MissionStartCapture::default(),
         }
     }
@@ -130,8 +123,6 @@ impl LaunchConfig {
             cli,
             global_options,
             browser_join_redeemed,
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            simulation_content_export: self.simulation_content_export.clone(),
             capture: self.capture.clone(),
         })
     }

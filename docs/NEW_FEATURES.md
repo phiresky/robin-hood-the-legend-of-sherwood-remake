@@ -4,23 +4,29 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
-- **Replay compatibility across commits.** Ranked admission selects an approved
-  verifier using replay and network versions, without matching client source
-  commits or save-format versions. Upload, verification, download, and playback
-  preserve the recording's source metadata without requiring it to match the
-  verifier. Compact replay links use the current browser runtime. Content,
-  signatures, resource bounds, and deterministic replay checks remain enforced.
+- **Replay compatibility across commits.** The verifier accepts any replay
+  whose replay schema and network protocol versions match its own, without
+  matching client source commits or save-format versions. Upload,
+  verification, download, and playback preserve the recording's source
+  metadata. Compact replay links use the current browser runtime. Signatures,
+  resource bounds, and deterministic replay checks remain enforced.
 
 - **Replay-based leaderboard submissions.** Mission-end screens and Previous
-  Plays prepare uploads from the recording itself. No pre-game server grant,
-  saved admission file, or multiplayer co-signing session is required. Any
-  readable supported recording can be submitted, including interrupted or
-  unsuccessful attempts; the server checks the recorded starting conditions,
-  gameplay and outcome before deciding whether it qualifies for a board.
-  The uploader authenticates the upload, and anonymous player counts come
-  from recorded seat events. Durable submission links use the recording's
-  content identity, which survives uploader rebuilds. Campaign Manager and
-  Hall of Deeds still link to mission and full-campaign boards.
+  Plays upload the recording itself. The client fetches the published board
+  list, picks the one board for the installed edition (Demo or Full) that
+  lists the mission and whose simulation policy admits the recorded gameplay
+  configuration (an exact preset board wins over an any-configuration board;
+  no match or an ambiguous match shows the leaderboard as unavailable),
+  signs a timestamped `SubmissionV2` (board, mission, replay SHA-256 and
+  length) with the player's identity key and posts it with the canonical
+  compact replay in one request; there is no server-issued challenge. The server
+  re-simulates the replay against its raw game content, checks the recorded
+  state hashes and outcome, and scores it. No pre-game grant, content or
+  ruleset manifest, or multiplayer co-signing is involved: the uploader signs
+  alone, and anonymous player counts come from recorded seat events. Durable
+  submission links use the recording's content identity, which survives
+  uploader rebuilds. Campaign Manager and Hall of Deeds link to mission
+  boards.
 
 - **Bundled modding tools.** Native release packages include `cpf_to_json`,
   `encode_mod_sprites`, `disasm_scb`, and `dump_res` from the new
@@ -133,14 +139,13 @@ A list of which additional features we have added, which ones we might still wan
   the originating menu without changing the active mission or campaign.
 
 
-- **Combined leaderboards and custom gameplay settings.** Mission and full-campaign
-  boards default to all admitted rulesets, with stable ranking and pagination across
-  difficulties. Exact Standard/Original boards remain selectable. Published metadata
-  retains every mission/ruleset pair, and Full-game field missions support individual
-  runs. Open rulesets accept the complete recorded simulation configuration, including
-  Legendary and Custom difficulty. The existing signed session digest fixes the settings
-  before play; verification checks the replay against those settings and independently
-  reconstructs the canonical fresh campaign. Each run exposes its exact gameplay settings.
+- **Leaderboard boards and custom gameplay settings.** The server publishes
+  boards as plain configuration: edition, mission list, metrics and a
+  simulation policy that is either one exact Standard/Original preset and
+  difficulty or any validated configuration (including Legendary and Custom
+  difficulty). Full-game field missions support individual runs. Verification
+  checks the replay against the board's policy and independently reconstructs
+  the canonical fresh campaign. Each run exposes its exact gameplay settings.
 
 - **Scrollable mission debriefings.** Narrative, achievement conditions, and
   statistics scroll within the parchment using the scrollbar, mouse wheel,
@@ -228,26 +233,25 @@ A list of which additional features we have added, which ones we might still wan
   a synchronous OS dialog launched from the cooperative Options state.
 - **Non-blocking mission-end leaderboards and verified-run consent.** The
   mission-end overlay opens verified score/time boards after wins, losses, and
-  interrupted attempts, with tabs for every board applicable to the run.
-  Board fetches, server-authored submission offers, compact-replay export,
-  participant authorization, and upload are frame-polled tasks on native and
-  browser builds; none waits inside rendering or pauses multiplayer.
-  Submission is available only for locally eligible won missions, defaults to
-  per-run consent, and has an explicit default-off **Always Submit Won Runs**
-  preference. The independent **Mission-end Leaderboards** presentation
-  setting defaults on. Both controls are available under Options →
-  Leaderboards; neither can disable canonical replay/history capture or alter
-  the ranked wire/storage format.
+  interrupted attempts, with a score and a time tab for the run's board.
+  Board fetches, replay preparation, signing and upload are
+  frame-polled tasks on native and browser builds; none waits inside
+  rendering or pauses multiplayer. Submission is offered only for won
+  missions, defaults to per-run consent, and has an explicit default-off
+  **Always Submit Won Runs** preference. The independent **Mission-end
+  Leaderboards** presentation setting defaults on. Both controls are
+  available under Options → Leaderboards; neither can disable canonical
+  replay/history capture or alter the ranked wire/storage format.
 
-  Exactly one canonical compact replay and its exact starting campaign enter
-  an upload. The controller rejects substituted offers, non-canonical replay
-  bytes, wrong mission/campaign evidence, altered signed envelopes, invalid
-  Ed25519 signatures, and incomplete or foreign multiplayer signer sets.
-  Native and browser single-player signing delegate to the shared durable
-  leaderboard identity rather than creating another key store. Multiplayer
-  co-signing is an injected authenticated, session-bound typed task so the
-  networking layer can gather every participant signature without exposing a
-  generic signing primitive.
+  Exactly one canonical compact replay enters an upload, and the signed
+  submission names its exact digest and length. The client rejects
+  non-canonical replay bytes and replays of another mission, and verifies the
+  Ed25519 signature locally before uploading. Native and browser signing
+  delegate to the shared durable leaderboard identity rather than creating
+  another key store; the isolated browser signer exposes only username,
+  submission, owner-status and deletion operations, never a generic signing
+  primitive. Accepted uploads are tracked through authenticated owner-status
+  polling until the server reports verification, rejection or failure.
 
 - **Self-describing save metadata.** Every newly written manual, quick,
   rotating-autosave, continue, restart, and Sherwood save freezes its

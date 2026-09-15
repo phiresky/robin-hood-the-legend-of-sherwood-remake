@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Local leaderboard backup: consistent DB snapshot, hard-linked content-addressed
-# replay/campaign objects, API secrets and config. Keeps the newest 7.
+# replay objects, API secrets and config. Keeps the newest 7.
 #
 # The DB snapshot is taken first while services keep running, so the copied
-# object trees can be slightly ahead of it (orphans are reconciled and GC'd on
+# object tree can be slightly ahead of it (orphans are reconciled and GC'd on
 # startup) or miss objects purged in between (purge claims resume on startup).
 #
 # Off-host copy (run from the other machine):
@@ -24,7 +24,6 @@ trap 'rm -rf "$partial"' EXIT
 "$root/current/bin/robin-highscores-admin" --config "$config_dir/server.toml" \
     snapshot-db "$partial/highscores.sqlite3"
 cp -al "$state/replays" "$partial/replays"
-cp -al "$state/campaign-states" "$partial/campaign-states"
 cp -a "$state/api-secrets" "$partial/api-secrets"
 cp -a "$config_dir" "$partial/config"
 mv -T "$partial" "$backups/$stamp"

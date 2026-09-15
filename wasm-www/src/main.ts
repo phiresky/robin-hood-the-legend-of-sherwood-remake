@@ -29,6 +29,7 @@ import {
 } from './replay.js';
 import { installTimeline } from './timeline.js';
 import { createRpcClient } from './rpc-client.js';
+import { fetchRunReplay, runFromQuery, type RunReplay } from './run-replay.js';
 
 declare global {
     // Optional test/dev override for loading binaries from a local checkout.
@@ -130,6 +131,11 @@ const BINARIES_BASE = import.meta.env.DEV
     : window.location.origin;
 const WASM_BUILDS_BASE = `${BINARIES_BASE}/wasm`;
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
+// The leaderboard API is the same-origin `/api` route in production.
+const RUN_API_BASE = import.meta.env.DEV
+    ? pageParams.get('api') ?? `${window.location.origin}/api/v1`
+    : `${window.location.origin}/api/v1`;
+const runQuery = runFromQuery(pageParams);
 
 const logEl = document.querySelector<HTMLDivElement>('#log');
 if (logEl === null) {
@@ -235,10 +241,16 @@ function installFullscreenButton(button: HTMLButtonElement | null): void {
     });
 }
 
-async function resolveBuild(ticket: VerifiedBrowserJoinTicket | undefined, signal: AbortSignal): Promise<BuildSelection> {
+async function resolveBuild(
+    ticket: VerifiedBrowserJoinTicket | undefined,
+    run: RunReplay | null,
+    signal: AbortSignal,
+): Promise<BuildSelection> {
     if (ticket !== undefined) {
         return { short: ticket.payload.engine_version.slice(0, 12), source: 'multiplayer' };
     }
+    // A verified leaderboard run plays on the exact engine build that recorded it.
+    if (run !== null) return { short: run.runtimeBuild, source: 'replay' };
     const wasmBase = pageParams.get('wasm-base') ?? pageParams.get('wasm_base');
     if (wasmBase !== null && wasmBase.length > 0) {
         return {
@@ -346,7 +358,16 @@ window.addEventListener('pagehide', event => {
 });
 
 async function main(): Promise<void> {
-    const replayQuery = replayFromQuery(pageParams);
+    if (runQuery !== null && (pageParams.has('replay') || capturedBrowserJoinCode !== undefined)) {
+        throw new Error('run= cannot be combined with replay= or a multiplayer invitation');
+    }
+    const runReplay = runQuery === null
+        ? null
+        : await fetchRunReplay(runQuery, RUN_API_BASE, fetch, bootAbort.signal);
+    if (runReplay !== null) logOk(`[leaderboard run ${runReplay.runId} recorded by build ${runReplay.runtimeBuild}]`);
+    const replayQuery = runReplay === null
+        ? replayFromQuery(pageParams)
+        : { content: runReplay.content, paused: true };
     let preparedReplay: PreparedReplay | null = null;
     logOk(crossOriginIsolated
         ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
@@ -355,7 +376,7 @@ async function main(): Promise<void> {
         buildsBase: WASM_BUILDS_BASE,
         prepareJoin: signal => prepareBrowserJoin(capturedBrowserJoinCode, signal),
         resolveBuild: async (ticket, signal) => {
-            const selection = await resolveBuild(ticket, signal);
+            const selection = await resolveBuild(ticket, runReplay, signal);
             diagnostics.setBuild(selection.short);
             return selection;
         },

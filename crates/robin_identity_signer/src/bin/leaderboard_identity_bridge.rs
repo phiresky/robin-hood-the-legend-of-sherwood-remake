@@ -30,104 +30,12 @@ pub async fn sign_username_update(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignCompetitionRunGrantRequest)]
-pub async fn sign_competition_run_grant_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_competition_run_grant_request(parent_origin, json)
-        .await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignFreshRunPreflightRequest)]
-pub async fn sign_fresh_run_preflight_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_fresh_run_preflight_request(parent_origin, json)
-        .await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(
-    js_name = robinhoodSignCampaignContinuationPreflightAsHost
-)]
-pub async fn sign_campaign_continuation_preflight_as_host(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_campaign_continuation_preflight_as_host(
-        parent_origin,
-        json,
-    )
-    .await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(
-    js_name = robinhoodSignCampaignContinuationPreflightAsController
-)]
-pub async fn sign_campaign_continuation_preflight_as_controller(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_campaign_continuation_preflight_as_controller(
-        parent_origin,
-        json,
-    )
-    .await
-}
-
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignSubmissionClaim)]
 pub async fn sign_submission_claim(
     parent_origin: String,
     json: String,
 ) -> Result<String, wasm_bindgen::JsValue> {
     robin_identity_signer::browser::browser_sign_submission_claim(parent_origin, json).await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(
-    js_name = robinhoodSignMultiplayerLeaderboardRequest
-)]
-pub async fn sign_multiplayer_leaderboard_request(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_multiplayer_leaderboard_request(
-        parent_origin,
-        json,
-    )
-    .await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignNamedSeatJoin)]
-pub async fn sign_named_seat_join(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_named_seat_join(parent_origin, json).await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignReplaySessionGenesis)]
-pub async fn sign_replay_session_genesis(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_replay_session_genesis(parent_origin, json).await
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(js_name = robinhoodSignCampaignContinuation)]
-pub async fn sign_campaign_continuation(
-    parent_origin: String,
-    json: String,
-) -> Result<String, wasm_bindgen::JsValue> {
-    robin_identity_signer::browser::browser_sign_campaign_continuation(parent_origin, json).await
 }
 
 #[cfg(target_arch = "wasm32")]

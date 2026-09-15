@@ -136,6 +136,31 @@ datadir_header() {
 }
 # Replace a checkout upload directory with a staged one.
 stage_checkout() { run rm -rf "$2"; run cp -RH "$1" "$2"; run chmod -R u+w "$2"; }
+write_file() { printf '%s\n' "$2" >"$1"; }
+
+# TODO: delete this one-time migration shim after the next web release. Stages
+# up to release-48005f9bb945 carry the removed datadir deployment receipt and
+# release authority instead of datadir-release.json; derive it from their
+# `.demo` identity (the receipt when present, else the authority).
+migrate_datadir_release() {
+    local prior=$1 output=$2 legacy json
+    legacy=$prior/datadir-deployment.json
+    [[ -f $legacy ]] || legacy=$prior/datadir-authority.json
+    [[ -f $legacy ]] || die "$prior has no datadir-release.json (nor a legacy datadir-deployment.json/datadir-authority.json)"
+    json=$(jq -e '.demo | {
+            schema: 1,
+            url: .datadir_url,
+            sha256: .datadir_sha256,
+            byte_length: .datadir_byte_length,
+            native_content_sha256: .native_content_sha256
+        } | select((.url | type) == "string"
+            and (.sha256 | type) == "string" and (.sha256 | test("^[0-9a-f]{64}$"))
+            and (.byte_length | type) == "number" and .byte_length > 0
+            and (.native_content_sha256 | type) == "string" and (.native_content_sha256 | test("^[0-9a-f]{64}$")))' \
+        "$legacy") || die "cannot derive datadir-release.json from $legacy"
+    note "migration: deriving datadir-release.json from legacy $legacy"
+    run write_file "$output" "$json"
+}
 
 release_web() {
     local prior=$staging/live stage=$staging/release-$short latest demo_url live_header code_magic code_version code_header
@@ -149,7 +174,7 @@ release_web() {
     export PATH=$toolchain/bin:$toolchain/node-v24.19.0-linux-x64/bin:$toolchain/wasm-tools-132-1.0.41/binaryen/bin:$toolchain/wasm-tools-132-1.0.41/wabt/bin:$PATH
     export ROBINHOOD_WASM_BINDGEN=$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen
     [[ -x $ROBINHOOD_WASM_BINDGEN ]] || die "missing $ROBINHOOD_WASM_BINDGEN"
-    for binding in runtime-dist datadir-dist public-dist datadir-authority.json datadir-deployment.json; do
+    for binding in runtime-dist datadir-dist public-dist; do
         [[ -e $prior/$binding ]] || die "$prior/$binding missing; point $prior at the last deployed staging directory"
     done
     prior=$(realpath "$prior")
@@ -182,7 +207,6 @@ release_web() {
 
     run mkdir -p "$stage"
     datadir_version=${before[datadir]}
-    binding=$prior/datadir-deployment.json
     if ((rebuild)); then
         step "web: build and deploy a new datadir generation"
         # Web images are AVIF, encoded by the pinned static avifenc/avifdec.
@@ -202,32 +226,28 @@ release_web() {
         run scripts/build_web_shipping_datadir.sh "$datadir_source" "$stage/demo-converter-output"
         # A release that reused its datadir stages `datadir-dist` as a symlink;
         # the corpus verifier rejects symlinks, so pass the resolved directory.
+        # Every retained Demo generation of the prior corpus stays in the upload.
         run node wasm-www/scripts/assemble-datadir-corpus.mjs --update "$(realpath "$prior/datadir-dist")" "$stage/demo-converter-output" "$stage/datadir-dist"
-        run node wasm-www/scripts/datadir-release-authority.mjs author "$stage/datadir-dist" "$commit" \
-            "$(sha256sum Cargo.lock | cut -d' ' -f1)" "$stage/datadir-inventory.json" "$stage/datadir-authority.json"
+        run node wasm-www/scripts/datadir-release.mjs write "$stage/datadir-dist" "$stage/datadir-release.json"
         stage_checkout "$stage/datadir-dist" wasm-www/datadir-dist
-        run cp "$stage/datadir-authority.json" target/datadir-authority.json
-        run rm -f target/datadir-deployment.json
         run wasm-www/scripts/deploy-cloudflare.sh --datadir-only
-        run cp target/datadir-deployment.json "$stage/datadir-deployment.json"
-        binding=$stage/datadir-deployment.json
-        if ((dry_run)); then datadir_version="<new datadir version>"; else datadir_version=$(jq -er .worker_version_id "$binding"); fi
+        if ((dry_run)); then datadir_version="<new datadir version>"; else datadir_version=$(worker_version datadir); fi
     else
         step "web: datadir unchanged, reusing $(realpath "$prior/datadir-dist")"
         run ln -s "$(realpath "$prior/datadir-dist")" "$stage/datadir-dist"
-        run cp "$prior/datadir-authority.json" "$prior/datadir-deployment.json" "$stage/"
+        if [[ -f $prior/datadir-release.json ]]; then
+            run cp "$prior/datadir-release.json" "$stage/datadir-release.json"
+        else
+            migrate_datadir_release "$prior" "$stage/datadir-release.json"
+        fi
     fi
 
     step "web: stage runtime $short and assemble the complete runtime corpus"
-    demo_field() { if [[ -f $binding ]]; then jq -er ".demo.$1" "$binding"; else printf '<%s>' "$1"; fi; }
     full=$(jq -r '.multiplayerContent.full.manifestSha256 // empty' <<<"$latest")
-    run env DEMO_ASSET_SHA256="$(demo_field datadir_sha256)" DEMO_ASSET_BYTE_LENGTH="$(demo_field datadir_byte_length)" \
-        DEMO_CONTENT_IDENTITY_SHA256="$(demo_field native_content_sha256)" FULL_CONTENT_MANIFEST_SHA256="$full" \
-        node wasm-www/scripts/stage-runtime-addition.mjs --root "$stage/runtime-addition" --bindgen "$ROBINHOOD_WASM_BINDGEN"
-    run node wasm-www/scripts/assemble-runtime-corpus.mjs --update "$prior/runtime-dist" "$stage/runtime-addition" \
-        "$stage/datadir-authority.json" "$stage/datadir-deployment.json" "$stage/runtime-dist" "$prior/datadir-authority.json"
+    run node wasm-www/scripts/stage-runtime-addition.mjs --root "$stage/runtime-addition" --bindgen "$ROBINHOOD_WASM_BINDGEN" \
+        --datadir-release "$stage/datadir-release.json" ${full:+--full-content-manifest-sha256 "$full"}
+    run node wasm-www/scripts/assemble-runtime-corpus.mjs --update "$prior/runtime-dist" "$stage/runtime-addition" "$stage/runtime-dist"
     stage_checkout "$stage/runtime-dist" wasm-www/runtime-dist
-    run cp "$stage/datadir-authority.json" target/datadir-authority.json
 
     step "web: deploy runtime, signer and public site"
     run env ROBINHOOD_DATADIR_VERSION_ID="$datadir_version" ROBINHOOD_PUBLIC_RETAIN="$prior/public-dist" \

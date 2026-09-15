@@ -1,31 +1,31 @@
+# Example leaderboard API configuration. Production uses ops/production/server.toml.
 bind = "127.0.0.1:8787"
 database_path = "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3"
 replay_directory = "/home/robinhood/.local/share/robin-highscores/replays"
-campaign_state_directory = "/home/robinhood/.local/share/robin-highscores/campaign-states"
 cursor_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key"
-competition_run_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key"
-run_preflight_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key"
 # Optional. When configured, operator routes exist and require the exact
 # printable 32..128-byte token from this private regular file.
 moderation_bearer_token_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token"
 moderation_operator_id = "production-operator"
 
-# Production site and API are same-origin at https://robinhood.phiresky.xyz,
-# so production does not enable CORS. Add an exact loopback development origin
-# only when intentionally running a separate local frontend dev server.
+# Production site and API are same-origin, so production does not enable CORS.
 allowed_origins = []
-# The canonical VPS deployment trusts only its loopback nginx peer. A trusted
-# peer must send exactly one canonical X-Forwarded-For address; missing,
-# malformed, or chained values fail closed. nginx must derive it from
-# Cloudflare's CF-Connecting-IP after the host firewall excludes direct clients.
+# Trust only the loopback nginx peer, which must send exactly one canonical
+# X-Forwarded-For address derived from Cloudflare's CF-Connecting-IP.
 trusted_proxy_cidrs = ["127.0.0.1/32", "::1/128"]
-challenge_requests_per_minute_per_ip = 120
+# Player-signed request metering (all optional; these are the defaults).
+# Username updates, deletion requests and private status reads, per operation.
+signed_requests_per_minute_per_ip = 120
+# Submission attempts: per client address before parsing, per uploader key
+# after signature verification, and uploads holding a live lease per key.
+submissions_per_hour_per_ip = 120
+submissions_per_hour_per_key = 60
+max_concurrent_uploads_per_key = 2
 abuse_reports_per_hour_per_ip = 10
 abuse_reports_per_hour_per_key = 25
 abuse_reports_per_hour_per_target = 10
 
 max_replay_bytes = 16777216
-max_campaign_bytes = 16777216
 max_metadata_bytes = 65536
 max_pending_submissions = 10000
 max_concurrent_requests = 256
@@ -35,26 +35,32 @@ upload_timeout_seconds = 120
 # durable window. It must exceed upload_timeout_seconds by at least 30 seconds.
 upload_reservation_ttl_seconds = 1800
 max_page_size = 100
-challenge_ttl_seconds = 600
-run_preflight_ttl_seconds = 86400
 database_busy_timeout_ms = 5000
 tombstone_retention_days = 30
 rejected_replay_retention_hours = 24
 orphan_replay_retention_hours = 24
 minimum_storage_free_bytes = 1073741824
 
-# Empty is intentionally fail-closed. Populate these from canonical immutable
-# operator manifests; never point a public deployment at mutable development
-# data or bundle retail files.
-# When profiles are enabled, set manifest_directory to an absolute directory
-# containing builds/, content-manifests/, campaign-content-manifests/,
-# rules-configs/, immutable ruleset-manifests/, mutable published-rulesets/,
-# competitions/, and policies/ digest-named canonical JSON documents.
-# Active current-schema profiles require public BuildManifestV2 documents in
-# builds/. Projection authorities, exporters, receipts, and source trees are
-# private operator inputs and must never be placed below this served catalog.
-# Every canonical_campaign_state_path in a production profile must be the
-# digest-named file below one exact immutable release:
-# /home/robinhood/.local/opt/robin-highscores/releases/<40-lowercase-hex-source-commit>/private/campaign-states/<sha256>
-admission_profiles = []
-competitions = []
+# Optional acceptance window for `signed_at_unix_ms` on every player-signed
+# request (defaults shown): at most this old, at most this far in the future.
+[signed_requests]
+max_age_seconds = 300
+max_future_skew_seconds = 60
+
+# One entry per ranked board. An empty list is fail-closed: metadata lists no
+# boards and every upload is rejected. `simulation_policy` is either
+# `{ kind = "fixed", policy = { version = 1, preset = "standard" | "original_parity",
+# difficulty = "easy" | "medium" | "hard" } }` or `{ kind = "any_config" }`.
+[[boards]]
+board_id = "demo-standard-normal"
+display_name = "Demo / Standard / Normal"
+edition = "demo"
+preset_id = "standard"
+preset_name = "Standard"
+difficulty_id = "normal"
+difficulty_name = "Normal"
+simulation_policy = { kind = "fixed", policy = { version = 1, preset = "standard", difficulty = "medium" } }
+allow_state_load = true
+metrics = ["original_score", "fastest_success"]
+viewer_content_requirement = "bundled_demo"
+missions = [{ mission_id = "Dem_Lei_MP", display_name = "Leicester" }]

@@ -1,7 +1,7 @@
 use crate::support::*;
 
 #[tokio::test]
-async fn red_storage_keeps_health_live_and_does_not_issue_or_consume_admission() {
+async fn red_storage_keeps_health_live_and_reserves_nothing() {
     let rig = TestRig::new().await;
     let owner = SigningKey::from_bytes(&[0x6d; 32]);
     rig.rename(&owner, "Capacity Robin", Ipv4Addr::new(127, 0, 4, 1))
@@ -21,73 +21,26 @@ async fn red_storage_keeps_health_live_and_does_not_issue_or_consume_admission()
         .unwrap();
     assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    let mut request = rig.offer_request(&owner, 41);
-    rig.authorize_fresh_request(&owner, &mut request, 41).await;
-    let denied_offer = red_app
-        .clone()
-        .oneshot(json_request(
-            Method::POST,
-            "/api/v1/submission-offers",
-            &request,
-            Ipv4Addr::new(127, 0, 4, 2),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(denied_offer.status(), StatusCode::SERVICE_UNAVAILABLE);
-
-    let offer = rig
-        .issue_offer(&owner, rig.offer_request(&owner, 42), 42)
-        .await;
     let replay = compact_replay_fixture("capacity-retry");
-    let envelope = SubmissionEnvelopeV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        replay_session_transcript: replay_session_transcript(&offer),
-        artifacts: submission_artifacts(&replay, &rig.starting_campaign),
-        offer,
-        campaign_aggregation_consent: CampaignAggregationConsentV1::NotAuthorized,
-        campaign_continuation_authorization: None,
-        requested_metrics: vec![BoardMetricV1::OriginalScore],
-    };
-    let signed = SignedSubmissionV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        participant_signatures: vec![ParticipantSignatureV1 {
-            public_key: protocol_public_key(&owner),
-            signature: sign(&owner, &envelope.signing_bytes().unwrap()),
-        }],
-        submission: envelope,
-    };
-    signed.validate().unwrap();
-
+    let signed = signed_submission(
+        &owner,
+        submission(&owner, &replay, ParticipantPublicDisclosureV1::NamedProfile),
+    );
     let denied_upload = red_app
-        .oneshot(multipart_request(&signed, &replay, &rig.starting_campaign))
+        .oneshot(multipart_request(&signed, &replay))
         .await
         .unwrap();
     assert_eq!(denied_upload.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?"
-        )
-        .bind(signed.submission.offer.upload_challenge_id.as_str())
-        .fetch_one(rig.database.fixture_pool())
-        .await
-        .unwrap(),
-        None,
-        "red admission consumed the upload challenge"
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
-            .fetch_one(rig.database.fixture_pool())
-            .await
-            .unwrap(),
-        0
-    );
+    for table in [
+        "SELECT COUNT(*) FROM submission_upload_reservations",
+        "SELECT COUNT(*) FROM submissions",
+        "SELECT COUNT(*) FROM replay_objects",
+    ] {
+        assert_eq!(rig.count(table).await, 0, "{table}");
+    }
 
-    let accepted_retry = rig
-        .app
-        .clone()
-        .oneshot(multipart_request(&signed, &replay, &rig.starting_campaign))
-        .await
-        .unwrap();
+    // The same signed request succeeds once capacity is green, within its
+    // freshness window.
+    let accepted_retry = rig.send(multipart_request(&signed, &replay)).await;
     assert_eq!(accepted_retry.status(), StatusCode::ACCEPTED);
 }

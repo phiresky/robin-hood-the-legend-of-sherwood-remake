@@ -1,15 +1,10 @@
-// Participant identity, roster, metric and timing invariants.
+// Participant identity, metric and timing invariants.
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import {
     type BoardMetricValue,
     type TickDuration,
     type RunMetrics,
     type PublicParticipant,
-    type AggregatePublicParticipant,
-    type ParsedCampaignSessionKind,
-    type ParsedAchievementDecision,
-    type Achievement,
-    type InputProvenance,
 } from './types.js';
 import {
     object,
@@ -26,20 +21,20 @@ import {
 } from './decode.js';
 import { bytesHex } from './canonical.js';
 
+/** BoardMetricValueV2, tagged by `metric`. */
 export function parseMetricValue(value: unknown, path: string): BoardMetricValue {
     const obj = object(value, path);
     const metric = enumeration(obj.metric, METRIC_ORDER, `${path}.metric`);
     if (metric === 'original_score') {
         assertExactKeys(obj, path, ['metric', 'points']);
-        return { metric, points: nonNegativeInteger(obj.points, `${path}.points`) };
+        const points = nonNegativeInteger(obj.points, `${path}.points`);
+        if (points > 0xffff_ffff) throw new Error(`${path}.points exceeds the original score range`);
+        return { metric, points };
     }
-    assertExactKeys(obj, path, ['metric', 'active_simulation_ticks', 'tick_duration']);
-    const tickDuration = parseTickDuration(obj.tick_duration, `${path}.tick_duration`);
+    assertExactKeys(obj, path, ['metric', 'active_simulation_ticks']);
     return {
         metric,
         activeSimulationTicks: nonNegativeInteger(obj.active_simulation_ticks, `${path}.active_simulation_ticks`),
-        tickDuration,
-        tickDurationMicros: tickDuration.numeratorMicros / tickDuration.denominator,
     };
 }
 
@@ -79,74 +74,30 @@ export function parseParticipant(value: unknown, path: string): PublicParticipan
     const obj = strictObject(value, path, [
         'seat', 'username', 'public_key', 'public_key_fingerprint',
     ]);
-    const seat = u16(obj.seat, `${path}.seat`);
-    if (seat >= 64) throw new Error(`${path}.seat exceeds the replay seat range`);
     const key = publicKey(obj.public_key, `${path}.public_key`);
     return {
-        seat,
+        seat: u16(obj.seat, `${path}.seat`),
         username: boundedString(obj.username, `${path}.username`, 48),
         publicKey: key,
         publicKeyFingerprint: validatePublicFingerprint(obj.public_key_fingerprint, key, `${path}.public_key_fingerprint`),
     };
 }
 
-export function parseAggregateParticipant(value: unknown, path: string): AggregatePublicParticipant {
-    const obj = strictObject(value, path, [
-        'current_display_name', 'public_key', 'public_key_fingerprint',
-    ]);
-    const key = publicKey(obj.public_key, `${path}.public_key`);
-    return {
-        currentDisplayName: boundedString(obj.current_display_name, `${path}.current_display_name`, 48),
-        publicKey: key,
-        publicKeyFingerprint: validatePublicFingerprint(
-            obj.public_key_fingerprint,
-            key,
-            `${path}.public_key_fingerprint`,
-        ),
-    };
+/** A named uploader always occupies the host seat; null means anonymous disclosure. */
+export function parseUploader(value: unknown, path: string): PublicParticipant | null {
+    if (value === null) return null;
+    const uploader = parseParticipant(value, path);
+    if (uploader.seat !== 0) throw new Error(`${path} must occupy the host seat 0`);
+    return uploader;
 }
 
-export function compareSeatPublicKey(
-    left: { readonly seat: number; readonly publicKey: string },
-    right: { readonly seat: number; readonly publicKey: string },
-): number {
-    return left.seat - right.seat || left.publicKey.localeCompare(right.publicKey);
-}
-
-export function validateRoster(
+export function validateParticipantCounts(
     maxConcurrentPlayers: number,
     participantInstanceCount: number,
-    namedParticipantInstanceCount: number,
-    namedParticipants: readonly PublicParticipant[],
-    aggregateNamedParticipants: readonly AggregatePublicParticipant[],
-    anonymousParticipantInstanceCount: number,
-    missionInstancesRequired: boolean,
     path: string,
 ): void {
-    if (participantInstanceCount < maxConcurrentPlayers
-        || namedParticipantInstanceCount + anonymousParticipantInstanceCount !== participantInstanceCount) {
-        throw new Error(`${path} contains invalid, non-canonical, or out-of-range participant claims`);
-    }
-    if (missionInstancesRequired) {
-        if (aggregateNamedParticipants.length !== 0
-            || namedParticipants[0]?.seat !== 0
-            || namedParticipantInstanceCount !== namedParticipants.length
-            || new Set(namedParticipants.map(participant => participant.publicKey)).size
-                !== namedParticipants.length
-            || namedParticipants.some((participant, index) => {
-                const previous = namedParticipants[index - 1];
-                return index > 0 && previous !== undefined
-                    && compareSeatPublicKey(previous, participant) >= 0;
-            })) {
-            throw new Error(`${path} contains invalid mission participant claims`);
-        }
-        return;
-    }
-    if (namedParticipants.length !== 0 || aggregateNamedParticipants.length === 0
-        || aggregateNamedParticipants.length > namedParticipantInstanceCount
-        || aggregateNamedParticipants.some((participant, index) => index > 0
-            && (aggregateNamedParticipants[index - 1]?.publicKey ?? '') >= participant.publicKey)) {
-        throw new Error(`${path} contains an invalid aggregate participant roster`);
+    if (participantInstanceCount < maxConcurrentPlayers) {
+        throw new Error(`${path}.participant_instance_count is smaller than its concurrent player count`);
     }
 }
 
@@ -173,36 +124,4 @@ export function hexBytes(value: string): Uint8Array {
         output[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
     }
     return output;
-}
-
-export function metricsEqual(left: RunMetrics, right: RunMetrics): boolean {
-    return left.originalScoreDelta === right.originalScoreDelta
-        && left.activeSimulationTicks === right.activeSimulationTicks
-        && left.ransomCollected === right.ransomCollected;
-}
-
-export function campaignSessionKindsEqual(
-    left: ParsedCampaignSessionKind,
-    right: ParsedCampaignSessionKind,
-): boolean {
-    return left.kind === right.kind
-        && (left.kind === 'field_mission'
-            ? right.kind === 'field_mission' && left.missionId === right.missionId
-            : right.kind === 'headquarters' && left.hqSequence === right.hqSequence);
-}
-
-export function achievementsEqual(
-    verified: readonly ParsedAchievementDecision[],
-    summaries: readonly Achievement[],
-): boolean {
-    return verified.length === summaries.length && verified.every((achievement, index) => {
-        const summary = summaries[index];
-        return summary !== undefined
-            && achievement.id === summary.id
-            && achievement.evaluation === summary.evaluation;
-    });
-}
-
-export function provenanceEqual(left: InputProvenance, right: InputProvenance): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
 }

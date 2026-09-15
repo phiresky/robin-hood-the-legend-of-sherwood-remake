@@ -799,52 +799,26 @@ impl Engine {
         (inner.into_campaign(), mission_idx, rng_seed, sim_config)
     }
 
-    /// Consume the exact ranked capability inspected and signed during
-    /// preflight. The admitted simulation policy is installed only here, at
-    /// the single-use capability boundary.
-    pub fn new_ranked(prepared: crate::simulation_inputs::RankedPreparedMissionInputs) -> Self {
-        let (prepared, simulation_policy) = prepared.into_prepared_and_policy();
-        let mut engine = prepared.into_engine();
+    /// Construct a mission engine for ranked resimulation and install the
+    /// board's simulation policy before the first frame.
+    ///
+    /// Fails when the policy does not admit the requested `SimConfig`.
+    pub fn new_ranked(
+        args: EngineArgs,
+        simulation_policy: crate::engine::RankedSimulationPolicy,
+    ) -> Result<Self, EngineError> {
+        simulation_policy
+            .validate_config(args.sim_config)
+            .map_err(|error| EngineError::MissionLevelStage {
+                stage: "ranked simulation policy",
+                reason: error.to_string(),
+            })?;
+        let mut engine = Self::new(args)?;
         engine
             .inner
             .control
             .install_ranked_simulation_policy(simulation_policy);
-        engine
-    }
-
-    /// Consume an ordinary sealed mission preparation exactly once.
-    pub fn from_prepared(prepared: crate::simulation_inputs::PreparedMissionInputs) -> Self {
-        prepared.into_engine()
-    }
-
-    pub fn prepare_ranked(
-        args: EngineArgs,
-        admission: crate::simulation_inputs::RankedContentAdmissionV1<'_>,
-    ) -> Result<crate::simulation_inputs::RankedPreparedMissionInputs, EngineError> {
-        Self::prepare_ranked_preserving_campaign(args, admission).map_err(|(error, _)| error)
-    }
-
-    pub fn prepare_ranked_preserving_campaign(
-        args: EngineArgs,
-        admission: crate::simulation_inputs::RankedContentAdmissionV1<'_>,
-    ) -> Result<
-        crate::simulation_inputs::RankedPreparedMissionInputs,
-        (EngineError, crate::campaign::Campaign),
-    > {
-        let prepared = Self::prepare_preserving_campaign(args)?;
-        match crate::simulation_inputs::RankedPreparedMissionInputs::admit(prepared, admission) {
-            Ok(ranked) => Ok(ranked),
-            Err((error, prepared)) => {
-                let campaign = prepared.into_engine().into_campaign();
-                Err((
-                    EngineError::MissionLevelStage {
-                        stage: "ranked prepared-content admission",
-                        reason: error.to_string(),
-                    },
-                    campaign,
-                ))
-            }
-        }
+        Ok(engine)
     }
 
     /// Create a fully-initialised engine for mission play.
@@ -945,105 +919,6 @@ impl Engine {
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         Self::construct_preserving_campaign(args)
-    }
-
-    /// Prepare and seal an engine while preserving the supplied campaign on
-    /// every construction or projection failure.
-    pub fn prepare_preserving_campaign(
-        args: EngineArgs,
-    ) -> Result<
-        crate::simulation_inputs::PreparedMissionInputs,
-        (EngineError, crate::campaign::Campaign),
-    > {
-        let EngineArgs {
-            campaign,
-            level:
-                LevelLoadArgs {
-                    assets,
-                    level_directory,
-                    progress,
-                    loaded,
-                    bg_pixel_dims,
-                },
-            ground_mark_sprite,
-            titbit_row_frame_counts,
-            rng_seed,
-            original_rng_replay,
-            sim_config,
-        } = args;
-        // This checkpoint precedes mission initialization and is not the final
-        // engine campaign. Preserve it for the run identity.
-        let starting_campaign = campaign.clone();
-        // Capture only authored values that construction consumes. Defer any
-        // projection error until construction completes, preserving its error
-        // precedence and the initialized campaign returned on projection failure.
-        let authored_projection = crate::simulation_inputs::AuthoredSimulationInputs::capture(
-            &loaded,
-            ground_mark_sprite.as_ref(),
-            &titbit_row_frame_counts,
-        );
-        let projection_original_rng_replay = original_rng_replay.clone();
-
-        let engine = Self::construct_preserving_campaign(EngineArgs {
-            campaign,
-            level: LevelLoadArgs {
-                assets: &mut *assets,
-                level_directory,
-                progress,
-                loaded,
-                bg_pixel_dims,
-            },
-            ground_mark_sprite,
-            titbit_row_frame_counts,
-            rng_seed,
-            original_rng_replay,
-            sim_config,
-        })?;
-
-        let static_projection = match authored_projection.and_then(|authored| {
-            crate::simulation_inputs::SimulationContentProjectionV1::from_prepared_engine_inputs(
-                authored,
-                assets,
-                bg_pixel_dims,
-            )
-        }) {
-            Ok(projection) => projection,
-            Err(error) => {
-                let campaign = engine.into_campaign();
-                return Err((
-                    EngineError::MissionLevelStage {
-                        stage: "simulation input projection",
-                        reason: error.to_string(),
-                    },
-                    campaign,
-                ));
-            }
-        };
-        let run_projection = match crate::simulation_inputs::PreparedMissionRunProjectionV1::new(
-            &static_projection,
-            &starting_campaign,
-            rng_seed,
-            &sim_config,
-            projection_original_rng_replay.as_deref(),
-            assets,
-        ) {
-            Ok(projection) => projection,
-            Err(error) => {
-                let campaign = engine.into_campaign();
-                return Err((
-                    EngineError::MissionLevelStage {
-                        stage: "prepared mission run projection",
-                        reason: error.to_string(),
-                    },
-                    campaign,
-                ));
-            }
-        };
-        Ok(crate::simulation_inputs::PreparedMissionInputs::seal(
-            engine,
-            static_projection,
-            run_projection,
-        ))
     }
 
     fn construct_preserving_campaign(

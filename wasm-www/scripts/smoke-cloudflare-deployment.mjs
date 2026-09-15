@@ -70,26 +70,6 @@ function requireNoStoreApiResponse(response, label) {
     requireNoCors(response, label);
 }
 
-function requireImmutableApiResponse(response, label) {
-    const directives = (response.headers.get('cache-control') ?? '')
-        .split(',')
-        .map(directive => directive.trim().toLowerCase())
-        .filter(Boolean);
-    const expected = ['public', 'max-age=31536000', 'immutable'];
-    if (directives.length !== expected.length
-        || expected.some(directive => !directives.includes(directive))) {
-        throw new Error(`${label} must set Cache-Control: public, max-age=31536000, immutable`);
-    }
-    // The API and nginx both emit nosniff; Fetch combines repeated fields.
-    // Require every value to agree, including rejecting empty list members.
-    const contentTypeOptions = (response.headers.get('x-content-type-options') ?? '')
-        .split(',').map(value => value.trim().toLowerCase());
-    if (contentTypeOptions.some(value => value !== 'nosniff')) {
-        throw new Error(`${label} must set X-Content-Type-Options: nosniff`);
-    }
-    requireNoCors(response, label);
-}
-
 async function requireBodyIdentity(response, identity, label) {
     const expectedLength = identity?.byteLength;
     const expectedSha256 = identity?.sha256;
@@ -132,14 +112,6 @@ async function requireBodyIdentity(response, identity, label) {
     if (hash.digest('hex') !== expectedSha256) {
         throw new Error(`${label} body SHA-256 differs from its manifest identity`);
     }
-}
-
-function publishedRulesetDigest(metadata) {
-    const digest = metadata?.rulesets?.[0]?.ruleset_manifest_sha256;
-    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/u.test(digest)) {
-        throw new Error('leaderboard metadata has no published immutable ruleset digest');
-    }
-    return digest;
 }
 
 async function smokeHtml(fetchImpl, url, marker, frameAncestor) {
@@ -254,7 +226,6 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     }
 
     const metadataUrl = `${DEPLOYMENT.publicOrigin}/api/v1/leaderboard-metadata`;
-    let metadata;
     for (let probe = 1; probe <= 2; probe += 1) {
         const api = await request(fetchImpl, metadataUrl);
         if (api.headers.has('x-robinhood-static-origin')) {
@@ -266,8 +237,7 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
             throw new Error(`${label} returned unexpected content type ${apiType}`);
         }
         requireNoStoreApiResponse(api, label);
-        const document = await api.json();
-        if (probe === 1) metadata = document;
+        await api.json();
     }
 
     const options = await request(fetchImpl, metadataUrl, API_OPTIONS_STATUS, 'OPTIONS', {
@@ -275,14 +245,6 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
         'Access-Control-Request-Method': 'GET',
     });
     requireNoCors(options, 'attacker-origin API preflight');
-
-    const rulesetDigest = publishedRulesetDigest(metadata);
-    const immutable = await request(
-        fetchImpl,
-        `${DEPLOYMENT.publicOrigin}/api/v1/ruleset-manifests/${rulesetDigest}`,
-    );
-    requireHeader(immutable, 'content-type', 'application/json');
-    requireImmutableApiResponse(immutable, 'published immutable ruleset manifest');
 }
 
 async function main() {

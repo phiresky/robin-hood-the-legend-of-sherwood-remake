@@ -1356,7 +1356,6 @@ impl PreparedMission {
             launch,
             mut presentation,
         } = self;
-        #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
         let _ = (args, &mission_name);
         let MissionLaunchSetup {
             rng_seed,
@@ -1388,78 +1387,12 @@ impl PreparedMission {
                 original_rng_replay: None,
                 sim_config,
             };
-            #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
-            let needs_projection = false;
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            let needs_projection = args.config.simulation_content_export.is_some();
-            if !needs_projection {
-                // Ordinary play has no consumer for the verification projection.
-                // Construct the same engine without cloning/serializing its inputs
-                // or hashing the sprite opacity surface.
-                let engine =
-                    Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
-                        MissionLoadError::new(
-                            campaign,
-                            MissionError::asset(format!("Level init failed: {error}")),
-                        )
-                    })?;
-                engine
-            } else {
-                match Engine::prepare_preserving_campaign(engine_args) {
-                    Ok(prepared) => {
-                        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-                        if let Some(request) = args.config.simulation_content_export.as_ref() {
-                            let exact_mission = match mission_name.as_deref() {
-                                Some(mission) => mission,
-                                None => {
-                                    let campaign = Engine::from_prepared(prepared).into_campaign();
-                                    return Err(MissionLoadError::new(
-                                        campaign,
-                                        MissionError::launch(
-                                            "simulation-content export has no prepared mission identity",
-                                        ),
-                                    ));
-                                }
-                            };
-                            let components = prepared
-                                .static_projection()
-                                .components()
-                                .iter()
-                                .map(|component| {
-                                    crate::official_projection_export::CanonicalProjectionComponent {
-                                        document: component.document.clone(),
-                                        canonical_bytes: component.canonical_bytes.clone(),
-                                        sha256: component.sha256,
-                                    }
-                                })
-                                .collect::<Vec<_>>();
-                            if let Err(error) =
-                            crate::official_projection_export::write_simulation_content_projection(
-                                request,
-                                exact_mission,
-                                &robin_engine::simulation_inputs::SIMULATION_CONTENT_COMPONENT_ORDER_V1,
-                                &components,
-                            )
-                        {
-                            let campaign = Engine::from_prepared(prepared).into_campaign();
-                            return Err(MissionLoadError::new(
-                                campaign,
-                                MissionError::asset(format!(
-                                    "simulation-content export failed: {error:#}"
-                                )),
-                            ));
-                        }
-                        }
-                        Engine::from_prepared(prepared)
-                    }
-                    Err((error, campaign)) => {
-                        return Err(MissionLoadError::new(
-                            campaign,
-                            MissionError::asset(format!("Level init failed: {error}")),
-                        ));
-                    }
-                }
-            }
+            Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
+                MissionLoadError::new(
+                    campaign,
+                    MissionError::asset(format!("Level init failed: {error}")),
+                )
+            })?
         };
         presentation.timer.step("engine construction");
         Ok(ConstructedMission {

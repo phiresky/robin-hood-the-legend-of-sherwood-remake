@@ -3,14 +3,12 @@
 //!
 //! Mounted by `multiplayer.rs` as `transport` and re-exported from there, so
 //! every item keeps its `crate::multiplayer::…` path. `disabled.rs` provides
-//! the same shared names (`MultiplayerRuntime`, `MultiplayerCampaignSession`,
-//! the ranked runtime entry points) when the feature is off. Submodule files
-//! stay next to this one in `multiplayer/`.
+//! the same shared names (`MultiplayerRuntime`, `MultiplayerCampaignSession`)
+//! when the feature is off. Submodule files stay next to this one in
+//! `multiplayer/`.
 
 use super::*;
 
-#[cfg(any(target_arch = "wasm32", test))]
-pub(super) mod browser_ranked;
 pub(super) mod client_gameplay;
 pub(super) mod client_outgoing;
 pub(super) mod client_protocol;
@@ -23,26 +21,9 @@ pub use client_session::ClientHandle;
 pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
 pub(crate) use robin_engine::multiplayer::MultiplayerSessionId;
 pub(crate) use robin_engine::multiplayer::{NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg};
-pub(crate) use robin_engine::multiplayer::{RankedBrowseOnlyReason, RankedJoinUnavailableReason};
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use robin_engine::multiplayer::{
-    RankedJoinAccepted, RankedJoinClaimDocument, RankedParticipantRosterDocument,
-    RankedSessionGenesisDocument,
-};
-pub(crate) use robin_engine::multiplayer::{
-    RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinResponse,
-    RankedSessionConfigDocument,
-};
 
 pub(super) mod framing;
 pub(crate) use framing::*;
-
-pub(super) mod ranked_client;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use ranked_client::{
-    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, verify_leaderboard_cosign_response,
-};
-pub(crate) use ranked_client::{SharedClientLeaderboardCoSignState, SharedClientRankedJoinState};
 
 pub mod identity;
 pub mod join_ticket;
@@ -118,76 +99,5 @@ impl MultiplayerRuntime {
 impl Drop for MultiplayerRuntime {
     fn drop(&mut self) {
         self.shutdown();
-    }
-}
-
-/// Build the ranked authorization capability of the attached runtime.
-pub(super) fn attached_ranked_port(
-    runtime: Option<&MultiplayerRuntime>,
-    channels: &EngineNetChannels,
-) -> Result<RankedMultiplayerPort, MultiplayerError> {
-    let (
-        role,
-        local_seat,
-        lifecycle,
-        authenticated_seats,
-        preflight_lobby,
-        authenticated_host_public_key,
-        local_public_key,
-    ) = match runtime {
-        Some(MultiplayerRuntime::Server(handle)) => (
-            RankedMultiplayerRole::Host,
-            handle.ranked_local_seat()?,
-            handle.ranked_lifecycle(),
-            handle.ranked_authenticated_seats(),
-            handle.ranked_preflight_lobby(),
-            Some(handle.ranked_host_public_key()),
-            Some(handle.ranked_host_public_key()),
-        ),
-        Some(MultiplayerRuntime::Client(handle)) => (
-            RankedMultiplayerRole::Client,
-            handle.ranked_local_seat()?,
-            handle.ranked_lifecycle(),
-            Vec::new(),
-            None,
-            handle.ranked_authenticated_host_public_key(),
-            handle.ranked_local_public_key(),
-        ),
-        None => {
-            return Err(MultiplayerError::LocalState(
-                "ranked multiplayer capability requires an attached authenticated runtime".into(),
-            ));
-        }
-    };
-    if (role == RankedMultiplayerRole::Host) != (local_seat == PlayerId::HOST) {
-        return Err(MultiplayerError::LocalState(
-            "attached multiplayer runtime reported an invalid ranked seat role".into(),
-        ));
-    }
-    Ok(RankedMultiplayerPort {
-        role,
-        local_seat,
-        lifecycle,
-        outgoing: channels.outgoing.clone(),
-        authorization_inbox: channels.leaderboard_authorization_inbox(),
-        authenticated_seats,
-        preflight_lobby,
-        local_public_key,
-        authenticated_host_public_key,
-    })
-}
-
-/// Hand the prepared ranked setup (or the explicit `None` decline) to the
-/// attached runtime.
-pub(super) fn install_attached_ranked_session_setup(
-    runtime: Option<&MultiplayerRuntime>,
-    setup: Option<OfficialRankedSessionSetupV1>,
-) -> Result<(), MultiplayerError> {
-    match runtime {
-        Some(MultiplayerRuntime::Server(handle)) => handle.install_ranked_session_setup(setup),
-        Some(MultiplayerRuntime::Client(handle)) => handle.install_ranked_session_setup(setup),
-        None => Err(MultiplayerError::LocalState(
-            "ranked setup requires an attached authenticated runtime".into(),
-        )),
     }
 }

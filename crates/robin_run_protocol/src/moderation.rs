@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ChallengeNonce32, OpaqueId, PublicKey32, Signature64, Validate, ValidationError};
+use crate::signed_request::{SignedRequestClaim, SignedRequestV2};
+use crate::{OpaqueId, PublicKey32, Validate, ValidationError};
 
-pub const DELETION_REQUEST_SIGNATURE_DOMAIN_V1: &[u8] =
-    b"robinhood/leaderboards/1/deletion-request\0";
+pub const DELETION_REQUEST_SIGNATURE_DOMAIN_V2: &[u8] =
+    b"robinhood/leaderboards/2/deletion-request\0";
 
 /// An owner may tombstone either an upload still in its submission lifecycle
 /// or a published verified run. A run target also covers its published replay.
@@ -14,99 +15,45 @@ pub enum DeletionTargetV1 {
     Run { run_id: OpaqueId },
 }
 
+/// Owner-signed deletion. Deletion is idempotent, so replaying a captured
+/// request within the signing window has no further effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeletionChallengeRequestV1 {
+pub struct DeletionRequestV2 {
     pub schema_version: u32,
     pub public_key: PublicKey32,
+    pub signed_at_unix_ms: u64,
     pub target: DeletionTargetV1,
 }
 
-impl Validate for DeletionChallengeRequestV1 {
+impl Validate for DeletionRequestV2 {
     fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("DeletionChallengeRequestV1", self.schema_version)?;
-        crate::validation::nonzero("deletion_challenge_request.public_key", &self.public_key)?;
-        Ok(())
-    }
-}
-
-/// Server-authored, one-use challenge binding the owner key and exact target.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeletionChallengeV1 {
-    pub schema_version: u32,
-    pub deletion_challenge_id: OpaqueId,
-    pub deletion_challenge_nonce: ChallengeNonce32,
-    pub expires_at_unix_ms: u64,
-    pub public_key: PublicKey32,
-    pub target: DeletionTargetV1,
-}
-
-impl Validate for DeletionChallengeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("DeletionChallengeV1", self.schema_version)?;
-        crate::validation::nonzero(
-            "deletion_challenge.deletion_challenge_nonce",
-            &self.deletion_challenge_nonce,
+        crate::validation::schema_exact(
+            "DeletionRequestV2",
+            crate::SCHEMA_VERSION_V2,
+            self.schema_version,
         )?;
-        if self.expires_at_unix_ms == 0 {
-            return Err(ValidationError::Zero {
-                field: "deletion_challenge.expires_at_unix_ms",
-            });
-        }
-        crate::validation::nonzero("deletion_challenge.public_key", &self.public_key)?;
-        Ok(())
-    }
-}
-
-#[derive(Serialize)]
-struct DeletionRequestSignable<'a> {
-    schema_version: u32,
-    challenge: &'a DeletionChallengeV1,
-}
-
-/// Key-signed owner request. The complete server challenge is nested so the
-/// target, owner, expiry, nonce, and challenge namespace are all covered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeletionRequestEnvelopeV1 {
-    pub schema_version: u32,
-    pub challenge: DeletionChallengeV1,
-    pub signature: Signature64,
-}
-
-impl DeletionRequestEnvelopeV1 {
-    /// Validate the claim before asking a native or WASM identity bridge to
-    /// sign it. The signature field is intentionally ignored here.
-    pub fn validate_signing_claim(&self) -> Result<(), ValidationError> {
-        crate::validation::schema("DeletionRequestEnvelopeV1", self.schema_version)?;
-        self.challenge.validate()?;
-        if self.schema_version != self.challenge.schema_version {
-            return Err(ValidationError::ClaimMismatch {
-                field: "deletion_request.challenge.schema_version",
-            });
-        }
-        Ok(())
-    }
-
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(
-            DELETION_REQUEST_SIGNATURE_DOMAIN_V1,
-            &DeletionRequestSignable {
-                schema_version: self.schema_version,
-                challenge: &self.challenge,
-            },
+        crate::validation::nonzero("deletion_request.public_key", &self.public_key)?;
+        crate::validation::nonzero(
+            "deletion_request.signed_at_unix_ms",
+            &self.signed_at_unix_ms,
         )
     }
 }
 
-impl Validate for DeletionRequestEnvelopeV1 {
-    fn validate(&self) -> Result<(), ValidationError> {
-        self.validate_signing_claim()?;
-        crate::validation::nonzero("deletion_request.signature", &self.signature)?;
-        Ok(())
+impl SignedRequestClaim for DeletionRequestV2 {
+    const DOMAIN: &'static [u8] = DELETION_REQUEST_SIGNATURE_DOMAIN_V2;
+
+    fn signer_public_key(&self) -> PublicKey32 {
+        self.public_key
+    }
+
+    fn signed_at_unix_ms(&self) -> u64 {
+        self.signed_at_unix_ms
     }
 }
+
+pub type SignedDeletionRequestV2 = SignedRequestV2<DeletionRequestV2>;
 
 /// Immediate result of a successful owner deletion request. Ranking and
 /// replay visibility have already been removed when this is returned.
@@ -217,45 +164,32 @@ mod tests {
         OpaqueId::new(value).unwrap()
     }
 
-    fn challenge() -> DeletionChallengeV1 {
-        DeletionChallengeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            deletion_challenge_id: id("delete-challenge-1"),
-            deletion_challenge_nonce: ChallengeNonce32::from_bytes([1; 32]),
-            expires_at_unix_ms: 10,
+    #[test]
+    fn deletion_signing_bytes_bind_target_key_and_time() {
+        let request = DeletionRequestV2 {
+            schema_version: crate::SCHEMA_VERSION_V2,
             public_key: PublicKey32::from_bytes([2; 32]),
+            signed_at_unix_ms: 10,
             target: DeletionTargetV1::Run {
                 run_id: id("run-1"),
             },
-        }
-    }
-
-    #[test]
-    fn deletion_signature_binds_exact_server_challenge_and_target() {
-        let mut request = DeletionRequestEnvelopeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            challenge: challenge(),
-            signature: Signature64::from_bytes([3; 64]),
         };
-        assert!(request.validate().is_ok());
-        let original = request.signing_bytes().unwrap();
-        request.signature = Signature64::from_bytes([4; 64]);
-        assert_eq!(original, request.signing_bytes().unwrap());
-        request.challenge.target = DeletionTargetV1::Submission {
+        let original = SignedDeletionRequestV2::signing_bytes(&request).unwrap();
+        assert!(original.starts_with(DELETION_REQUEST_SIGNATURE_DOMAIN_V2));
+        let mut other_target = request.clone();
+        other_target.target = DeletionTargetV1::Submission {
             submission_id: id("submission-1"),
         };
-        assert_ne!(original, request.signing_bytes().unwrap());
-    }
-
-    #[test]
-    fn deletion_bridge_can_validate_before_signature_exists() {
-        let request = DeletionRequestEnvelopeV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            challenge: challenge(),
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        assert!(request.validate_signing_claim().is_ok());
-        assert!(request.validate().is_err());
+        assert_ne!(
+            original,
+            SignedDeletionRequestV2::signing_bytes(&other_target).unwrap()
+        );
+        let mut other_time = request;
+        other_time.signed_at_unix_ms = 11;
+        assert_ne!(
+            original,
+            SignedDeletionRequestV2::signing_bytes(&other_time).unwrap()
+        );
     }
 
     #[test]

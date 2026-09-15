@@ -1,13 +1,13 @@
 //! Continuous, fail-closed capacity admission for ranked artifacts.
 //!
-//! The HTTP concurrency limit bounds how many uploads may write at once.  We
+//! The HTTP concurrency limit bounds how many uploads may write at once. We
 //! reserve the exact declared bytes for the current upload and the configured
-//! maxima for every other slot, plus bounded multipart/SQLite and verifier
-//! output headroom.  Demands are combined when paths share a filesystem so a
-//! replay and campaign store on one volume cannot each spend the same free
-//! bytes.
+//! maxima for every other slot, plus bounded multipart/SQLite headroom and
+//! the verifier sandbox's scratch files. Demands are combined when paths share
+//! a filesystem so the replay store and database cannot each spend the same
+//! free bytes.
 
-use crate::{CampaignStore, Database, ReplayStore, ServerConfig};
+use crate::{Database, ReplayStore, ServerConfig};
 use std::collections::BTreeMap;
 
 pub const MINIMUM_STORAGE_RESERVE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -65,8 +65,7 @@ impl StorageVolume {
     }
 
     /// Inspect the filesystem through the already-pinned capability rather
-    /// than resolving the mutable configured path again. This preserves the
-    /// stores' ancestor-swap guarantees during every admission check.
+    /// than resolving the mutable configured path again.
     pub(crate) fn from_pinned_dir(
         kind: &'static str,
         directory: &cap_std::fs::Dir,
@@ -85,88 +84,37 @@ impl StorageVolume {
     }
 }
 
-/// Readiness and offer issuance reserve enough room for a complete maximum
-/// upload in every HTTP slot and one maximum verifier campaign output.
-pub fn ensure_offer_capacity(
+/// Readiness reserves enough room for a complete maximum upload in every HTTP
+/// slot.
+pub fn ensure_maximum_upload_capacity(
     config: &ServerConfig,
     database: &Database,
     replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
 ) -> Result<(), StorageAdmissionError> {
-    ensure_capacity(
-        config,
-        database,
-        replay_store,
-        campaign_store,
-        config.max_replay_bytes,
-        config.max_campaign_bytes,
-    )
+    ensure_capacity(config, database, replay_store, config.max_replay_bytes)
 }
 
-/// Recheck capacity immediately before the database may consume the one-use
-/// challenge.  The current slot uses authenticated exact lengths; only the
-/// other concurrently active slots use configured maxima.
+/// Recheck capacity immediately before the database may reserve an upload.
+/// The current slot uses the authenticated exact length; only the other
+/// concurrently active slots use configured maxima.
 pub fn ensure_upload_capacity(
     config: &ServerConfig,
     database: &Database,
     replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
     replay_bytes: u64,
-    campaign_bytes: u64,
 ) -> Result<(), StorageAdmissionError> {
     validate_artifact_length("replay", replay_bytes, config.max_replay_bytes)?;
-    validate_artifact_length("campaign", campaign_bytes, config.max_campaign_bytes)?;
-    ensure_capacity(
-        config,
-        database,
-        replay_store,
-        campaign_store,
-        replay_bytes,
-        campaign_bytes,
-    )
+    ensure_capacity(config, database, replay_store, replay_bytes)
 }
 
-/// A worker may lease only when a maximum-sized final campaign can be written
-/// while every bounded API upload slot is active.
+/// A worker may lease only when every bounded API upload slot could still
+/// complete.
 pub fn ensure_worker_lease_capacity(
     config: &ServerConfig,
     database: &Database,
     replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
 ) -> Result<(), StorageAdmissionError> {
-    ensure_capacity(
-        config,
-        database,
-        replay_store,
-        campaign_store,
-        config.max_replay_bytes,
-        config.max_campaign_bytes,
-    )
-}
-
-/// Recheck the verifier's exact authenticated output before creating its
-/// content-addressed object.  This is deliberately after verification and
-/// before the first campaign-store write.
-pub fn ensure_worker_final_campaign_capacity(
-    config: &ServerConfig,
-    database: &Database,
-    replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
-    final_campaign_bytes: u64,
-) -> Result<(), StorageAdmissionError> {
-    validate_artifact_length(
-        "final_campaign",
-        final_campaign_bytes,
-        config.max_campaign_bytes,
-    )?;
-    ensure_capacity(
-        config,
-        database,
-        replay_store,
-        campaign_store,
-        config.max_replay_bytes,
-        final_campaign_bytes,
-    )
+    ensure_capacity(config, database, replay_store, config.max_replay_bytes)
 }
 
 fn validate_artifact_length(
@@ -188,15 +136,10 @@ fn ensure_capacity(
     config: &ServerConfig,
     database: &Database,
     replay_store: &ReplayStore,
-    campaign_store: &CampaignStore,
     current_replay_bytes: u64,
-    current_campaign_bytes: u64,
 ) -> Result<(), StorageAdmissionError> {
-    let plan = capacity_demand_bytes(config, current_replay_bytes, current_campaign_bytes)?;
+    let plan = capacity_demand_bytes(config, current_replay_bytes)?;
     let replay_volume = replay_store
-        .storage_volume()
-        .map_err(StorageAdmissionError::Io)?;
-    let campaign_volume = campaign_store
         .storage_volume()
         .map_err(StorageAdmissionError::Io)?;
     let database_volume = database
@@ -208,11 +151,6 @@ fn ensure_capacity(
                 kind: replay_volume.kind,
                 volume: replay_volume,
                 bytes: plan.replay,
-            },
-            Demand {
-                kind: campaign_volume.kind,
-                volume: campaign_volume,
-                bytes: plan.campaign,
             },
             Demand {
                 kind: database_volume.kind,
@@ -227,7 +165,6 @@ fn ensure_capacity(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CapacityDemandBytes {
     pub replay: u64,
-    pub campaign: u64,
     pub database: u64,
 }
 
@@ -238,7 +175,6 @@ pub const MAXIMUM_AUXILIARY_DATABASE_WRITERS: u64 = 3;
 fn capacity_demand_bytes(
     config: &ServerConfig,
     current_replay_bytes: u64,
-    current_campaign_bytes: u64,
 ) -> Result<CapacityDemandBytes, StorageAdmissionError> {
     let slots = u64::try_from(config.max_concurrent_uploads)
         .map_err(|_| StorageAdmissionError::Overflow)?;
@@ -251,16 +187,6 @@ fn capacity_demand_bytes(
                 .checked_mul(config.max_replay_bytes)
                 .ok_or(StorageAdmissionError::Overflow)?,
         )
-        .ok_or(StorageAdmissionError::Overflow)?;
-    let campaign_upload_demand = current_campaign_bytes
-        .checked_add(
-            other_slots
-                .checked_mul(config.max_campaign_bytes)
-                .ok_or(StorageAdmissionError::Overflow)?,
-        )
-        .ok_or(StorageAdmissionError::Overflow)?;
-    let campaign_demand = campaign_upload_demand
-        .checked_add(config.max_campaign_bytes)
         .ok_or(StorageAdmissionError::Overflow)?;
     let per_request_database = u64::try_from(config.max_metadata_bytes)
         .map_err(|_| StorageAdmissionError::Overflow)?
@@ -285,7 +211,6 @@ fn capacity_demand_bytes(
         .ok_or(StorageAdmissionError::Overflow)?;
     Ok(CapacityDemandBytes {
         replay: replay_demand,
-        campaign: campaign_demand,
         database: database_demand,
     })
 }
@@ -356,12 +281,7 @@ mod tests {
             Demand {
                 kind: "replay",
                 volume,
-                bytes: 11,
-            },
-            Demand {
-                kind: "campaign",
-                volume,
-                bytes: 13,
+                bytes: 24,
             },
             Demand {
                 kind: "database",
@@ -383,26 +303,23 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            capacity_demand_bytes(&config, config.max_replay_bytes, config.max_campaign_bytes),
+            capacity_demand_bytes(&config, config.max_replay_bytes),
             Err(StorageAdmissionError::Overflow)
         ));
     }
 
     #[test]
-    fn exact_current_lengths_and_other_concurrent_slots_share_one_capacity_budget() {
+    fn exact_current_length_and_other_concurrent_slots_share_one_capacity_budget() {
         let config = ServerConfig {
             max_replay_bytes: 11,
-            max_campaign_bytes: 13,
             max_metadata_bytes: 17,
             max_concurrent_uploads: 4,
             ..Default::default()
         };
-
         assert_eq!(
-            capacity_demand_bytes(&config, 5, 7).unwrap(),
+            capacity_demand_bytes(&config, 5).unwrap(),
             CapacityDemandBytes {
                 replay: 5 + 3 * 11,
-                campaign: 7 + 3 * 13 + 13,
                 database: 4 * (17 + MULTIPART_FRAMING_HEADROOM_BYTES)
                     + (u64::try_from(config.max_concurrent_requests).unwrap()
                         + MAXIMUM_AUXILIARY_DATABASE_WRITERS)
@@ -417,13 +334,6 @@ mod tests {
         assert!(matches!(
             validate_artifact_length("replay", 12, 11),
             Err(StorageAdmissionError::ArtifactTooLarge { kind: "replay", .. })
-        ));
-        assert!(matches!(
-            validate_artifact_length("final_campaign", 14, 13),
-            Err(StorageAdmissionError::ArtifactTooLarge {
-                kind: "final_campaign",
-                ..
-            })
         ));
     }
 }

@@ -2,12 +2,6 @@
 //! code names the same types and calls on every target.
 
 use super::{ClientHandle, NetEvent, NetOutbound, connect_client};
-use crate::leaderboard_ranked_session::{
-    OfficialRankedSessionSetupV1, RankedPreflightLobbyV1, SharedRankedSessionLifecycle,
-};
-use crate::multiplayer::MultiplayerError;
-use robin_engine::player_command::PlayerId;
-use robin_run_protocol::PublicKey32;
 use std::sync::mpsc::{Receiver, Sender};
 
 /// Browser campaign token. Browser clients keep no campaign transport state:
@@ -31,33 +25,6 @@ pub fn connect_client_in_campaign(
 pub enum ServerHandle {}
 
 impl ServerHandle {
-    pub(crate) fn ranked_lifecycle(&self) -> SharedRankedSessionLifecycle {
-        match *self {}
-    }
-
-    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, MultiplayerError> {
-        match *self {}
-    }
-
-    pub(crate) fn ranked_host_public_key(&self) -> PublicKey32 {
-        match *self {}
-    }
-
-    pub(crate) fn ranked_authenticated_seats(&self) -> Vec<(PlayerId, PublicKey32)> {
-        match *self {}
-    }
-
-    pub(crate) fn ranked_preflight_lobby(&self) -> Option<RankedPreflightLobbyV1> {
-        match *self {}
-    }
-
-    pub(crate) fn install_ranked_session_setup(
-        &self,
-        _setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), MultiplayerError> {
-        match *self {}
-    }
-
     pub fn shutdown(&mut self) {
         match *self {}
     }

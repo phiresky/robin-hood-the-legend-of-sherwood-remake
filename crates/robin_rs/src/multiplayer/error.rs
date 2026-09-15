@@ -62,16 +62,6 @@ pub enum MultiplayerError {
     /// The local player or local validation declined the host content.
     #[error("{0}")]
     ContentDeclined(Text),
-    /// A ranked admission or co-sign trust rule was violated.
-    #[error("{0}")]
-    Ranked(Text),
-    /// A ranked document, signature or lifecycle operation failed.
-    #[error("{context}: {source}")]
-    RankedDocument {
-        context: Text,
-        #[source]
-        source: SharedError,
-    },
     /// The host explicitly rejected the connection or session.
     #[error("host rejected {stage}: {reason}")]
     HostRejected { stage: &'static str, reason: String },
@@ -150,16 +140,6 @@ impl MultiplayerError {
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self::Transport {
-            context: context.into(),
-            source: Arc::new(source),
-        }
-    }
-
-    pub fn ranked_document(
-        context: impl Into<Text>,
-        source: impl std::error::Error + Send + Sync + 'static,
-    ) -> Self {
-        Self::RankedDocument {
             context: context.into(),
             source: Arc::new(source),
         }

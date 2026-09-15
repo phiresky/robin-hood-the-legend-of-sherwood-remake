@@ -10,6 +10,18 @@ pub enum ApiError {
     BadRequest(String),
     #[error("signature authentication failed")]
     Unauthorized,
+    /// `signed_at_unix_ms` is outside the server's acceptance window.
+    #[error(
+        "signed request timestamp {signed_at_unix_ms} is outside the accepted window at server time {server_time_unix_ms}"
+    )]
+    SignedRequestNotFresh {
+        signed_at_unix_ms: u64,
+        server_time_unix_ms: u64,
+    },
+    #[error("username update is not newer than the last accepted update for this key")]
+    UsernameUpdateSuperseded,
+    #[error("the uploader already has the maximum number of concurrent uploads")]
+    UploadConcurrencyLimit { retry_after_ms: u64 },
     #[error("resource not found")]
     NotFound,
     #[error("{0}")]
@@ -46,6 +58,32 @@ impl From<robin_run_protocol::CanonicalDocumentError> for ApiError {
     }
 }
 
+/// Shape errors are client bugs, a timestamp outside the window is a
+/// retryable clock/latency problem with its own code, and any signature
+/// failure (including one made for a different operation) is `401`.
+impl From<robin_run_protocol::SignedRequestError> for ApiError {
+    fn from(error: robin_run_protocol::SignedRequestError) -> Self {
+        use robin_run_protocol::{SignedRequestError, SignedRequestFreshnessError};
+        match error {
+            SignedRequestError::Invalid(error) => Self::BadRequest(error.to_string()),
+            SignedRequestError::Freshness(
+                SignedRequestFreshnessError::Expired {
+                    signed_at_unix_ms,
+                    now_unix_ms,
+                }
+                | SignedRequestFreshnessError::FromTheFuture {
+                    signed_at_unix_ms,
+                    now_unix_ms,
+                },
+            ) => Self::SignedRequestNotFresh {
+                signed_at_unix_ms,
+                server_time_unix_ms: now_unix_ms,
+            },
+            SignedRequestError::Signature(_) => Self::Unauthorized,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     schema_version: u32,
@@ -67,6 +105,24 @@ impl IntoResponse for ApiError {
                 "signature_authentication_failed",
                 self.to_string(),
                 None,
+            ),
+            Self::SignedRequestNotFresh { .. } => (
+                StatusCode::BAD_REQUEST,
+                "signed_request_not_fresh",
+                self.to_string(),
+                None,
+            ),
+            Self::UsernameUpdateSuperseded => (
+                StatusCode::CONFLICT,
+                "username_update_superseded",
+                self.to_string(),
+                None,
+            ),
+            Self::UploadConcurrencyLimit { retry_after_ms } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "concurrent_upload_limit",
+                "the uploader already has the maximum number of concurrent uploads".to_owned(),
+                Some(retry_after_ms),
             ),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", self.to_string(), None),
             Self::Conflict(message) => (StatusCode::CONFLICT, "conflict", message, None),
@@ -133,14 +189,22 @@ impl From<crate::db::DbError> for ApiError {
     fn from(error: crate::db::DbError) -> Self {
         match error {
             crate::db::DbError::NotFound => Self::NotFound,
-            crate::db::DbError::InvalidChallenge => {
-                Self::Conflict("upload challenge is expired, consumed, or stale".to_owned())
-            }
             crate::db::DbError::QueueFull => Self::QueueFull,
             crate::db::DbError::AdmissionUnavailable => Self::Unavailable,
             crate::db::DbError::SubmissionConflict => Self::Conflict(
-                "submission challenge was already used for different immutable content".to_owned(),
+                "a concurrent upload of this replay holds different signed content; retry"
+                    .to_owned(),
             ),
+            crate::db::DbError::DuplicateReplay => Self::Conflict(
+                "this replay was already submitted and is pending or verified".to_owned(),
+            ),
+            crate::db::DbError::UploadConcurrencyLimit => Self::UploadConcurrencyLimit {
+                retry_after_ms: 2_000,
+            },
+            crate::db::DbError::UploadLeaseLost => Self::Conflict(
+                "the upload lease expired before the upload completed; retry the upload".to_owned(),
+            ),
+            crate::db::DbError::UsernameUpdateSuperseded => Self::UsernameUpdateSuperseded,
             // Database invariants are downstream of HTTP validation and may
             // contain verifier-derived or operator-private detail. They are
             // never suitable client diagnostics.
@@ -174,29 +238,6 @@ impl From<crate::replay_store::StoreError> for ApiError {
             }
             crate::replay_store::StoreError::Io(_) => {
                 tracing::error!(error_code = error.safe_log_code(), "replay storage failed");
-                Self::Internal
-            }
-        }
-    }
-}
-
-impl From<crate::campaign_store::CampaignStoreError> for ApiError {
-    fn from(error: crate::campaign_store::CampaignStoreError) -> Self {
-        match error {
-            crate::campaign_store::CampaignStoreError::Empty
-            | crate::campaign_store::CampaignStoreError::LengthMismatch { .. }
-            | crate::campaign_store::CampaignStoreError::DigestMismatch
-            | crate::campaign_store::CampaignStoreError::Upload(_) => {
-                Self::BadRequest(error.to_string())
-            }
-            crate::campaign_store::CampaignStoreError::TooLarge { .. } => {
-                Self::PayloadTooLarge(error.to_string())
-            }
-            crate::campaign_store::CampaignStoreError::Io(_) => {
-                tracing::error!(
-                    error_code = error.safe_log_code(),
-                    "campaign storage failed"
-                );
                 Self::Internal
             }
         }
