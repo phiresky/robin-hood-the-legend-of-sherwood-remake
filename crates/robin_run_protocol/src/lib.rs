@@ -55,6 +55,7 @@ pub use robin_run_types::{
     ArtifactRefV1, BoardSimulationPolicyV1, MAX_PARTICIPANT_INSTANCES_V1, MAX_REPLAY_SEATS_V1,
     OfficialContentEditionV1, RANKED_SIMULATION_POLICY_VERSION_V1, RankedSimulationDifficultyV1,
     RankedSimulationPolicyV1, RankedSimulationPresetV1, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2,
+    SCHEMA_VERSION_V3,
 };
 #[cfg(feature = "authentication")]
 pub use signed_request::SignedRequestError;
@@ -66,7 +67,7 @@ pub use signed_request::{
 pub use submission::{
     InputIneligibilityReasonV1, InputProvenanceStatusV1, InputTaintKindV1, InputTaintV1,
     ParticipantPublicDisclosureV1, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-    SUBMISSION_SIGNATURE_DOMAIN_V2, SignedSubmissionV2, SignedUsernameUpdateV2, SubmissionV2,
+    SUBMISSION_SIGNATURE_DOMAIN_V3, SignedSubmissionV3, SignedUsernameUpdateV2, SubmissionV3,
     TerminalOutcomeV1, USERNAME_UPDATE_SIGNATURE_DOMAIN_V2, UsernameUpdateV2,
 };
 pub use validation::{Validate, ValidationError};
@@ -81,7 +82,7 @@ pub use verification::{
 
 /// Exact SQLx migration level shared by the high-score runtime and its
 /// deployment scripts.
-pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 6;
+pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 7;
 
 /// Exact replay schema whose compact bitcode bytes are simultaneously the
 /// submitted, verifier-resimulated, retained, and publicly downloadable
@@ -97,7 +98,7 @@ mod tests {
     #[test]
     fn every_signature_domain_is_distinct_and_terminated() {
         let domains = [
-            <crate::SubmissionV2 as crate::SignedRequestClaim>::DOMAIN,
+            <crate::SubmissionV3 as crate::SignedRequestClaim>::DOMAIN,
             <crate::UsernameUpdateV2 as crate::SignedRequestClaim>::DOMAIN,
             <crate::DeletionRequestV2 as crate::SignedRequestClaim>::DOMAIN,
             <crate::SubmissionOwnerStatusRequestV2 as crate::SignedRequestClaim>::DOMAIN,

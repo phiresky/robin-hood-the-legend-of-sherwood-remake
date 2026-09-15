@@ -187,10 +187,11 @@ stay under `/api/v1`.
 
 ### Submission (`robin_run_protocol::submission`)
 
-- `SubmissionV2 { schema_version, uploader_public_key, signed_at_unix_ms,
+- `SubmissionV3 { schema_version: 3, uploader_public_key, signed_at_unix_ms,
   public_disclosure: ParticipantPublicDisclosureV1, board_id: OpaqueId,
   mission_id, replay: ReplayArtifactV1, requested_metrics: Vec<BoardMetricV1> }`,
-  sent as `SignedSubmissionV2 = SignedRequestV2<SubmissionV2>` (see below).
+  sent as `SignedSubmissionV3 = SignedRequestV2<SubmissionV3>` (see below).
+  The deployed challenge-bearing `SubmissionV2` is retired.
 - Kept as is: `ReplayArtifactV1`, `RANKED_REPLAY_MEDIA_TYPE_V1`, abuse
   reports, diagnostics, `SubmissionAcceptedV1`, `PublicSubmissionStatusV1`.
   `SubmissionLifecycleV1::Accepted { run_id }` loses the campaign receipt.
@@ -206,7 +207,7 @@ submission endpoint itself.
   signature }`; signature = Ed25519 by the claim's own key over
   `T::DOMAIN || canonical_json(request)`.
 - Claims, each carrying the player key and `signed_at_unix_ms`:
-  `SubmissionV2` (`robinhood/leaderboards/2/submission\0`),
+  `SubmissionV3` (`robinhood/leaderboards/3/submission\0`),
   `UsernameUpdateV2 { public_key, signed_at_unix_ms, username }`
   (`…/2/username-update\0`), `DeletionRequestV2 { public_key,
   signed_at_unix_ms, target }` (`…/2/deletion-request\0`),
@@ -222,7 +223,9 @@ submission endpoint itself.
 - `POST /api/v1/submissions` rejects an oversized `Content-Length` before
   reading the body and applies per-IP and per-key rate limits, concurrent
   upload caps and storage admission.
-- DB changes are folded into the undeployed migration 0006.
+- Migration 0006 shipped with challenges, so migration 0007 drops the
+  challenge tables and columns (DB schema 7). Network protocol and replay
+  schema are unaffected.
 - Removed: offers and offer requests, session genesis, ranked session config,
   participant claims/signatures, join attestations, co-sign, preflight and
   competition grants, campaign continuation/authorization/chain receipts,
