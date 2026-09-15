@@ -19,10 +19,6 @@ function fixtureFetch({
     optionsStatus = 405,
     optionsAllowOrigin,
     optionsAllowCredentials,
-    immutableCacheControl = 'public, max-age=31536000, immutable',
-    immutableContentTypeOptions = 'nosniff',
-    immutableAllowOrigin,
-    immutableAllowCredentials,
     demoBytes = DEMO_BYTES,
     demoContentLength,
     demoManifestByteLength = DEMO_BYTES.byteLength,
@@ -41,7 +37,6 @@ function fixtureFetch({
     const requests = [];
     let metadataProbes = 0;
     const short = '1234567890ab';
-    const rulesetDigest = '1234567890abcdef'.repeat(4);
     const runtimeManifest = `${JSON.stringify({
         short,
         ticketSchema: 3,
@@ -72,31 +67,14 @@ function fixtureFetch({
                     },
                 });
             }
-            if (url.pathname === `/api/v1/ruleset-manifests/${rulesetDigest}`) {
-                return new Response(JSON.stringify({ schema_version: 1 }), {
-                    status: 200,
-                    headers: {
-                        'content-type': 'application/json',
-                        'cache-control': immutableCacheControl,
-                        ...(immutableContentTypeOptions === null
-                            ? {}
-                            : { 'x-content-type-options': immutableContentTypeOptions }),
-                        ...(immutableAllowOrigin === undefined
-                            ? {}
-                            : { 'access-control-allow-origin': immutableAllowOrigin }),
-                        ...(immutableAllowCredentials === undefined
-                            ? {}
-                            : { 'access-control-allow-credentials': immutableAllowCredentials }),
-                    },
-                });
-            }
             metadataProbes += 1;
             const cfCacheStatus = metadataProbes === 2
                 ? apiSecondCfCacheStatus ?? apiCfCacheStatus
                 : apiCfCacheStatus;
             return new Response(JSON.stringify({
-                schema_version: 1,
-                rulesets: [{ ruleset_manifest_sha256: rulesetDigest }],
+                schema_version: 2,
+                tick_duration: { numerator_micros: 50_000, denominator: 1 },
+                boards: [],
             }), {
                 status: 200,
                 headers: {
@@ -232,9 +210,6 @@ test('deployment smoke covers both static origins, a deep link, assets, and API 
     const preflightHeaders = new Headers(preflight.options.headers);
     assert.equal(preflightHeaders.get('origin'), 'https://attacker.invalid');
     assert.equal(preflightHeaders.get('access-control-request-method'), 'GET');
-    assert(fixture.paths.includes(
-        `GET ${DEPLOYMENT.publicOrigin}/api/v1/ruleset-manifests/${'1234567890abcdef'.repeat(4)}`,
-    ));
 });
 
 test('deployment smoke requires game isolation, an isolation-compatible signer, and same-origin static resources', async () => {
@@ -326,41 +301,6 @@ test('deployment smoke rejects permissive attacker-origin preflight headers', as
         optionsAllowOrigin: '*',
         optionsAllowCredentials: 'true',
     });
-    await assert.rejects(
-        smokeCloudflareDeployment(fixture.fetchImpl),
-        /unexpectedly exposes access-control-allow-origin/u,
-    );
-});
-
-test('deployment smoke rejects weakened immutable API caching', async () => {
-    const fixture = fixtureFetch({ immutableCacheControl: 'public, max-age=60' });
-    await assert.rejects(
-        smokeCloudflareDeployment(fixture.fetchImpl),
-        /public, max-age=31536000, immutable/u,
-    );
-});
-
-test('deployment smoke rejects an immutable API document without nosniff', async () => {
-    const fixture = fixtureFetch({ immutableContentTypeOptions: null });
-    await assert.rejects(
-        smokeCloudflareDeployment(fixture.fetchImpl),
-        /X-Content-Type-Options: nosniff/u,
-    );
-});
-
-test('deployment smoke accepts combined repeated nosniff fields but rejects any other member', async () => {
-    // The API and nginx both emit the header; Fetch joins repeated fields.
-    await smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: 'nosniff, nosniff' }).fetchImpl);
-    for (const value of ['nosniff, ', 'nosniff, sniff']) {
-        await assert.rejects(
-            smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: value }).fetchImpl),
-            /X-Content-Type-Options: nosniff/u,
-        );
-    }
-});
-
-test('deployment smoke rejects CORS on immutable API documents', async () => {
-    const fixture = fixtureFetch({ immutableAllowOrigin: DEPLOYMENT.publicOrigin });
     await assert.rejects(
         smokeCloudflareDeployment(fixture.fetchImpl),
         /unexpectedly exposes access-control-allow-origin/u,

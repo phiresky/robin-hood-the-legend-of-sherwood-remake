@@ -1,5 +1,8 @@
 import {
+    type BoardMetric,
     type BoardMetricValue,
+    type ContentEdition,
+    type TickDuration,
 } from './types.js';
 
 export function formatDuration(milliseconds: number): string {
@@ -27,18 +30,28 @@ export function formatDate(timestamp: string | number): string {
         .format(new Date(timestamp));
 }
 
-export function formatMetricValue(value: BoardMetricValue): string {
+/** Active simulation time; the tick duration is the service's compiled engine constant. */
+export function formatActiveTime(activeSimulationTicks: number, tickDuration: TickDuration): string {
+    const microseconds = activeSimulationTicks * tickDuration.numeratorMicros / tickDuration.denominator;
+    if (!Number.isSafeInteger(Math.floor(microseconds))) return 'Duration too large';
+    return formatDuration(microseconds / 1000);
+}
+
+export function formatMetricValue(value: BoardMetricValue, tickDuration: TickDuration): string {
     switch (value.metric) {
         case 'original_score':
             return formatInteger(value.points);
-        case 'fastest_success': {
-            const microseconds = value.activeSimulationTicks * value.tickDurationMicros;
-            if (!Number.isSafeInteger(microseconds)) {
-                return 'Duration too large';
-            }
-            return formatDuration(microseconds / 1000);
-        }
+        case 'fastest_success':
+            return formatActiveTime(value.activeSimulationTicks, tickDuration);
     }
+}
+
+export function metricLabel(metric: BoardMetric): string {
+    return metric === 'original_score' ? 'Original score' : 'Fastest successful';
+}
+
+export function editionLabel(edition: ContentEdition): string {
+    return edition === 'demo' ? 'Demo' : 'Full game';
 }
 
 function pad2(value: number): string {

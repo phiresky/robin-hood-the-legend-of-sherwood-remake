@@ -4,23 +4,18 @@ import { filtersToApiQuery, routeFromUrl, urlWithFilters, urlWithPlayerCursor } 
 
 const digest = 'a'.repeat(64);
 
-test('leaderboard URL parsing has stable public defaults', () => {
+test('leaderboard URL parsing leaves unset board choices to published defaults', () => {
     assert.deepEqual(routeFromUrl('https://pages.example/leaderboards/?api=https://api.example/api/v1'), {
         kind: 'leaderboard',
-        filters: {
-            subject: 'individual_level',
-            metric: 'original_score',
-            missionId: null,
-            presetId: null,
-            difficultyId: null,
-            rulesetId: null,
-            contentIdentitySha256: null,
-            rulesConfigSha256: null,
-            competitionManifestSha256: null,
-            maxConcurrentPlayers: null,
-            cursor: null,
-        },
+        filters: { boardId: null, missionId: null, metric: null, maxConcurrentPlayers: null, cursor: null },
     });
+    assert.deepEqual(routeFromUrl('https://pages.example/leaderboards/?board=demo-standard-normal&mission=Dem_Lei_MP&metric=fastest_success&players=2'), {
+        kind: 'leaderboard',
+        filters: { boardId: 'demo-standard-normal', missionId: 'Dem_Lei_MP', metric: 'fastest_success', maxConcurrentPlayers: 2, cursor: null },
+    });
+    assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?metric=ransom'), /metric must be one of/u);
+    assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?players=5'), /seat range/u);
+    assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?board=%20bad'), /board is invalid/u);
 });
 
 test('run routes and minimal public submission routes preserve their identifiers', () => {
@@ -30,21 +25,7 @@ test('run routes and minimal public submission routes preserve their identifiers
         { kind: 'submission', id: 'sub_7' },
     );
     assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?run=%20bad'), /invalid/u);
-});
-
-test('full-campaign session routes require an aggregate id and gap-free ordinal', () => {
-    assert.deepEqual(
-        routeFromUrl('https://pages.example/leaderboards/?run=aggregate_1&session=0'),
-        { kind: 'campaign_session', aggregateRunId: 'aggregate_1', ordinal: 0 },
-    );
-    assert.throws(
-        () => routeFromUrl('https://pages.example/leaderboards/?session=1'),
-        /requires its aggregate/u,
-    );
-    assert.throws(
-        () => routeFromUrl('https://pages.example/leaderboards/?run=aggregate_1&session=-1'),
-        /non-negative/u,
-    );
+    assert.throws(() => routeFromUrl(`https://pages.example/leaderboards/?run=r&player=${digest}`), /more than one/u);
 });
 
 test('player routes round-trip an opaque history cursor without losing loopback API configuration', () => {
@@ -53,12 +34,13 @@ test('player routes round-trip an opaque history cursor without losing loopback 
         { kind: 'player', publicKey: digest, cursor: 'page+2' },
     );
     const next = new URL(urlWithPlayerCursor(
-        `http://localhost:5173/leaderboards/?api=https%3A%2F%2Fscores.example%2Fapi%2Fv1&run=old`,
+        `http://localhost:5173/leaderboards/?api=https%3A%2F%2Fscores.example%2Fapi%2Fv1&run=old&board=b`,
         digest,
         'page+2',
     ));
     assert.equal(next.searchParams.get('api'), 'https://scores.example/api/v1');
     assert.equal(next.searchParams.get('run'), null);
+    assert.equal(next.searchParams.get('board'), null);
     assert.equal(next.searchParams.get('player'), digest);
     assert.equal(next.searchParams.get('cursor'), 'page+2');
     assert.throws(
@@ -67,68 +49,36 @@ test('player routes round-trip an opaque history cursor without losing loopback 
     );
 });
 
-test('filter serialization preserves API configuration and canonical query vocabulary', () => {
+test('filter serialization preserves API configuration and the flat LeaderboardQueryV2 vocabulary', () => {
     const filters = {
-        subject: 'campaign' as const,
+        boardId: 'demo-standard-normal',
+        missionId: 'Dem_Lei_MP',
         metric: 'fastest_success' as const,
-        missionId: 'nottingham',
-        presetId: 'fresh_features',
-        difficultyId: 'legendary',
-        rulesetId: digest,
-        contentIdentitySha256: digest,
-        rulesConfigSha256: digest,
-        competitionManifestSha256: 'b'.repeat(64),
         maxConcurrentPlayers: 2,
         cursor: 'cursor+opaque',
     };
     const url = new URL(urlWithFilters('https://pages.example/leaderboards/?api=https%3A%2F%2Fapi.example%2Fapi%2Fv1&run=old', filters));
     assert.equal(url.searchParams.get('api'), 'https://api.example/api/v1');
     assert.equal(url.searchParams.get('run'), null);
-    assert.equal(url.searchParams.get('competition'), 'b'.repeat(64));
+    assert.equal(url.searchParams.get('board'), 'demo-standard-normal');
+    assert.deepEqual(routeFromUrl(url.toString()), { kind: 'leaderboard', filters });
 
     assert.deepEqual(filtersToApiQuery(filters), {
-        schema_version: 1,
-        mission_id: 'nottingham',
-        subject_kind: 'mission',
-        mission_scope: 'campaign',
+        schema_version: 2,
+        board_id: 'demo-standard-normal',
+        mission_id: 'Dem_Lei_MP',
         metric: 'fastest_success',
-        content_identity_sha256: digest,
-        rules_config_sha256: digest,
-        ruleset_manifest_sha256: digest,
-        competition_manifest_sha256: 'b'.repeat(64),
         max_concurrent_players: 2,
         limit: 25,
         cursor: 'cursor+opaque',
     });
 });
 
-test('full campaign query forbids mission fields and remembered subject is used only as a URL default', () => {
-    const route = routeFromUrl('https://pages.example/leaderboards/', 'full_campaign');
-    assert.equal(route.kind === 'leaderboard' ? route.filters.subject : null, 'full_campaign');
-    if (route.kind !== 'leaderboard') throw new Error('expected leaderboard route');
-    const query = filtersToApiQuery({
-        ...route.filters,
-        metric: 'original_score',
-        rulesetId: digest,
-        contentIdentitySha256: digest,
-        rulesConfigSha256: digest,
-    });
-    assert.equal(query.subject_kind, 'full_campaign');
-    assert.equal(query.mission_id, null);
-    assert.equal(query.mission_scope, null);
-    assert.equal(routeFromUrl('https://pages.example/leaderboards/?subject=campaign', 'full_campaign').kind, 'leaderboard');
-});
-
 test('Worker-hosted leaderboard paths survive canonical query navigation and direct reload links', () => {
-    const input = 'https://robinhood.phiresky.xyz/leaderboards/?run=run_42';
-    assert.deepEqual(routeFromUrl(input), { kind: 'run', id: 'run_42' });
-
-    const route = routeFromUrl('https://robinhood.phiresky.xyz/leaderboards/');
-    if (route.kind !== 'leaderboard') throw new Error('expected leaderboard route');
-    const output = new URL(urlWithFilters(
-        'https://robinhood.phiresky.xyz/leaderboards/',
-        route.filters,
-    ));
+    assert.deepEqual(routeFromUrl('https://robinhood.phiresky.xyz/leaderboards/?run=run_42'), { kind: 'run', id: 'run_42' });
+    const output = new URL(urlWithFilters('https://robinhood.phiresky.xyz/leaderboards/', {
+        boardId: 'b', missionId: null, metric: null, maxConcurrentPlayers: null, cursor: null,
+    }));
     assert.equal(output.pathname, '/leaderboards/');
-    assert.equal(output.searchParams.get('subject'), 'individual_level');
+    assert.equal(output.search, '?board=b');
 });

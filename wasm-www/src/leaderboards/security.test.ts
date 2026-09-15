@@ -4,9 +4,9 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { cspDirectives } from '../csp-test-utils.js';
 import { element, link, replace } from './dom.js';
-import { participantView, aggregateParticipantView, appendAchievements, playerTables, campaignCompositionLabel } from './public-components.js';
-import { parsePlayerRunHistoryPage, parseRunDetail } from './public-response.js';
-import { playerHistoryPage, fullCampaignRun } from './model-fixtures.js';
+import { appendAchievements, playerTables, uploaderView } from './public-components.js';
+import { parseBoardMetadata, parsePlayerRunHistoryPage } from './public-response.js';
+import { metadataDocument, playerHistoryPage } from './model-fixtures.js';
 
 function browser(t: test.TestContext): Document {
     const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -25,18 +25,17 @@ test('actual participant views keep hostile names inert and expose only public i
     const name = '<img src=x onerror=alert(1)><script>bad()</script>';
     const publicKey = '12'.repeat(32), fingerprint = 'owner fingerprint';
     const playerLink = (key: string, label: string) => link(label, '?player=' + key);
-    for (const view of [
-        participantView({ seat: 1, username: name, publicKey, publicKeyFingerprint: fingerprint }, playerLink),
-        aggregateParticipantView({ currentDisplayName: name, publicKey, publicKeyFingerprint: fingerprint }, playerLink),
-    ]) {
-        replace(document.body, view);
-        assert.equal(document.querySelector('a')?.textContent, name);
-        assert.equal(document.querySelector('a')?.getAttribute('href'), '?player=' + publicKey);
-        assert.equal(document.querySelector('.fingerprint')?.textContent, fingerprint);
-        assert.match(document.querySelector('.fingerprint')?.getAttribute('title') ?? '', /only its owner/u);
-        assert.equal(document.querySelectorAll('img, script').length, 0);
-        assert.equal(document.body.textContent, name + fingerprint);
-    }
+    replace(document.body, uploaderView({ seat: 0, username: name, publicKey, publicKeyFingerprint: fingerprint }, playerLink));
+    assert.equal(document.querySelector('a')?.textContent, name);
+    assert.equal(document.querySelector('a')?.getAttribute('href'), '?player=' + publicKey);
+    assert.equal(document.querySelector('.fingerprint')?.textContent, fingerprint);
+    assert.match(document.querySelector('.fingerprint')?.getAttribute('title') ?? '', /only its owner/u);
+    assert.equal(document.querySelectorAll('img, script').length, 0);
+    assert.equal(document.body.textContent, name + fingerprint);
+
+    replace(document.body, uploaderView(null, playerLink));
+    assert.equal(document.querySelectorAll('a').length, 0);
+    assert.equal(document.body.textContent, 'Anonymous uploader');
 });
 
 test('achievement rendering awards only earned decisions and keeps all labels inert', t => {
@@ -58,10 +57,8 @@ test('player tables expose labelled sections, captions, scoped columns and inert
     const document = browser(t);
     const page = parsePlayerRunHistoryPage(playerHistoryPage());
     const hostile = '<img src=x onerror=alert(1)>';
-    const tables = playerTables((id, label) => link(label, '?run=' + id), () => element('nav'));
-    const bests = page.personalBests.map(best => ({ ...best, filter: { ...best.filter,
-        subject: { kind: 'mission' as const, category: 'individual_level' as const, missionId: hostile },
-    } }));
+    const tables = playerTables((id, label) => link(label, '?run=' + id), () => element('nav'), parseBoardMetadata(metadataDocument()));
+    const bests = page.personalBests.map(best => ({ ...best, filter: { ...best.filter, missionId: hostile, boardId: hostile } }));
     document.body.append(tables.renderPlayerPersonalBests(bests), tables.renderPlayerRunHistory(page, null));
     assert.equal(document.querySelectorAll('table').length, 2);
     for (const section of document.querySelectorAll('section')) {
@@ -74,15 +71,6 @@ test('player tables expose labelled sections, captions, scoped columns and inert
     }
     assert.ok(document.body.textContent?.includes(hostile));
     assert.equal(document.querySelectorAll('img,script').length, 0);
-});
-
-test('full campaign composition renders the public aggregate identity and ordered session count', t => {
-    const document = browser(t);
-    const run = parseRunDetail(fullCampaignRun());
-    const label = campaignCompositionLabel(run);
-    document.body.append(element('dd', { text: label }));
-    assert.equal(document.body.textContent, `${run.runId} · ${run.fullCampaignSessions.length} ordered sessions`);
-    assert.doesNotMatch(label, /chain_id|chainId/u);
 });
 
 test('leaderboard CSP pins the dedicated signer and has no executable blob exception', () => {
