@@ -1,140 +1,98 @@
-import type { BoardFilters } from './state.js';
-import type { BoardMetadata, Competition } from './types.js';
-import { runContentDigest } from './subject-contract.js';
-import { selectionFromSubject } from './view-model.js';
+import type { BoardFilters, SelectedBoardFilters } from './state.js';
+import type { Board, BoardMetadata, ContentEdition } from './types.js';
 
-/** Shared subject/content policy for admission and the filter controls. */
-export function compatibleRulesets(
-    metadata: BoardMetadata,
-    subject: BoardFilters['subject'],
-    metric: BoardFilters['metric'],
-    mission: BoardMetadata['missions'][number] | null | undefined,
-): BoardMetadata['rulesets'] {
-    return metadata.rulesets.filter(ruleset => ruleset.metrics.includes(metric)
-        && (subject === 'full_campaign'
-            ? ruleset.supportsFullCampaign && ruleset.content.kind === 'full_campaign'
-            : mission !== null && mission !== undefined
-                && ruleset.content.kind === 'mission'
-                && ruleset.content.contentManifestSha256 === mission.contentManifestSha256
-                && ruleset.categories.includes(subject)));
+export type NormalizedBoardFilters = SelectedBoardFilters & { readonly board: Board };
+
+export type FacetOption = { readonly id: string; readonly label: string };
+
+export function requireBoard(metadata: BoardMetadata, boardId: string): Board {
+    const board = metadata.boards.find(item => item.boardId === boardId);
+    if (board === undefined) throw new Error('The selected board is not published by this server.');
+    return board;
 }
 
-export function normalizeFilters(input: BoardFilters, metadata: BoardMetadata): BoardFilters {
-    const selectedCompetition = input.competitionManifestSha256 === null
-        ? null
-        : requireCompetition(input.competitionManifestSha256, metadata.competitions);
-    let subject = selectedCompetition === null
-        ? input.subject
-        : selectionFromSubject(selectedCompetition.subject);
-    if (subject !== 'full_campaign' && metadata.missions.length === 0 && metadata.fullCampaign !== null) {
-        subject = 'full_campaign';
+/**
+ * Resolve URL filters against published boards: board × mission × metric, with
+ * the first published choice as default. A named but unpublished choice fails
+ * clearly instead of silently showing another board.
+ */
+export function normalizeFilters(
+    input: BoardFilters,
+    metadata: BoardMetadata,
+    rememberedBoardId: string | null = null,
+): NormalizedBoardFilters {
+    const fallback = metadata.boards.find(item => item.boardId === rememberedBoardId) ?? metadata.boards[0];
+    if (fallback === undefined) throw new Error('This server publishes no ranked boards.');
+    const board = input.boardId === null ? fallback : requireBoard(metadata, input.boardId);
+    const missionId = input.missionId ?? board.missions[0]?.missionId;
+    if (missionId === undefined || !board.missions.some(mission => mission.missionId === missionId)) {
+        throw new Error('The selected mission is not part of this board.');
     }
-    const metric = selectedCompetition?.metric ?? input.metric;
-    if (subject === 'full_campaign' && metadata.fullCampaign === null) {
-        throw new Error('This server has not provisioned a full-campaign board.');
+    const metric = input.metric ?? board.metrics[0];
+    if (metric === undefined || !board.metrics.includes(metric)) {
+        throw new Error('This board does not rank the selected metric.');
     }
-    const competitionMissionId = selectedCompetition?.subject.kind === 'mission'
-        ? selectedCompetition.subject.missionId
-        : null;
-    const missionId = subject === 'full_campaign'
-        ? null
-        : competitionMissionId ?? input.missionId ?? metadata.missions[0]?.id ?? null;
-    const mission = missionId === null ? null : metadata.missions.find(item => item.id === missionId);
-    if (subject !== 'full_campaign' && mission === undefined) {
-        throw new Error('The selected mission is not published by this server.');
-    }
+    return { ...input, board, boardId: board.boardId, missionId, metric };
+}
 
-    const compatible = compatibleRulesets(metadata, subject, metric, mission);
-    if (compatible.length === 0) throw new Error('No published ruleset supports this subject and metric.');
-
-    const competitionRuleset = selectedCompetition === null
-        ? null
-        : compatible.find(ruleset => ruleset.id === selectedCompetition.rulesetId);
-    if (selectedCompetition !== null) {
-        if (competitionRuleset === undefined || competitionRuleset === null) {
-            throw new Error('The selected challenge references a ruleset that is not published for its subject.');
-        }
-        if (runContentDigest(competitionRuleset.content) !== runContentDigest(selectedCompetition.content)
-            || competitionRuleset.content.kind !== selectedCompetition.content.kind
-            || competitionRuleset.rulesConfigSha256 !== selectedCompetition.rulesConfigSha256) {
-            throw new Error('The selected challenge does not match its published content and rules configuration.');
-        }
-    }
-
-    if (selectedCompetition === null && input.presetId === null
-        && input.difficultyId === null && input.rulesetId === null) {
-        const content = compatible[0]?.content;
-        if (content === undefined) throw new Error('No content is published for the combined board.');
-        return { ...input, subject, metric, missionId,
-            presetId: null, difficultyId: null, rulesetId: null, rulesConfigSha256: null,
-            contentIdentitySha256: runContentDigest(content), competitionManifestSha256: null };
-    }
-
-    let presetId = competitionRuleset?.presetId ?? input.presetId;
-    if (presetId !== null && !compatible.some(ruleset => ruleset.presetId === presetId)) {
-        throw new Error('The selected preset is not available for this board.');
-    }
-    presetId ??= compatible.find(ruleset => ruleset.presetId === 'standard')?.presetId
-        ?? compatible[0]?.presetId
-        ?? null;
-    const presetRules = compatible.filter(ruleset => ruleset.presetId === presetId);
-
-    let difficultyId = competitionRuleset?.difficultyId ?? input.difficultyId;
-    if (difficultyId !== null && !presetRules.some(ruleset => ruleset.difficultyId === difficultyId)) {
-        throw new Error('The selected difficulty is not available for this preset.');
-    }
-    difficultyId ??= presetRules[0]?.difficultyId ?? null;
-    const exactRules = presetRules.filter(ruleset => ruleset.difficultyId === difficultyId);
-
-    let rulesetId = selectedCompetition?.rulesetId ?? input.rulesetId;
-    if (rulesetId !== null && !exactRules.some(ruleset => ruleset.id === rulesetId)) {
-        throw new Error('The selected ruleset is not available for these filters.');
-    }
-    rulesetId ??= exactRules[0]?.id ?? null;
-    if (rulesetId === null) throw new Error('No immutable ruleset matches these filters.');
-    const selectedRuleset = exactRules.find(ruleset => ruleset.id === rulesetId);
-    if (selectedRuleset === undefined) throw new Error('The selected immutable ruleset is unavailable.');
-
+/** Choices for the edition, preset and difficulty selectors around the current board. */
+export function boardFacets(metadata: BoardMetadata, board: Board): {
+    readonly editions: readonly FacetOption[];
+    readonly presets: readonly FacetOption[];
+    readonly difficulties: readonly FacetOption[];
+    /** Boards sharing all three labels; more than one needs an explicit board choice. */
+    readonly variants: readonly Board[];
+} {
+    const sameEdition = metadata.boards.filter(item => item.edition === board.edition);
+    const samePreset = sameEdition.filter(item => item.presetId === board.presetId);
     return {
-        ...input,
-        subject,
-        metric,
-        missionId,
-        presetId,
-        difficultyId,
-        rulesetId,
-        contentIdentitySha256: runContentDigest(selectedRuleset.content),
-        rulesConfigSha256: selectedRuleset.presetId === 'any' ? input.rulesConfigSha256 ?? selectedRuleset.rulesConfigSha256 : selectedRuleset.rulesConfigSha256,
-        competitionManifestSha256: selectedCompetition?.manifestSha256 ?? null,
-        maxConcurrentPlayers: selectedCompetition === null
-            ? input.maxConcurrentPlayers
-            : competitionPlayerCount(selectedCompetition),
+        editions: unique(metadata.boards.map(item => ({ id: item.edition, label: item.edition === 'demo' ? 'Demo' : 'Full game' }))),
+        presets: unique(sameEdition.map(item => ({ id: item.presetId, label: item.presetName }))),
+        difficulties: unique(samePreset.map(item => ({ id: item.difficultyId, label: item.difficultyName }))),
+        variants: samePreset.filter(item => item.difficultyId === board.difficultyId),
     };
 }
 
-
-export function requireMission(id: string | null, metadata: BoardMetadata): BoardMetadata['missions'][number] {
-    const mission = metadata.missions.find(item => item.id === id);
-    if (mission === undefined) throw new Error('The selected mission is not published by this server.');
-    return mission;
+/** The board selected by changing one facet, keeping the other facets where possible. */
+export function boardForFacet(
+    metadata: BoardMetadata,
+    current: Board,
+    change: { readonly edition?: ContentEdition; readonly presetId?: string; readonly difficultyId?: string },
+): Board {
+    const narrow = (boards: readonly Board[], matches: (board: Board) => boolean): readonly Board[] => {
+        const matching = boards.filter(matches);
+        return matching.length === 0 ? boards : matching;
+    };
+    const edition = change.edition ?? current.edition;
+    const byEdition = metadata.boards.filter(board => board.edition === edition);
+    if (byEdition.length === 0) throw new Error('No board is published for the selected edition.');
+    const presetId = change.presetId ?? current.presetId;
+    const byPreset = change.presetId === undefined
+        ? narrow(byEdition, board => board.presetId === presetId)
+        : byEdition.filter(board => board.presetId === presetId);
+    const difficultyId = change.difficultyId ?? current.difficultyId;
+    const byDifficulty = change.difficultyId === undefined
+        ? narrow(byPreset, board => board.difficultyId === difficultyId)
+        : byPreset.filter(board => board.difficultyId === difficultyId);
+    const selected = byDifficulty.find(board => board.boardId === current.boardId) ?? byDifficulty[0];
+    if (selected === undefined) throw new Error('No board is published for the selected preset and difficulty.');
+    return selected;
 }
 
-
-export function requireCompetition(manifestSha256: string, competitions: readonly Competition[]): Competition {
-    const competition = competitions.find(item => item.manifestSha256 === manifestSha256);
-    if (competition === undefined) throw new Error('The selected challenge is not published by this server.');
-    return competition;
+/** Filters after switching boards: keep the mission and metric when the new board has them. */
+export function filtersForBoard(board: Board, current: BoardFilters): BoardFilters {
+    return {
+        boardId: board.boardId,
+        missionId: current.missionId !== null && board.missions.some(mission => mission.missionId === current.missionId)
+            ? current.missionId
+            : null,
+        metric: current.metric !== null && board.metrics.includes(current.metric) ? current.metric : null,
+        maxConcurrentPlayers: current.maxConcurrentPlayers,
+        cursor: null,
+    };
 }
 
-
-export function competitionPlayerCount(competition: Competition): number {
-    return competition.participantComposition.kind === 'single_player'
-        ? 1
-        : competition.participantComposition.maxConcurrentPlayers;
-}
-
-
-export function requireFilterIdentity(value: string | null, label: string): string {
-    if (value === null) throw new Error(`The normalized board is missing its ${label} identity.`);
-    return value;
+function unique(values: readonly FacetOption[]): readonly FacetOption[] {
+    const seen = new Set<string>();
+    return values.filter(value => !seen.has(value.id) && seen.add(value.id));
 }
