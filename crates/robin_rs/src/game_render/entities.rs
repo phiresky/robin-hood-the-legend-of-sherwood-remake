@@ -368,6 +368,16 @@ fn render_cached_entity_sprite(
             dst_rect,
             128,
         );
+    } else if uses_pixel_fog_visibility(entity) {
+        renderer.render_cached_map_sprite(
+            bank_id,
+            variant,
+            shadow_color,
+            shadow_level,
+            placement.world_origin,
+            view,
+            zoom,
+        );
     } else {
         renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
     }
@@ -1051,7 +1061,25 @@ pub(super) fn render_fx_entities_gpu<I>(
             let (dst_x, dst_y) = placement.screen_origin;
 
             let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
-            renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
+            if uses_pixel_fog_visibility(entity) {
+                renderer.render_cached_map_sprite(
+                    bank_id,
+                    variant,
+                    shadow_color,
+                    shadow_level,
+                    placement.world_origin,
+                    view,
+                    zoom,
+                );
+            } else {
+                renderer.render_cached_sprite(
+                    bank_id,
+                    variant,
+                    shadow_color,
+                    shadow_level,
+                    dst_rect,
+                );
+            }
         }
     }
 }

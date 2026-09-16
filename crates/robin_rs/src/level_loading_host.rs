@@ -16,14 +16,13 @@ use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_assets::terrain_source::{candidate_paths, open_candidate};
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{MapPoint, MinimapSize};
+use robin_engine::coordinates::MinimapSize;
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
 use robin_engine::engine::{Ambiance, Engine, PANNEL_HEIGHT};
 use robin_engine::minimap as engine_minimap;
 use robin_engine::sbfile;
-use robin_engine::sprite::BBox;
 use robin_engine::sprite_variant::SpriteVariant;
 use std::sync::Arc;
 
@@ -997,16 +996,12 @@ pub fn draw_background(viewport: &crate::host::ViewportState, renderer: &mut Ren
     let screen = &viewport.screen_size;
     let zoom = viewport.zoom_factor;
 
-    let src_min = *view;
-    let src_max = MapPoint::new(
-        view.x + (screen.x / zoom),
-        view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
+    renderer.render_map_background(
+        *view,
+        zoom,
+        screen.x as u32,
+        (screen.y - PANNEL_HEIGHT) as u32,
     );
-    let src = BBox::from_coords(src_min.x, src_min.y, src_max.x, src_max.y);
-
-    let dst = BBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
-
-    renderer.render_background_texture(Some(&src), Some(&dst));
 }
 
 #[cfg(test)]
