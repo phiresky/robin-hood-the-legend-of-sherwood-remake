@@ -157,7 +157,8 @@ pub struct ReplayHeader {
 /// Version 51 stores ordered pathfinder state and canonical action payloads.
 /// Version 52 stores canonical order ownership, sequence links, and host effects.
 /// Version 53 stores unified host output and canonical human opponent records.
-pub const REPLAY_SCHEMA_VERSION: u32 = 53;
+/// Version 54 removes inferred corpse-posture and special-strike tracking state.
+pub const REPLAY_SCHEMA_VERSION: u32 = 54;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

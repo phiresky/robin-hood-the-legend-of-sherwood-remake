@@ -89,7 +89,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 59 carries ordered pathfinder state and canonical action payloads.
 /// Protocol 60 carries canonical order ownership, sequence links, and host effects.
 /// Protocol 61 carries unified host output and canonical human opponent records.
-pub const NET_PROTOCOL_VERSION: u32 = 61;
+/// Protocol 62 removes inferred corpse-posture and special-strike tracking state.
+pub const NET_PROTOCOL_VERSION: u32 = 62;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
