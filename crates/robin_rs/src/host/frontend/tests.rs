@@ -98,7 +98,9 @@ mod interaction_reset_tests {
             .diagnostics_mut()
             .queue_console_output("old mission output".into());
         host.frontend.diagnostics_mut().record_frame(100, 7);
-        host.frontend.diagnostics_mut().observe_present_cost(42);
+        host.frontend
+            .diagnostics_mut()
+            .observe_present_cost(42, 100);
         host.frontend.presentation.fade_to_black = Some(FadeToBlack {
             speed: 20,
             frames_remaining: 13,
@@ -122,6 +124,10 @@ mod interaction_reset_tests {
         assert_eq!(
             host.frontend.diagnostics().native_refresh_present_cost_us(),
             42
+        );
+        assert_eq!(
+            host.frontend.diagnostics().native_refresh_last_present_us(),
+            100
         );
         assert!(Arc::ptr_eq(
             &sprites,
