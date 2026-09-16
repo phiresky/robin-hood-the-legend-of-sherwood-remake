@@ -3325,11 +3325,12 @@ mod tests {
             .sequence_manager
             .get_element_mut(seq_id, 0)
             .unwrap();
-        let order = element.pop_current_order().expect("canonical Carry order");
+        let order = element.orders.front().expect("canonical Carry order");
         assert_eq!(
             (order.order_type, order.order_id.get()),
             (OrderType::TransitionWaitingUprightCarryingCorpse, 300)
         );
+        assert!(element.pop_current_order().is_some());
         assert!(element.pop_current_order().is_none());
 
         let carrier_entity = engine.world.entities.get_mut(carrier).unwrap();
