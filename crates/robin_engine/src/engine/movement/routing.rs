@@ -912,8 +912,18 @@ impl EngineInner {
                     }
                     return order_action;
                 }
-                // Frozen action processing returns before sprite motion, then
-                // seeking ages the shared unsigned wait scalar.
+                // Frozen action processing leaves the sprite untouched, but
+                // seeking still renews the order before aging its wait scalar.
+                let (element, next_order_id) = self
+                    .orders
+                    .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                    .expect("globally frozen seek lost its selected element");
+                let order = element
+                    .orders
+                    .front_mut()
+                    .expect("globally frozen seek lost its selected order");
+                assert_eq!(order.order_id, selected.order_id);
+                order.reseed_id(crate::order::alloc_order_id(next_order_id));
                 let actor = self
                     .world
                     .entities

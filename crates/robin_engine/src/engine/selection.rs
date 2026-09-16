@@ -170,9 +170,8 @@ impl EngineInner {
             return;
         }
         if !multi_select {
-            let old_selection = self.players.seats[seat].selection.clone();
-            for old_id in old_selection {
-                if let Some(Entity::Pc(pc)) = self.get_entity_mut(old_id) {
+            for &old_id in &self.players.seats[seat].selection {
+                if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(old_id) {
                     pc.pc.portrait.open = false;
                 }
             }
@@ -221,9 +220,12 @@ impl EngineInner {
         assets: &LevelAssets,
         seat: usize,
     ) {
-        if self.players.seats[seat].selection.len() > 1 {
-            let ids = self.players.seats[seat].selection.clone();
-            for id in ids {
+        // Callbacks see the live selection, with the traversal extent fixed
+        // before dispatch. They must retain every index still to be visited.
+        let selected_count = self.players.seats[seat].selection.len();
+        if selected_count > 1 {
+            for index in 0..selected_count {
+                let id = self.players.seats[seat].selection[index];
                 self.unselect_action(sim, assets, id);
             }
             self.players.seats[seat].selected_action = Action::NoAction;
@@ -276,16 +278,15 @@ impl EngineInner {
         assets: &LevelAssets,
         seat: usize,
     ) {
-        for pc_id in self.world.pc_ids.clone() {
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+        for &pc_id in &self.world.pc_ids {
+            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
                 pc.pc.portrait.open = false;
             }
         }
         self.players.seats[seat].selection.clear();
         self.players.seats[seat].selected_action = Action::NoAction;
         self.players.seats[seat].planned_shield_target = None;
-        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        for &pc_id in &pc_ids {
+        for &pc_id in &self.world.pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
                 continue;
             }
@@ -298,16 +299,15 @@ impl EngineInner {
             } else {
                 self.players.seats[seat].selection.push(pc_id);
             }
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
                 pc.pc.portrait.open = !pc.pc.portrait.burned;
             }
         }
         // Sherwood: clear the per-PC `interface_hidden` flag on every
         // selectable PC so each PC's HQ interface re-shows.
         if self.is_sherwood(&assets.profile_manager) {
-            let selected = self.players.seats[seat].selection.clone();
-            for id in selected {
-                if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+            for &id in &self.players.seats[seat].selection {
+                if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) {
                     pc.pc.interface_hidden = false;
                 }
             }
@@ -317,9 +317,8 @@ impl EngineInner {
 
     /// Clear the selection.
     pub(crate) fn unselect_all_pcs(&mut self, seat: usize) {
-        let old_selection = self.players.seats[seat].selection.clone();
-        for id in old_selection {
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+        for &id in &self.players.seats[seat].selection {
+            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) {
                 pc.pc.portrait.open = false;
             }
         }
@@ -356,9 +355,8 @@ impl EngineInner {
     /// The ctrl key is the "move during action" modifier; saving lets
     /// ctrl-release restore the action that was active when ctrl was pressed.
     pub(crate) fn save_action_for_selected_pcs(&mut self, seat: usize) {
-        let ids = self.players.seats[seat].selection.clone();
-        for id in ids {
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
+        for &id in &self.players.seats[seat].selection {
+            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) {
                 pc.pc.saved_action = pc.pc.current_action;
             }
         }
@@ -372,12 +370,13 @@ impl EngineInner {
         seat: usize,
         target_pc: Option<EntityId>,
     ) {
-        let targets: Vec<EntityId> = match target_pc {
-            None => self.players.seats[seat].selection.clone(),
-            Some(id) => vec![id],
+        let targets = if target_pc.is_some() {
+            target_pc.as_slice()
+        } else {
+            &self.players.seats[seat].selection
         };
-        for id in targets {
-            let Some(Entity::Pc(pc)) = self.get_entity_mut(id) else {
+        for &id in targets {
+            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(id) else {
                 continue;
             };
             pc.pc.disable_all_actions_temp();
@@ -392,12 +391,14 @@ impl EngineInner {
         seat: usize,
         target_pc: Option<EntityId>,
     ) {
-        let targets: Vec<EntityId> = match target_pc {
-            None => self.players.seats[seat].selection.clone(),
-            Some(id) => vec![id],
-        };
-        for id in targets {
+        if let Some(id) = target_pc {
             self.enable_pc_actions_temp(sim, assets, seat, id);
+        } else {
+            let selected_count = self.players.seats[seat].selection.len();
+            for index in 0..selected_count {
+                let id = self.players.seats[seat].selection[index];
+                self.enable_pc_actions_temp(sim, assets, seat, id);
+            }
         }
     }
 
@@ -471,10 +472,7 @@ impl EngineInner {
         assets: &LevelAssets,
         seat: usize,
     ) {
-        if false {
-            return;
-        }
-        let profiles = assets.profile_manager.clone();
+        let profiles = &assets.profile_manager;
 
         let mut best: Option<(EntityId, u16)> = None;
         for &pc_id in &self.world.pc_ids {
@@ -766,9 +764,8 @@ impl EngineInner {
             && self.players.seats[seat].selection.len() > 1
             && self.players.seats[seat].selection.contains(&pc_id)
         {
-            let old_selection = self.players.seats[seat].selection.clone();
-            for old_id in old_selection {
-                if let Some(Entity::Pc(pc)) = self.get_entity_mut(old_id) {
+            for &old_id in &self.players.seats[seat].selection {
+                if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(old_id) {
                     pc.pc.portrait.open = false;
                 }
             }
@@ -812,7 +809,10 @@ impl EngineInner {
 
         // For each selected PC, call `unselect_action` if the action is
         // changing (gated on `!record_qa`), then set the new action.
-        for id in self.players.seats[seat].selection.clone() {
+        // Both passes share the entry count and reread each selected PC live.
+        let selected_count = self.players.seats[seat].selection.len();
+        for index in 0..selected_count {
+            let id = self.players.seats[seat].selection[index];
             let old_action = self
                 .get_entity(id)
                 .and_then(|e| e.pc_data())
@@ -855,7 +855,8 @@ impl EngineInner {
                 Action::Hit | Action::HitHard | Action::Strangle | Action::NoAction | Action::Heal
             );
         if should_stop_group {
-            for id in self.players.seats[seat].selection.clone() {
+            for index in 0..selected_count {
+                let id = self.players.seats[seat].selection[index];
                 if action == Action::Bow {
                     let state = self
                         .get_entity(id)
@@ -1273,9 +1274,14 @@ impl EngineInner {
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
-        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        let mut box_selected: Vec<EntityId> = Vec::new();
-        for &pc_id in &pc_ids {
+        if !shift_held {
+            self.unselect_all_pcs(seat);
+        }
+        // Capture the traversal extent, but evaluate each PC after the previous
+        // selection's synchronous action callbacks have completed.
+        let pc_count = self.world.pc_ids.len();
+        for index in 0..pc_count {
+            let pc_id = self.world.pc_ids[index];
             if !self.is_pc_selectable(assets, pc_id) {
                 continue;
             }
@@ -1291,20 +1297,9 @@ impl EngineInner {
                 if box_multi_selection.is_intersecting(&sprite_box)
                     || box_multi_selection.contains_point(map_pt)
                 {
-                    box_selected.push(pc_id);
+                    self.select_pc(sim, assets, seat, pc_id, true, true);
                 }
             }
-        }
-
-        // The original game sends one synchronous character deselection followed by an
-        // ordered SELECT_ADD_CHARACTER_WITH_ECHO per intersecting PC. Route
-        // through the same helpers so Robin ordering, portraits, barks, and
-        // action restitution/unselection all occur at the same boundaries.
-        if !shift_held {
-            self.unselect_all_pcs(seat);
-        }
-        for pc_id in box_selected {
-            self.select_pc(sim, assets, seat, pc_id, true, true);
         }
     }
 
@@ -1321,8 +1316,7 @@ impl EngineInner {
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
-        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        for &pc_id in &pc_ids {
+        for &pc_id in &self.world.pc_ids {
             if !self.players.seats[seat].selection.contains(&pc_id) {
                 continue;
             }
@@ -1351,7 +1345,7 @@ impl EngineInner {
                     .position(|&x| x == pc_id)
             {
                 self.players.seats[seat].selection.remove(idx);
-                if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+                if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
                     pc.pc.portrait.open = false;
                 }
             }
@@ -1383,8 +1377,8 @@ impl EngineInner {
     /// Assign the current selection to a quick-select group slot (0-8).
     pub(crate) fn assign_quick_group(&mut self, seat: usize, slot: usize) {
         if slot < 9 {
-            self.players.seats[seat].quick_select_groups[slot] =
-                self.players.seats[seat].selection.clone();
+            let player = &mut self.players.seats[seat];
+            player.quick_select_groups[slot].clone_from(&player.selection);
             tracing::info!(
                 "Assigned {} PCs to group {} (seat {})",
                 self.players.seats[seat].selection.len(),
@@ -1408,10 +1402,9 @@ impl EngineInner {
     ///   to `hulk_direction` (true = fade out, false = fade in).
     /// - When `running_hulk` reaches 0 → reset direction/speed defaults.
     pub(crate) fn refresh_pc_selection_hulk(&mut self) {
-        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        for pc_id in pc_ids {
+        for &pc_id in &self.world.pc_ids {
             let is_drawn_as_selected = self.players.seats[0].selection.contains(&pc_id);
-            let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
+            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
 
@@ -1457,9 +1450,6 @@ impl EngineInner {
         action: Action,
         out: &mut Vec<EntityId>,
     ) {
-        if false {
-            return;
-        }
         for &pc_id in &self.world.pc_ids {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
                 continue;
@@ -1485,9 +1475,9 @@ impl EngineInner {
     /// Only recalls PCs that are still alive and selectable.
     pub(crate) fn recall_quick_group(&mut self, assets: &LevelAssets, seat: usize, slot: usize) {
         if slot < 9 {
-            let group = self.players.seats[seat].quick_select_groups[slot].clone();
             self.players.seats[seat].selection.clear();
-            for &pc_id in &group {
+            for index in 0..self.players.seats[seat].quick_select_groups[slot].len() {
+                let pc_id = self.players.seats[seat].quick_select_groups[slot][index];
                 if self.is_pc_selectable(assets, pc_id) {
                     self.players.seats[seat].selection.push(pc_id);
                 }
@@ -1539,9 +1529,8 @@ impl EngineInner {
     /// sprite at the current position) is rendered in
     /// `crates/robin_rs/src/game_render.rs::render_entities_gpu`.
     pub(crate) fn tick_pc_teleport_fades(&mut self) {
-        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
-        for pc_id in pc_ids {
-            let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
             if pc.pc.teleport_counter > 0 {

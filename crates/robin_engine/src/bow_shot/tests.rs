@@ -2824,11 +2824,7 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
     assert!(!arrow.projectile.flying);
 }
 
-/// The original game's stationary FX-target checks still require
-/// `vtRange.Norm() <= range`, so a projectile with zero movement
-/// cannot activate a nearby target unless it is exactly centered on
-/// it. Rust used to fall back to `HIT_DISTANCE`, which could fire
-/// scripted targets from a stopped projectile.
+/// A stopped projectile cannot activate a target with its degenerate flight line.
 #[test]
 fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
@@ -2906,6 +2902,87 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
             Command::ActivateArrow
         ),
         "stationary projectile must not activate nearby FX target by radius"
+    );
+}
+
+#[test]
+fn projectile_target_collision_has_no_stationary_or_short_segment_epsilon() {
+    for (movement, target_x, expected_hit) in [
+        (0.0, 0.0, false),
+        (0.0, 0.005, false),
+        (0.0001, 0.0001, true),
+        (0.0001, 0.0002, true),
+        (0.0001, 0.0003, false),
+    ] {
+        let mut element = ElementData::default();
+        element.kind = ElementKind::ObjectProjectile;
+        element.active = true;
+        element.set_position(WorldPoint3D::new(movement, 0.0, 0.0));
+        let projectile = Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: ObjectType::Arrow,
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData::default(),
+        });
+        let entities = entity_table(vec![
+            Some(projectile),
+            Some(make_arrow_target(target_x, 0.0)),
+        ]);
+        let hit = projectile_target_victim(
+            &entities,
+            EntityId::Projectile(crate::entity_id::ProjectileId(0)),
+            WorldPoint3D::new(0.0, 0.0, 0.0),
+        );
+        assert_eq!(
+            hit.is_some(),
+            expected_hit,
+            "movement={movement}, target={target_x}"
+        );
+    }
+}
+
+#[test]
+fn projectile_target_collision_keeps_first_eligible_sparse_slot() {
+    let mut element = ElementData::default();
+    element.kind = ElementKind::ObjectProjectile;
+    element.active = true;
+    element.set_position(WorldPoint3D::new(10.0, 0.0, 0.0));
+    let projectile = Entity::Projectile(ElementProjectile {
+        element,
+        object: ObjectData {
+            object_type: ObjectType::Arrow,
+            ..ObjectData::default()
+        },
+        projectile: ProjectileData::default(),
+    });
+    let mut inactive = make_arrow_target(10.0, 0.0);
+    inactive.element_data_mut().active = false;
+    let mut wrong_filter = make_arrow_target(10.0, 0.0);
+    let Entity::Target(target) = &mut wrong_filter else {
+        unreachable!()
+    };
+    target.target.action_filter = TargetFilter::APPLE;
+    let entities = entity_table(vec![
+        Some(projectile),
+        Some(inactive),
+        None,
+        Some(make_pc(10.0, 0.0)),
+        Some(wrong_filter),
+        Some(make_arrow_target(15.0, 0.0)),
+        Some(make_arrow_target(10.0, 0.0)),
+    ]);
+    assert_eq!(
+        projectile_target_victim(
+            &entities,
+            EntityId::Projectile(crate::entity_id::ProjectileId(0)),
+            WorldPoint3D::new(0.0, 0.0, 0.0),
+        ),
+        Some((
+            EntityId::Target(crate::entity_id::TargetId(5)),
+            Command::ActivateArrow
+        )),
     );
 }
 

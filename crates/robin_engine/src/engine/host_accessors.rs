@@ -232,22 +232,23 @@ impl EngineInner {
     /// Called once all PCs have successfully launched their slot-`slot`
     /// macros — see `apply_start_macro` which drives the call.
     pub(crate) fn do_tetris_macro(&mut self, slot: u8) {
-        let pcs = self.world.pc_ids.clone();
-        for pc in pcs {
+        for &pc in &self.world.pc_ids {
             if let Some(state) = self.players.macro_store.get_mut(pc) {
                 state.do_tetris(slot as usize);
             }
             let saved_pc = self
-                .get_entity_mut(pc)
+                .world
+                .entities
+                .get_mut(pc)
                 .and_then(|entity| entity.pc_data_mut())
                 .unwrap_or_else(|| panic!("quick-action owner {pc:?} is not a PC"));
             let first = slot as usize;
             for index in first..crate::macro_store::NUMBER_OF_QA_MEMORY - 1 {
                 saved_pc.quick_action_types[index] = saved_pc.quick_action_types[index + 1];
                 saved_pc.quick_action_sequences[index] =
-                    saved_pc.quick_action_sequences[index + 1].clone();
+                    saved_pc.quick_action_sequences[index + 1].take();
                 saved_pc.quick_seek_sequences[index] =
-                    saved_pc.quick_seek_sequences[index + 1].clone();
+                    saved_pc.quick_seek_sequences[index + 1].take();
                 saved_pc.titbits[index] = saved_pc.titbits[index + 1];
                 saved_pc.quick_action_interactors[index] =
                     saved_pc.quick_action_interactors[index + 1];
@@ -333,8 +334,7 @@ impl EngineInner {
     /// portrait-click handler).  Idempotent.
     pub(crate) fn stop_recording_macro(&mut self) {
         let slot = self.players.qa_recording_slot as usize;
-        let recording = self.players.qa_recording_for.clone();
-        for pc_id in recording {
+        for &pc_id in &self.players.qa_recording_for {
             if let Some(state) = self.players.macro_store.get_mut(pc_id) {
                 state.stop_recording();
             }
@@ -356,7 +356,9 @@ impl EngineInner {
                 Default::default()
             };
             let pc = self
-                .get_entity_mut(pc_id)
+                .world
+                .entities
+                .get_mut(pc_id)
                 .and_then(|entity| entity.pc_data_mut())
                 .unwrap_or_else(|| panic!("quick-action recording target {pc_id:?} is not a PC"));
             pc.portrait.quick_icons[slot] = icon;
@@ -383,16 +385,16 @@ impl EngineInner {
             return;
         }
         let slot = self.players.qa_recording_slot;
-        let selected: Vec<EntityId> = self.players.seats[0].selection.clone();
-        let current = self.players.qa_recording_for.clone();
-        for pc_id in &current {
+        let selected = &self.players.seats[0].selection;
+        let current = &self.players.qa_recording_for;
+        for pc_id in current {
             if !selected.contains(pc_id)
                 && let Some(state) = self.players.macro_store.get_mut(*pc_id)
             {
                 state.stop_recording();
             }
         }
-        for pc_id in &selected {
+        for pc_id in selected {
             if !current.contains(pc_id) {
                 self.players
                     .macro_store
@@ -400,7 +402,7 @@ impl EngineInner {
                     .begin_recording(slot);
             }
         }
-        self.players.qa_recording_for = selected;
+        self.players.qa_recording_for.clone_from(selected);
     }
 
     /// Request the PC-info hover overlay to show (`Some(pc_id)`) or hide
