@@ -498,7 +498,7 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
 
 #[test]
 fn special_strike_terminal_callbacks_finish_inline_without_reconciliation() {
-    use crate::ai::Substate;
+    use crate::ai::{StimulusType, Substate};
     use crate::sequence::{CascadeFlags, SequenceElement, SequenceState};
 
     for command in [
@@ -533,15 +533,28 @@ fn special_strike_terminal_callbacks_finish_inline_without_reconciliation() {
                     .orders
                     .sequence_manager
                     .start_sequence_level(sequence);
-                engine.set_sequence_element_state(
-                    sim,
-                    &assets,
-                    &mut Vec::new(),
-                    sequence,
-                    0,
-                    terminal,
-                    CascadeFlags::empty(),
-                    "special_strike_terminal_test",
+                let (_, stimuli) =
+                    crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
+                        engine.set_sequence_element_state(
+                            sim,
+                            &assets,
+                            &mut Vec::new(),
+                            sequence,
+                            0,
+                            terminal,
+                            CascadeFlags::empty(),
+                            "special_strike_terminal_test",
+                        );
+                    });
+                let expected = if terminal == SequenceState::Impossible {
+                    StimulusType::EventImpossible
+                } else {
+                    StimulusType::EventDone
+                };
+                assert_eq!(
+                    stimuli,
+                    vec![(attacker, expected)],
+                    "{command:?}: {terminal:?}"
                 );
             });
 
@@ -549,21 +562,15 @@ fn special_strike_terminal_callbacks_finish_inline_without_reconciliation() {
                 .get_entity(attacker)
                 .and_then(Entity::enemy_ai)
                 .unwrap();
-            if terminal == SequenceState::Impossible {
-                assert_eq!(
-                    ai.base.current_substate,
-                    Substate::AttackingSwordfightSpecialStrike,
-                    "{command:?}: impossibility must not synthesize a completion"
-                );
-            } else {
-                assert_eq!(
-                    ai.base.current_substate,
-                    Substate::AttackingSwordfight,
-                    "{command:?}: {terminal:?} must finish before the transition returns"
-                );
-                assert_eq!(ai.base.when_does_timer_ring, 60);
-                assert!(ai.base.timer_is_running);
-            }
+            // Unexpected impossibility is recovered by a nested Done event;
+            // both paths finish on the same callback stack.
+            assert_eq!(
+                ai.base.current_substate,
+                Substate::AttackingSwordfight,
+                "{command:?}: {terminal:?} must finish before the transition returns"
+            );
+            assert_eq!(ai.base.when_does_timer_ring, 60);
+            assert!(ai.base.timer_is_running);
         }
     }
 }
