@@ -374,7 +374,13 @@ async function main(): Promise<void> {
     const runReplay = runQuery === null
         ? null
         : await fetchRunReplay(runQuery, RUN_API_BASE, fetch, bootAbort.signal);
-    if (runReplay !== null) logOk(`[leaderboard run ${runReplay.runId} recorded by build ${runReplay.runtimeBuild}]`);
+    if (runReplay !== null) {
+        logOk(`[leaderboard run ${runReplay.runId} recorded by build ${runReplay.runtimeBuild}]`);
+        // Archived runtimes recognize this launch option before their main menu starts.
+        const launchUrl = new URL(location.href);
+        launchUrl.searchParams.set('wait-for-command', 'true');
+        history.replaceState(history.state, '', launchUrl);
+    }
     const replayQuery = runReplay === null
         ? replayFromQuery(pageParams)
         : { content: runReplay.content, paused: true };
