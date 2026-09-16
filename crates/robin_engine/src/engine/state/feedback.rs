@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     coordinates::{MapPoint, MapSize},
-    engine::{CameraState, SideEffects},
+    engine::{CameraState, HostEffects},
     markers::GroundMark,
     sound::SoundSimState,
     titbit::TitbitManager,
@@ -25,7 +25,7 @@ pub(crate) struct FeedbackRuntime {
     pub(crate) ground_mark: GroundMark,
     pub(crate) titbit_manager: TitbitManager,
     pub(crate) cutscene_camera: CameraState,
-    pub(crate) pending_side_effects: SideEffects,
+    pub(crate) pending_side_effects: HostEffects,
 }
 
 impl FeedbackRuntime {
@@ -61,11 +61,11 @@ impl FeedbackRuntime {
                 camera_slide: MapPoint::new(-1.0, -1.0),
                 ..Default::default()
             },
-            pending_side_effects: SideEffects::default(),
+            pending_side_effects: HostEffects::default(),
         }
     }
 
-    pub(crate) fn drain_side_effects(&mut self) -> SideEffects {
+    pub(crate) fn drain_side_effects(&mut self) -> HostEffects {
         std::mem::take(&mut self.pending_side_effects)
     }
 }

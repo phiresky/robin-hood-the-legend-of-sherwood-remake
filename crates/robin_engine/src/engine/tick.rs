@@ -932,7 +932,7 @@ impl EngineInner {
         assets: &LevelAssets,
         simulation_body_allowed: bool,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
         let effects = self.perform_hourglass_authoritative(
             &mut display,
@@ -947,7 +947,7 @@ impl EngineInner {
     pub(crate) fn perform_frame_post_initialize(
         &mut self,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         // Keep the existing placeholder/restoration boundary around script callbacks.
         let display = std::mem::take(&mut self.feedback.cutscene_camera.display);
         let effects = self.perform_post_initialize_authoritative(assets);
@@ -1027,7 +1027,7 @@ impl EngineInner {
         input: &mut InputState,
         assets: &LevelAssets,
         dev: &mut DevState,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let mut camera = self.feedback.cutscene_camera.display.clone();
         let effects = self.perform_hourglass_authoritative(&mut camera, assets, true, None);
         self.feedback.cutscene_camera.display = camera;
@@ -1052,7 +1052,7 @@ impl EngineInner {
         assets: &LevelAssets,
         simulation_body_allowed: bool,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let _hourglass_timer = HourglassTimer::start();
 
         let sim = self.control.simulation_context();
@@ -1306,7 +1306,7 @@ impl EngineInner {
     fn perform_post_initialize_authoritative(
         &mut self,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         if !self.control.sim_config.script_enabled
             || self.script_domains.mission_ui.game_post_initialized
         {
@@ -1319,7 +1319,7 @@ impl EngineInner {
             self.script_domains.mission_ui.game_post_initialized = true;
             // Completion is authoritative even with no callback effects:
             // the host records Some as the replay's post-initialize stage bit.
-            return Some(super::SideEffects {
+            return Some(super::HostEffects {
                 code: GameCode::LevelInProgress,
                 ..Default::default()
             });
@@ -1348,7 +1348,7 @@ impl EngineInner {
         &mut self,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         let camera = self.feedback.cutscene_camera.display.clone();
         let effects = self.perform_post_initialize_authoritative(assets);
         self.feedback.cutscene_camera.display = camera;

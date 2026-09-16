@@ -138,7 +138,6 @@ impl EngineInner {
         {
             self.queue_restore_fx_bg(entity);
         }
-        self.feedback.pending_side_effects.invalidate_background = true;
     }
 
     fn swap_patch_background(&mut self, index: crate::patch::PatchIndex, applied: bool) {
@@ -151,7 +150,6 @@ impl EngineInner {
             {
                 self.queue_blit_fx_to_map(entity);
             }
-            self.feedback.pending_side_effects.invalidate_background = true;
         } else {
             self.restore_patch_background(index);
         }
@@ -520,12 +518,11 @@ impl EngineInner {
 
     /// Queue a persistent background decal insert for this FX entity.
     /// Consumed later by the host-side drain after `perform_hourglass`
-    /// returns its `SideEffects` (see `robin_rs::blit_to_map`).
+    /// returns its `HostEffects` (see `robin_rs::blit_to_map`).
     pub(crate) fn queue_blit_fx_to_map(&mut self, entity_id: crate::element::EntityId) {
         let decal = self.snapshot_patch_transition_decal(entity_id);
         self.feedback
             .pending_side_effects
-            .host_effects
             .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
@@ -539,7 +536,6 @@ impl EngineInner {
     pub(crate) fn queue_restore_fx_bg(&mut self, entity_id: crate::element::EntityId) {
         self.feedback
             .pending_side_effects
-            .host_effects
             .background_blits
             .push(super::PendingBgBlit {
                 entity_id,

@@ -370,7 +370,7 @@ impl EngineInner {
                     // Can't scroll further — cancel slide
                     self.feedback.cutscene_camera.stop_slide();
                     self.control.speed = 1.0;
-                    self.feedback.pending_side_effects.invalidate_background = true;
+
                     display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
@@ -395,7 +395,7 @@ impl EngineInner {
                 // Already at target
                 self.feedback.cutscene_camera.stop_slide();
                 self.control.speed = 1.0;
-                self.feedback.pending_side_effects.invalidate_background = true;
+
                 display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
@@ -592,8 +592,10 @@ impl EngineInner {
             (point.y - half_screen.y).floor(),
         );
         self.set_view_position_for_seat(seat, target);
-        self.feedback.pending_side_effects.invalidate_background = true;
-        self.feedback.pending_side_effects.cancel_multi_selection = true;
+
+        self.feedback
+            .pending_side_effects
+            .request_signal(crate::engine::HostSignal::CancelMultiSelection);
     }
 
     // ─── Zoom ────────────────────────────────────────────────────
@@ -675,7 +677,6 @@ impl EngineInner {
                 display.background_transform.zoom_to_up = false;
             } else {
                 display.background_transform.zoom_to_down = false;
-                self.feedback.pending_side_effects.invalidate_background = true;
             }
         } else {
             // Interpolate zoom / view between the endpoints captured in
@@ -714,9 +715,7 @@ impl EngineInner {
         new_height: f32,
     ) {
         let _ = (new_width, new_height);
-        // The Rust engine doesn't own a cache surface — the host
-        // renderer does, and `invalidate_background` below signals it
-        // to drop and rebuild on the next frame.
+        // The renderer composes the scene from the current camera each frame.
 
         // Recalculate camera slide target if one is active.  Re-runs
         // `check_location_is_valid_for_camera(camera_wanted)` against
@@ -740,8 +739,6 @@ impl EngineInner {
                 display.background_transform.zoom_to_down = false;
             }
         }
-
-        self.feedback.pending_side_effects.invalidate_background = true;
 
         // If at 0.5x zoom and can't zoom down anymore, snap to 1x
         if self.feedback.cutscene_camera.zoom_factor == 0.5 && !self.is_zoom_down_possible() {

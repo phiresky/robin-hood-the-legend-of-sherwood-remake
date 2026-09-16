@@ -5,7 +5,7 @@ use crate::{
     campaign::{Campaign, CampaignValue},
     diplomacy::DiplomacyState,
     element::EntityId,
-    engine::{MissionState, SideEffects, SoundCommand},
+    engine::{HostEffects, MissionState, SoundCommand},
     mission_stat::MissionStat,
     short_briefings::ShortBriefings,
 };
@@ -66,7 +66,7 @@ impl MissionDomain {
     /// have no extra side effects.
     pub(crate) fn add_campaign_value(
         &mut self,
-        side_effects: &mut SideEffects,
+        side_effects: &mut HostEffects,
         frame_counter: u32,
         name: CampaignValue,
         amount: i32,
@@ -96,7 +96,7 @@ impl MissionDomain {
     /// recruitment, and blazon consumption.
     pub(crate) fn apply_won_updates(
         &mut self,
-        side_effects: &mut SideEffects,
+        side_effects: &mut HostEffects,
         frame_counter: u32,
         sim: &crate::sim_rng::SimulationContext,
         profiles: &crate::profiles::ProfileManager,

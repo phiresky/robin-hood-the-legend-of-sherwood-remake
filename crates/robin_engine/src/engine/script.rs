@@ -3782,12 +3782,10 @@ impl EngineInner {
                     self.control.speed = speed;
                 }
                 EngineCommand::JumpCameraTo { x, y } => {
-                    // Snap the view to the script point and invalidate
-                    // background validity so the next frame redraws.
+                    // Snap the view to the script point for the next render.
                     let pos = crate::coordinates::MapPoint::new(x, y);
                     self.feedback.cutscene_camera.view_position =
                         self.check_location_is_valid_for_camera(pos);
-                    self.feedback.pending_side_effects.invalidate_background = true;
                 }
                 EngineCommand::SetZoomLevel { zoom } => {
                     // `SetZoomLevel` only assigns the desired zoom; the
@@ -3804,7 +3802,6 @@ impl EngineInner {
                     tracing::debug!("StartDialog({dialog_id}): queued for game session");
                     self.feedback
                         .pending_side_effects
-                        .host_effects
                         .extend_dialogues([dialog_id]);
                     // The original game's dialog start is synchronous and its menu-screen
                     // constructor re-enters the game refresh before returning
@@ -3829,7 +3826,6 @@ impl EngineInner {
                     tracing::debug!("DisplayConsole: queued for UI system");
                     self.feedback
                         .pending_side_effects
-                        .host_effects
                         .request_signal(crate::engine::HostSignal::ShowConsole);
                     self.forward_message(
                         sim,
@@ -3988,7 +3984,6 @@ impl EngineInner {
                     tracing::debug!("DisplayPopupText({text_id}): queued for UI system");
                     self.feedback
                         .pending_side_effects
-                        .host_effects
                         .extend_popup_texts([text_id]);
                     // Displaying scripted popup text opens the popup scroll synchronously. The first
                     // popup in a universal frame constructs its colorized
@@ -4007,10 +4002,7 @@ impl EngineInner {
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
-                    self.feedback
-                        .pending_side_effects
-                        .host_effects
-                        .request_sherwood_report();
+                    self.feedback.pending_side_effects.request_sherwood_report();
                     self.forward_message(
                         sim,
                         assets,

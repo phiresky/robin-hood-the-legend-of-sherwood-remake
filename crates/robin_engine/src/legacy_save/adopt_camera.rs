@@ -134,7 +134,6 @@ impl LegacyCameraAdoptionPlan {
             .first_mut()
             .expect("initialized v48 mission has no host player seat")
             .locker_active = self.locker;
-        engine.feedback.pending_side_effects.invalidate_background = true;
 
         LegacyCameraHostState {
             background_transform: self.background_transform,
@@ -405,8 +404,6 @@ mod tests {
             engine.feedback.cutscene_camera.display.display_op,
             DisplayOpCode::Redraw
         );
-        assert!(engine.feedback.pending_side_effects.invalidate_background);
-
         let mut display = HostDisplayState::default();
         display.minimap.map_displayed = true;
         host.apply_to(&mut display);

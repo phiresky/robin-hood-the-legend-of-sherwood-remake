@@ -63,7 +63,10 @@ fn engine_snapshot_fixture() -> EngineInner {
     engine.mission_domain.mission_stat.added_score = 5678;
     engine.feedback.cutscene_camera.view_position = MapPoint::new(101.5, 202.25);
     engine.restore_rng_from_seed(0xCAFE_BABE_1020_3040);
-    engine.feedback.pending_side_effects.invalidate_background = true;
+    engine
+        .feedback
+        .pending_side_effects
+        .request_signal(crate::engine::HostSignal::ResetModalInput);
     engine.players.user_locked = true;
     engine.players.qa_recording_slot = 2;
     engine.control.fast_forward = true;

@@ -299,7 +299,7 @@ impl EngineInner {
         if was_swordfighting && !self.is_selected_pc_swordfighting() {
             self.feedback
                 .pending_side_effects
-                .pending_swordfight_drag_ignore = true;
+                .request_signal(crate::engine::HostSignal::IgnoreSwordfightDrag);
         }
 
         // ── Titbit sync + per-frame update ──────────────────────

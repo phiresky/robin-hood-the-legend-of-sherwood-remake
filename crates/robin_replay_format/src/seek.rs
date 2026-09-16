@@ -87,13 +87,19 @@ impl ReplaySeekSidecar {
                 .chain(std::iter::once(&output.post_boundary_events))
                 .chain(output.post_initialize_events.iter())
             {
-                effects.append(event.host_effects.clone());
+                // Seek checkpoints reconstruct modal scheduling, not audio,
+                // input dispatch, or render work from the skipped frames.
+                effects.append(HostEffects {
+                    modals: event.modals.clone(),
+                    ..Default::default()
+                });
+                if event.has_signal(HostSignal::MissionStatePopup) {
+                    effects.request_signal(HostSignal::MissionStatePopup);
+                }
                 if event.set_draw_hidden.is_some() {
                     draw_hidden = event.set_draw_hidden;
                 }
             }
-            effects.background_blits.clear();
-            effects.trade_receipts.clear();
             if !effects.pending_modal_kinds().is_empty()
                 || effects.has_signal(HostSignal::MissionStatePopup)
                 || draw_hidden.is_some()

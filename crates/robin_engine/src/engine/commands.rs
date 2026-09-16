@@ -619,7 +619,7 @@ impl EngineInner {
                 }
                 self.feedback
                     .pending_side_effects
-                    .invalidate_trajectory_preview = true;
+                    .request_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview);
                 self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
             }
             #[cfg(not(target_os = "macos"))]
@@ -645,7 +645,7 @@ impl EngineInner {
                 self.players.seats[seat].selected_action = restore;
                 self.feedback
                     .pending_side_effects
-                    .invalidate_trajectory_preview = true;
+                    .request_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview);
             }
             #[cfg(target_os = "macos")]
             KeyReleaseControl => {

@@ -317,7 +317,7 @@ impl CameraState {
 
 // ─── Host-emitted ramp consumed by the FADE_TO_BLACK opcode ─────────
 // (Host struct itself moved to robin_rs::host. FadeToBlack stays here
-// because `SideEffects` carries it.)
+// because `HostEffects` carries it.)
 
 /// Two-phase pixel ramp scheduled by the `FADE_TO_BLACK` script opcode.
 #[derive(

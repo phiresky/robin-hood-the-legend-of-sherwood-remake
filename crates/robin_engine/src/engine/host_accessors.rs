@@ -381,7 +381,7 @@ impl EngineInner {
     /// Request the PC-info hover overlay to show (`Some(pc_id)`) or hide
     /// (`None`).  The host writes into this via its per-frame mouse
     /// handler; the renderer reads the overlay after the tick drains
-    /// [`SideEffects::overlay`] into [`Host::pc_info_overlay`].
+    /// [`HostEffects::overlay`] into the host's presentation state.
     ///
     /// Backed by the `MSG_SHOW_PC_INFORMATION` /
     /// `MSG_HIDE_PC_INFORMATION` messenger pair — the messenger
@@ -994,7 +994,7 @@ impl EngineInner {
 
     #[cfg(test)]
     fn apply_value_set_side_effects(
-        side_effects: &mut SideEffects,
+        side_effects: &mut HostEffects,
         frame_counter: u32,
         name: crate::campaign::CampaignValue,
         old: i32,
@@ -1084,7 +1084,7 @@ impl EngineInner {
         // …) that was being built before the quick-load.  Normally
         // drained by `perform_hourglass`; this covers the partial-tick
         // case where the load pre-empted the drain.
-        self.feedback.pending_side_effects = SideEffects::default();
+        self.feedback.pending_side_effects = HostEffects::default();
 
         // Anonymous sequence-timer entries are tied to `SequenceManager`
         // state that was just replaced; the reloaded manager rebuilds

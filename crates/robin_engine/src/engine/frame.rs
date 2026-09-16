@@ -31,7 +31,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ConsoleResponse, DirectorCompletion, SideEffects};
+use super::{ConsoleResponse, DirectorCompletion, HostEffects};
 use crate::campaign::Campaign;
 use crate::console::ConsoleCommand;
 use crate::element::EntityId;
@@ -532,14 +532,14 @@ pub struct SimulationFrameOutput<Hash: robin_util::state_hash::StateHash = u64> 
     /// True exactly when this admission ran a simulation tick.
     pub hourglass_ran: bool,
     /// Output for the host to consume after the transaction.
-    pub events: SideEffects,
+    pub events: HostEffects,
     /// Ordered effects emitted by post-hourglass external actions and player
     /// commands. These must be delivered even when no hourglass or one-shot
     /// PostInitialize stage runs; otherwise a modal-issued command can strand
     /// its acknowledgement behind the modal that is waiting for it.
-    pub post_boundary_events: SideEffects,
+    pub post_boundary_events: HostEffects,
     /// Ordered effects produced by the optional one-shot lifecycle stage.
-    pub post_initialize_events: Option<SideEffects>,
+    pub post_initialize_events: Option<HostEffects>,
     /// Results for pre- then post-hourglass external actions, in order.
     pub external_action_results: Vec<ExternalActionResult>,
     /// Canonical deterministic engine-state hash after the full modeled

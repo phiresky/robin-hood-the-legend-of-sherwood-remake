@@ -240,7 +240,7 @@ pub struct EngineInner {
 
     /// Deterministic sound, marker, director-camera, and tick-output state.
     pub(crate) feedback: FeedbackRuntime,
-    // (Deferred bg-blits live on `pending_side_effects.host_effects`;
+    // (Deferred bg-blits live on `pending_side_effects`;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
@@ -922,7 +922,6 @@ impl EngineInner {
         if !show_window {
             self.feedback
                 .pending_side_effects
-                .host_effects
                 .request_signal(crate::engine::HostSignal::SilentWinWidgetSwap);
         }
     }

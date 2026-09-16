@@ -370,7 +370,7 @@ pub struct MinimapState {
     pub(crate) button_hit_mask: Option<HitMask>,
 
     /// Set whenever `set_minimap_position` accepts a new position.  The
-    /// engine drains this into `SideEffects::pending_minimap_position`
+    /// engine drains this into `HostEffects::pending_minimap_position`
     /// after each command-apply so the host can persist the new top-left
     /// to the active player profile.
     pub(crate) position_dirty: bool,
@@ -801,7 +801,7 @@ impl MinimapState {
             // The new top-left should be written back to the active player
             // profile.  The engine doesn't carry a profile reference; flag
             // dirty and let the host drain via
-            // `SideEffects::pending_minimap_position`.
+            // `HostEffects::pending_minimap_position`.
             self.position_dirty = true;
             return true;
         }
@@ -831,7 +831,7 @@ impl MinimapState {
     /// Take the dirty-position flag, returning the current map top-left
     /// when it was set.  Used by the engine's command-apply path to
     /// propagate drag-induced position changes into
-    /// [`SideEffects::pending_minimap_position`].
+    /// [`HostEffects::pending_minimap_position`].
     pub(crate) fn take_pending_position(&mut self) -> Option<ScreenPoint> {
         if self.position_dirty && self.map_box.is_somewhere() {
             self.position_dirty = false;

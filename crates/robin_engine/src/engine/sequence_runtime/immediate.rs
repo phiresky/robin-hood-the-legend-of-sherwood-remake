@@ -200,7 +200,6 @@ impl EngineInner {
                     // separate clamp.
                     self.feedback.cutscene_camera.view_position =
                         self.check_location_is_valid_for_camera(pos);
-                    self.feedback.pending_side_effects.invalidate_background = true;
                 }
                 self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
             }

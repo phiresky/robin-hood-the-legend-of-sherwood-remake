@@ -317,7 +317,7 @@ pub struct FrontendPresentation {
     /// then falls back over the next speed frames. Advanced only at the live
     /// presentation boundary, never by screenshot or thumbnail drawing.
     pub fade_to_black: Option<FadeToBlack>,
-    /// Last tick's SideEffects.skip_render; fast-forward can skip the GPU pass.
+    /// Last tick's HostEffects.skip_render; fast-forward can skip the GPU pass.
     pub skip_render: bool,
 }
 
@@ -666,12 +666,12 @@ impl HostFrontend {
 
 impl HostFrontend {
     /// Apply the engine-local outputs of a tick.  Consumes the
-    /// [`SideEffects`] struct by value so owned sub-vectors
+    /// [`HostEffects`] struct by value so owned sub-vectors
     /// can be moved directly into host accumulators without clones.
     /// Returns the tick's game-state code.
     pub(crate) fn apply_side_effects(
         &mut self,
-        fx: SideEffects,
+        mut fx: HostEffects,
         audio: &mut HostAudio,
         effects: &mut HostEffectBatches,
         application_context: &ApplicationContext,
@@ -679,22 +679,20 @@ impl HostFrontend {
     ) -> GameCode {
         // Effect order is part of the host contract: presentation flags,
         // input resets, profile persistence, audio, UI queues, then marks.
-        self.apply_view_flags(&fx);
-        self.apply_reset_input(&fx, effects);
-        if fx.cancel_multi_selection {
+        self.apply_view_flags(&mut fx);
+        self.apply_reset_input(&mut fx, effects);
+        if fx.take_signal(HostSignal::CancelMultiSelection) {
             self.input.cancel_selection_gestures();
         }
-        Self::persist_minimap_position(fx.pending_minimap_position, application_context);
-        self.apply_swordfight_drag_ignore(fx.pending_swordfight_drag_ignore);
+        Self::persist_minimap_position(fx.pending_minimap_position.take(), application_context);
+        self.apply_swordfight_drag_ignore(fx.take_signal(HostSignal::IgnoreSwordfightDrag));
         self.presentation.skip_render = fx.skip_render;
-        Self::dispatch_sound_commands(audio, fx.sounds);
+        Self::dispatch_sound_commands(audio, std::mem::take(&mut fx.sounds));
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
-        let mut requests = fx.host_effects;
         if local_seat != engine_player_command::PlayerId::HOST {
-            requests.trade_receipts.clear();
+            fx.trade_receipts.clear();
         }
-        effects.append(requests);
         // Per-frame mark requests from sim-side Mark() calls (currently
         // scripted mission-team insertion → `EngineCommand::MarkPc`).
         // Accumulates with host-side mark sources (requirements-bar
@@ -703,18 +701,31 @@ impl HostFrontend {
         self.input
             .feedback
             .marked_pc_ids
-            .extend(fx.pending_mark_pc_ids);
-        fx.code
+            .extend(fx.pending_mark_pc_ids.drain(..));
+        let code = fx.code;
+        fx.code = GameCode::default();
+        fx.skip_render = false;
+        effects.append(fx);
+        code
     }
 
-    fn apply_view_flags(&mut self, fx: &SideEffects) {
-        if let Some(fade) = fx.fade_to_black {
+    fn apply_view_flags(&mut self, fx: &mut HostEffects) {
+        if let Some(overlay) = fx.overlay.take() {
+            match overlay {
+                engine_api::OverlayChange::Show { pc_id } => {
+                    self.presentation.pc_info_overlay.visible = true;
+                    self.presentation.pc_info_overlay.pc_id = Some(pc_id);
+                }
+                engine_api::OverlayChange::Hide => self.presentation.pc_info_overlay.hide(),
+            }
+        }
+        if let Some(fade) = fx.fade_to_black.take() {
             self.presentation.fade_to_black = fade;
         }
-        if let Some(show) = fx.set_draw_hidden {
+        if let Some(show) = fx.set_draw_hidden.take() {
             self.input.feedback.draw_hidden = show;
         }
-        if fx.invalidate_trajectory_preview {
+        if fx.take_signal(HostSignal::InvalidateTrajectoryPreview) {
             // `SelectAction` trajectory cleanup: clear the jumper and
             // jumped trajectories, the valid flag, and the projectile
             // arc.  We fold all four trajectory overlays (jump-line
@@ -726,8 +737,8 @@ impl HostFrontend {
         }
     }
 
-    fn apply_reset_input(&mut self, fx: &SideEffects, effects: &mut HostEffectBatches) {
-        if fx.reset_input {
+    fn apply_reset_input(&mut self, fx: &mut HostEffects, effects: &mut HostEffectBatches) {
+        if fx.take_signal(HostSignal::ResetModalInput) {
             // MSG_RESET_INPUT clears the rubber-band selection flags
             // and suppresses any pending drag / click so a modal popup
             // / dialog entered from a sequence command doesn't leave

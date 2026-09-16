@@ -574,10 +574,8 @@ impl Game {
         // cheat arms the next input reset to leave the info overlay
         // visible.  The cheat flag lives on `DevState::debug.fps_display`
         // while the overlay flag lives in frontend diagnostics; the
-        // engine-side `reset_input` side-effect is consumed by
-        // frontend effect handler cannot access DevState, so it parks
-        // `pending_fps_cheat_promote` for us to apply here where both
-        // halves are in scope.
+        // frontend consumes ResetModalInput and queues PromoteFpsCheat
+        // for this phase, where both halves are in scope.
         if effects.take_signal(HostSignal::PromoteFpsCheat) {
             frontend
                 .diagnostics_mut()
@@ -587,8 +585,7 @@ impl Game {
 
         // Ambush/tactical silent win swaps the Sherwood start/quit
         // mission widgets.  The engine routes the request through
-        // `SideEffects`, the host drains it into
-        // `pending_silent_win_widget_swap`, and we apply it here where
+        // `HostEffects`, and we consume the signal here where
         // `&mut self` can mutate the widget-enable flags.
         if effects.take_signal(HostSignal::SilentWinWidgetSwap) {
             self.enable_start_mission(true);

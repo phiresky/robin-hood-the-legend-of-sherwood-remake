@@ -1,5 +1,5 @@
 //! Deferred host requests shared by simulation producers and presentation consumers.
-use super::PendingBgBlit;
+use super::HostEffects;
 use crate::player_command::{self as engine_player_command, ModalKind};
 
 #[derive(
@@ -22,25 +22,16 @@ pub enum HostSignal {
     ResetInput,
     PromoteFpsCheat,
     SherwoodTrading,
-}
-
-/// Ordered, typed work emitted at the post-tick boundary. Variant-specific
-/// drains preserve the existing host phase priority and simulation timing.
-#[derive(
-    Debug,
-    Clone,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-    Default,
-)]
-pub struct HostEffects {
-    modals: Vec<ModalKind>,
-    signals: Vec<HostSignal>,
-    pub trade_receipts: Vec<crate::trading::TradeReceipt>,
-    pub background_blits: Vec<PendingBgBlit>,
+    /// Clear the complete trajectory preview before the next input update.
+    InvalidateTrajectoryPreview,
+    /// Reset selection gestures and modal pointer state at frontend admission.
+    /// `ResetInput` separately resets the game session's device input state.
+    ResetModalInput,
+    CancelMultiSelection,
+    /// Suppress pending drag/click only if a swordfight ended during a drag.
+    IgnoreSwordfightDrag,
+    /// Clear UI focus after ordered display events and before mouse dispatch.
+    ClearUiFocus,
 }
 
 impl HostEffects {
@@ -157,6 +148,27 @@ impl HostEffects {
     /// consumes audio/input first, modals by their explicit priority, and decals
     /// only at the next render pass. Replayed output is discarded before here.
     pub fn append(&mut self, mut incoming: Self) {
+        self.code = incoming.code;
+        self.sounds.append(&mut incoming.sounds);
+        self.displayed_noises.append(&mut incoming.displayed_noises);
+        self.host_events.append(&mut incoming.host_events);
+        if incoming.overlay.is_some() {
+            self.overlay = incoming.overlay;
+        }
+        if incoming.fade_to_black.is_some() {
+            self.fade_to_black = incoming.fade_to_black;
+        }
+        if incoming.set_draw_hidden.is_some() {
+            self.set_draw_hidden = incoming.set_draw_hidden;
+        }
+        self.skip_render = incoming.skip_render;
+        self.pending_mark_pc_ids
+            .append(&mut incoming.pending_mark_pc_ids);
+        if incoming.pending_minimap_position.is_some() {
+            self.pending_minimap_position = incoming.pending_minimap_position;
+        }
+        self.pending_minimap_display_maps
+            .append(&mut incoming.pending_minimap_display_maps);
         if self.has_sherwood_report() {
             incoming
                 .modals
@@ -171,10 +183,7 @@ impl HostEffects {
     }
 
     pub fn clear(&mut self) {
-        self.modals.clear();
-        self.signals.clear();
-        self.trade_receipts.clear();
-        self.background_blits.clear();
+        *self = Self::default();
     }
 }
 

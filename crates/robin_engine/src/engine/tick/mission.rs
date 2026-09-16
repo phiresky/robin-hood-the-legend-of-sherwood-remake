@@ -34,11 +34,9 @@ impl EngineInner {
             self.mission_domain.state.mission_won_first_time = false;
             self.feedback
                 .pending_side_effects
-                .host_effects
                 .request_signal(crate::engine::HostSignal::MissionStateNotice);
             self.feedback
                 .pending_side_effects
-                .host_effects
                 .request_signal(crate::engine::HostSignal::MissionStatePopup);
         }
 
@@ -385,7 +383,9 @@ impl EngineInner {
             // before later mouse dispatch can see it.
             MessageType::Simple(crate::messenger::SimpleMessage::UiHasFocus) => {
                 self.request_pc_info_overlay(assets, None);
-                self.feedback.pending_side_effects.ui_has_focus = true;
+                self.feedback
+                    .pending_side_effects
+                    .request_signal(crate::engine::HostSignal::ClearUiFocus);
             }
             MessageType::Pc(crate::messenger::PcMessage::ShowPcInformation, pc) => {
                 self.request_pc_info_overlay(assets, pc);
@@ -527,9 +527,10 @@ impl EngineInner {
             MessageType::Simple(crate::messenger::SimpleMessage::ResetInput) => {
                 self.feedback
                     .pending_side_effects
-                    .host_effects
                     .request_signal(crate::engine::HostSignal::ResetInput);
-                self.feedback.pending_side_effects.reset_input = true;
+                self.feedback
+                    .pending_side_effects
+                    .request_signal(crate::engine::HostSignal::ResetModalInput);
                 // Clear the alt-lock latch along with the
                 // modifier cache; without this, an alt-lock
                 // toggled before a console-hide / task-switch
@@ -593,7 +594,6 @@ impl EngineInner {
                 self.players.user_locked = false;
                 self.feedback
                     .pending_side_effects
-                    .host_effects
                     .request_signal(crate::engine::HostSignal::ResetInput);
             }
             // After hiding the console or switching task,
@@ -632,7 +632,7 @@ impl EngineInner {
                 }
                 self.feedback
                     .pending_side_effects
-                    .invalidate_trajectory_preview = true;
+                    .request_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview);
             }
             // A macro fizzled on a PC's QA slot, so arm the
             // per-slot titbit blink strobe.  Typed `pc` slot
@@ -761,12 +761,16 @@ mod direct_message_tests {
             Message::new(MessageType::Simple(SimpleMessage::HideConsole)),
         );
         assert!(!engine.players.seats[0].is_lock_alt);
-        assert!(engine.feedback.pending_side_effects.reset_input);
         assert!(
             engine
                 .feedback
                 .pending_side_effects
-                .host_effects
+                .has_signal(crate::engine::HostSignal::ResetModalInput)
+        );
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
                 .has_signal(crate::engine::HostSignal::ResetInput)
         );
         engine.forward_message(

@@ -85,7 +85,7 @@ fn apply_frame_effects(
         frame_after,
         hourglass_ran,
         post_initialized: post_initialize_events.is_some(),
-        game_code: events.game_code(),
+        game_code: events.code,
         external_action_results,
         spellforge_abort,
     };
@@ -104,7 +104,7 @@ fn apply_frame_effects(
             &mut frontend.presentation.engine_display,
             &mut frontend.input,
             dev,
-            events.into_side_effects(),
+            events,
         );
         frontend.apply_side_effects(
             side_effects,
@@ -264,15 +264,15 @@ fn prepare_display_effects(
     display: &mut HostDisplayState,
     input: &mut robin_engine::engine::InputState,
     dev: &mut DevState,
-    mut side_effects: robin_engine::engine::SideEffects,
-) -> robin_engine::engine::SideEffects {
+    mut side_effects: robin_engine::engine::HostEffects,
+) -> robin_engine::engine::HostEffects {
     for event in side_effects.host_events.drain(..) {
         display.apply_host_event(input, event);
     }
     if let Some(top_left) = display.take_pending_minimap_position() {
         side_effects.pending_minimap_position = Some(top_left);
     }
-    if side_effects.ui_has_focus {
+    if side_effects.take_signal(crate::host::HostSignal::ClearUiFocus) {
         input.controls.has_focus = false;
     }
     for noise in side_effects.displayed_noises.drain(..) {
@@ -360,26 +360,23 @@ mod tests {
     #[test]
     fn frame_effects_consume_all_three_stages_in_order_and_retain_metadata() {
         use robin_engine::ai::{Noise, NoiseOrigin, NoiseType};
-        use robin_engine::engine::{ExternalActionResult, SideEffects, SimulationFrameOutput};
+        use robin_engine::engine::{ExternalActionResult, HostEffects, SimulationFrameOutput};
 
-        let noise_batch = |element_id, code| {
-            SideEffects {
-                code,
-                displayed_noises: vec![Noise {
-                    origin: NoiseOrigin {
-                        x: 0.0,
-                        y: 0.0,
-                        sector: None,
-                        layer: None,
-                    },
-                    noise_type: NoiseType::Bonk,
-                    volume: 1000,
-                    elevation: 0,
-                    element_id,
-                }],
-                ..Default::default()
-            }
-            .into()
+        let noise_batch = |element_id, code| HostEffects {
+            code,
+            displayed_noises: vec![Noise {
+                origin: NoiseOrigin {
+                    x: 0.0,
+                    y: 0.0,
+                    sector: None,
+                    layer: None,
+                },
+                noise_type: NoiseType::Bonk,
+                volume: 1000,
+                elevation: 0,
+                element_id,
+            }],
+            ..Default::default()
         };
         let mut host = crate::host::Host::scratch(800.0, 600.0);
         let application_context = host.application_context().clone();
@@ -476,27 +473,46 @@ mod tests {
         let mut input = robin_engine::engine::InputState::default();
         input.controls.has_focus = true;
         let mut dev = DevState::default();
-        let prepared = prepare_display_effects(
-            &mut display,
-            &mut input,
-            &mut dev,
-            robin_engine::engine::SideEffects {
-                ui_has_focus: true,
-                host_effects: {
-                    let mut requests = robin_engine::engine::HostEffects::default();
-                    requests.request_signal(crate::host::HostSignal::ShowConsole);
-                    requests
-                },
-                ..Default::default()
-            },
-        );
+        let prepared = prepare_display_effects(&mut display, &mut input, &mut dev, {
+            let mut requests = robin_engine::engine::HostEffects::default();
+            requests.request_signal(crate::host::HostSignal::ClearUiFocus);
+            requests.request_signal(crate::host::HostSignal::ShowConsole);
+            requests
+        });
         assert!(!input.controls.has_focus);
-        assert!(
-            prepared
-                .host_effects
-                .has_signal(crate::host::HostSignal::ShowConsole)
-        );
-        assert!(prepared.ui_has_focus);
+        assert!(prepared.has_signal(crate::host::HostSignal::ShowConsole));
+        assert!(!prepared.has_signal(crate::host::HostSignal::ClearUiFocus));
         assert_eq!(dev.noise_display_start_radius, 7);
+    }
+
+    #[test]
+    fn focus_clear_hides_an_existing_hover_overlay_at_the_frame_boundary() {
+        let mut host = crate::host::Host::scratch(800.0, 600.0);
+        host.frontend.input.controls.has_focus = true;
+        host.frontend.presentation.pc_info_overlay.visible = true;
+        host.frontend.presentation.pc_info_overlay.pc_id = Some(
+            robin_engine::element::EntityId::Pc(robin_engine::element::PcId(7)),
+        );
+        let mut requests = robin_engine::engine::HostEffects {
+            overlay: Some(robin_engine::engine::OverlayChange::Hide),
+            ..Default::default()
+        };
+        requests.request_signal(crate::host::HostSignal::ClearUiFocus);
+        let prepared = prepare_display_effects(
+            &mut host.frontend.presentation.engine_display,
+            &mut host.frontend.input,
+            &mut DevState::default(),
+            requests,
+        );
+        host.apply_side_effects(prepared);
+        assert!(!host.frontend.input.controls.has_focus);
+        assert!(!host.frontend.presentation.pc_info_overlay.visible);
+        assert!(host.frontend.presentation.pc_info_overlay.pc_id.is_none());
+        assert!(host.effects.overlay.is_none());
+        assert!(
+            !host
+                .effects
+                .has_signal(crate::host::HostSignal::ClearUiFocus)
+        );
     }
 }

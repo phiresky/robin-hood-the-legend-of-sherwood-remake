@@ -36,8 +36,8 @@ use super::SimConfig;
 use super::commands::SelectionCommandBatchMode;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
-    ExternalFacts, FrameAdvanceError, FrameConsoleResponse, LevelAssets, LevelLoadStaging,
-    RecordedDropAleRoute, SideEffects, SimulationCommandPhase, SimulationFrameInput,
+    ExternalFacts, FrameAdvanceError, FrameConsoleResponse, HostEffects, LevelAssets,
+    LevelLoadStaging, RecordedDropAleRoute, SimulationCommandPhase, SimulationFrameInput,
     SimulationFrameOutput, SimulationRng, SoundBoundaryPolicy,
 };
 #[cfg(test)]
@@ -1329,11 +1329,11 @@ impl Engine {
                 frame_before: frame_counter,
                 frame_after: frame_counter,
                 hourglass_ran: frame.run_hourglass,
-                events: SideEffects {
+                events: HostEffects {
                     code: crate::game_operation::GameCode::LevelInterrupted,
                     ..Default::default()
                 },
-                post_boundary_events: SideEffects::default(),
+                post_boundary_events: HostEffects::default(),
                 post_initialize_events: None,
                 external_action_results: Vec::new(),
                 state_hash,
@@ -1405,7 +1405,7 @@ impl Engine {
             self.inner
                 .perform_frame_hourglass(assets, simulation_body_allowed, execution)
         } else {
-            SideEffects {
+            HostEffects {
                 code: crate::game_operation::GameCode::LevelInProgress,
                 ..Default::default()
             }
@@ -1547,7 +1547,7 @@ impl Engine {
         input: &mut InputState,
         assets: &LevelAssets,
         dev: &mut DevState,
-    ) -> SideEffects {
+    ) -> HostEffects {
         self.inner.perform_hourglass(display, input, assets, dev)
     }
 
@@ -1682,7 +1682,7 @@ impl Engine {
     }
 
     // ── Per-frame drains ────
-    // Patch-effect bg blits now travel through `SideEffects`
+    // Patch-effect bg blits now travel through `HostEffects`
     // (`apply_side_effects` moves them into `Host::pending_bg_blits`)
     // so the engine no longer owns the queue between tick and render.
 

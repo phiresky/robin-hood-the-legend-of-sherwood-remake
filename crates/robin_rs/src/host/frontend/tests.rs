@@ -288,10 +288,9 @@ mod interaction_reset_tests {
             .interaction
             .tactical_targeting
             .arm_patrol(Vec::new(), TacticalFormation::Line);
-        host.apply_side_effects(SideEffects {
-            invalidate_trajectory_preview: true,
-            ..Default::default()
-        });
+        let mut effects = HostEffects::default();
+        effects.request_signal(HostSignal::InvalidateTrajectoryPreview);
+        host.apply_side_effects(effects);
         assert!(!host.frontend.interaction.trajectory_preview.is_valid());
         assert_eq!(
             host.frontend.interaction.trajectory_preview.hover_ticks(),
@@ -302,10 +301,9 @@ mod interaction_reset_tests {
             .interaction
             .trajectory_preview
             .apply(TrajectoryPreview::HitNoArc);
-        host.apply_side_effects(SideEffects {
-            reset_input: true,
-            ..Default::default()
-        });
+        let mut effects = HostEffects::default();
+        effects.request_signal(HostSignal::ResetModalInput);
+        host.apply_side_effects(effects);
         assert_eq!(
             host.frontend.interaction.trajectory_preview.hover_ticks(),
             0
@@ -353,12 +351,17 @@ mod host_resource_tests {
                 restore_only: true,
                 decal: None,
             });
+            requests.request_signal(HostSignal::ResetModalInput);
+            requests.request_signal(HostSignal::ResetInput);
+            requests.request_signal(HostSignal::CancelMultiSelection);
+            requests.request_signal(HostSignal::IgnoreSwordfightDrag);
+            requests.request_signal(HostSignal::InvalidateTrajectoryPreview);
+            requests.set_draw_hidden = Some(true);
+            requests.skip_render = true;
+            let marked = EntityId::Fx(robin_engine::element::FxId(42));
+            requests.pending_mark_pc_ids.push(marked);
             frontend.apply_side_effects(
-                SideEffects {
-                    host_effects: requests,
-                    reset_input: true,
-                    ..Default::default()
-                },
+                requests,
                 &mut HostAudio::default(),
                 &mut effects,
                 &ApplicationContext::default(),
@@ -373,6 +376,21 @@ mod host_resource_tests {
                 }
             );
             assert!(effects.take_signal(HostSignal::PromoteFpsCheat));
+            assert!(effects.take_signal(HostSignal::ResetInput));
+            for signal in [
+                HostSignal::ResetModalInput,
+                HostSignal::CancelMultiSelection,
+                HostSignal::IgnoreSwordfightDrag,
+                HostSignal::InvalidateTrajectoryPreview,
+            ] {
+                assert!(!effects.has_signal(signal));
+            }
+            assert!(frontend.input.feedback.draw_hidden);
+            assert!(frontend.presentation.skip_render);
+            assert_eq!(frontend.input.feedback.marked_pc_ids, [marked]);
+            assert!(effects.pending_mark_pc_ids.is_empty());
+            assert!(effects.set_draw_hidden.is_none());
+            assert!(!effects.skip_render);
             assert_eq!(
                 effects.take_modals(HostModalPhase::Dialogue),
                 vec![ModalKind::Dialog { dialog_id: 7 }]
@@ -418,6 +436,35 @@ mod host_resource_tests {
         assert!(effects.take_signal(HostSignal::ResetInput));
         assert!(!effects.take_signal(HostSignal::ResetInput));
         assert!(effects.take_signal(HostSignal::ShowConsole));
+    }
+
+    #[test]
+    fn overlay_effects_replace_hover_and_last_request_wins() {
+        let mut host = Host::scratch(800.0, 600.0);
+        let pc_id = EntityId::Pc(robin_engine::element::PcId(7));
+        host.apply_side_effects(HostEffects {
+            overlay: Some(engine_api::OverlayChange::Show { pc_id }),
+            ..Default::default()
+        });
+        assert!(host.frontend.presentation.pc_info_overlay.visible);
+        assert_eq!(
+            host.frontend.presentation.pc_info_overlay.pc_id,
+            Some(pc_id)
+        );
+        assert!(host.effects.overlay.is_none());
+
+        let mut requests = HostEffects {
+            overlay: Some(engine_api::OverlayChange::Show { pc_id }),
+            ..Default::default()
+        };
+        requests.append(HostEffects {
+            overlay: Some(engine_api::OverlayChange::Hide),
+            ..Default::default()
+        });
+        host.apply_side_effects(requests);
+        assert!(!host.frontend.presentation.pc_info_overlay.visible);
+        assert!(host.frontend.presentation.pc_info_overlay.pc_id.is_none());
+        assert!(host.effects.overlay.is_none());
     }
 
     #[test]
