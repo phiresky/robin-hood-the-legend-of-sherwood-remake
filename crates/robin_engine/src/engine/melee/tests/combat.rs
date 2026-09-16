@@ -4121,14 +4121,19 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     let (enter_sequence, enter_index) = engine
         .orders
         .sequence_manager
-        .pending_elements_for_owner(attacker)
-        .into_iter()
+        .elements_to_go
+        .iter()
+        .copied()
         .find(|(sequence, index)| {
             engine
                 .orders
                 .sequence_manager
                 .get_element(*sequence, *index)
-                .is_some_and(|element| element.command == Command::EnterSwordfight)
+                .is_some_and(|element| {
+                    element.owner == Some(attacker)
+                        && element.state != crate::sequence::SequenceState::Interrupted
+                        && element.command == Command::EnterSwordfight
+                })
         })
         .expect("the reciprocal ENTER_SWORDFIGHT must be attacker-owned");
     let enter = engine

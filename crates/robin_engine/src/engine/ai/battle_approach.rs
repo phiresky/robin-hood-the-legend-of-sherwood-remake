@@ -1183,7 +1183,7 @@ mod tests {
             engine
                 .orders
                 .sequence_manager
-                .pending_elements_for_owner(owner)
+                .elements_to_go
                 .iter()
                 .any(|&(sequence, index)| {
                     engine
@@ -1191,8 +1191,15 @@ mod tests {
                         .sequence_manager
                         .get_element(sequence, index)
                         .unwrap()
-                        .command
-                        == crate::element::Command::EnterSwordfight
+                        .owner
+                        == Some(owner)
+                        && engine
+                            .orders
+                            .sequence_manager
+                            .get_element(sequence, index)
+                            .unwrap()
+                            .command
+                            == crate::element::Command::EnterSwordfight
                 })
         );
     }
@@ -1229,18 +1236,22 @@ mod tests {
         engine
             .orders
             .sequence_manager
-            .pending_elements_for_owner(owner)
-            .into_iter()
+            .elements_to_go
+            .iter()
+            .copied()
             .filter(|&(id, index)| {
                 engine
                     .orders
                     .sequence_manager
                     .get_element(id, index)
                     .is_some_and(|element| {
-                        matches!(
-                            element.command,
-                            crate::element::Command::Move | crate::element::Command::MoveWaiting
-                        )
+                        element.owner == Some(owner)
+                            && element.state != crate::sequence::SequenceState::Interrupted
+                            && matches!(
+                                element.command,
+                                crate::element::Command::Move
+                                    | crate::element::Command::MoveWaiting
+                            )
                     })
             })
             .collect()
@@ -1356,16 +1367,17 @@ mod tests {
                 .primary_target,
             Some(AiEntityHandle::new(target.index()))
         );
-        let pending = engine
-            .orders
-            .sequence_manager
-            .pending_elements_for_owner(owner);
+        let pending = &engine.orders.sequence_manager.elements_to_go;
         assert!(pending.iter().any(|&(id, index)| {
             engine
                 .orders
                 .sequence_manager
                 .get_element(id, index)
-                .is_some_and(|element| element.command == crate::element::Command::EnterSwordfight)
+                .is_some_and(|element| {
+                    element.owner == Some(owner)
+                        && element.state != crate::sequence::SequenceState::Interrupted
+                        && element.command == crate::element::Command::EnterSwordfight
+                })
         }));
     }
 

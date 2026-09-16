@@ -591,8 +591,18 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         engine
             .orders
             .sequence_manager
-            .pending_elements_for_owner(owner)
+            .elements_to_go
             .iter()
+            .filter(|&&(sequence, index)| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, index)
+                    .is_some_and(|element| {
+                        element.owner == Some(owner)
+                            && element.state != crate::sequence::SequenceState::Interrupted
+                    })
+            })
             .all(|(sequence_id, _)| *sequence_id == waiting_sequence),
         "the post-construction movement tail must cancel the replacement before instruction; only the old waiter's stop transition may remain"
     );
