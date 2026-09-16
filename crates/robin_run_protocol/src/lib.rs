@@ -91,7 +91,7 @@ pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 50;
 
 /// Exact multiplayer wire protocol of the verifier and current clients. A
 /// replay recorded under another network protocol is not rankable.
-pub const CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1: u32 = 57;
+pub const CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1: u32 = 58;
 
 #[cfg(test)]
 mod tests {
