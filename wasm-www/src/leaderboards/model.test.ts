@@ -194,8 +194,8 @@ test('player history parses V2 run summaries and personal bests', () => {
 
 test('metrics format scores and active time with the published tick duration', () => {
     const tick = { numeratorMicros: 50_000, denominator: 1 };
-    assert.equal(formatActiveTime(1200, tick), '1:00.0');
-    assert.equal(formatMetricValue({ metric: 'fastest_success', activeSimulationTicks: 30 }, { numeratorMicros: 100_000, denominator: 3 }), '0:01.0');
+    assert.equal(formatActiveTime(1200, tick), '1:00.00');
+    assert.equal(formatMetricValue({ metric: 'fastest_success', activeSimulationTicks: 30 }, { numeratorMicros: 100_000, denominator: 3 }), '0:01.00');
     assert.match(formatMetricValue({ metric: 'original_score', points: 1234 }, tick), /1.?234/u);
 });
 

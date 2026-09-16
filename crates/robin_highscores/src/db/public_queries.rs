@@ -246,6 +246,39 @@ impl Database {
         cursor: Option<(u64, &str)>,
         limit: u32,
     ) -> Result<Vec<PlayerHistoryRecord>, DbError> {
+        self.run_history(
+            Some(public_key),
+            visible_board_ids,
+            accepted_sequence_watermark,
+            cursor,
+            limit,
+        )
+        .await
+    }
+
+    /// Most recently accepted public runs, including anonymous uploads.
+    pub async fn latest_runs(
+        &self,
+        visible_board_ids: &[String],
+    ) -> Result<Vec<PlayerHistoryRecord>, DbError> {
+        self.run_history(
+            None,
+            visible_board_ids,
+            self.accepted_sequence_watermark().await?,
+            None,
+            10,
+        )
+        .await
+    }
+
+    async fn run_history(
+        &self,
+        public_key: Option<&[u8; 32]>,
+        visible_board_ids: &[String],
+        accepted_sequence_watermark: u64,
+        cursor: Option<(u64, &str)>,
+        limit: u32,
+    ) -> Result<Vec<PlayerHistoryRecord>, DbError> {
         if limit == 0 || limit > 101 {
             return Err(DbError::ResultInvariant(
                 "player history limit must be in 1..=101".to_owned(),
@@ -258,11 +291,14 @@ impl Database {
                     s.public_disclosure, s.uploader_public_key, i.username ",
         );
         query.push(RUN_UPLOADER_JOIN);
-        query.push(
-            "WHERE s.status = 'accepted' AND s.tombstoned_at_ms IS NULL \
-               AND s.public_disclosure = 'named_profile' AND s.uploader_public_key = ",
-        );
-        query.push_bind(public_key.to_vec());
+        query.push("WHERE s.status = 'accepted' AND s.tombstoned_at_ms IS NULL");
+        if let Some(public_key) = public_key {
+            query
+                .push(" AND s.public_disclosure = 'named_profile' AND s.uploader_public_key = ")
+                .push_bind(public_key.to_vec());
+        } else {
+            query.push(" AND lower(r.mission_id) NOT IN ('sherwood', 'sherwoodoutro')");
+        }
         query.push(" AND ");
         push_text_filter(&mut query, "r.board_id", visible_board_ids);
         query

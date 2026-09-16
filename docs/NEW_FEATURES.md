@@ -1283,7 +1283,7 @@ end in an incomplete write.
 
 Verified run pages include an embedded replay player with playback controls and a
 full-page link. Full-game replays load hosted shipping data automatically. Each
-recorded runtime has an immutable `datadirs/replays/<build>.json` binding to a
+recorded runtime has an immutable `datadirs/replays/v2/<build>.json` binding to a
 content-addressed Full package; Demo play keeps its existing data selection.
 Build Full data with `ROBIN_WEB_CONTENT_EDITION=full scripts/build_web_shipping_datadir.sh`,
 then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publishing
@@ -1292,3 +1292,7 @@ the datadir corpus. The matching recorded browser runtime must also be published
 - Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.
 
 - Shipping conversion keeps cinematic video bytes in separate content-addressed files. Small per-movie references retain locale fallback in the boot data, and native video playback verifies and reads the selected file only when requested. The `split_cinematics` asset example migrates existing boot files without re-encoding mission assets; regenerate the web content manifest afterward.
+
+### Leaderboard browsing and latest submissions
+
+The leaderboard site defaults to the full game and combines full-game and demo missions in one numbered, grouped selector. Locations without a mission victory are excluded. Times show hundredths of a second, preserving every 25 Hz simulation frame. The first results page also shows the ten most recently verified public runs across missions, via `GET /api/v1/latest-runs`; anonymous uploads remain anonymous and removed runs are excluded.

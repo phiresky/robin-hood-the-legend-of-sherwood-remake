@@ -16,19 +16,19 @@ function metadata(extraBoards: readonly Record<string, unknown>[] = []) {
     return parseBoardMetadata({ ...document, boards });
 }
 
-test('defaults select the first published board, mission and metric, or the remembered board', () => {
+test('defaults select a full-game board, or the remembered board', () => {
     const selected = normalizeFilters(empty, metadata());
-    assert.equal(selected.boardId, 'demo-standard-normal');
-    assert.equal(selected.missionId, 'Dem_Lei_MP');
+    assert.equal(selected.boardId, 'full-any-config');
+    assert.equal(selected.missionId, 'M01');
     assert.equal(selected.metric, 'original_score');
     assert.equal(normalizeFilters(empty, metadata(), 'full-any-config').boardId, 'full-any-config');
-    assert.equal(normalizeFilters(empty, metadata(), 'retired-board').boardId, 'demo-standard-normal');
+    assert.equal(normalizeFilters(empty, metadata(), 'retired-board').boardId, 'full-any-config');
     assert.equal(normalizeFilters({ ...empty, boardId: 'demo-standard-normal' }, metadata(), 'full-any-config').boardId, 'demo-standard-normal');
 });
 
 test('unpublished boards, missions and metrics fail clearly', () => {
     assert.throws(() => normalizeFilters({ ...empty, boardId: 'missing' }, metadata()), /board is not published/u);
-    assert.throws(() => normalizeFilters({ ...empty, missionId: 'M01' }, metadata()), /mission is not part of this board/u);
+    assert.throws(() => normalizeFilters({ ...empty, boardId: 'demo-standard-normal', missionId: 'M01' }, metadata()), /mission is not part of this board/u);
     assert.throws(() => normalizeFilters({ ...empty, boardId: 'full-any-config', metric: 'fastest_success' }, metadata()), /does not rank the selected metric/u);
     assert.throws(() => normalizeFilters(empty, parseBoardMetadata({ ...metadataDocument(), boards: [] })), /no ranked boards/u);
 });

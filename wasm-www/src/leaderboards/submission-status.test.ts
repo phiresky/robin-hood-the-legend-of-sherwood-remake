@@ -7,7 +7,7 @@ test('pending submission states never claim a verified result', () => {
         const status = parsePublicSubmissionStatus({ schema_version: 1, submission_id: 'sub_1', state: { state } }, 'sub_1');
         assert.equal(status.runId, null);
         assert.equal(submissionPresentation(status).pending, true);
-        assert.match(submissionPresentation(status).title, /Unverified/u);
+        assert.doesNotMatch(submissionPresentation(status).title, /verified run/i);
     }
 });
 test('only a verified status carries a run link', () => {

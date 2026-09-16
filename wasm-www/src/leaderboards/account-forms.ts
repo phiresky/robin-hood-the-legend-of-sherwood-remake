@@ -24,11 +24,11 @@ export function renderUsernameForm(
     label.append(input);
     const help = element('p', {
         className: 'fingerprint',
-        text: '1–48 UTF-8 bytes. Names are public, mutable, and not unique; your fingerprint remains the durable identity.',
+        text: 'Choose a short public display name. Other players can use the same name.',
         attrs: { id: 'username-owner-help' },
     });
     const submit = element('button', {
-        className: 'button secondary', text: 'Sign and update name', attrs: { type: 'submit' },
+        className: 'button secondary', text: 'Save name', attrs: { type: 'submit' },
     });
     const status = element('p', { className: 'fingerprint', attrs: { role: 'status' } });
     form.append(label, help, submit, status);
@@ -48,7 +48,7 @@ export function renderUsernameForm(
             const updated = await updateUsername(api, bridge, profile, username, signal,
                 message => { status.textContent = message; });
             input.value = updated.username;
-            status.textContent = `Display name updated to ${updated.username}. Fingerprint ${updated.publicKeyFingerprint} is unchanged.`;
+            status.textContent = `Display name updated to ${updated.username}.`;
         })().catch(errorValue => {
             if (signal.aborted) return;
             status.textContent = errorValue instanceof Error ? errorValue.message : String(errorValue);
@@ -71,13 +71,13 @@ export function renderDeletionForm(
     details.append(element('summary', { text: 'Delete my public record' }));
     const form = element('form', { className: 'moderation-form danger-zone' });
     const consequence = target.kind === 'run'
-        ? 'This immediately removes the run from rankings and tombstones its replay. Physical deletion may occur later and shared replay objects remain while referenced.'
-        : 'This immediately tombstones the submission and removes any associated public ranking and replay. Physical deletion may occur later.';
+        ? 'This removes your run from the leaderboards and hides its replay. This cannot be undone.'
+        : 'This removes your submission, its ranking, and its public replay. This cannot be undone.';
     const confirmLabel = element('label', { className: 'confirm-action' });
     const confirm = element('input', { attrs: { type: 'checkbox', required: '' } });
     confirmLabel.append(confirm, document.createTextNode(` I understand: ${consequence}`));
     const submit = element('button', {
-        className: 'button danger', text: 'Sign deletion request', attrs: { type: 'submit' },
+        className: 'button danger', text: 'Delete record', attrs: { type: 'submit' },
     });
     submit.disabled = true;
     confirm.addEventListener('change', () => { submit.disabled = !confirm.checked; });
@@ -95,10 +95,7 @@ export function renderDeletionForm(
         void (async () => {
             const receipt = await deleteRecord(api, bridge, target, signal,
                 message => { status.textContent = message; });
-            const retention = receipt.purgeEligibleAtUnixMs === null
-                ? 'No automatic physical purge date is configured.'
-                : `Physical purge is eligible after ${formatDate(receipt.purgeEligibleAtUnixMs)}.`;
-            status.textContent = `Record tombstoned at ${formatDate(receipt.tombstonedAtUnixMs)}. ${retention}`;
+            status.textContent = `Record removed on ${formatDate(receipt.tombstonedAtUnixMs)}.`;
         })().catch(errorValue => {
             if (signal.aborted) return;
             status.textContent = errorValue instanceof Error ? errorValue.message : String(errorValue);
@@ -117,13 +114,13 @@ export function renderReportForm(
     signal: AbortSignal,
 ): HTMLElement {
     const details = element('details');
-    details.append(element('summary', { text: 'Report this public record' }));
+    details.append(element('summary', { text: 'Report a problem' }));
     const form = element('form', { className: 'moderation-form' });
     const categoryLabel = element('label', { text: 'Category' });
     const category = element('select', { attrs: { required: '', 'aria-label': 'Report category' } });
     const categories: readonly (readonly [AbuseReportCategory, string])[] = [
         ['suspected_cheating', 'Suspected cheating'],
-        ['offensive_identity', 'Offensive identity'],
+        ['offensive_identity', 'Offensive name'],
         ['privacy', 'Privacy'],
         ['copyright', 'Copyright'],
         ['other', 'Other'],

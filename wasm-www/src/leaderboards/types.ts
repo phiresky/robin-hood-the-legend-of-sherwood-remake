@@ -261,3 +261,5 @@ export type AbuseReportCategory =
 export type AbuseReportAccepted = { readonly reportId: string; readonly receivedAtUnixMs: number };
 
 export type JsonObject = Readonly<Record<string, unknown>>;
+
+export type LatestRun = { readonly run: RunSummary; readonly verifiedAtUnixMs: number };

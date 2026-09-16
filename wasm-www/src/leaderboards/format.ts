@@ -6,13 +6,12 @@ import {
 } from './types.js';
 
 export function formatDuration(milliseconds: number): string {
-    const totalTenths = Math.max(0, Math.floor(milliseconds / 100));
-    const hours = Math.floor(totalTenths / 36_000);
-    const minutes = Math.floor((totalTenths % 36_000) / 600);
-    const seconds = Math.floor((totalTenths % 600) / 10);
-    const tenths = totalTenths % 10;
+    const hundredths = Math.max(0, Math.round(milliseconds / 10));
+    const hours = Math.floor(hundredths / 360_000);
+    const minutes = Math.floor((hundredths % 360_000) / 6_000);
+    const seconds = Math.floor((hundredths % 6_000) / 100);
     const prefix = hours > 0 ? `${hours}:${pad2(minutes)}:` : `${minutes}:`;
-    return `${prefix}${pad2(seconds)}.${tenths}`;
+    return `${prefix}${pad2(seconds)}.${pad2(hundredths % 100)}`;
 }
 
 export function formatInteger(value: number): string {
@@ -47,7 +46,7 @@ export function formatMetricValue(value: BoardMetricValue, tickDuration: TickDur
 }
 
 export function metricLabel(metric: BoardMetric): string {
-    return metric === 'original_score' ? 'Original score' : 'Fastest successful';
+    return metric === 'original_score' ? 'High scores' : 'Fastest times';
 }
 
 export function editionLabel(edition: ContentEdition): string {

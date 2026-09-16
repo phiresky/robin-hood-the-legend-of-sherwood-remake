@@ -1,3 +1,4 @@
+import { missionGroup } from './missions.js';
 import { renderUsernameForm, renderDeletionForm, renderReportForm } from './account-forms.js';
 import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters, type NormalizedBoardFilters } from './board-filters.js';
 import {
@@ -90,8 +91,8 @@ async function renderSubmission(api: HighscoreApi, id: string, signal: AbortSign
     const view = submissionPresentation(status);
     const panel = statePanel(view.title, view.message);
     panel.append(element('p', { className: 'fingerprint', text: `Submission ${id}` }));
-    if (status.runId !== null) panel.append(runLink(status.runId, 'View verified result'));
-    replace(app, pageHeading('Replay submission', 'A received replay stays unverified until the server confirms it.'), panel);
+    if (status.runId !== null) panel.append(runLink(status.runId, 'View result'));
+    replace(app, pageHeading('Replay submission', 'Follow the progress of your submitted replay.'), panel);
     if (view.pending) scheduleSubmissionRefresh(api, id, signal);
 }
 
@@ -117,9 +118,9 @@ async function renderLeaderboard(
     const metadata = await api.metadata(signal);
     signal.throwIfAborted();
     if (metadata.boards.length === 0) {
-        replace(app, pageHeading('Verified leaderboards', boardIntro()), statePanel(
-            'No official boards are provisioned',
-            'This server publishes no ranked Demo or Full boards yet.',
+        replace(app, pageHeading('Leaderboards', boardIntro()), statePanel(
+            'No leaderboards yet',
+            'Check back soon for the first results.',
         ));
         return;
     }
@@ -131,13 +132,15 @@ async function renderLeaderboard(
     signal.throwIfAborted();
     validateBoardView(page, filters);
 
-    const heading = pageHeading('Verified leaderboards', boardIntro());
+    const heading = pageHeading('Leaderboards', boardIntro());
     const controls = renderFilters(metadata, filters);
+    const latest = filters.cursor === null ? renderLatestRuns(api, metadata, signal) : null;
     if (page.entries.length === 0) {
         replace(app, heading, controls, statePanel(
-            'No verified runs on this board',
-            'No verified runs match the selected board, mission, metric and player count.',
+            'Be the first to set a record',
+            'No runs match these choices yet. Play this mission and submit your replay to join the leaderboard.',
         ));
+        if (latest !== null) app.append(latest);
         return;
     }
 
@@ -145,25 +148,29 @@ async function renderLeaderboard(
     const tableScroll = element('div', { className: 'table-scroll' });
     const table = element('table');
     table.append(element('caption', {
-        text: `${page.entries.length} server-verified run${page.entries.length === 1 ? '' : 's'} on this page`,
+        text: `${filters.board.missions.find(mission => mission.missionId === filters.missionId)?.displayName} · ${metricLabel(filters.metric)}`,
     }));
     const head = element('thead');
     const row = element('tr');
     for (const [label, className] of [
-        ['Rank', 'rank'], ['Uploader', ''], [metricHeading(filters.metric), ''],
-        ['Players', 'hide-small'], ['Verified', 'hide-small'], ['Record', ''],
+        ['Rank', 'rank'], ['Player', ''], [metricHeading(filters.metric), ''],
+        ['Players', 'hide-small'], ['Added', 'hide-small'], ['Replay', ''],
     ] as const) row.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
     head.append(row);
     const body = element('tbody');
     for (const entry of page.entries) body.append(renderBoardRow(entry, metadata));
     table.append(head, body);
     tableScroll.append(table);
-    tablePanel.append(tableScroll, renderPagination(page.nextCursor, filters));
+    tablePanel.append(tableScroll);
+    if (page.nextCursor !== null || previousPageUrls.has(window.location.href)) {
+        tablePanel.append(renderPagination(page.nextCursor, filters));
+    }
     replace(app, heading, controls, tablePanel);
+    if (latest !== null) app.append(latest);
 }
 
 function boardIntro(): string {
-    return 'Official Demo and Full runs only. Every listed score or time comes from a complete replay that the server re-simulated and checked against its recorded state.';
+    return 'Chase a high score, beat the fastest time, or watch how other players did it.';
 }
 
 function renderFilters(metadata: BoardMetadata, filters: NormalizedBoardFilters): HTMLElement {
@@ -175,17 +182,45 @@ function renderFilters(metadata: BoardMetadata, filters: NormalizedBoardFilters)
     const facets = boardFacets(metadata, board);
     const switchBoard = (next: Board): void => navigateFilters(filtersForBoard(next, filters));
     const fields = element('div', { className: 'filters' });
-    if (facets.editions.length > 1) fields.append(optionSelect('Edition', facets.editions, board.edition, value => {
-        switchBoard(boardForFacet(metadata, board, { edition: value === 'full' ? 'full' : 'demo' }));
+    const missionField = element('label', { className: 'filter-wide', text: 'Mission' });
+    const missionSelect = element('select', { attrs: { 'aria-label': 'Mission' } });
+    const choices = new Map<string, { board: Board; missionId: string }>();
+    const groups = new Map<string, HTMLOptGroupElement>();
+    for (const edition of ['full', 'demo'] as const) {
+        const available = metadata.boards.filter(item => item.edition === edition);
+        if (available.length === 0) continue;
+        const preferred = boardForFacet(metadata, board, { edition });
+        const missions = new Map(available.flatMap(item => item.missions).map(mission => [mission.missionId, mission]));
+        for (const mission of missions.values()) {
+            const key = `${edition}:${mission.missionId}`;
+            const target = preferred.missions.some(item => item.missionId === mission.missionId)
+                ? preferred : available.find(item => item.missions.some(candidate => candidate.missionId === mission.missionId))!;
+            choices.set(key, { board: target, missionId: mission.missionId });
+            const groupName = edition === 'demo' ? 'Demo missions' : missionGroup(mission.missionId);
+            let group = groups.get(groupName);
+            if (group === undefined) {
+                group = element('optgroup', { attrs: { label: groupName } });
+                groups.set(groupName, group);
+                missionSelect.append(group);
+            }
+            const option = element('option', { text: mission.displayName, attrs: { value: key } });
+            option.selected = board.edition === edition && filters.missionId === mission.missionId;
+            group.append(option);
+        }
+    }
+    missionSelect.addEventListener('change', () => {
+        const choice = choices.get(missionSelect.value);
+        if (choice === undefined) throw new Error('Unknown mission choice');
+        navigateFilters({ ...filtersForBoard(choice.board, filters), missionId: choice.missionId });
+    });
+    missionField.append(missionSelect);
+    fields.append(missionField);
+    if (facets.presets.length > 1) fields.append(optionSelect('Rules', facets.presets, board.presetId, value => {
+        switchBoard(boardForFacet(metadata, board, { presetId: value }));
     }));
-    fields.append(
-        optionSelect('Preset', facets.presets, board.presetId, value => {
-            switchBoard(boardForFacet(metadata, board, { presetId: value }));
-        }),
-        optionSelect('Difficulty', facets.difficulties, board.difficultyId, value => {
-            switchBoard(boardForFacet(metadata, board, { difficultyId: value }));
-        }),
-    );
+    if (facets.difficulties.length > 1) fields.append(optionSelect('Difficulty', facets.difficulties, board.difficultyId, value => {
+        switchBoard(boardForFacet(metadata, board, { difficultyId: value }));
+    }));
     if (facets.variants.length > 1) fields.append(optionSelect(
         'Board',
         facets.variants.map(item => ({ id: item.boardId, label: item.displayName })),
@@ -195,19 +230,8 @@ function renderFilters(metadata: BoardMetadata, filters: NormalizedBoardFilters)
             if (next !== undefined) switchBoard(next);
         },
     ));
-    fields.append(
-        optionSelect(
-            'Mission',
-            board.missions.map(mission => ({ id: mission.missionId, label: mission.displayName })),
-            filters.missionId,
-            value => navigateFilters({ ...filters, missionId: value, cursor: null }),
-        ),
-        maxConcurrentPlayersInput(filters),
-    );
-    panel.append(tabs, fields, element('p', {
-        className: 'notice',
-        text: `${board.displayName}: ${boardPolicyLabel(board)}.`,
-    }));
+    fields.append(maxConcurrentPlayersInput(filters));
+    panel.append(fields, tabs);
     return panel;
 }
 
@@ -242,23 +266,15 @@ function optionSelect(
 }
 
 function maxConcurrentPlayersInput(filters: BoardFilters): HTMLLabelElement {
-    const label = element('label', { text: 'Max concurrent players (optional)' });
-    const input = element('input', {
-        attrs: { type: 'number', inputmode: 'numeric', min: '1', max: '4', step: '1', placeholder: 'Any', 'aria-label': 'Exact player count' },
+    return optionSelect('Players', [
+        { id: '', label: 'Any number' },
+        { id: '1', label: 'Solo' },
+        { id: '2', label: '2 players' },
+        { id: '3', label: '3 players' },
+        { id: '4', label: '4 players' },
+    ], filters.maxConcurrentPlayers === null ? '' : String(filters.maxConcurrentPlayers), value => {
+        navigateFilters({ ...filters, maxConcurrentPlayers: value === '' ? null : Number(value), cursor: null });
     });
-    if (filters.maxConcurrentPlayers !== null) input.value = String(filters.maxConcurrentPlayers);
-    input.addEventListener('change', () => {
-        const count = input.value.length === 0 ? null : Number(input.value);
-        if (count !== null && (!Number.isSafeInteger(count) || count < 1 || count > 4)) {
-            input.setCustomValidity('Enter a whole number from 1 through 4.');
-            input.reportValidity();
-            return;
-        }
-        input.setCustomValidity('');
-        navigateFilters({ ...filters, maxConcurrentPlayers: count, cursor: null });
-    });
-    label.append(input);
-    return label;
 }
 
 function renderBoardRow(entry: LeaderboardEntry, metadata: BoardMetadata): HTMLTableRowElement {
@@ -272,6 +288,48 @@ function renderBoardRow(entry: LeaderboardEntry, metadata: BoardMetadata): HTMLT
         element('td', {}, [runLink(entry.runId, 'Details')]),
     );
     return row;
+}
+
+function renderLatestRuns(api: HighscoreApi, metadata: BoardMetadata, signal: AbortSignal): HTMLElement {
+    const section = element('section', { className: 'panel table-panel player-results latest-submissions', attrs: { 'aria-label': 'Latest submissions' } });
+    const heading = element('h2', { text: 'Latest submissions' });
+    section.append(heading, element('p', { className: 'section-intro', text: 'Loading recent runs…' }));
+    void api.latestRuns(signal).then(entries => {
+        signal.throwIfAborted();
+        const intro = element('p', { className: 'section-intro', text: entries.length === 0
+            ? 'No submissions yet. Yours could be the first!'
+            : 'The latest verified runs across all missions.' });
+        replace(section, heading, intro);
+        if (entries.length === 0) return;
+        const scroll = element('div', { className: 'table-scroll' });
+        const table = element('table');
+        const head = element('thead');
+        const header = element('tr');
+        for (const title of ['Player', 'Mission', 'Score', 'Time', 'Replay']) {
+            header.append(element('th', { text: title, attrs: { scope: 'col' } }));
+        }
+        head.append(header);
+        const body = element('tbody');
+        for (const { run, verifiedAtUnixMs } of entries) {
+            const row = element('tr');
+            row.append(
+                element('td', {}, [uploaderView(run.uploader, playerLink), element('small', { className: 'fingerprint', text: formatDate(verifiedAtUnixMs) })]),
+                element('td', { text: runLabels(metadata, run.boardId, run.missionId).missionLabel }),
+                element('td', { text: formatInteger(run.metrics.originalScoreDelta), attrs: { 'data-label': 'Score' } }),
+                element('td', { text: formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration), attrs: { 'data-label': 'Time' } }),
+                element('td', {}, [runLink(run.runId, 'Watch')]),
+            );
+            body.append(row);
+        }
+        table.append(head, body);
+        scroll.append(table);
+        section.append(scroll);
+    }).catch(error => {
+        if (signal.aborted) return;
+        console.error('Latest submissions could not be loaded', error);
+        replace(section, heading, element('p', { className: 'section-intro', text: 'Latest submissions are unavailable right now.' }));
+    });
+    return section;
 }
 
 async function renderPlayer(
@@ -289,27 +347,21 @@ async function renderPlayer(
     }
     const panel = element('section', { className: 'panel detail-section' });
     panel.append(
-        element('span', { className: 'badge verified', text: 'Public-key identity' }),
         element('div', { className: 'metric-hero', text: profile.username }),
-        definitionList([
-            ['Fingerprint', profile.publicKeyFingerprint],
-            ['Public key', profile.publicKey],
-        ]),
-        element('p', {
-            className: 'notice',
-            text: 'This display name is mutable and not unique. Only the owning browser identity can sign a rename. Its non-extractable private key remains in the dedicated signer origin; this page receives only the public key and typed signed document.',
-        }),
+        element('details', {}, [element('summary', { text: 'Player ID' }), definitionList([
+            ['ID', profile.publicKeyFingerprint], ['Public key', profile.publicKey],
+        ])]),
     );
     const ownerBridge = await bridgeForKeys([profile.publicKey]);
     signal.throwIfAborted();
     panel.append(ownerBridge === null
-        ? signerUnavailableNotice('Rename is available only to this key owner when the protected identity signer is connected.')
+        ? signerUnavailableNotice('To change your name, open this page in the browser you use to play.')
         : renderUsernameForm(api, profile, ownerBridge, signal));
     panel.append(renderReportForm(api, { kind: 'player', public_key: profile.publicKey }, signal));
     const { renderPlayerPersonalBests, renderPlayerRunHistory } = playerTables(runLink, renderPlayerPagination, metadata);
     replace(
         app,
-        pageHeading('Player identity', 'Durable accountless identity, disambiguated by its key fingerprint.'),
+        pageHeading('Player profile', 'Personal bests and recent runs.'),
         panel,
         renderPlayerPersonalBests(page.personalBests),
         renderPlayerRunHistory(page, cursor),
@@ -367,16 +419,16 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     const labels = runLabels(metadata, run.boardId, run.missionId);
     const mainPanel = element('section', { className: 'panel detail-section' });
     mainPanel.append(
-        element('span', { className: 'badge verified', text: '✓ Server replay verified' }),
+        element('span', { className: 'badge verified', text: '✓ Verified run' }),
         element('div', { className: 'metric-hero', text: `${formatInteger(run.metrics.originalScoreDelta)} points` }),
         definitionList([
-            ['Uploader', uploaderView(run.uploader, playerLink)],
-            ['Participation', participationLabel(run.maxConcurrentPlayers, run.participantInstanceCount)],
-            ['Board', labels.board === null ? labels.boardLabel : `${labels.boardLabel} (${boardPolicyLabel(labels.board)})`],
+            ['Player', uploaderView(run.uploader, playerLink)],
+            ['Players', participationLabel(run.maxConcurrentPlayers, run.participantInstanceCount)],
+            ['Rules', labels.board === null ? labels.boardLabel : boardPolicyLabel(labels.board)],
             ['Mission', labels.missionLabel],
             ['Edition', editionLabel(run.edition)],
-            ['Original score', formatInteger(run.metrics.originalScoreDelta)],
-            ['Active time', formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration)],
+            ['Score', formatInteger(run.metrics.originalScoreDelta)],
+            ['Time', formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration)],
             ['Net money', formatInteger(run.metrics.ransomCollected)],
             ['Campaign score', `${run.startingCampaignScore} → ${run.finalCampaignScore}`],
             ['Verified', formatDate(run.verifiedAtUnixMs)],
@@ -384,19 +436,22 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     );
 
     const record = element('aside', { className: 'panel detail-section' });
-    record.append(element('h2', { text: 'Replay record' }), definitionList([
+    const technical = element('details');
+    technical.append(element('summary', { text: 'Replay information' }));
+    technical.append(definitionList([
         ['Replay', `${run.replay.artifact.sha256} · ${formatBytes(run.replay.artifact.byteLength)}`],
         ['Replay schema', String(run.replay.replaySchemaVersion)],
         ['Recorded engine version', run.recordedEngineVersion],
     ]), renderSimConfig(run));
     appendAchievements(record, run.achievements);
+    record.append(technical);
     record.append(renderReportForm(api, { kind: 'run', run_id: run.runId }, signal));
     record.append(ownerBridge === null
-        ? signerUnavailableNotice('Owner deletion is available only to the named uploader with the protected identity signer.')
+        ? signerUnavailableNotice('To delete your run, open this page in the browser you used to submit it.')
         : renderDeletionForm(api, ownerBridge, { kind: 'run', run_id: run.runId }, signal));
     replace(
         app,
-        pageHeading(`${labels.missionLabel} — verified run`, 'Full replay and the result the server reproduced from it.'),
+        pageHeading(`${labels.missionLabel} — verified run`, 'Watch the replay and explore the result.'),
         element('section', { className: 'panel replay-section' }, [renderReplayActions(api, run)]),
         element('div', { className: 'detail-grid' }, [mainPanel, record]),
     );
@@ -463,7 +518,7 @@ async function connectedOwnerBridge(): Promise<LeaderboardSigningBridge | null> 
 function signerUnavailableNotice(message: string): HTMLElement {
     return element('section', { className: 'notice' }, [element('p', {
         className: 'notice',
-        text: `${message} Open this page directly from an official deployment with its dedicated identity signer, or use the owning game client.`,
+        text: message,
     })]);
 }
 
@@ -551,5 +606,5 @@ function rememberBoard(boardId: string): void {
 }
 
 function metricHeading(metric: BoardMetric): string {
-    return metric === 'original_score' ? 'Original score' : 'Active time';
+    return metric === 'original_score' ? 'Score' : 'Time';
 }
