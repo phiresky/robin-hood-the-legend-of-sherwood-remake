@@ -370,6 +370,14 @@ mod suite {
             Some(owner),
             OrderType::WalkingWithSword,
         );
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut movement.data
+        else {
+            unreachable!()
+        };
+        *gate_id = crate::gate::DoorIndex::new(0);
+        *direction = 1;
         movement
             .orders
             .push_back(Order::new(transition, goal.x, goal.y, order_id));
@@ -557,6 +565,14 @@ mod suite {
 
         let order_id = engine.orders.allocate_order_id();
         let mut movement = SequenceElement::new_movement(1, Command::PassDoor, Some(owner), action);
+        let SequenceElementData::Movement {
+            gate_id, direction, ..
+        } = &mut movement.data
+        else {
+            unreachable!()
+        };
+        *gate_id = crate::gate::DoorIndex::new(0);
+        *direction = 1;
         let mut order = Order::new(action, destination.x, destination.y, order_id);
         order.compute_direction = false;
         movement.orders.push_back(order);
