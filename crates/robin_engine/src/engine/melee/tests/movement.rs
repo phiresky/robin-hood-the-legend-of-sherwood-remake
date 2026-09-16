@@ -147,13 +147,7 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
             .unwrap()
             .opponents
             .push(attacker);
-        let target_actor = target_entity.actor_data_mut().unwrap();
-        target_actor.active_door_pass = Some(crate::element::ActiveDoorPass {
-            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
-            direct: true,
-            position_direct: true,
-            triggers_fired: 0,
-        });
+
         target_entity.position_iface_mut().set_door_for_test(
             crate::position_interface::DoorHandle::new(7).expect("valid door index"),
         );

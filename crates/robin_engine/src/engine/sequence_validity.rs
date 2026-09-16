@@ -35,7 +35,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         actor_id: EntityId,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         let Some(actor) = self.get_entity(actor_id) else {
@@ -317,7 +317,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !check_position {
@@ -347,7 +347,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         let Some(victim) = interaction_victim(self, element) else {
@@ -392,7 +392,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         let opponent_id = match element.get_property(Field::Opponent) {
             Some(FieldValue::Integer(0)) => {
@@ -440,7 +440,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if self.is_climbing_or_inside_building(actor_id) {
             return false;
@@ -481,7 +481,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         let Some(victim) = interaction_victim(self, element) else {
@@ -505,7 +505,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         let Some(victim_id) = interaction_victim_id(element) else {
@@ -630,7 +630,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         // PC command eligibility always allows buildings here.
@@ -666,7 +666,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if actor.is_pc() && !self.can_pc_execute_commands(actor_id, true) {
             return false;
@@ -684,7 +684,11 @@ impl EngineInner {
         true
     }
 
-    fn sequence_validity_jump_cmd(&self, actor: &Entity, element: &SequenceElement) -> bool {
+    fn sequence_validity_jump_cmd(
+        &self,
+        actor: &Entity,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
+    ) -> bool {
         let Some(src_idx) = element
             .get_property(crate::sequence::Field::JumplineSource)
             .and_then(|v| match v {
@@ -720,7 +724,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -758,7 +762,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -807,7 +811,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -843,7 +847,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -871,7 +875,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -929,7 +933,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -954,7 +958,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -997,7 +1001,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -1036,7 +1040,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1078,7 +1082,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1152,7 +1156,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1179,7 +1183,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1222,7 +1226,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1254,7 +1258,7 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     ) -> bool {
         if !actor.is_pc() {
             return true;
@@ -1284,7 +1288,7 @@ impl EngineInner {
     fn sequence_validity_pay(
         &self,
         actor: &Entity,
-        element: &SequenceElement,
+        element: &SequenceElement<impl robin_util::state_hash::StateHash>,
         check_position: bool,
     ) -> bool {
         if !actor.is_pc() {
@@ -1726,7 +1730,9 @@ fn human_init_validity_arm(
 
 // ─── Local helpers ─────────────────────────────────────────────
 
-fn interaction_victim_id(element: &SequenceElement) -> Option<EntityId> {
+fn interaction_victim_id(
+    element: &SequenceElement<impl robin_util::state_hash::StateHash>,
+) -> Option<EntityId> {
     match &element.data {
         SequenceElementData::Interaction { antagonist } => *antagonist,
         _ => None,
@@ -1735,7 +1741,7 @@ fn interaction_victim_id(element: &SequenceElement) -> Option<EntityId> {
 
 fn interaction_victim<'a>(
     engine: &'a EngineInner,
-    element: &SequenceElement,
+    element: &SequenceElement<impl robin_util::state_hash::StateHash>,
 ) -> Option<&'a Entity> {
     engine.get_entity(interaction_victim_id(element)?)
 }
@@ -1807,7 +1813,7 @@ fn max_norm_distance(a: &Entity, b: &Entity) -> f32 {
 /// saves.  The Z is dropped: `is_in_range_for_projectile` re-derives
 /// Z from the projection-area obstacles.
 fn read_target_point_2d(
-    element: &SequenceElement,
+    element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     field: crate::sequence::Field,
 ) -> Option<crate::coordinates::MapPoint> {
     match element.get_property(field)? {
@@ -1826,7 +1832,7 @@ fn read_target_point_2d(
 /// engine/archery.rs ThrowPurseDone, which lifts the stored target the
 /// same way).
 fn read_target_point_3d(
-    element: &SequenceElement,
+    element: &SequenceElement<impl robin_util::state_hash::StateHash>,
     field: crate::sequence::Field,
 ) -> Option<crate::coordinates::WorldPoint3D> {
     match element.get_property(field)? {

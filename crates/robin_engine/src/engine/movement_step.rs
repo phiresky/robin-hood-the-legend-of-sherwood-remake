@@ -159,7 +159,6 @@ impl EngineInner {
         mut selected: MovementOwnerSelection,
         actor_id: crate::entity_id::ActorId,
         mut ft: FinalTol,
-        prepared: &LiveMobileGeometry,
     ) -> Option<MotionState> {
         let mut seek_operands = self.movement_seek_operands(entity_id, selected, ft);
         let entity = self
@@ -188,14 +187,8 @@ impl EngineInner {
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
 
-        // Extract movement data from actor (scoped borrow).
-        //
-        // The walk goal is read from the current order's
-        // destination on the actor's active Move element —
-        // accessed via `SequenceManager::current_order_for_actor`.
-        // `path_waypoints` is kept as a mirror for legacy bolt-ons
-        // (drunken wobble, abilities, debug overlays) but is no
-        // longer the authoritative path source in the hot loop.
+        // Read movement operands from the selected sequence element's current
+        // order. Its order queue owns the route throughout execution.
         let Some(mut selected_order) = EngineInner::prepare_selected_movement_order(
             entity,
             &self.orders.sequence_manager,
@@ -607,14 +600,7 @@ impl EngineInner {
             .command;
         // Completion callbacks may replace the sequence before this Execute
         // arm returns; retain its dispatch classification, not the live element.
-        let door_transition_has_owner = pass_door_transition_completion_has_owner(
-            command,
-            selected_order.door_pass_anim.is_some()
-                || (selected_order.legacy_serialized_order_chain
-                    && command == crate::element::Command::PassDoor),
-            order_action,
-            is_pc,
-        );
+        let door_transition_has_owner = command == crate::element::Command::PassDoor;
         let provenance_frame = self.control.frame_counter;
         let live_seek_target = seek_operands.live_seek_target;
         let order_compute_direction = order_compute_direction;
@@ -852,8 +838,7 @@ impl EngineInner {
                     .expect("seeking owner disappeared")
                     .actor_data_mut()
                     .expect("seeking owner is an actor");
-                actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
-                actor.wait_time = actor.seek_refresh_wait;
+                actor.wait_time = age_seek_refresh_wait(actor.wait_time);
             }
             let position = self
                 .world
@@ -1277,12 +1262,11 @@ impl EngineInner {
                                         half_diagonal,
                                         goal_map,
                                     };
-                                    let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                                    let (dx_step, dy_step) = apply_live_anti_collision_step(
                                         provenance_frame,
                                         &mover,
                                         collision,
                                         &self.ai.global.repulsive_points,
-                                        prepared,
                                         &self.world.fast_grid,
                                         &mut state,
                                         nx,
@@ -1351,12 +1335,11 @@ impl EngineInner {
                                         half_diagonal,
                                         goal_map,
                                     };
-                                    let step = apply_prepared_anti_collision_step(
+                                    let step = apply_live_anti_collision_step(
                                         provenance_frame,
                                         &mover,
                                         collision,
                                         &self.ai.global.repulsive_points,
-                                        prepared,
                                         &self.world.fast_grid,
                                         &mut state,
                                         0.0,
@@ -1602,7 +1585,6 @@ impl EngineInner {
                     speed,
                     collision,
                     &self.ai.global.repulsive_points,
-                    prepared,
                     &self.world.fast_grid,
                     &mut self.feedback.titbit_manager,
                 );
@@ -1993,11 +1975,7 @@ impl EngineInner {
         entity_id: EntityId,
         selected_order: SelectedMovementOrder,
     ) -> Option<MotionState> {
-        let SelectedMovementOrder {
-            order_action,
-            legacy_serialized_order_chain,
-            ..
-        } = selected_order;
+        let order_action = selected_order.order_action;
         if !matches!(order_action, OrderType::Freezing | OrderType::PassingDoor) {
             return None;
         }
@@ -2012,65 +1990,7 @@ impl EngineInner {
         if order_action == OrderType::Freezing {
             return Some(MotionState::InProgress);
         }
-        let has_active_pass = self
-            .world
-            .entities
-            .get(owner)
-            .expect("door owner disappeared")
-            .actor_data()
-            .expect("door owner must be an actor")
-            .active_door_pass
-            .is_some();
-        if has_active_pass {
-            let (door, direct, trigger) = {
-                let pass = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .expect("door owner disappeared")
-                    .actor_data_mut()
-                    .expect("door owner must be an actor")
-                    .active_door_pass
-                    .as_mut()
-                    .expect("door pass disappeared");
-                let trigger = pass.triggers_fired;
-                pass.triggers_fired += 1;
-                (pass.door_index, pass.direct, trigger)
-            };
-            self.execute_pass_door(sim, assets, owner, door, direct, trigger);
-        } else {
-            assert!(
-                legacy_serialized_order_chain,
-                "runtime door action point lost its active pass"
-            );
-            let door = {
-                let position = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .expect("door owner disappeared")
-                    .position_iface();
-                position
-                    .get_door()
-                    .map(|door| (door, position.get_door_direction()))
-            };
-            if let Some((door, direct)) = door {
-                self.execute_pass_door(sim, assets, owner, door, direct, 0);
-                self.world
-                    .entities
-                    .get_mut(owner)
-                    .expect("door owner disappeared")
-                    .position_iface_mut()
-                    .clear_door();
-            } else {
-                self.world
-                    .entities
-                    .get_mut(owner)
-                    .expect("door owner disappeared")
-                    .position_iface_mut()
-                    .set_anti_collision_on(true);
-            }
-        }
+        self.execute_passing_door_order(sim, assets, owner);
         Some(MotionState::Terminated)
     }
 
@@ -2286,8 +2206,7 @@ impl EngineInner {
         }
         if final_entity_seek_arrival == Some(true) {
             let actor = entity.actor_data_mut().expect("actor-only branch");
-            if actor.post_seek_sequence.is_some() && actor.active_door_pass.is_none() {
-                actor.active_door_pass = None;
+            if actor.post_seek_sequence.is_some() && selected_order.door_pass_anim.is_none() {
                 if self.start_post_seek_sequence(
                     sim,
                     assets,
@@ -2301,7 +2220,7 @@ impl EngineInner {
                 // No action consumes the arrival yet. Match
                 // seeking's frozen refresh arm rather than
                 // exhausting the final transition order.
-                actor.seek_refresh_wait = 0;
+                actor.wait_time = 0;
             }
             return std::ops::ControlFlow::Break(MotionState::InProgress);
         }
@@ -2361,9 +2280,7 @@ impl EngineInner {
             && entity
                 .actor_data()
                 .is_some_and(|actor| actor.post_seek_sequence.is_some())
-            && entity
-                .actor_data()
-                .is_some_and(|actor| actor.active_door_pass.is_none());
+            && selected_order.door_pass_anim.is_none();
         // A copied terminal stop transition can lose the movement
         // element's target while actor seek handling still owns the
         // entity in the seek-target reference. That remains entity-seek mode, not
@@ -2384,9 +2301,7 @@ impl EngineInner {
             && entity
                 .actor_data()
                 .is_some_and(|actor| actor.post_seek_sequence.is_some())
-            && entity
-                .actor_data()
-                .is_some_and(|actor| actor.active_door_pass.is_none());
+            && selected_order.door_pass_anim.is_none();
         let final_actor_owned_post_seek_arrival =
             final_point_post_seek_arrival || final_actor_entity_post_seek_arrival;
         let actor_owned_interaction = entity
@@ -2421,9 +2336,7 @@ impl EngineInner {
             actor.abort_out_of_range_hit_seek();
             return Some(MotionState::Terminated);
         }
-        let actor = entity.actor_data_mut().expect("actor-only branch");
         if final_actor_owned_post_seek_arrival {
-            actor.active_door_pass = None;
             return Some(
                 if self.start_post_seek_sequence(
                     sim,

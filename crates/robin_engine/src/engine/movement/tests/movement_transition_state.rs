@@ -2,8 +2,8 @@
 mod suite {
     use super::super::*;
     use crate::element::{
-        ActionState, ActiveDoorPass, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command,
-        ElementData, ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
+        ActionState, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command, ElementData,
+        ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
     use crate::engine::test_support::unmapped_conversion;
     use crate::order::Order;
@@ -260,7 +260,7 @@ mod suite {
     fn run_stale_sword_crenel_transition() -> (u8, u8) {
         let assets = LevelAssets::new();
         use crate::fast_find_grid::GridSector;
-        use crate::gate::{Door, DoorIndex, DoorType};
+        use crate::gate::{Door, DoorType};
         use crate::sector::{LiftType, SectorNumber, SectorType};
 
         let mut engine = EngineInner::new();
@@ -309,12 +309,6 @@ mod suite {
             actor: ActorData {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
-                active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct: true,
-                    position_direct: true,
-                    triggers_fired: 0,
-                }),
                 ..ActorData::default()
             },
             human: HumanData {
@@ -329,6 +323,9 @@ mod suite {
         );
         owner_entity.element_data_mut().set_position_map(start);
         owner_entity.element_data_mut().set_direction_instantly(2);
+        owner_entity
+            .position_iface_mut()
+            .set_door(crate::position_interface::DoorHandle::new(0).unwrap(), true);
         owner_entity
             .element_data_mut()
             .set_sector(crate::position_interface::SectorHandle::new(7));
@@ -479,7 +476,7 @@ mod suite {
     #[test]
     fn stale_sword_state_does_not_face_opponent_before_plain_door_walk() {
         let assets = LevelAssets::new();
-        use crate::gate::{Door, DoorIndex};
+        use crate::gate::Door;
 
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
@@ -530,12 +527,6 @@ mod suite {
             actor: ActorData {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
-                active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct: true,
-                    position_direct: true,
-                    triggers_fired: 0,
-                }),
                 ..ActorData::default()
             },
             human: HumanData {
@@ -551,6 +542,9 @@ mod suite {
         owner_entity.element_data_mut().set_position_map(start);
         owner_entity.element_data_mut().set_direction_instantly(0);
         owner_entity.element_data_mut().set_direction_goal(15);
+        owner_entity
+            .position_iface_mut()
+            .set_door(crate::position_interface::DoorHandle::new(0).unwrap(), true);
         owner_entity
             .position_iface_mut()
             .set_anti_collision_on(false);
@@ -2100,7 +2094,6 @@ mod suite {
                 .actor_data_mut()
                 .unwrap();
             actor.last_seek_target_position = stale_target;
-            actor.seek_refresh_wait = 22;
             actor.wait_time = 22;
         }
         let order_ids = [
@@ -2147,7 +2140,7 @@ mod suite {
                 .unwrap()
                 .actor_data()
                 .unwrap()
-                .seek_refresh_wait
+                .wait_time
                 == 25
             {
                 break;
@@ -2155,7 +2148,6 @@ mod suite {
         }
 
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-        assert_eq!(actor.seek_refresh_wait, 25);
         assert_eq!(actor.wait_time, 25);
         assert_eq!(
             actor.last_seek_target_position,
@@ -2208,7 +2200,6 @@ mod suite {
                 .unwrap()
                 .actor_data_mut()
                 .unwrap();
-            actor.seek_refresh_wait = 0;
             actor.wait_time = 0;
             actor.last_seek_target_position = stale_position;
         }
@@ -2225,7 +2216,7 @@ mod suite {
                 .unwrap()
                 .actor_data()
                 .unwrap()
-                .seek_refresh_wait,
+                .wait_time,
             0,
             "the suppressed refresh must not rearm the 25-frame timer"
         );

@@ -2305,14 +2305,9 @@ impl EngineInner {
                     let actor = entity.actor_data_mut().unwrap();
                     actor.active_flight = None;
                     if flight.ladder_fall {
-                        // The countdown just hit zero. Original stores the
-                        // ladder countdown and seek-refresh countdown in the
-                        // same wait-time scalar, so landing overwrites the
-                        // dormant seek mirror too. Keep the retained seek
-                        // target/continuation themselves intact: only their
-                        // split Rust countdown copy has become stale.
+                        // Landing exhausts the shared timer while preserving
+                        // the retained seek target and continuation.
                         actor.wait_time = 0;
-                        actor.seek_refresh_wait = 0;
                         ladder_arrivals.push(entity_id.into());
                     }
                 }
@@ -3540,7 +3535,6 @@ mod tests {
                 .actor_data_mut()
                 .unwrap();
             actor.wait_time = 1;
-            actor.seek_refresh_wait = 24;
             actor.seek_target = Some(victim);
             actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
         }
@@ -3550,8 +3544,6 @@ mod tests {
 
         let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
         assert_eq!(actor.wait_time, 0);
-        assert_eq!(actor.seek_refresh_wait, 0);
-        assert_eq!(engine.actor_legacy_wait_time(victim), 0);
         assert_eq!(actor.seek_target, Some(victim));
         assert!(actor.post_seek_sequence.is_some());
     }

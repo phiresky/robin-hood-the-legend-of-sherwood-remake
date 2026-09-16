@@ -266,7 +266,7 @@ impl EngineInner {
                 | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
         ) && actor.execute_order_initialising
         {
-            let dp = actor.active_door_pass.as_ref().unwrap_or_else(|| {
+            let door_index = entity.position_iface().get_door().unwrap_or_else(|| {
                     panic!(
                         "actor {entity_id:?} {anim_type:?} lacks required active door pass at legacy slot {}",
                         entity_id.index()
@@ -278,11 +278,11 @@ impl EngineInner {
                     .script_domains
                     .interactables
                     .doors
-                    .get(usize::from(dp.door_index))
+                    .get(usize::from(door_index))
                     .unwrap_or_else(|| {
                         panic!(
                             "actor {entity_id:?} crenel transition references missing door {} at legacy slot {}",
-                            dp.door_index,
+                            door_index,
                             entity_id.index()
                         )
                     });
@@ -297,7 +297,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!(
                             "actor {entity_id:?} crenel door {} references missing sector {sector_number:?} at legacy slot {}",
-                            dp.door_index,
+                            door_index,
                             entity_id.index()
                         )
                     });
@@ -310,14 +310,14 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!(
                             "actor {entity_id:?} crenel door {} resolved invalid sector index {sector_index} at legacy slot {}",
-                            dp.door_index,
+                            door_index,
                             entity_id.index()
                         )
                     });
             if sector.lift_type != Some(crate::sector::LiftType::Wall) {
                 panic!(
                     "actor {entity_id:?} crenel door {} requires wall-lift sector {sector_number:?}, found {:?}",
-                    dp.door_index, sector.lift_type
+                    door_index, sector.lift_type
                 );
             }
             Some(if reverse_direction {
@@ -672,6 +672,7 @@ impl EngineInner {
         } else {
             None
         };
+        self.prepare_jump_order(sim, assets, entity_id);
         let owner = self.expect_entity(entity_id, "animation owner");
         if owner.is_soldier() {
             match anim_type {
@@ -756,15 +757,13 @@ impl EngineInner {
         // Jump steps whose execution arm processes motion rather
         // than action processing: they approach an authored map point
         // while their transition animation plays.
-        let actor_in_jump = entity
-            .actor_data()
-            .is_some_and(|actor| actor.active_jump.is_some());
+        let actor_in_jump = cur_command == Some(Command::JumpCmd);
         let jump_ground_motion_step =
             super::jump::jump_step_uses_perform_motion(anim_type) && actor_in_jump;
         // Airborne segments fly the body themselves and ignore
         // what their animation reports, so they take their own
         // Execute path below.
-        let jump_airborne_step = super::jump::jump_step_is_airborne(entity, anim_type);
+        let jump_airborne_step = actor_in_jump && super::jump::jump_order_is_airborne(anim_type);
         let order_is_initialising = actor.execute_order_initialising;
         if owner_is_pc && anim_type == OrderType::WaitingWithCorpse && order_is_initialising {
             let carried = entity
@@ -1247,7 +1246,7 @@ impl EngineInner {
                 weak_sword_held = true;
             }
             let sprite_motion = held_weak_sword.or_else(|| {
-                if globally_frozen {
+                if globally_frozen && !jump_airborne_step {
                     // Global freezing leaves actor execution live
                     // but sprite action returns
                     // IN_PROGRESS without selecting, stamping, or
@@ -1376,7 +1375,12 @@ impl EngineInner {
                 }
                 if jump_airborne_step {
                     return Some(super::jump::perform_jump_airborne_motion(
-                        entity, sim, order_id, played, row,
+                        entity,
+                        sim,
+                        order_id,
+                        played,
+                        row,
+                        globally_frozen,
                     ));
                 }
                 let elem = entity.element_data_mut();
@@ -1546,6 +1550,7 @@ impl EngineInner {
         // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
         // applies to both soldier and civilian NPCs.
         if let Some(motion_state) = motion {
+            self.apply_jump_order_state(sim, assets, entity_id, motion_state);
             if anim_type == OrderType::TransitionHelpingClimbingDown {
                 self.execute_helper_shoulder_dismount(sim, assets, entity_id, motion_state);
             }

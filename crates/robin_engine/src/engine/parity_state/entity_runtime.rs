@@ -1073,35 +1073,27 @@ impl<'a> EntityRuntimeProjector<'a> {
 
     fn pc_qa(&self) -> Option<Vec<human_projections::PcQa>> {
         let id = self.id;
-        self.entity.pc_data().map(|pc| {
+        self.entity.pc_data().map(|_| {
             const QA_SLOTS: usize = crate::macro_store::NUMBER_OF_QA_MEMORY;
-            for (name, length) in [
-                ("types", pc.quick_action_types.len()),
-                ("actions", pc.quick_action_sequences.len()),
-                ("seeks", pc.quick_seek_sequences.len()),
-                ("special-counts", pc.quick_action_special_counts.len()),
-                ("buttons", pc.quick_action_buttons.len()),
-                ("interactors", pc.quick_action_interactors.len()),
-                ("titbits", pc.titbits.len()),
-            ] {
-                assert_eq!(
-                    length, QA_SLOTS,
-                    "PC {id:?} parity projection has {length} {name}, expected {QA_SLOTS}"
-                );
-            }
+            let state = self.engine.inner.players.macro_store.get(id);
             (0..QA_SLOTS)
-                .map(|slot| human_projections::PcQa {
-                    special_count: pc.quick_action_special_counts[slot],
-                    quickito: pc.quick_action_types[slot] as u32,
-                    titbit: pc.titbits[slot].map(crate::titbit::TitbitId::get),
-                    button: pc.quick_action_buttons[slot],
-                    interactor: pc.quick_action_interactors[slot].map(typed_entity_reference),
-                    action_size: pc.quick_action_sequences[slot]
-                        .as_ref()
-                        .map(|sequence| sequence.len()),
-                    seek_size: pc.quick_seek_sequences[slot]
-                        .as_ref()
-                        .map(|sequence| sequence.len()),
+                .map(|slot| {
+                    let value = state.map(|state| state.slot(slot).expect("PC quick-action slot"));
+                    let quickito = value.map(|value| value.quickito).unwrap_or_default();
+                    let (action_size, seek_size) = value
+                        .map(|value| value.retained_sequence_sizes())
+                        .unwrap_or_default();
+                    human_projections::PcQa {
+                        special_count: state.map_or(0, |state| state.special_count(slot)),
+                        quickito: quickito.kind as u32,
+                        titbit: state
+                            .and_then(|state| state.get_slot_titbit(slot))
+                            .map(crate::titbit::TitbitId::get),
+                        button: quickito.button,
+                        interactor: quickito.interactor.map(typed_entity_reference),
+                        action_size,
+                        seek_size,
+                    }
                 })
                 .collect::<Vec<_>>()
         })

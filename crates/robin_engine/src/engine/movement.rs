@@ -328,19 +328,6 @@ pub(super) fn determine_lift_movement_animation_for(
     }
 }
 
-/// Mobile geometry sampled at one actor's live creation-order slot.
-///
-/// Unlike the other immutable movement preparation, this must not escape the
-/// owner boundary: an actor before a mobile sees its previous position and an
-/// actor after the mobile sees the geometry translated by that master's
-/// update.
-struct LiveMobileGeometry {
-    mobile_lines_by_layer: std::collections::BTreeMap<u16, Vec<crate::fast_find_grid::GridLine>>,
-    mobile_points_by_layer: std::collections::BTreeMap<u16, Vec<crate::repulsive::RepulsivePoint>>,
-    mobile_polygons_by_layer:
-        std::collections::BTreeMap<u16, Vec<Vec<crate::coordinates::MapPoint>>>,
-}
-
 /// State seen when the post-Execute line-crossing boundary opens for `owner`.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -624,36 +611,6 @@ fn initialising_climb_uses_lift_direction(
                 crate::sector::LiftType::Ladder
             )
         )
-}
-
-/// Whether a terminal translated door transition still has an authoritative
-/// PassDoor owner when the runtime `ActiveDoorPass` mirror is absent.
-///
-/// Restored Original saves can carry the complete translated order chain in
-/// the serialized PassDoor sequence without reconstructing that Rust-only
-/// mirror. The caller treats that serialized chain as ownership while the
-/// actor's saved position-state door supplies geometry when needed. The
-/// PC crenel climb-up and ladder-down exits are also recoverable without
-/// either representation because their original-game execution arms only publish
-/// actor state before advancing to `PASSING_DOOR`.
-pub(super) fn pass_door_transition_completion_has_owner(
-    command: crate::element::Command,
-    has_materialized_or_restored_door_pass: bool,
-    action: OrderType,
-    is_pc: bool,
-) -> bool {
-    has_materialized_or_restored_door_pass
-        || (command == crate::element::Command::PassDoor
-            && matches!(
-                action,
-                OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel if is_pc
-            ))
-        || (command == crate::element::Command::PassDoor
-            && matches!(
-                action,
-                OrderType::TransitionClimbingLadderDownWaitingUpright
-                    | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
-            ))
 }
 
 pub(super) fn door_click_polygon_at(doors: &[crate::gate::Door], click: MapPoint) -> Option<u32> {
@@ -2436,7 +2393,6 @@ struct SelectedMovementOrder {
     order_antagonist: Option<EntityId>,
     transition_distance_continuation: bool,
     next_destination_same_action: Option<MapPoint>,
-    legacy_serialized_order_chain: bool,
 }
 
 /// Observations retained across the ordinary step's arrival boundary.
@@ -2457,12 +2413,11 @@ struct MovementArrivalBoundary {
 /// A free function rather than a method: at both call sites the mover is
 /// held as a live `&mut` borrow out of the entity table, so `self` cannot
 /// be borrowed as a whole.
-fn apply_prepared_anti_collision_step(
+fn apply_live_anti_collision_step(
     frame: u32,
     mover: &super::anti_collision::CollisionMover,
     collision: super::anti_collision::CollisionWorld<'_>,
     static_repulsive_points: &[crate::ai::RepulsivePoint],
-    prepared: &LiveMobileGeometry,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     state: &mut super::anti_collision::AntiCollisionState<'_>,
     nx: f32,
@@ -2485,21 +2440,6 @@ fn apply_prepared_anti_collision_step(
             mover,
             collision,
             static_repulsive_points,
-            prepared
-                .mobile_points_by_layer
-                .get(&mover.layer)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-            prepared
-                .mobile_lines_by_layer
-                .get(&mover.layer)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-            prepared
-                .mobile_polygons_by_layer
-                .get(&mover.layer)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
             Some(fast_grid),
             Some(&mut *state),
             nx,
@@ -2780,49 +2720,6 @@ impl EngineInner {
         occupant_count < usize::from(u16::MAX)
     }
 
-    fn live_mobile_geometry(&self) -> LiveMobileGeometry {
-        let mut prepared = LiveMobileGeometry {
-            mobile_lines_by_layer: std::collections::BTreeMap::new(),
-            mobile_points_by_layer: std::collections::BTreeMap::new(),
-            mobile_polygons_by_layer: std::collections::BTreeMap::new(),
-        };
-        for mobile in &self.world.mobile_elements {
-            if !mobile.active {
-                continue;
-            }
-            prepared
-                .mobile_lines_by_layer
-                .entry(mobile.layer)
-                .or_default()
-                .extend(mobile.repulsive_lines());
-            prepared
-                .mobile_points_by_layer
-                .entry(mobile.layer)
-                .or_default()
-                .extend(mobile.repulsive_points());
-            prepared
-                .mobile_polygons_by_layer
-                .entry(mobile.layer)
-                .or_default()
-                .push(mobile.motion_polygon.clone());
-        }
-        prepared
-    }
-
-    #[cfg(test)]
-    pub(super) fn first_live_mobile_polygon_point(
-        &self,
-        layer: u16,
-    ) -> crate::coordinates::MapPoint {
-        self.live_mobile_geometry()
-            .mobile_polygons_by_layer
-            .get(&layer)
-            .and_then(|polygons| polygons.first())
-            .and_then(|polygon| polygon.first())
-            .copied()
-            .unwrap_or_else(|| panic!("no live mobile polygon point on layer {layer}"))
-    }
-
     /// Execute the original game's rider-charging action inside its
     /// rider's creation-ordered movement slot. Returns true only when the live
     /// selected movement order was exactly `RiderCharging` and consumed the
@@ -2833,7 +2730,6 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         rider_id: EntityId,
         frozen_all: bool,
-        anti_context: Option<&LiveMobileGeometry>,
     ) -> Option<MotionState> {
         use crate::element::{ActionState, Posture};
         use crate::weapons::SwordStrike;
@@ -3044,10 +2940,7 @@ impl EngineInner {
                 let increment = elem.sprite.position_iface.get_increment_map();
                 let anti_on = elem.sprite.position_iface.is_anti_collision_on();
                 let (dx_step, dy_step, recovered_from_deviation, rebuild_after_deviation) =
-                    if let Some(prepared) = anti_context
-                        && anti_on
-                        && mover.active
-                    {
+                    if !frozen_all && anti_on && mover.active {
                         let move_box = *elem.sprite.position_iface.get_move_box();
                         let half_diagonal = elem.sprite.position_iface.get_half_diagonal();
                         let was_deviated = elem.sprite.position_iface.is_deviated();
@@ -3057,12 +2950,11 @@ impl EngineInner {
                             half_diagonal,
                             goal_map: goal,
                         };
-                        let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                        let (dx_step, dy_step) = apply_live_anti_collision_step(
                             provenance_frame,
                             &mover,
                             collision,
                             &self.ai.global.repulsive_points,
-                            prepared,
                             &self.world.fast_grid,
                             &mut anti_state,
                             increment.x,
@@ -3633,7 +3525,8 @@ impl EngineInner {
         else {
             return;
         };
-        let door_pass_anim = actor.active_door_pass.as_ref().map(|_| order_action);
+        let door_pass_anim = (self.actor_command(owner) == crate::element::Command::PassDoor)
+            .then_some(order_action);
         let executes_shield_movement =
             executes_shield_movement_action(door_pass_anim, order_action);
         let is_sword_motion = is_sword_motion_context(action_state, door_pass_anim, order_action);
@@ -3806,17 +3699,12 @@ impl EngineInner {
             // work before it: climb Turn() above and both rider-specific
             // Soldier arms remain live. RiderCharging performs its polygon
             // work or RunningUpright samples that frozen frame and may Think.
-            let charge_execution = self.tick_rider_charge_owner(sim, assets, owner, true, None);
+            let charge_execution = self.tick_rider_charge_owner(sim, assets, owner, true);
             if charge_execution.is_none() && self.selected_galopp_decision_frame(owner, selected) {
                 self.dispatch_galopp_loop_event(sim, assets, owner);
             }
             return Some(MotionState::InProgress);
         }
-
-        // Sample mutable mobile geometry only now, at this actor's
-        // entity slot. Preparing it once before the live owner walk freezes
-        // every actor onto the same side of intervening mobile masters.
-        let prepared = self.live_mobile_geometry();
 
         let final_tolerance = self.movement_final_tolerance(owner, selected);
         self.turn_movement_owner_drunken(owner, selected);
@@ -3829,7 +3717,7 @@ impl EngineInner {
                 "movement_after_prepass",
             );
         }
-        if let Some(motion) = self.tick_movement_rider_charge(sim, assets, owner, &prepared) {
+        if let Some(motion) = self.tick_rider_charge_owner(sim, assets, owner, false) {
             return Some(motion);
         }
 
@@ -3849,7 +3737,6 @@ impl EngineInner {
                 selected,
                 actor_id,
                 final_tolerance,
-                &prepared,
             );
         }
         None
@@ -3972,16 +3859,15 @@ impl EngineInner {
             .expect("movement owner disappeared");
         let actor_id = owner;
         let posture = entity.element_data().posture();
-        let door_pass = entity
-            .actor_data()
-            .and_then(|actor| actor.active_door_pass.as_ref());
+        let door_pass = entity.position_iface().get_door();
         let current_order = self
             .orders
             .sequence_manager
             .get_element(selected.seq_id, selected.elem_idx)
             .and_then(|element| element.current_order())
             .expect("selected door movement order disappeared");
-        let door_pass_action = door_pass.map(|_| current_order.order_type);
+        let door_pass_action = (self.actor_command(owner) == crate::element::Command::PassDoor)
+            .then_some(current_order.order_type);
         let Some(sector) = entity.element_data().sector() else {
             return (None, None, false);
         };
@@ -3991,19 +3877,16 @@ impl EngineInner {
         if let Some(action) = door_pass_action
             && let Some(expected) = climb_lift_type(action)
         {
-            door_pass_climb_direction = entity
-                    .actor_data()
-                    .and_then(|actor| actor.active_door_pass.as_ref())
-                    .and_then(|dp| {
+            door_pass_climb_direction = door_pass.and_then(|door_index| {
                         let door = self
                             .script_domains
                             .interactables
                             .doors
-                            .get(usize::from(dp.door_index))
+                            .get(usize::from(door_index))
                             .unwrap_or_else(|| {
                                 panic!(
                                     "door-pass climb owner {actor_id:?} references missing door {}",
-                                    dp.door_index
+                                    door_index
                                 )
                             });
                         door_type_uses_lift_climb_direction(door.door_type)
@@ -4036,13 +3919,13 @@ impl EngineInner {
                         sector.lift_direction
                     });
             if action == OrderType::ClimbingLadderDown
-                && door_pass.is_some_and(|pass| {
+                && door_pass.is_some_and(|door_index| {
                     current_order.reverse
                         && self
                             .script_domains
                             .interactables
                             .doors
-                            .get(usize::from(pass.door_index))
+                            .get(usize::from(door_index))
                             .is_some_and(|door| {
                                 door.door_type == crate::gate::DoorType::BuildingTrap
                             })
@@ -4246,16 +4129,6 @@ impl EngineInner {
         }
     }
 
-    fn tick_movement_rider_charge(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        prepared: &LiveMobileGeometry,
-    ) -> Option<MotionState> {
-        self.tick_rider_charge_owner(sim, assets, entity_id, false, Some(prepared))
-    }
-
     /// Commit collision-adjusted geometry and its forecast.
     /// Returns whether movement aborted; arrival and START remain caller-owned.
     // Disjoint world/AI borrows remain explicit rather than introducing another
@@ -4268,7 +4141,6 @@ impl EngineInner {
         speed: f32,
         collision: super::anti_collision::CollisionWorld<'_>,
         repulsive_points: &[crate::ai::RepulsivePoint],
-        prepared: &LiveMobileGeometry,
         fast_grid: &crate::fast_find_grid::FastFindGrid,
         titbits: &mut crate::titbit::TitbitManager,
     ) -> bool {
@@ -4302,12 +4174,11 @@ impl EngineInner {
                     half_diagonal,
                     goal_map,
                 };
-                let (dx_step, dy_step) = apply_prepared_anti_collision_step(
+                let (dx_step, dy_step) = apply_live_anti_collision_step(
                     provenance_frame,
                     &mover,
                     collision,
                     repulsive_points,
-                    prepared,
                     fast_grid,
                     &mut state,
                     nx,
@@ -4409,28 +4280,6 @@ impl EngineInner {
         // Impossible.
         let movement_aborted = entity.position_iface().is_blocked();
         if movement_aborted {
-            let actor = entity.actor_data_mut().expect("actor-only branch");
-            let restore_anti_collision = {
-                let restore_anti_collision = actor.active_door_pass.is_some();
-                if restore_anti_collision {
-                    tracing::warn!(
-                        entity = ?entity_id,
-                        "DoorPass: movement blocked; clearing active pass with aborted movement"
-                    );
-                    actor.active_door_pass = None;
-                }
-                // The movement Execute switches have no ABORTED
-                // state branch. The actor update marks the captured
-                // element Impossible, but the actor keeps whatever
-                // live state Execute established before returning.
-                // In particular a walking actor remains Moving;
-                // RunningUpright's unconditional Execute effect is
-                // applied below and still publishes MovingFast.
-                restore_anti_collision
-            };
-            if restore_anti_collision {
-                entity.position_iface_mut().set_anti_collision_on(true);
-            }
             entity.position_iface_mut().reset_box_blocked();
         }
 
@@ -4605,15 +4454,7 @@ impl EngineInner {
             || point_seek_post_arrival
             || final_entity_seek_arrival == Some(true))
             && actor.post_seek_sequence.is_some();
-        let start_post_seek = if start_post_seek && actor.active_door_pass.is_some() {
-            tracing::warn!(
-                entity = ?eid,
-                "DoorPass: suppressing post-seek teardown during active pass"
-            );
-            false
-        } else {
-            start_post_seek
-        };
+        let start_post_seek = start_post_seek && selected_order.door_pass_anim.is_none();
 
         if start_post_seek {
             // Post-seek sequence launch makes seeking return
@@ -4624,7 +4465,6 @@ impl EngineInner {
             // and launches the interaction without rewriting the
             // actor state. The interaction's generated transition
             // owns any later Moving→Waiting change.
-            actor.active_door_pass = None;
             refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
             return if self.start_post_seek_sequence(
                 sim,
@@ -4644,7 +4484,7 @@ impl EngineInner {
         // arms an immediate refresh check and returns InProgress
         // instead of consuming the final order.
         if final_entity_seek_arrival == Some(true) {
-            actor.seek_refresh_wait = 0;
+            actor.wait_time = 0;
             refresh_pc_walking_shield_after_execute(entity, &assets.profile_manager, order_action);
             return MotionState::InProgress;
         }
@@ -4701,25 +4541,11 @@ impl EngineInner {
             // No active Move element (element terminated or
             // was never active) — drop out of the moving
             // state back to Waiting.
-            let restore_anti_collision = {
-                let restore_anti_collision = actor.active_door_pass.is_some();
-                if restore_anti_collision {
-                    tracing::warn!(
-                        entity = ?entity_id,
-                        "DoorPass: clearing stale active pass after movement element disappeared"
-                    );
-                    actor.active_door_pass = None;
-                }
-                actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
-                    crate::element::ActionState::WaitingSword
-                } else {
-                    crate::element::ActionState::Waiting
-                };
-                restore_anti_collision
+            actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
+                crate::element::ActionState::WaitingSword
+            } else {
+                crate::element::ActionState::Waiting
             };
-            if restore_anti_collision {
-                entity.position_iface_mut().set_anti_collision_on(true);
-            }
             return None;
         };
         if !has_moving_state
@@ -4760,9 +4586,6 @@ impl EngineInner {
                 _ => None,
             })
             .unwrap_or(crate::sequence::MoveFlags::empty());
-        let legacy_serialized_order_chain = manager
-            .get_element(seq_id, elem_idx)
-            .is_some_and(|element| element.legacy_v48.is_some());
 
         // Is this the literal last order in the queue?  The
         // Movement element's `tolerance` applies to the final
@@ -4783,7 +4606,10 @@ impl EngineInner {
             .get_element(seq_id, elem_idx)
             .map(|e| e.orders.len() <= 1)
             .unwrap_or(true);
-        let door_pass_anim = actor.active_door_pass.as_ref().map(|_| order_action);
+        let door_pass_anim = manager
+            .get_element(seq_id, elem_idx)
+            .filter(|element| element.command == crate::element::Command::PassDoor)
+            .map(|_| order_action);
         Some(SelectedMovementOrder {
             goal,
             action_state: actor.action_state,
@@ -4800,7 +4626,6 @@ impl EngineInner {
             order_antagonist,
             transition_distance_continuation,
             next_destination_same_action,
-            legacy_serialized_order_chain,
         })
     }
 

@@ -577,7 +577,6 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     else {
         panic!("door-passing target changed kind")
     };
-    assert!(target.actor.active_door_pass.is_none());
     let exact_target_world = WorldPoint3D::new(20.123_457, 9.876_543, 7.654_321);
     target.element.set_position_map(MapPoint::from_world_xyz(
         exact_target_world.x,

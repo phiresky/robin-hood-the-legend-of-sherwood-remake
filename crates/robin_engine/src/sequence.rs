@@ -1103,10 +1103,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElement<P> {
             legacy_v48,
         })
     }
-}
-
-impl SequenceElement<()> {
-    /// Generic property access for elements in a flat post-seek sequence.
+    /// Get a property from a generic element. Returns `None` if not found or not generic.
     pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
         match &self.data {
             SequenceElementData::Generic { properties } => properties.get(&field),
@@ -1287,14 +1284,6 @@ impl SequenceElement {
                 properties.insert(field, value);
             }
             _ => panic!("set_property called on non-generic element"),
-        }
-    }
-
-    /// Get a property from a generic element. Returns `None` if not found or not generic.
-    pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
-        match &self.data {
-            SequenceElementData::Generic { properties } => properties.get(&field),
-            _ => None,
         }
     }
 

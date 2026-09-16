@@ -363,7 +363,6 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     friend_soldier
         .element
         .set_position_map(MapPoint::new(11.0, 12.0));
-    assert!(friend_soldier.actor.active_door_pass.is_none());
     // A null live sprite door must not suppress the selected movement gate.
     assert!(
         friend_soldier
@@ -387,7 +386,6 @@ fn live_positions_resolve_both_friend_and_target_through_selected_doors() {
     target_pc
         .element
         .set_position_map(MapPoint::new(21.0, 22.0));
-    assert!(target_pc.actor.active_door_pass.is_none());
     // A different live sprite door must not replace the selected movement
     // element's gate or direction for AI Position.
     target_pc.element.sprite.position_iface.set_door(
@@ -895,16 +893,6 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         &mut Vec::new(),
         sequence_id,
         0,
-    );
-    assert!(
-        engine
-            .get_entity(friend_id)
-            .expect("friend exists")
-            .actor_data()
-            .expect("friend is actor")
-            .active_door_pass
-            .is_none(),
-        "fixture must model a selected legacy PassDoor without a runtime choreography latch"
     );
 
     let assets = engine.test_runtime_assets();

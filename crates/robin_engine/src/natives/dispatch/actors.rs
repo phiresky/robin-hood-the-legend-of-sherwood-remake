@@ -685,9 +685,14 @@ impl NativeContext<'_, '_> {
                     .unconscious;
                 let tgt_passing_door = target_entity
                     .actor_data()
-                    .expect("Sees validated a human target, which must have actor data")
-                    .active_door_pass
-                    .is_some();
+                    .and_then(|actor| actor.selected_sequence_element)
+                    .and_then(|selected| {
+                        self.sequence_manager
+                            .as_ref()
+                            .expect("Sees requires the live sequence manager")
+                            .get_element(selected.sequence_id, selected.element_index)
+                    })
+                    .is_some_and(|element| element.command == crate::element::Command::PassDoor);
                 let tgt_is_pc = matches!(target_entity, Entity::Pc(_));
                 // Use the same target-point helper as the authoritative
                 // AI detection pass. The 3D point supplies only the

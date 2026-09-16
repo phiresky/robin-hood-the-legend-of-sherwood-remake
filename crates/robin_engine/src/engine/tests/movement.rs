@@ -4222,7 +4222,6 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             actor.seek_target = seek_target;
             actor.continuation.seek_to_point = false;
             actor.last_seek_target_position = seek_position.expect("seek target position");
-            actor.seek_refresh_wait = 25;
             actor.wait_time = 25;
         }
         sequence_id
@@ -4374,7 +4373,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 sprite.frame_count,
                 sprite.last_processed_order_id,
             );
-            let wait_before = seeker.actor_data().unwrap().seek_refresh_wait;
+            let wait_before = seeker.actor_data().unwrap().wait_time;
             let order_before = engine
                 .orders
                 .sequence_manager
@@ -4397,7 +4396,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 "global freezing suppresses only the sprite action",
             );
             assert_eq!(
-                seeker.actor_data().unwrap().seek_refresh_wait,
+                seeker.actor_data().unwrap().wait_time,
                 wait_before.wrapping_sub(1)
             );
             assert_ne!(

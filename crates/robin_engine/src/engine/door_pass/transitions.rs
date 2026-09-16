@@ -12,17 +12,53 @@ impl EngineInner {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
-        let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
-            entity.actor_data().and_then(|actor| {
-                actor.active_door_pass.as_ref().and_then(|dp| {
-                    actor
-                        .installed_order
-                        .map(|order| (dp.door_index, order.order_type, entity.is_pc()))
-                })
-            })
-        }) else {
-            return;
+        let entity = self
+            .world
+            .entities
+            .get(entity_id)
+            .expect("door transition owner disappeared");
+        let action = entity
+            .actor_data()
+            .expect("door transition owner is not an actor")
+            .installed_order
+            .expect("door transition has no installed order")
+            .order_type;
+        let is_pc = entity.is_pc();
+        let state = match action {
+            OT::TransitionWaitingUprightClimbingWallUp => {
+                Some((Posture::OnWall, ActionState::Moving))
+            }
+            OT::TransitionClimbingWallDownWaitingUpright => {
+                Some((Posture::Upright, ActionState::Waiting))
+            }
+            OT::TransitionClimbingLadderUpWaitingCrouched
+            | OT::TransitionClimbingLadderUpWaitingUprightAlerted => Some((
+                if is_pc {
+                    Posture::Crouched
+                } else {
+                    Posture::Upright
+                },
+                ActionState::Waiting,
+            )),
+            _ => None,
         };
+        if let Some((posture, action_state)) = state {
+            let entity = self
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("door transition owner disappeared");
+            entity.set_posture(posture);
+            entity
+                .actor_data_mut()
+                .expect("door transition owner is not an actor")
+                .action_state = action_state;
+            return;
+        }
+        let door_index = entity
+            .position_iface()
+            .get_door()
+            .expect("door transition geometry requires a live door");
 
         let door = required_canonical_door(
             &self.script_domains.interactables.doors,
@@ -59,14 +95,6 @@ impl EngineInner {
             });
 
         match action {
-            OT::TransitionWaitingUprightClimbingWallUp => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::OnWall);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Moving;
-                    }
-                }
-            }
             OT::TransitionWaitingCrouchedClimbingWallDown => {
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::OnWall);
@@ -184,27 +212,6 @@ impl EngineInner {
                     }
                 }
             }
-            OT::TransitionClimbingWallDownWaitingUpright => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::Upright);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Waiting;
-                    }
-                }
-            }
-            OT::TransitionClimbingLadderUpWaitingCrouched
-            | OT::TransitionClimbingLadderUpWaitingUprightAlerted => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(if is_pc {
-                        Posture::Crouched
-                    } else {
-                        Posture::Upright
-                    });
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.action_state = ActionState::Waiting;
-                    }
-                }
-            }
             _ => {}
         }
     }
@@ -219,13 +226,12 @@ impl EngineInner {
 
         let (door_index, action) = self
             .get_entity(entity_id)
-            .and_then(|entity| entity.actor_data())
-            .and_then(|actor| {
-                actor.active_door_pass.as_ref().and_then(|pass| {
-                    actor
-                        .installed_order
-                        .map(|order| (pass.door_index, order.order_type))
-                })
+            .and_then(|entity| {
+                let door = entity.position_iface().get_door()?;
+                entity
+                    .actor_data()?
+                    .installed_order
+                    .map(|order| (door, order.order_type))
             })
             .unwrap_or_else(|| {
                 panic!(
@@ -281,112 +287,70 @@ impl EngineInner {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
-        // A restored Original save may already contain the complete
-        // translated PassDoor order chain without Rust's parallel
-        // ActiveDoorPass mirror. These exit transitions need no door
-        // geometry: their terminal Execute arms only publish actor state
-        // before order advancement selects door passing.
-        let restored_completion = self.get_entity(entity_id).and_then(|entity| {
-            let actor = entity.actor_data()?;
-            if actor.active_door_pass.is_some() {
-                return None;
-            }
-            match action {
-                OT::TransitionClimbingWallUpWaitingCrouchedCrenel if entity.is_pc() => {
-                    Some((Posture::Crouched, ActionState::Waiting))
-                }
-                OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted => {
-                    Some((Posture::Upright, ActionState::Waiting))
-                }
-                _ => None,
-            }
-        });
-        if let Some((posture, action_state)) = restored_completion {
+        // Exit orders can run after crossing has consumed the live door.
+        // They publish actor state without reading door geometry.
+        let is_pc = self
+            .world
+            .entities
+            .get(entity_id)
+            .expect("door transition owner disappeared")
+            .is_pc();
+        let terminal_posture = match action {
+            OT::TransitionClimbingWallUpWaitingCrouchedCrenel => Some(if is_pc {
+                Posture::Crouched
+            } else {
+                Posture::Upright
+            }),
+            OT::TransitionClimbingWallDownWaitingUpright
+            | OT::TransitionClimbingLadderDownWaitingUpright
+            | OT::TransitionClimbingLadderDownWaitingUprightAlerted => Some(Posture::Upright),
+            _ => None,
+        };
+        if let Some(posture) = terminal_posture {
             let entity = self
                 .world
                 .entities
                 .get_mut(entity_id)
-                .expect("restored transition completion owner disappeared");
+                .expect("door transition owner disappeared");
             entity.set_posture(posture);
             entity
                 .actor_data_mut()
-                .expect("restored transition completion owner is not an actor")
-                .action_state = action_state;
+                .expect("door transition owner is not an actor")
+                .action_state = ActionState::Waiting;
             return;
         }
-
-        let Some((door_index, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
-            entity.actor_data().and_then(|actor| {
-                actor
-                    .active_door_pass
-                    .as_ref()
-                    .map(|dp| dp.door_index)
-                    .or_else(|| {
-                        // Original-game v48 saves serialize the translated door-passage
-                        // order chain and PositionInterface's live door, but
-                        // have no Rust-only ActiveDoorPass mirror.  Until the
-                        // first PassingDoor action consumes that pointer it is
-                        // the authoritative door for transition completion.
-                        entity.position_iface().get_door()
-                    })
-                    .map(|door_index| (door_index, entity.is_pc()))
-            })
-        }) else {
-            return;
+        let door_index = match action {
+            OT::TransitionWaitingUprightClimbingWallUp
+            | OT::TransitionWaitingCrouchedClimbingLadderDown
+            | OT::TransitionWaitingUprightClimbingLadderDownAlerted => self
+                .world
+                .entities
+                .get(entity_id)
+                .expect("door transition owner disappeared")
+                .position_iface()
+                .get_door()
+                .expect("door entry transition requires a live door"),
+            _ => return,
         };
 
-        let Some((snap_point, posture, action_state)) = (|| {
-            let door = required_canonical_door(
-                &self.script_domains.interactables.doors,
-                door_index,
-                "PassDoor transition completion",
-            );
-            let snap = match action {
-                OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
-                    x: door.point_mid.x,
-                    y: door.point_mid.y,
-                }),
-                OT::TransitionWaitingCrouchedClimbingLadderDown
-                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => Some(MapPoint {
-                    x: door.point_in.x,
-                    y: door.point_in.y,
-                }),
-                OT::TransitionClimbingWallDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted
-                | OT::TransitionClimbingWallUpWaitingCrouchedCrenel => None,
-                _ => return None,
-            };
-            let (posture, action_state) = match action {
-                OT::TransitionWaitingUprightClimbingWallUp => {
-                    (Posture::OnWall, ActionState::Moving)
-                }
-                OT::TransitionWaitingCrouchedClimbingLadderDown
-                | OT::TransitionWaitingUprightClimbingLadderDownAlerted => {
-                    (Posture::OnLadder, ActionState::Moving)
-                }
-                OT::TransitionClimbingWallDownWaitingUpright => {
-                    (Posture::Upright, ActionState::Waiting)
-                }
-                OT::TransitionClimbingLadderDownWaitingUpright
-                | OT::TransitionClimbingLadderDownWaitingUprightAlerted => {
-                    (Posture::Upright, ActionState::Waiting)
-                }
-                OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                    let posture = if is_pc {
-                        Posture::Crouched
-                    } else {
-                        Posture::Upright
-                    };
-                    (posture, ActionState::Waiting)
-                }
-                _ => return None,
-            };
-            Some((snap, posture, action_state))
-        })() else {
-            return;
+        let door = required_canonical_door(
+            &self.script_domains.interactables.doors,
+            door_index,
+            "PassDoor transition completion",
+        );
+        let (snap_point, posture) = match action {
+            OT::TransitionWaitingUprightClimbingWallUp => (
+                MapPoint::new(door.point_mid.x, door.point_mid.y),
+                Posture::OnWall,
+            ),
+            OT::TransitionWaitingCrouchedClimbingLadderDown
+            | OT::TransitionWaitingUprightClimbingLadderDownAlerted => (
+                MapPoint::new(door.point_in.x, door.point_in.y),
+                Posture::OnLadder,
+            ),
+            _ => unreachable!("door entry action was classified above"),
         };
+        let action_state = ActionState::Moving;
         tracing::trace!(
             ?entity_id,
             ?action,
@@ -394,16 +358,7 @@ impl EngineInner {
             ?posture,
             "door transition completion side effects"
         );
-        if let Some(snap_point) = snap_point {
-            self.set_transition_position_map_and_compute_position_all(
-                assets,
-                entity_id,
-                crate::coordinates::MapPoint {
-                    x: snap_point.x,
-                    y: snap_point.y,
-                },
-            );
-        }
+        self.set_transition_position_map_and_compute_position_all(assets, entity_id, snap_point);
 
         let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;

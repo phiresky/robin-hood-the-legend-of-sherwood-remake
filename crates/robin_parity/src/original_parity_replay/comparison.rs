@@ -631,7 +631,7 @@ impl FrameComparison<'_> {
                 id,
                 "actor.wait_time",
                 expected_actor.wait_time,
-                engine.actor_legacy_wait_time(id),
+                actual_actor.wait_time,
             );
             // Older legacy recordings can
             // observe a dangling actor order after the actor's

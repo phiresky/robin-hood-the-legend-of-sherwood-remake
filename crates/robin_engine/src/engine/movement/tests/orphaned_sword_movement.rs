@@ -836,7 +836,6 @@ mod suite {
                 .unwrap();
             actor.last_seek_target_position = MapPoint::new(140.0, 100.0);
             actor.seek_target = Some(target);
-            actor.seek_refresh_wait = 0;
             actor.wait_time = 0;
             actor.seek_distance = 10.0;
         }

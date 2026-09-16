@@ -4,11 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    coordinates::{MapBBox, MapPoint, MapVec},
+    coordinates::{MapPoint, MapVec},
     element::EntityId,
-    fast_find_grid::GridLine,
     level_data::{RawHikingPath, RawMobileElement, WaypointCommand},
-    repulsive::RepulsivePoint,
 };
 
 const COMMAND_MOBILE_SPEED: u8 = 129;
@@ -132,49 +130,6 @@ impl MobileElement {
         }
     }
 
-    pub fn repulsive_lines(&self) -> Vec<GridLine> {
-        let mut lines = Vec::with_capacity(self.motion_polygon.len());
-        for pair in self.motion_polygon.windows(2) {
-            let mut line = GridLine::new(pair[0], pair[1], false);
-            line.set_repulsive(true);
-            lines.push(line);
-        }
-        if let (Some(&first), Some(&last)) =
-            (self.motion_polygon.first(), self.motion_polygon.last())
-        {
-            let mut line = GridLine::new(last, first, false);
-            line.set_repulsive(true);
-            lines.push(line);
-        }
-        lines
-    }
-
-    /// Reproduce fast-grid repulsive-point creation for the mobile
-    /// motion sector. Mobile sectors are obstacles (not areas), so only
-    /// outward/left-turn corners contribute a wedge-limited point. The
-    /// master then overrides the normal obstacle force with `(0, 15)`.
-    pub fn repulsive_points(&self) -> Vec<RepulsivePoint> {
-        let count = self.motion_polygon.len();
-        if count < 3 {
-            return Vec::new();
-        }
-
-        let mut points = Vec::new();
-        for index in 0..count {
-            let previous = self.motion_polygon[(index + count - 1) % count];
-            let current = self.motion_polygon[index];
-            let next = self.motion_polygon[(index + 1) % count];
-            let incoming = current - previous;
-            let outgoing = next - current;
-            if incoming.x * outgoing.y - incoming.y * outgoing.x > 0.0 {
-                let mut point = RepulsivePoint::new(current, 0.0, 15.0);
-                point.set_action_field(right_normal(incoming), right_normal(outgoing));
-                points.push(point);
-            }
-        }
-        points
-    }
-
     pub fn contains_point(&self, point: MapPoint) -> bool {
         if self.motion_polygon.len() < 3 {
             return false;
@@ -193,17 +148,6 @@ impl MobileElement {
             previous = current;
         }
         inside
-    }
-
-    /// Exact polygon-vs-box test used by original-game mobile positioning
-    /// blocker check. A corridor may miss every perimeter line while its
-    /// destination move box is nevertheless wholly inside the cart.
-    pub fn polygon_intersects_bbox(polygon: &[MapPoint], bbox: &MapBBox) -> bool {
-        let vertices = polygon
-            .iter()
-            .map(|point| point.to_geo())
-            .collect::<Vec<_>>();
-        crate::geo2d::polygon_vertices_intersect_bbox(&vertices, &bbox.to_geo())
     }
 
     pub fn is_moving(&self) -> bool {
@@ -427,15 +371,6 @@ impl MobileElement {
     }
 }
 
-fn right_normal(vector: MapVec) -> MapVec {
-    let length = vector.length();
-    if length == 0.0 {
-        MapVec::ZERO
-    } else {
-        MapVec::new(vector.y / length, -vector.x / length)
-    }
-}
-
 // Offset-addressed macro reads; truncation converts into the `String` error via `?`.
 use crate::le_bytes::{f32_at as read_f32, u16_at as read_u16};
 
@@ -558,23 +493,6 @@ mod tests {
     }
 
     #[test]
-    fn motion_sector_builds_closed_lines_and_corner_points() {
-        crate::sim_rng::with_seed(9, |sim| {
-            let mobile = MobileElement::from_raw(sim, &raw_mobile(), &path(), Vec::new()).unwrap();
-            assert_eq!(mobile.repulsive_lines().len(), 3);
-            assert_eq!(mobile.repulsive_points().len(), 3);
-            assert!(mobile.contains_point(MapPoint::new(2.0, 2.0)));
-            assert!(!mobile.contains_point(MapPoint::new(20.0, 20.0)));
-            assert!(
-                mobile
-                    .repulsive_points()
-                    .iter()
-                    .all(|point| point.radius == 0.0 && point.action_radius == 15.0)
-            );
-        });
-    }
-
-    #[test]
     fn stopped_mobile_freezes_master_motion() {
         crate::sim_rng::with_seed(11, |sim| {
             let path = path();
@@ -585,19 +503,5 @@ mod tests {
             assert!(mobile.begin_hourglass_motion().is_none());
             assert_eq!(mobile.position, position);
         });
-    }
-
-    #[test]
-    fn motion_polygon_blocks_a_box_fully_inside_it() {
-        let polygon = vec![
-            MapPoint::new(0.0, 0.0),
-            MapPoint::new(20.0, 0.0),
-            MapPoint::new(20.0, 20.0),
-            MapPoint::new(0.0, 20.0),
-        ];
-        let inside = MapBBox::from_coords(8.0, 8.0, 12.0, 12.0);
-        let outside = MapBBox::from_coords(30.0, 30.0, 35.0, 35.0);
-        assert!(MobileElement::polygon_intersects_bbox(&polygon, &inside));
-        assert!(!MobileElement::polygon_intersects_bbox(&polygon, &outside));
     }
 }

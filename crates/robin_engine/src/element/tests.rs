@@ -29,7 +29,6 @@ fn frozen_actor_execute_selection_keeps_independent_installed_identity() {
 fn hit_seek_abort_preserves_independent_actor_latches() {
     let mut actor = ActorData {
         wait_time: 99,
-        seek_refresh_wait: 7,
         seek_target: Some(EntityId::Pc(crate::entity_id::PcId(42))),
         post_seek_sequence: Some(crate::sequence::Sequence::new().into_post_seek()),
         selected_sequence_element: Some(crate::sequence::SequenceElementRef::new(
@@ -41,18 +40,15 @@ fn hit_seek_abort_preserves_independent_actor_latches() {
         last_execute_order_id: std::num::NonZeroU32::new(17),
         execute_order_initialising: true,
         execution_frozen: true,
-        active_jump_airborne: true,
-        jump_z_offset: 3.5,
         ..ActorData::default()
     };
     // Retain a complete expected value so any accidental reset of an
     // unrelated field becomes visible, including future stored latches.
     let mut expected = actor.clone();
-    expected.wait_time = expected.seek_refresh_wait;
+
     expected.seek_target = None;
     expected.post_seek_sequence = None;
 
-    expected.active_door_pass = None;
     actor.abort_out_of_range_hit_seek();
     assert_eq!(bitcode::encode(&actor), bitcode::encode(&expected));
 }
@@ -492,27 +488,6 @@ fn target_hotspots_use_the_exact_cached_sprite_top_left() {
         target.gameplay_sprite_position(),
         crate::coordinates::SpriteTopLeft::new(2791.0, 171.0)
     );
-}
-
-#[test]
-fn actor_sprite_visual_anchor_applies_jump_offset() {
-    let pc = Entity::Pc(ActorPc {
-        element: ElementData {
-            kind: ElementKind::ActorPc,
-            ..ElementData::default()
-        },
-        actor: ActorData {
-            jump_z_offset: 12.0,
-            ..ActorData::default()
-        },
-        human: HumanData::default(),
-        pc: PcData::default(),
-    });
-    let mut pc = pc;
-    pc.element_data_mut()
-        .set_position_map(MapPoint::new(40.0, 70.0));
-
-    assert_eq!(pc.sprite_visual_map_position(), MapPoint::new(40.0, 58.0));
 }
 
 /// Corpse-transition guard: a dead corpse can only flip to
@@ -1016,13 +991,6 @@ fn lying_stars_point_uses_floored_sprite_top_left_plus_hotspot() {
     assert_eq!(stars.y - stars.z, 248.0);
     assert_eq!(stars.z, 5.0);
 }
-
-// `actor_pathfinder_waypoints` deleted — the waypoint state it
-// covered (ActorData::path_waypoints / path_waypoint_index,
-// set_path, next_waypoint, advance_waypoint, has_path) moved to
-// the active Move element's order queue during the order-queue
-// refactor.  Integration-level coverage now lives in the
-// movement tick tests.
 
 #[test]
 fn npc_ai_controller_reference() {

@@ -161,12 +161,6 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
             pc.disabled_actions = vec![true, false, true];
             pc.disabled_actions_temp = vec![false, true, false];
             pc.position_before_teleport = MapPoint::new(-0.0, 37.25);
-            pc.quick_action_special_counts[0] = 13;
-            pc.quick_action_buttons[1] = 19;
-            pc.quick_action_interactors[2] = Some(opponent);
-            pc.titbits[0] = Some(crate::titbit::TitbitId::new(23).unwrap());
-            pc.quick_action_sequences[0] = Some(crate::sequence::Sequence::new());
-            pc.quick_seek_sequences[2] = Some(crate::sequence::Sequence::new());
             pc.interface_hidden = true;
             pc.portrait.burned = true;
             pc.portrait.open = true;
@@ -194,6 +188,23 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
             human,
             pc,
         }));
+        let macros = inner.players.macro_store.get_or_insert(id);
+        for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY {
+            macros.adopt_slot(
+                slot,
+                crate::macro_store::QuickActionSlot::retained(
+                    (slot == 0).then(crate::sequence::Sequence::new),
+                    (slot == 2).then(crate::sequence::Sequence::new),
+                    crate::macro_store::LegacyQuickito {
+                        kind: crate::element_kinds::QuickAction::None,
+                        button: if slot == 1 { 19 } else { 0 },
+                        interactor: (slot == 2).then_some(opponent),
+                    },
+                    (slot == 0).then(|| crate::titbit::TitbitId::new(23).unwrap()),
+                ),
+                if slot == 0 { 13 } else { 0 },
+            );
+        }
         let engine = Engine {
             inner,
             bootstrap_open: false,
@@ -441,32 +452,22 @@ impl Engine {
                 ),
             })
         });
-        let pc_qa = entity.pc_data().map(|pc| {
+        let pc_qa = entity.pc_data().map(|_| {
             const QA_SLOTS: usize = crate::macro_store::NUMBER_OF_QA_MEMORY;
-            for (name, length) in [
-                ("types", pc.quick_action_types.len()),
-                ("actions", pc.quick_action_sequences.len()),
-                ("seeks", pc.quick_seek_sequences.len()),
-                ("special-counts", pc.quick_action_special_counts.len()),
-                ("buttons", pc.quick_action_buttons.len()),
-                ("interactors", pc.quick_action_interactors.len()),
-                ("titbits", pc.titbits.len()),
-            ] {
-                assert_eq!(
-                    length, QA_SLOTS,
-                    "PC {id:?} parity projection has {length} {name}, expected {QA_SLOTS}"
-                );
-            }
+            let state = self.inner.players.macro_store.get(id);
             (0..QA_SLOTS)
                 .map(|slot| {
+                    let value = state.map(|state| state.slot(slot).expect("PC quick-action slot"));
+                    let quickito = value.map(|value| value.quickito).unwrap_or_default();
+                    let (action_size, seek_size) = value.map(|value| value.retained_sequence_sizes()).unwrap_or_default();
                     json!({
-                        "special_count": pc.quick_action_special_counts[slot],
-                        "quickito": pc.quick_action_types[slot] as u32,
-                        "titbit": pc.titbits[slot].map(crate::titbit::TitbitId::get),
-                        "button": pc.quick_action_buttons[slot],
-                        "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
-                        "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
-                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(|sequence| sequence.len()),
+                        "special_count": state.map_or(0, |state| state.special_count(slot)),
+                        "quickito": quickito.kind as u32,
+                        "titbit": state.and_then(|state| state.get_slot_titbit(slot)).map(crate::titbit::TitbitId::get),
+                        "button": quickito.button,
+                        "interactor": quickito.interactor.map_or(Value::Null, entity_ref),
+                        "action_size": action_size,
+                        "seek_size": seek_size,
                     })
                 })
                 .collect::<Vec<_>>()

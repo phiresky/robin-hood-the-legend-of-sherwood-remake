@@ -64,7 +64,6 @@ pub struct SpatialPresentationSnapshot {
 struct SpatialPresentationPose {
     position: crate::coordinates::WorldPoint3D,
     map_position: crate::coordinates::MapPoint,
-    jump_z_offset: f32,
     kind: crate::element::ElementKind,
     active: bool,
     hidden_in_building: bool,
@@ -90,7 +89,6 @@ impl SpatialPresentationPose {
         Self {
             position: element.position(),
             map_position: element.position_map(),
-            jump_z_offset: entity.actor_data().map_or(0.0, |actor| actor.jump_z_offset),
             kind: element.kind,
             active: element.active,
             hidden_in_building: element.hidden_in_building,
@@ -449,7 +447,6 @@ impl PresentationEngine {
                     lerp(before.map_position.x, next.map_position.x),
                     lerp(before.map_position.y, next.map_position.y),
                 );
-                pose.jump_z_offset = lerp(before.jump_z_offset, next.jump_z_offset);
                 pose
             };
 
@@ -461,9 +458,6 @@ impl PresentationEngine {
             // Some authored targets intentionally keep an interaction point
             // distinct from their visible 3D anchor. Preserve both channels.
             element.set_position_map_preserving_3d(sampled.map_position);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.jump_z_offset = sampled.jump_z_offset;
-            }
         }
     }
 }

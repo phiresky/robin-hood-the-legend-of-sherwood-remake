@@ -1,5 +1,5 @@
 use super::*;
-use crate::element::{Command, Posture};
+use crate::element::Posture;
 
 #[test]
 fn recursively_reached_wall_exit_preserves_its_done_posture() {
@@ -54,51 +54,4 @@ fn crenel_and_sibling_lift_transitions_keep_their_selected_sprite_action() {
 
     assert_eq!(literal_lift_sprite_action(OT::PassingDoor), None);
     assert_eq!(literal_lift_sprite_action(OT::WalkingUpright), None);
-}
-
-#[test]
-fn restored_pass_door_completion_accepts_serialized_and_geometry_free_ownership() {
-    assert!(pass_door_transition_completion_has_owner(
-        Command::PassDoor,
-        false,
-        OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
-        true,
-    ));
-    assert!(pass_door_transition_completion_has_owner(
-        Command::PassDoor,
-        true,
-        OrderType::TransitionWaitingCrouchedClimbingLadderDown,
-        true,
-    ));
-
-    for action in [
-        OrderType::TransitionClimbingLadderDownWaitingUpright,
-        OrderType::TransitionClimbingLadderDownWaitingUprightAlerted,
-    ] {
-        assert!(pass_door_transition_completion_has_owner(
-            Command::PassDoor,
-            false,
-            action,
-            false,
-        ));
-    }
-
-    assert!(
-        !pass_door_transition_completion_has_owner(
-            Command::PassDoor,
-            false,
-            OrderType::TransitionClimbingWallDownWaitingUpright,
-            true,
-        ),
-        "door-dependent transition completion still requires either the materialized pass or its restored serialized chain"
-    );
-    assert!(
-        !pass_door_transition_completion_has_owner(
-            Command::Move,
-            false,
-            OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
-            true,
-        ),
-        "an unrelated movement sequence must not acquire PassDoor completion semantics"
-    );
 }

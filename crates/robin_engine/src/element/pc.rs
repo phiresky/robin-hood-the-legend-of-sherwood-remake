@@ -184,16 +184,6 @@ pub struct PcData {
     #[serde(default)]
     pub ammo: PcAmmoData,
 
-    // Quick actions
-    pub quick_action_types: Vec<QuickAction>,
-    /// Stored sequences for each QA slot (up to 3). When the player
-    /// replays a QA, the engine launches the sequence from this slot.
-    pub quick_action_sequences: Vec<Option<crate::sequence::Sequence>>,
-    pub quick_seek_sequences: Vec<Option<crate::sequence::Sequence>>,
-    pub quick_action_special_counts: Vec<u16>,
-    pub quick_action_buttons: Vec<u16>,
-    pub quick_action_interactors: Vec<Option<EntityId>>,
-    pub titbits: Vec<Option<crate::titbit::TitbitId>>,
     pub portrait: PcPortraitState,
 
     // Detection
@@ -315,13 +305,6 @@ impl Default for PcData {
             disabled_actions: Vec::new(),
             disabled_actions_temp: Vec::new(),
             ammo: PcAmmoData::default(),
-            quick_action_types: vec![QuickAction::None; 3],
-            quick_action_sequences: vec![None, None, None],
-            quick_seek_sequences: vec![None, None, None],
-            quick_action_special_counts: vec![0; 3],
-            quick_action_buttons: vec![0; 3],
-            quick_action_interactors: vec![None; 3],
-            titbits: vec![None; 3],
             portrait: PcPortraitState::default(),
             head_seen: false,
             belt_seen: false,

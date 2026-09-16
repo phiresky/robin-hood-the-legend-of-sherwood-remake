@@ -3598,52 +3598,6 @@ impl FastFindGrid {
         self.is_reachable_thick(p1, p2, layer, half_diag)
     }
 
-    /// Check if a thick straight-line movement from `p1` to `p2` is
-    /// clear of static motion lines AND of caller-supplied mobile
-    /// repulsive lines. Same thick-corridor segment math as
-    /// [`Self::is_reachable_thick`], then also tests the corridor
-    /// against every mobile `LINE_REPULSIVE` line (one per live mobile
-    /// element).
-    ///
-    /// The mobile lines are passed in as a slice because mobile
-    /// elements are owned by `EngineInner`, not by the grid — the
-    /// engine builds the slice from its current tick's live mobile
-    /// elements and hands it to the grid for the corridor test.
-    /// Passing `&[]` reduces to pure static motion-line checks.
-    pub fn is_reachable_thick_mobile(
-        &self,
-        p1: MapPoint,
-        p2: MapPoint,
-        layer: u16,
-        half_diagonal: MoveBoxHalfDiagonal,
-        mobile_lines: &[GridLine],
-    ) -> bool {
-        if !self.is_reachable_thick(p1, p2, layer, half_diagonal) {
-            return false;
-        }
-        if mobile_lines.is_empty() || p1 == p2 {
-            return true;
-        }
-        let Some(corridor) = Self::build_thick_move_corridor(p1, p2, half_diagonal) else {
-            return true;
-        };
-        for line in mobile_lines {
-            // Mobile (per-entity repulsive) lines have no runtime active
-            // toggle — they're rebuilt each tick from the live entity
-            // set, so they're implicitly "always active."
-            if !line.intersects_bbox(&corridor.bbox) {
-                continue;
-            }
-            if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
-                return false;
-            }
-            if corridor.point_inside(line.a) {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Find an authorized (non-colliding) position for a bounding box
     /// by iteratively pushing it away from intersecting motion lines.
     ///
@@ -4425,44 +4379,6 @@ mod tests {
             MapPoint::new(50.0, 128.0),
             0,
             &move_box
-        ));
-    }
-
-    #[test]
-    fn test_is_reachable_thick_mobile() {
-        let grid = make_grid_with_line();
-        let hd = MoveBoxHalfDiagonal::new(5.0, 5.0);
-
-        // With no mobile repulsive lines the call collapses to
-        // `is_reachable_thick`.
-        assert!(grid.is_reachable_thick_mobile(
-            MapPoint::new(50.0, 50.0),
-            MapPoint::new(200.0, 50.0),
-            0,
-            hd,
-            &[]
-        ));
-        assert!(!grid.is_reachable_thick_mobile(
-            MapPoint::new(50.0, 50.0),
-            MapPoint::new(50.0, 200.0),
-            0,
-            hd,
-            &[]
-        ));
-
-        // Mobile repulsive line added: a vertical line at x=150 that
-        // the corridor from (50,50)→(200,50) must cross.
-        let mobile = GridLine::new(
-            MapPoint::new(150.0, 30.0),
-            MapPoint::new(150.0, 70.0),
-            false,
-        );
-        assert!(!grid.is_reachable_thick_mobile(
-            MapPoint::new(50.0, 50.0),
-            MapPoint::new(200.0, 50.0),
-            0,
-            hd,
-            std::slice::from_ref(&mobile)
         ));
     }
 

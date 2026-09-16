@@ -196,7 +196,7 @@ fn production_walk_mobile_observations(actor_before: bool) -> Vec<f32> {
                 .get_entity(owner)
                 .is_some_and(|entity| entity.actor_data().is_some())
             {
-                observations.push(engine.first_live_mobile_polygon_point(0).x);
+                observations.push(engine.world.mobile_elements[0].motion_polygon[0].x);
             }
         },
     );

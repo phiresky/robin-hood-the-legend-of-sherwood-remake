@@ -138,7 +138,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         .unwrap()
         .actor_data_mut()
         .unwrap();
-    actor.listen_wait_time = 0;
+    actor.wait_time = 0;
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     // The listening animation deliberately ignores the sprite's completion
@@ -180,7 +180,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             .unwrap()
             .actor_data()
             .unwrap();
-        assert_eq!(owner_actor.listen_wait_time, expected_wait);
+        assert_eq!(owner_actor.wait_time, expected_wait);
         assert_eq!(
             owner_actor.continuation.motion_state,
             crate::sprite::MotionState::InProgress,
@@ -244,7 +244,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
                 .unwrap()
                 .actor_data()
                 .unwrap()
-                .listen_wait_time,
+                .wait_time,
             expected,
             "{case} owner gate"
         );
@@ -262,7 +262,37 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         }
     }
 
+    // Direct Execute probes supply the initialization edge normally published
+    // by owner selection. A restored zero timer does not restart or reveal.
+    let mut restored = engine.clone();
+    restored
+        .get_entity_mut(listener)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execute_order_initialising = false;
+    assert_eq!(
+        restored.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        Some(crate::sprite::MotionState::InProgress)
+    );
+    assert_eq!(
+        restored
+            .get_entity(listener)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .wait_time,
+        0
+    );
+    assert!(restored.get_entity(near).unwrap().element_data().blipped);
+
     for invocation in 1..25 {
+        engine
+            .get_entity_mut(listener)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .execute_order_initialising = invocation == 1;
         assert_eq!(
             engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
             Some(crate::sprite::MotionState::InProgress)
@@ -273,7 +303,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
                 .unwrap()
                 .actor_data()
                 .unwrap()
-                .listen_wait_time,
+                .wait_time,
             25 - invocation
         );
         assert!(engine.get_entity(near).unwrap().element_data().blipped);

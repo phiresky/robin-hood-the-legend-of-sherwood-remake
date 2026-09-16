@@ -72,6 +72,7 @@ struct ConvertedPc {
     character_index: usize,
     status: PcStatus,
     pc: PcData,
+    quick_slots: Vec<(crate::macro_store::QuickActionSlot, u16)>,
 }
 
 impl LegacyPcHumanAdoptionPlan {
@@ -163,7 +164,6 @@ impl LegacyPcHumanAdoptionPlan {
                     unreachable!("preflighted PC changed concrete kind");
                 };
                 pc.pc = saved.pc;
-                let loaded = &pc.pc;
                 let campaign_character = engine
                     .mission_domain
                     .campaign
@@ -175,28 +175,9 @@ impl LegacyPcHumanAdoptionPlan {
                 // that pointer. The leaf copy is therefore authoritative over
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
-                for slot in 0..loaded.quick_action_sequences.len() {
-                    let titbit = loaded.titbits.get(slot).copied().flatten();
-                    if let Some(action) = loaded.quick_action_sequences[slot].clone() {
-                        engine.players.macro_store.adopt_legacy_sequence_slot(
-                            record.entity_id,
-                            slot,
-                            action,
-                            loaded.quick_seek_sequences[slot].clone(),
-                            titbit,
-                        );
-                    } else if loaded.quick_action_types[slot] != QuickAction::None {
-                        engine.players.macro_store.adopt_legacy_quickito_slot(
-                            record.entity_id,
-                            slot,
-                            crate::macro_store::LegacyQuickito {
-                                kind: loaded.quick_action_types[slot],
-                                interactor: loaded.quick_action_interactors[slot],
-                                button: loaded.quick_action_buttons[slot],
-                            },
-                            titbit,
-                        );
-                    }
+                let macros = engine.players.macro_store.get_or_insert(record.entity_id);
+                for (slot, (value, special_count)) in saved.quick_slots.into_iter().enumerate() {
+                    macros.adopt_slot(slot, value, special_count);
                 }
             }
         }
@@ -469,13 +450,7 @@ fn convert_pc(
             expected: expected_life,
         }));
     }
-    let mut quick_action_types = Vec::with_capacity(3);
-    let mut quick_action_sequences = Vec::with_capacity(3);
-    let mut quick_seek_sequences = Vec::with_capacity(3);
-    let mut quick_action_special_counts = Vec::with_capacity(3);
-    let mut quick_action_buttons = Vec::with_capacity(3);
-    let mut quick_action_interactors = Vec::with_capacity(3);
-    let mut titbits = Vec::with_capacity(3);
+    let mut quick_slots = Vec::with_capacity(crate::macro_store::NUMBER_OF_QA_MEMORY);
     for (slot, action) in saved.pre_human.quick_actions.iter().enumerate() {
         let quickito = quick_action(action.metadata.quickito, creation_order)?;
         let interactor = entities.resolve_element(action.metadata.interactor)?;
@@ -501,27 +476,31 @@ fn convert_pc(
                 button: action.metadata.button,
             }));
         }
-        quick_action_types.push(quickito);
-        quick_action_sequences.push(
-            action
-                .sequences
-                .action
-                .as_ref()
-                .map(|sequence| convert_owner_local_sequence(sequence, entities, sequence_topology))
-                .transpose()?,
-        );
-        quick_seek_sequences.push(
-            action
-                .sequences
-                .seek
-                .as_ref()
-                .map(|sequence| convert_owner_local_sequence(sequence, entities, sequence_topology))
-                .transpose()?,
-        );
-        quick_action_special_counts.push(action.metadata.number_of_special_quick_actions);
-        quick_action_buttons.push(action.metadata.button);
-        quick_action_interactors.push(interactor);
-        titbits.push(crate::titbit::TitbitId::new(action.metadata.titbit));
+        let sequence = action
+            .sequences
+            .action
+            .as_ref()
+            .map(|sequence| convert_owner_local_sequence(sequence, entities, sequence_topology))
+            .transpose()?;
+        let seek = action
+            .sequences
+            .seek
+            .as_ref()
+            .map(|sequence| convert_owner_local_sequence(sequence, entities, sequence_topology))
+            .transpose()?;
+        quick_slots.push((
+            crate::macro_store::QuickActionSlot::retained(
+                sequence,
+                seek,
+                crate::macro_store::LegacyQuickito {
+                    kind: quickito,
+                    interactor,
+                    button: action.metadata.button,
+                },
+                crate::titbit::TitbitId::new(action.metadata.titbit),
+            ),
+            action.metadata.number_of_special_quick_actions,
+        ));
     }
     let carried = checked_ref(
         entities.resolve_element(saved.post_human.carried)?,
@@ -585,13 +564,6 @@ fn convert_pc(
         disabled_actions_temp: saved.pre_human.disabled_actions_temp.to_vec(),
         interface_hidden: !saved.pre_human.interface_displayed,
         position_before_teleport: point2(saved.pre_human.position_before_teleport),
-        quick_action_types,
-        quick_action_sequences,
-        quick_seek_sequences,
-        quick_action_special_counts,
-        quick_action_buttons,
-        quick_action_interactors,
-        titbits,
         portrait: PcPortraitState {
             quantities: saved.portrait.quantities,
             two_buttons_mode: saved.portrait.two_buttons_mode,
@@ -666,6 +638,7 @@ fn convert_pc(
         character_index,
         status,
         pc,
+        quick_slots,
     })
 }
 

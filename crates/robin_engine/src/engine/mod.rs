@@ -1474,13 +1474,8 @@ impl EngineInner {
     /// Gate and direction stored on the actor's currently selected PassDoor
     /// movement element.
     ///
-    /// This reads the actor's sequence element followed by the
-    /// Movement-sequence gate/direction reads used by the schema-15
-    /// Original recorder. It deliberately does not inspect
-    /// [`crate::element::ActorData::active_door_pass`]: that field is Rust's
-    /// physical traversal choreography and can be absent, or reconstructed in
-    /// the opposite physical direction, while the selected sequence element
-    /// still retains the authored PassDoor direction.
+    /// The movement operand retains its traversal direction after crossing
+    /// consumes the position interface's live door pointer.
     pub fn actor_selected_pass_door(
         &self,
         actor: EntityId,
@@ -1526,75 +1521,6 @@ impl EngineInner {
             &self.script_domains.interactables.doors,
         )
         .unwrap_or_else(|error| panic!("derive Original gate translation: {error}"))
-    }
-
-    /// Value corresponding to the original-game actor wait time.
-    ///
-    /// Rust keeps the seek-refresh countdown separate from ordinary command
-    /// waits, while the original game reuses one wait timer for both. Debug/parity
-    /// consumers need this isomorphic view rather than comparing the Rust
-    /// storage layout literally.
-    pub fn actor_legacy_wait_time(&self, actor: EntityId) -> u32 {
-        let entity = self
-            .get_entity(actor)
-            .unwrap_or_else(|| panic!("actor_legacy_wait_time: missing actor {actor:?}"));
-        let data = entity
-            .actor_data()
-            .unwrap_or_else(|| panic!("actor_legacy_wait_time: non-actor {actor:?}"));
-
-        // A live WAIT_TIMER owns Original's overloaded scalar even when the
-        // actor retains a seek target/post-seek continuation. Rust's split
-        // seek-refresh copy is dormant during this command and must not mask
-        // the timer that the actor update just decremented.
-        if self.actor_command(actor) == crate::element::Command::WaitTimer {
-            return data.wait_time;
-        }
-
-        // FallingLadderWall uses the original game's shared wait timer as its remaining
-        // constant-speed flight duration.
-        // A fall can interrupt an entity Seek while its target and post-seek
-        // continuation remain attached to the actor; those pointers are
-        // dormant until the non-interruptible fall finishes and must not make
-        // the split seek-refresh copy appear to own the overloaded scalar.
-        if data.active_flight.is_some_and(|flight| flight.ladder_fall) {
-            return data.wait_time;
-        }
-
-        // Every airborne jump execution branch reuses the original game's wait timer
-        // for the remaining flight ticks. A retained post-seek continuation
-        // is dormant while that order runs and must not expose Rust's split
-        // seek-refresh copy instead. Test the current step rather than the
-        // cached airborne flag, which intentionally survives between steps.
-        if data
-            .active_jump
-            .as_ref()
-            .and_then(|jump| jump.current.as_ref())
-            .is_some_and(|current| current.step.airborne)
-        {
-            return data.wait_time;
-        }
-
-        if let Some(selected) = data.selected_sequence_element
-            && let Some(element) = self
-                .orders
-                .sequence_manager
-                .get_element(selected.sequence_id, selected.element_index)
-            && let crate::sequence::SequenceElementData::Movement { flags, element, .. } =
-                &element.data
-            && flags.contains(crate::sequence::MoveFlags::SEEK)
-            && element.is_some()
-        {
-            return data.seek_refresh_wait;
-        }
-
-        // The seek countdown survives the transition to the post-seek
-        // interaction. Its retained continuation identifies the timer,
-        // including after loading both timer fields from one saved scalar.
-        if data.post_seek_sequence.is_some() && data.seek_target.is_some() {
-            return data.seek_refresh_wait;
-        }
-
-        data.wait_time
     }
 
     /// Current animation/order type for parity diagnostics.
@@ -2337,12 +2263,7 @@ impl EngineInner {
                 return false;
             };
             let target = actor.seek_target;
-            // The original game retains the single overloaded wait-timer value
-            // when post-seek sequence launch replaces the seek with its
-            // interaction. Fold Rust's seek-specific copy back into the
-            // ordinary slot before dropping the state that identifies which
-            // split field currently owns that legacy scalar.
-            actor.wait_time = actor.seek_refresh_wait;
+
             actor.seek_target = None;
             (target, actor.post_seek_sequence.take())
         };

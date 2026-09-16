@@ -1,25 +1,14 @@
 use super::{current_door_for_route_source, sector_hits_have_distinct_identity};
 use crate::element::{
-    ActiveDoorPass, ActorData, ActorPc, ElementData, Entity, HumanData, InstalledActorOrder, PcData,
+    ActorData, ActorPc, ElementData, Entity, HumanData, InstalledActorOrder, PcData,
 };
-use crate::gate::DoorIndex;
 use crate::order::OrderType;
 use crate::position_interface::DoorHandle;
 
-fn pc_with_door_pass(triggers_fired: u8) -> Entity {
-    pc_with_door_pass_directions(triggers_fired, true, true)
-}
-
-fn pc_with_door_pass_directions(triggers_fired: u8, direct: bool, position_direct: bool) -> Entity {
+fn pc_with_door_pass(crossed: bool) -> Entity {
     let mut entity = Entity::Pc(ActorPc {
         element: ElementData::default(),
         actor: ActorData {
-            active_door_pass: Some(ActiveDoorPass {
-                door_index: DoorIndex::new(53).expect("valid door index"),
-                direct,
-                position_direct,
-                triggers_fired,
-            }),
             installed_order: Some(InstalledActorOrder {
                 order_id: std::num::NonZeroU32::new(1).unwrap(),
                 order_type: OrderType::WalkingUpright,
@@ -29,17 +18,17 @@ fn pc_with_door_pass_directions(triggers_fired: u8, direct: bool, position_direc
         human: HumanData::default(),
         pc: PcData::default(),
     });
-    if triggers_fired == 0 {
+    if !crossed {
         entity
             .position_iface_mut()
-            .set_door(DoorHandle::new(53).expect("valid door index"), direct);
+            .set_door(DoorHandle::new(53).expect("valid door index"), true);
     }
     entity
 }
 
 #[test]
 fn route_source_uses_active_door_before_pass_callback() {
-    let pc = pc_with_door_pass(0);
+    let pc = pc_with_door_pass(false);
 
     assert_eq!(
         current_door_for_route_source(&pc),
@@ -49,14 +38,14 @@ fn route_source_uses_active_door_before_pass_callback() {
 
 #[test]
 fn route_source_drops_active_door_after_pass_callback() {
-    let pc = pc_with_door_pass(1);
+    let pc = pc_with_door_pass(true);
 
     assert_eq!(current_door_for_route_source(&pc), None);
 }
 
 #[test]
 fn route_source_does_not_resurrect_postponed_door_under_unrelated_order() {
-    let mut pc = pc_with_door_pass(0);
+    let mut pc = pc_with_door_pass(false);
     pc.position_iface_mut().clear_door();
     pc.actor_data_mut().unwrap().installed_order = Some(InstalledActorOrder {
         order_id: std::num::NonZeroU32::new(2).unwrap(),
@@ -66,28 +55,13 @@ fn route_source_does_not_resurrect_postponed_door_under_unrelated_order() {
     assert_eq!(
         current_door_for_route_source(&pc),
         None,
-        "the dormant pass mirror must not replace an absent position door reference"
-    );
-}
-
-#[test]
-fn route_source_reports_live_traversal_direction_not_element_direction() {
-    // The original game reads the door-direction field written from the
-    // live sector-side test at
-    // launch. A v48-restored movement element can carry a different
-    // serialized direction; that value belongs to
-    // AI position state, not to route sourcing.
-    let pc = pc_with_door_pass_directions(0, true, false);
-
-    assert_eq!(
-        current_door_for_route_source(&pc),
-        Some((DoorHandle::new(53).expect("valid door index"), true))
+        "an unrelated order must not replace an absent position door reference"
     );
 }
 
 #[test]
 fn route_source_uses_position_door_during_pass_callback_queue_window() {
-    let mut pc = pc_with_door_pass(1);
+    let mut pc = pc_with_door_pass(true);
     pc.position_iface_mut()
         .set_door(DoorHandle::new(17).expect("valid door index"), false);
 

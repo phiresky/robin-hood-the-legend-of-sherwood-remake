@@ -349,14 +349,8 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
                 engine
                     .get_entity_mut(target)
                     .unwrap()
-                    .actor_data_mut()
-                    .unwrap()
-                    .active_door_pass = Some(crate::element::ActiveDoorPass {
-                    door_index: crate::gate::DoorIndex::new(0).unwrap(),
-                    direct: true,
-                    position_direct: true,
-                    triggers_fired: 0,
-                })
+                    .position_iface_mut()
+                    .set_door(crate::position_interface::DoorHandle::new(0).unwrap(), true);
             }
             _ => {}
         }

@@ -2296,16 +2296,10 @@ fn animation_execution_gates_do_not_skip_action_change() {
                 .expect("skipped actor is human")
                 .opponents
                 .push(stale);
-            entity
-                .actor_data_mut()
-                .expect("skipped actor is typed")
-                .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
-                    .expect("largest valid door index"),
-                direct: true,
-                position_direct: true,
-                triggers_fired: 0,
-            });
+            entity.position_iface_mut().set_door(
+                crate::position_interface::DoorHandle::new(u32::MAX - 1).unwrap(),
+                true,
+            );
         }
         let last_action_before = engine
             .world
@@ -2424,16 +2418,10 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                 .expect("token-skip actor is human")
                 .opponents
                 .push(stale);
-            entity
-                .actor_data_mut()
-                .expect("token-skip actor is typed")
-                .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
-                    .expect("largest valid door index"),
-                direct: true,
-                position_direct: true,
-                triggers_fired: 0,
-            });
+            entity.position_iface_mut().set_door(
+                crate::position_interface::DoorHandle::new(u32::MAX - 1).unwrap(),
+                true,
+            );
         }
         let order =
             crate::order::Order::new(movement_order, 0.0, 0.0, engine.orders.allocate_order_id())
@@ -3300,9 +3288,9 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
             .get(actor)
             .and_then(|entity| entity.actor_data())
             .expect("timer actor remains typed")
-            .seek_refresh_wait,
+            .wait_time,
         0,
-        "WAIT_TIMER countdown updates every Rust mirror of Original's shared mulWaitTime"
+        "WAIT_TIMER countdown expires before the following termination frame"
     );
     assert_eq!(
         engine
@@ -5398,9 +5386,8 @@ fn install_unrelated_multi_exit_building_actor(
     engine: &mut EngineInner,
     probe_owner: EntityId,
 ) -> EntityId {
-    use crate::element::ActiveDoorPass;
     use crate::fast_find_grid::GridSector;
-    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::gate::{Door, DoorType};
     use crate::sector::{SectorNumber, SectorType};
 
     let door_actor = engine.add_test_entity(make_pc(true));
@@ -5414,12 +5401,7 @@ fn install_unrelated_multi_exit_building_actor(
     };
     pc.element.active = true;
     pc.pc.life_points = 100;
-    pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex::new(0).expect("valid door index"),
-        direct: true,
-        position_direct: true,
-        triggers_fired: 0,
-    });
+
     pc.actor.passing_door_directly = true;
     pc.element.sprite.position_iface.set_door_for_test(
         crate::position_interface::DoorHandle::new(0).expect("valid door index"),
@@ -5579,21 +5561,10 @@ fn resolve_test_actor_forecast(
 }
 
 #[test]
-fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
-    use crate::element::ActiveDoorPass;
+fn destination_forecast_requires_a_live_door() {
     use crate::gate::DoorIndex;
 
     let mut actor = make_pc(true);
-    let Entity::Pc(pc) = &mut actor else {
-        unreachable!("PC fixture changed kind")
-    };
-    pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex::new(7).expect("valid door index"),
-        direct: true,
-        position_direct: true,
-        triggers_fired: 0,
-    });
-
     assert_eq!(
         super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
@@ -5605,7 +5576,7 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
         !super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
             .passing_door_directly,
-        "a stale passage mirror must not manufacture the independent direct-passage latch"
+        "a missing live door must not manufacture the independent direct-passage latch"
     );
 
     let Entity::Pc(pc) = &mut actor else {
@@ -5633,10 +5604,6 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
     let Entity::Pc(pc) = &mut actor else {
         unreachable!("PC fixture changed kind")
     };
-    assert!(
-        pc.actor.active_door_pass.is_none(),
-        "legacy adoption does not reconstruct runtime door choreography"
-    );
     pc.actor.passing_door_directly = true;
     pc.element.sprite.position_iface.set_door_for_test(
         crate::position_interface::DoorHandle::new(133).expect("valid door index"),
@@ -6153,8 +6120,6 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
 #[test]
 fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_forecasts() {
     use crate::ai::{AiLockFlags, Stimulus, StimulusType};
-    use crate::element::ActiveDoorPass;
-    use crate::gate::DoorIndex;
     use crate::profiles::ProfileRank;
     use crate::sim_rng::{RngSite, with_draw_trace};
 
@@ -6170,12 +6135,11 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     };
     officer.element.active = true;
     officer.soldier.cached_camp = owner_camp;
-    officer.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex::new(0).expect("valid door index"),
-        direct: true,
-        position_direct: true,
-        triggers_fired: 0,
-    });
+    officer
+        .element
+        .sprite
+        .position_iface
+        .set_door(crate::position_interface::DoorHandle::new(0).unwrap(), true);
     let officer_ai = officer.npc.ai_brain.enemy_mut().unwrap();
     crate::engine::test_support::actors::edit_enemy_profile(&mut assets, officer_ai, |profile| {
         profile.rank = ProfileRank::Officer;

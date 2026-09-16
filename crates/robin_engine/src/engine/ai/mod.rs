@@ -1856,9 +1856,8 @@ pub(super) fn extract_forecast_input(
     let actor = entity.actor_data()?;
     // AI destination forecasting gates the serialized door pointer on
     // door-passing state, then uses the independent direct-passage latch
-    // for the destination side. A legacy save restores the selected PassDoor
-    // element and both serialized actor fields even though Rust's runtime-only
-    // ActiveDoorPass choreography is not reconstructed.
+    // for the destination side. The selected movement element, live door and
+    // direct-passage latch retain their separate execution roles.
     let live_door = entity.position_iface().get_door();
     let door_pass = is_passing_door
         .then_some(live_door)

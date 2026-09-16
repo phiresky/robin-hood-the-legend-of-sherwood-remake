@@ -2134,11 +2134,6 @@ impl EngineInner {
     ) {
         let _detail = entity_system_detail_guard(EntitySystemDetail::OwnerPrelude);
 
-        // The jump step lifecycle is the jump order's own work: the
-        // step that starts here is the order this actor executes a few
-        // lines later, and the landing posture it publishes is visible
-        // to every later creation slot and to none of the earlier ones.
-        self.tick_active_jump_for(sim, assets, owner);
         if matches!(owner, EntityId::Soldier(_)) {
             observe_actor_owner_envelope(ActorOwnerEnvelopePhase::SoldierPrelude(owner));
             self.tick_apple_smell_for(owner);
@@ -2352,11 +2347,9 @@ impl EngineInner {
                 .and_then(Entity::actor_data_mut)
                 .expect("wait timer owner disappeared");
             if actor.wait_time == 0 {
-                actor.seek_refresh_wait = 0;
                 *motion = crate::sprite::MotionState::Terminated;
             } else {
                 actor.wait_time -= 1;
-                actor.seek_refresh_wait = actor.wait_time;
             }
         } else if command == Some(Command::WaitFreeLift) {
             let (seq, elem) = selected.expect("lift wait lost its selected element");
@@ -2397,9 +2390,6 @@ impl EngineInner {
                     crate::order::OrderCompletion::AdvanceElement
                     | crate::order::OrderCompletion::UnlockDoor { .. } => {
                         self.execute_seq_advance(sim, assets, (seq_id, elem_idx));
-                    }
-                    crate::order::OrderCompletion::NextJumpStep => {
-                        self.execute_next_jump_step(sim, assets, owner);
                     }
                     crate::order::OrderCompletion::WaspStruggleCycle { cycles_remaining } => {
                         if cycles_remaining <= 1 {
