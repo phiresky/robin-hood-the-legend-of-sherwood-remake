@@ -1296,6 +1296,11 @@ Reviewed fixes that change only the host can select a patched playback build;
 game data and replay provenance remain bound to the recorded build. Runtime
 `340d66324974` adds save isolation to recordings from `1699bc12ffb8`.
 
+TODO: end-of-replay seeking can still resolve queued host speech after its
+simulation request has gone away. Run `01a0a8ba-426f-74a5-867c-ee3394a64a16`
+reaches both final save markers without accessing player saves, then seeking to
+ordinal 4444 triggers the authoritative-pending-speech assertion in `tick.rs`.
+
 - Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.
 
 - Shipping conversion keeps cinematic video bytes in separate content-addressed files. Small per-movie references retain locale fallback in the boot data, and native video playback verifies and reads the selected file only when requested. The `split_cinematics` asset example migrates existing boot files without re-encoding mission assets; regenerate the web content manifest afterward.
