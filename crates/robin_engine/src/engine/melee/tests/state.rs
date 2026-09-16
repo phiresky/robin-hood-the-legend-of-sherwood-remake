@@ -2681,6 +2681,8 @@ fn parried_true_circle_still_queues_push_fall() {
         .actor_data()
         .unwrap()
         .active_flight
+        .as_deref()
+        .copied()
         .expect("takeoff preparation must retain a fully rejected flight");
     assert_eq!(rejected_flight.increment_x, 0.0);
     assert_eq!(rejected_flight.increment_y, 0.0);
@@ -2691,14 +2693,14 @@ fn parried_true_circle_still_queues_push_fall() {
         .unwrap()
         .actor_data_mut()
         .unwrap()
-        .active_flight = Some(ActiveFlight {
+        .active_flight = Some(Box::new(ActiveFlight {
         increment_x: accepted_increment,
         goal_x: victim_position_before.x + 8.0,
         goal_y: victim_position_before.y,
         frames_remaining: 8,
         antagonist: Some(attacker),
         ..Default::default()
-    });
+    }));
     engine.tick_push_flights(&sim, &assets);
     let victim_after_fall_start = engine.get_entity(victim).unwrap();
     assert_eq!(
@@ -2718,6 +2720,8 @@ fn parried_true_circle_still_queues_push_fall() {
             .actor_data()
             .unwrap()
             .active_flight
+            .as_deref()
+            .copied()
             .unwrap()
             .frames_remaining,
         7
@@ -2888,6 +2892,8 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         .actor_data()
         .unwrap()
         .active_flight
+        .as_deref()
+        .copied()
         .expect("elevated landing plane must author a flight");
     engine
         .get_entity_mut(victim)
@@ -3339,7 +3345,7 @@ fn no_domino_when_flight_has_no_antagonist() {
     if let Some(entity) = engine.world.entities.get_mut(flyer)
         && let Some(actor) = entity.actor_data_mut()
     {
-        actor.active_flight = Some(ActiveFlight {
+        actor.active_flight = Some(Box::new(ActiveFlight {
             increment_x: 1.0,
             increment_y: 0.0,
             goal_x: flyer_pos.x + 5.0,
@@ -3347,7 +3353,7 @@ fn no_domino_when_flight_has_no_antagonist() {
             frames_remaining: 5,
             antagonist: None,
             ..Default::default()
-        });
+        }));
     }
 
     engine.tick_push_flights(sim, &LevelAssets::default());

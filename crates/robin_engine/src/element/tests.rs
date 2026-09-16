@@ -1,6 +1,88 @@
 use super::*;
 
 #[test]
+fn optional_actor_payloads_preserve_wire_format_and_hashes() {
+    use robin_util::state_hash::StateHash;
+    use std::hash::Hasher;
+
+    let flight = ActiveFlight {
+        frames_remaining: 17,
+        increment_x: 1.25,
+        ..Default::default()
+    };
+    let shield = crate::bow_shot::compute_shield_obstacle(
+        MapPoint::new(13.0, 27.0),
+        4.0,
+        3,
+        &crate::bow_shot::shield_params_for_pc(false),
+    );
+    let jump = crate::engine::jump::ActiveJump {
+        steps: std::collections::VecDeque::from([crate::engine::jump::JumpStep {
+            anim: crate::order::OrderType::JumpingLong,
+            target_3d: Some(WorldPoint3D::new(1.0, 2.0, 3.0)),
+            airborne: true,
+            max_frames: Some(4),
+        }]),
+        current: None,
+        sequence_id: crate::sequence::SequenceId(7),
+        element_index: 2,
+        dest_sector: Some(3),
+        dest_layer: 1,
+        source_direction_goal: 4,
+        dest_projection_point: MapPoint::new(9.0, 12.0),
+    };
+    let unboxed = vec![(None, None, None), (Some(flight), Some(shield), Some(jump))];
+    let boxed = unboxed
+        .iter()
+        .cloned()
+        .map(|(flight, shield, jump)| {
+            (
+                flight.map(Box::new),
+                shield.map(Box::new),
+                jump.map(Box::new),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::to_value(&unboxed).unwrap(),
+        serde_json::to_value(&boxed).unwrap()
+    );
+    let bytes = bitcode::encode(&unboxed);
+    assert_eq!(bytes, bitcode::encode(&boxed));
+    let decoded: Vec<(
+        Option<Box<ActiveFlight>>,
+        Option<Box<crate::sight_obstacle::SightObstacle>>,
+        Option<Box<crate::engine::jump::ActiveJump>>,
+    )> = bitcode::decode(&bytes).unwrap();
+    assert_eq!(
+        serde_json::to_value(&decoded).unwrap(),
+        serde_json::to_value(&unboxed).unwrap()
+    );
+    let mut before = std::hash::DefaultHasher::new();
+    let mut after = std::hash::DefaultHasher::new();
+    unboxed.state_hash(&mut before);
+    boxed.state_hash(&mut after);
+    assert_eq!(before.finish(), after.finish());
+
+    let actor = ActorData {
+        active_flight: boxed[1].0.clone(),
+        shield_obstacle: boxed[1].1.clone(),
+        active_jump: boxed[1].2.clone(),
+        ..Default::default()
+    };
+    let mut snapshot = actor.clone();
+    snapshot.active_flight.as_mut().unwrap().frames_remaining = 0;
+    snapshot.active_jump.as_mut().unwrap().steps.clear();
+    assert_eq!(actor.active_flight.as_ref().unwrap().frames_remaining, 17);
+    assert_eq!(actor.active_jump.as_ref().unwrap().steps.len(), 1);
+}
+
+#[test]
+fn entity_slots_fit_within_two_kibibytes() {
+    assert!(std::mem::size_of::<Option<Entity>>() <= 2048);
+}
+
+#[test]
 fn frozen_actor_execute_selection_keeps_independent_installed_identity() {
     let previous = std::num::NonZeroU32::new(10).unwrap();
     let selected = std::num::NonZeroU32::new(11).unwrap();

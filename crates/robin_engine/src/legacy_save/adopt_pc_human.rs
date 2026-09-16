@@ -720,8 +720,8 @@ fn restore_saved_shield_obstacle(entity: &mut Entity) {
     entity
         .actor_data_mut()
         .expect("preflighted Human has no mutable Actor data")
-        .shield_obstacle = Some(crate::bow_shot::shield_obstacle_from_serialized_state(
-        &serialized,
+        .shield_obstacle = Some(Box::new(
+        crate::bow_shot::shield_obstacle_from_serialized_state(&serialized),
     ));
 }
 

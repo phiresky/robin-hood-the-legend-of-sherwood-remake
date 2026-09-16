@@ -424,7 +424,7 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
             .unwrap();
         actor.wait_time = 4;
         actor.seek_refresh_wait = 0;
-        actor.active_jump = Some(ActiveJump {
+        actor.active_jump = Some(Box::new(ActiveJump {
             steps: VecDeque::new(),
             current: Some(CurrentStepState {
                 start_x: 0.0,
@@ -447,7 +447,7 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
             dest_layer: 0,
             source_direction_goal: 0,
             dest_projection_point: crate::coordinates::MapPoint::default(),
-        });
+        }));
     }
     assert_eq!(engine.actor_legacy_wait_time(owner), 4);
     engine
@@ -487,11 +487,11 @@ fn ladder_fall_wait_owns_legacy_scalar_over_dormant_seek() {
     actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
     actor.seek_refresh_wait = 0;
     actor.wait_time = 2;
-    actor.active_flight = Some(crate::element::ActiveFlight {
+    actor.active_flight = Some(Box::new(crate::element::ActiveFlight {
         frames_remaining: 2,
         ladder_fall: true,
         ..crate::element::ActiveFlight::default()
-    });
+    }));
 
     assert_eq!(engine.actor_legacy_wait_time(owner), 2);
 }

@@ -2901,6 +2901,8 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         .actor_data()
         .unwrap()
         .active_flight
+        .as_deref()
+        .copied()
         .expect("elevated landing plane must author a hit flight");
     engine
         .get_entity_mut(victim)

@@ -1556,7 +1556,11 @@ impl EngineInner {
         // continuation remain attached to the actor; those pointers are
         // dormant until the non-interruptible fall finishes and must not make
         // the split seek-refresh copy appear to own the overloaded scalar.
-        if data.active_flight.is_some_and(|flight| flight.ladder_fall) {
+        if data
+            .active_flight
+            .as_ref()
+            .is_some_and(|flight| flight.ladder_fall)
+        {
             return data.wait_time;
         }
 
