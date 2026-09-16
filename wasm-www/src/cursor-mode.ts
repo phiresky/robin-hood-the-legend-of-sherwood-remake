@@ -14,7 +14,7 @@ export function installCursorMode(canvas: HTMLCanvasElement, button: HTMLButtonE
     const toggle = async () => {
         if (document.pointerLockElement === canvas) document.exitPointerLock();
         else {
-            try { await canvas.requestPointerLock(); }
+            try { canvas.focus(); await canvas.requestPointerLock(); }
             catch { failed(); }
         }
     };
