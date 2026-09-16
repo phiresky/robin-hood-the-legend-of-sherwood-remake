@@ -1670,15 +1670,16 @@ mod tests {
             let imported = convert_owner_local_sequence(&saved, &entities, &topology()).unwrap();
             let element = &imported.elements[0];
             let expected_strike = (raw_strike == 0).then_some(crate::weapons::SwordStrike::A);
-            let authored = SequenceElementData::<Option<crate::sequence::PostSeekSequence>>::Damage {
-                origin: Some(owner),
-                projectile: Some(projectile),
-                damage: 19,
-                concussion: 7,
-                sword_strike: expected_strike,
-                sword_profile_idx: None,
-                is_harder_hit: false,
-            };
+            let authored =
+                SequenceElementData::<Option<crate::sequence::PostSeekSequence>>::Damage {
+                    origin: Some(owner),
+                    projectile: Some(projectile),
+                    damage: 19,
+                    concussion: 7,
+                    sword_strike: expected_strike,
+                    sword_profile_idx: None,
+                    is_harder_hit: false,
+                };
             assert_eq!(
                 serde_json::to_value(&element.data).unwrap(),
                 serde_json::to_value(&authored).unwrap(),

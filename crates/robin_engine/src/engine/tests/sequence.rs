@@ -2798,7 +2798,13 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
     );
     let installed = crate::element::InstalledActorOrder::new(
         crate::sequence::SequenceElementRef::new(old_sequence, 0),
-        engine.orders.sequence_manager.get_element(old_sequence, 0).unwrap().current_order().unwrap(),
+        engine
+            .orders
+            .sequence_manager
+            .get_element(old_sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap(),
     );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
