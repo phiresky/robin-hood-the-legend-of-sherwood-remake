@@ -1575,6 +1575,25 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         mission_packaging.package(&mut dd, encoded?)?;
     }
 
+    // Shared cinematics are not part of the small-file boot walk.
+    if let Some(root) =
+        resolve_case_insensitive(&data_in.join("Cinematics")).filter(|path| path.is_dir())
+    {
+        let mut files = Vec::new();
+        collect_files_recursive(&root, &mut files)?;
+        for path in files {
+            let relative = path.strip_prefix(&data_in)?;
+            dd.raw.insert(
+                canonical_shipping_asset_key(&relative.to_string_lossy()),
+                fs::read(&path)?,
+            );
+        }
+    }
+    for (file, bytes) in robin_assets::shipping_cinematics::split_cinematics(&mut dd)? {
+        let destination = data_out.join(file);
+        fs::create_dir_all(destination.parent().context("cinematic has no parent")?)?;
+        publication::publish_bytes(&destination, &bytes)?;
+    }
     bundle_grouped_audio(&mut dd, data_out)?;
     if opts.browser_publication && opts.audio_format == AudioFormat::Opus {
         let trimmed =

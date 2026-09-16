@@ -202,7 +202,8 @@ function validateWebContentPath(path, label) {
     if (!/^(?:missions|rhs|terrain)\/[A-Za-z0-9._-]+\.rhmission\.zst$/u.test(path)
         && !/^audio\/[A-Za-z0-9._-]+\.rhmission\.zst$/u.test(path)
         && !/^audio\/assets\/[A-Za-z0-9._-]+\.opus$/u.test(path)
-        && !/^audio\/bundles\/[A-Za-z0-9._-]+\.bin$/u.test(path)) {
+        && !/^audio\/bundles\/[A-Za-z0-9._-]+\.bin$/u.test(path)
+        && !/^cinematics\/assets\/[0-9a-f]{64}\.[A-Za-z0-9]+$/u.test(path)) {
         throw new Error(`${label} is not a supported split Demo path: ${path}`);
     }
 }
@@ -245,7 +246,7 @@ export function parseWebContentManifest(bytes, label, edition = 'demo') {
         }
         seen.set(folded, file.path);
         const expectedKind = file.path.startsWith('audio/assets/')
-            || file.path.startsWith('audio/bundles/') ? 'asset' : 'shipping';
+            || file.path.startsWith('audio/bundles/') || file.path.startsWith('cinematics/assets/') ? 'asset' : 'shipping';
         exact(file.kind, expectedKind, `${fileLabel} kind`);
         positiveInteger(file.byte_length, `${fileLabel} byte_length`);
         if (!DIGEST.test(file.sha256)) throw new Error(`${fileLabel} has an invalid digest`);
@@ -428,7 +429,7 @@ export async function verifyDatadirCorpus(directory, { retainedGenerations = [],
         }
     }
     for (const path of files) {
-        if (!/^datadirs\/replays\/[0-9a-f]{12}\.json$/u.test(path)) continue;
+        if (!/^datadirs\/replays\/(?:v2\/)?[0-9a-f]{12}\.json$/u.test(path)) continue;
         const binding = json(await readFile(resolve(root, path)), path);
         exactKeys(binding, ['url', 'sha256', 'byteLength'], path);
         const match = /^\/datadirs\/full\/([0-9a-f]{64})\/datadir\.bin$/u.exec(binding.url);

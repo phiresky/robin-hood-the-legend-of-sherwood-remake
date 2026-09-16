@@ -90,6 +90,7 @@ pub(super) fn write_web_content_manifest(
         } else {
             let kind = if relative.starts_with("audio/assets/")
                 || relative.starts_with("audio/bundles/")
+                || relative.starts_with("cinematics/assets/")
             {
                 WebContentFileKind::Asset
             } else {

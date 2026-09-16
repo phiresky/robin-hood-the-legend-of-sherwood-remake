@@ -1290,3 +1290,5 @@ then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publish
 the datadir corpus. The matching recorded browser runtime must also be published.
 
 - Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.
+
+- Shipping conversion keeps cinematic video bytes in separate content-addressed files. Small per-movie references retain locale fallback in the boot data, and native video playback verifies and reads the selected file only when requested. The `split_cinematics` asset example migrates existing boot files without re-encoding mission assets; regenerate the web content manifest afterward.

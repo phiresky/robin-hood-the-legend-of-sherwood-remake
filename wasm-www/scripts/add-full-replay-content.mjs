@@ -39,7 +39,7 @@ export async function addFullReplayContent({ corpus, source, build, retainedGene
             await install(`${base}/${file.path}`, content);
         }
     }
-    await install(`datadirs/replays/${build}.json`, Buffer.from(JSON.stringify({
+    await install(`datadirs/replays/v2/${build}.json`, Buffer.from(JSON.stringify({
         url: `/${base}/datadir.bin`, sha256: manifest.datadir.sha256,
         byteLength: manifest.datadir.byte_length,
     }) + '\n'));

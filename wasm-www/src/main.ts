@@ -344,7 +344,7 @@ async function selectedFullReplayDatadir(
     _base: string, build: BuildSelection, signal: AbortSignal,
 ): Promise<{ readonly url: string; readonly identity: DemoDatadirIdentity; readonly parts: readonly string[] }> {
     const content = parseHostedReplayContent(await fetchJson<unknown>(
-        `${BINARIES_BASE}/datadirs/replays/${build.short}.json`, signal,
+        `${BINARIES_BASE}/datadirs/replays/v2/${build.short}.json`, signal,
     ), BINARIES_BASE);
     return { url: content.url, identity: content, parts: content.parts };
 }

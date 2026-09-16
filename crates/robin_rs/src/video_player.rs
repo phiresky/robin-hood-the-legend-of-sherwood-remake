@@ -123,9 +123,25 @@ pub async fn play_video(
         None => {
             use std::io::Write as _;
 
-            let bytes = files.read_shared(path).map_err(|status| {
-                format!("Video file {path} is unavailable (file error {status})")
-            })?;
+            use robin_assets::shipping_cinematics::{CinematicAsset, REFERENCE_SUFFIX};
+            let bytes = match files.read_shared(&format!("{path}{REFERENCE_SUFFIX}")) {
+                Ok(index) => {
+                    let asset: CinematicAsset = serde_json::from_slice(&index)
+                        .map_err(|error| format!("invalid cinematic reference: {error}"))?;
+                    let asset_path = asset.data_path().map_err(|error| error.to_string())?;
+                    let bytes = files.read_shared(&asset_path).map_err(|status| {
+                        format!("Video file {asset_path} is unavailable (file error {status})")
+                    })?;
+                    asset.validate(&bytes).map_err(|error| error.to_string())?;
+                    bytes
+                }
+                Err(robin_engine::sbfile::SbFileError::NotFound) => {
+                    files.read_shared(path).map_err(|status| {
+                        format!("Video file {path} is unavailable (file error {status})")
+                    })?
+                }
+                Err(status) => return Err(format!("cannot read cinematic catalog: {status}")),
+            };
             let mut temporary = tempfile::Builder::new()
                 .prefix("robin-cinematic-")
                 .suffix(".ogg")

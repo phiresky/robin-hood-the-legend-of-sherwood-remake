@@ -35,6 +35,7 @@ pub mod rle_jxl;
 pub mod scb;
 #[cfg(feature = "engine-adapters")]
 pub mod shipping_boot_trim;
+pub mod shipping_cinematics;
 #[cfg(feature = "engine-adapters")]
 pub mod shipping_datadir;
 #[cfg(feature = "engine-adapters")]

@@ -284,7 +284,7 @@ pub struct RemoteAudioAsset {
 ///
 /// Parsed resource maps avoid reparsing hot UI/mission text during a switch;
 /// `raw` contains the same locale's VFS-visible files, including speech and
-/// cinematics. Keeping the raw overlay in the platform-neutral manifest makes
+/// the small cinematic catalog; video payloads are separate files. Keeping the raw overlay in the platform-neutral manifest makes
 /// the representation identical for native, browser, and Android builds.
 #[derive(Default, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ShippingLocale {

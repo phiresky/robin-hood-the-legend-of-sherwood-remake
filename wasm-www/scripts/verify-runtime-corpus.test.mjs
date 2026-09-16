@@ -568,7 +568,7 @@ test('hosted Full replay content preserves Demo data and rejects tampered bindin
     const corpus = resolve(root, 'corpus');
     await assembleDatadirCorpus({ existing: null, demo: demo.root, output: corpus });
     await addFullReplayContent({ corpus, source: full.root, build: '1699bc12ffb8', retainedGenerations: [] });
-    const bindingPath = resolve(corpus, 'datadirs/replays/1699bc12ffb8.json');
+    const bindingPath = resolve(corpus, 'datadirs/replays/v2/1699bc12ffb8.json');
     const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
     assert.equal(binding.sha256, full.document.datadir.sha256);
     assert.equal((await verifyDatadirCorpus(corpus)).demo.datadir_sha256, demo.document.datadir.sha256);
@@ -584,7 +584,7 @@ test('large Full data is split into verified parts below the static asset limit'
     const corpus = resolve(root, 'corpus');
     await assembleDatadirCorpus({ existing: null, demo: demo.root, output: corpus });
     await addFullReplayContent({ corpus: corpus, source: full.root, build: '1699bc12ffb8', retainedGenerations: [] });
-    const binding = JSON.parse(await readFile(resolve(corpus, 'datadirs/replays/1699bc12ffb8.json'), 'utf8'));
+    const binding = JSON.parse(await readFile(resolve(corpus, 'datadirs/replays/v2/1699bc12ffb8.json'), 'utf8'));
     const part = resolve(corpus, `${binding.url.slice(1)}.part0`);
     assert.equal((await readFile(part)).length, 24 * 1024 * 1024);
     await assert.rejects(readFile(resolve(corpus, binding.url.slice(1))), /ENOENT/u);
