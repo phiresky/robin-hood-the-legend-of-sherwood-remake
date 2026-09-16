@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseWebContentManifest, verifyDatadirCorpus, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
@@ -44,6 +44,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     if (!output) throw new Error('Usage: add-full-replay-content.mjs EXISTING_CORPUS CONVERTER_OUTPUT BUILD NEW_CORPUS');
     await mkdir(output);
     await cp(existing, output, { recursive: true });
+    async function writableDirectories(path) {
+        await chmod(path, 0o755);
+        for (const entry of await readdir(path, { withFileTypes: true })) {
+            if (entry.isDirectory()) await writableDirectories(resolve(path, entry.name));
+        }
+    }
+    await writableDirectories(output);
     const result = await addFullReplayContent({ corpus: output, source, build });
     console.log(`Verified Full replay corpus: ${result.assetCount} assets`);
 }
