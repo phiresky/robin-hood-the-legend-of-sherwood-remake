@@ -22,6 +22,35 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
     assert_eq!(manager.find_resume_target(), Some(0));
 }
 
+#[test]
+fn automatic_resume_skips_incompatible_checkpoints_without_removing_them() {
+    for version in [
+        save_file::SAVE_FORMAT_VERSION - 1,
+        save_file::SAVE_FORMAT_VERSION + 1,
+    ] {
+        let mut manager = SaveGameManager::new(String::new());
+        let mut continued = published_slot("Continue");
+        continued.timestamp = "100".into();
+        let mut autosave = published_slot("Autosave_200_0000");
+        autosave.timestamp = "200".into();
+        autosave.version = version;
+        for save in [continued, autosave] {
+            manager.insert_test_slot(save, SlotState::Published);
+        }
+        assert_eq!(manager.find_resume_target(), Some(0));
+
+        manager.catalog[0].version = version;
+        let incompatible = manager.saves().cloned().collect::<Vec<_>>();
+        assert_eq!(manager.find_resume_target(), None);
+        assert_eq!(manager.saves().cloned().collect::<Vec<_>>(), incompatible);
+
+        // A newer incompatible Continue must not mask a compatible autosave.
+        manager.catalog[0].timestamp = "300".into();
+        manager.catalog[1].version = save_file::SAVE_FORMAT_VERSION;
+        assert_eq!(manager.find_resume_target(), Some(1));
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn synchronous_publication_failure_matrix_recovers_only_completed_payloads() {
