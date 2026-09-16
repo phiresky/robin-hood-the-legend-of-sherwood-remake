@@ -419,16 +419,19 @@ fn bind_single_animation(engine: &mut EngineInner, owner: EntityId, action: Orde
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0, 0, 0],
     };
-    engine
+    let sprite = &mut engine
         .world
         .entities
         .get_mut(owner)
         .unwrap()
         .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+        .sprite;
+    let position = std::mem::take(&mut sprite.position_iface);
+    *sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(std::iter::repeat_n(script, 16).collect()),
         std::sync::Arc::new(conversion),
     );
+    sprite.position_iface = position;
 }
 
 fn install_production_climb_fixture(
@@ -1421,6 +1424,15 @@ fn building_trap_exact_target_decorative_ladder_uses_release_compatibility_state
     );
 
     bind_single_animation(&mut engine, owner, OrderType::ClimbingLadderDown);
+    engine.execute_passing_door_order(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    assert!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .get_door()
+            .is_none()
+    );
     let order_id = engine.orders.allocate_order_id();
     let passing_id = engine.orders.allocate_order_id();
     {
@@ -1690,13 +1702,14 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
                 actor.execute_order_initialising = true;
             }
 
-            engine.execute_pass_door(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                owner,
-                crate::gate::DoorIndex::new(0).expect("valid door index"),
-                true,
-            );
+            let is_climb = crate::engine::movement::order_uses_distance_motion(action);
+            if is_climb {
+                engine.execute_passing_door_order(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    owner,
+                );
+            }
             assert_eq!(
                 engine
                     .world
@@ -1731,6 +1744,18 @@ fn production_lift_callbacks_and_transition_turn_without_snapping_in_swapped_cre
                 5,
                 "{lift_type:?} transition must use the inside lift sector's direction goal"
             );
+            if !is_climb {
+                engine.execute_passing_door_order(
+                    &crate::sim_rng::test_context(),
+                    &LevelAssets::new(),
+                    owner,
+                );
+                assert_eq!(
+                    engine.get_entity(owner).unwrap().element_data().direction(),
+                    expected_direction,
+                    "crossing after the entry transition must preserve its gradual turn"
+                );
+            }
             engine
                 .world
                 .entities
@@ -2089,11 +2114,12 @@ fn untranslated_loaded_pass_door_ignores_dormant_saved_direction() {
         .unwrap()
         .actor_data()
         .unwrap();
-    assert_eq!(
+    assert!(
         engine
-            .actor_selected_pass_door(owner)
-            .map(|(_, direction)| direction != 0),
-        Some(true)
+            .get_entity(owner)
+            .unwrap()
+            .position_iface()
+            .get_door_direction()
     );
     assert!(actor.passing_door_directly);
 }

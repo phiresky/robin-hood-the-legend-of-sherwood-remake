@@ -690,6 +690,11 @@ impl EngineInner {
         let Some(expected_lift_type) = climb_lift_type(action) else {
             return;
         };
+        let door_index = if order_uses_distance_motion(action) {
+            self.actor_selected_pass_door(owner).map(|(door, _)| door)
+        } else {
+            door_index
+        };
 
         let selected_order = self
             .orders
@@ -728,7 +733,12 @@ impl EngineInner {
                 // Execute arm still calls Turn below while sprites are frozen.
                 None
             } else {
-                Some(door.sector_in)
+                Some(if order_uses_distance_motion(action) {
+                    crate::sector::SectorNumber::new(i16::from(current_sector
+                        .expect("climb execution requires its current lift sector")))
+                } else {
+                    door.sector_in
+                })
             }
         } else {
             let sector = current_sector.unwrap_or_else(|| {

@@ -188,22 +188,24 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
             human,
             pc,
         }));
-        let macros = inner.players.macro_store.get_or_insert(id);
-        for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY {
-            macros.adopt_slot(
-                slot,
-                crate::macro_store::QuickActionSlot::retained(
-                    (slot == 0).then(crate::sequence::Sequence::new),
-                    (slot == 2).then(crate::sequence::Sequence::new),
-                    crate::macro_store::LegacyQuickito {
-                        kind: crate::element_kinds::QuickAction::None,
-                        button: if slot == 1 { 19 } else { 0 },
-                        interactor: (slot == 2).then_some(opponent),
-                    },
-                    (slot == 0).then(|| crate::titbit::TitbitId::new(23).unwrap()),
-                ),
-                if slot == 0 { 13 } else { 0 },
-            );
+        if populated {
+            let macros = inner.players.macro_store.get_or_insert(id);
+            for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY {
+                macros.adopt_slot(
+                    slot,
+                    crate::macro_store::QuickActionSlot::retained(
+                        (slot == 0).then(crate::sequence::Sequence::new),
+                        (slot == 2).then(crate::sequence::Sequence::new),
+                        crate::macro_store::LegacyQuickito {
+                            kind: crate::element_kinds::QuickAction::None,
+                            button: if slot == 1 { 19 } else { 0 },
+                            interactor: (slot == 2).then_some(opponent),
+                        },
+                        (slot == 0).then(|| crate::titbit::TitbitId::new(23).unwrap()),
+                    ),
+                    if slot == 0 { 13 } else { 0 },
+                );
+            }
         }
         let engine = Engine {
             inner,

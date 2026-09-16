@@ -503,6 +503,8 @@ fn climb_lift_type(action: OrderType) -> Option<crate::sector::LiftType> {
         | OrderType::TransitionClimbingLadderDownWaitingUprightAlerted
         | OrderType::ClimbingLadderUp
         | OrderType::ClimbingLadderDown
+        | OrderType::ClimbingLadderUpAlerted
+        | OrderType::ClimbingLadderDownAlerted
         | OrderType::ClimbingLadderUpFast
         | OrderType::ClimbingLadderDownFast => Some(LiftType::Ladder),
         _ => None,
@@ -3860,6 +3862,7 @@ impl EngineInner {
         let actor_id = owner;
         let posture = entity.element_data().posture();
         let door_pass = entity.position_iface().get_door();
+        let traversal_door = self.actor_selected_pass_door(owner).map(|(door, _)| door);
         let current_order = self
             .orders
             .sequence_manager
@@ -3877,7 +3880,16 @@ impl EngineInner {
         if let Some(action) = door_pass_action
             && let Some(expected) = climb_lift_type(action)
         {
-            door_pass_climb_direction = door_pass.and_then(|door_index| {
+            door_pass_climb_direction = if order_uses_distance_motion(action) {
+                gs.lift_type.map(|lift_type| {
+                    assert_eq!(
+                        lift_type, expected,
+                        "climb action requires its current lift sector"
+                    );
+                    gs.lift_direction
+                })
+            } else {
+                door_pass.and_then(|door_index| {
                         let door = self
                             .script_domains
                             .interactables
@@ -3917,9 +3929,10 @@ impl EngineInner {
                             sector.lift_type
                         );
                         sector.lift_direction
-                    });
+                    })
+            };
             if action == OrderType::ClimbingLadderDown
-                && door_pass.is_some_and(|door_index| {
+                && traversal_door.is_some_and(|door_index| {
                     current_order.reverse
                         && self
                             .script_domains
