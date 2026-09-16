@@ -1095,7 +1095,48 @@ impl AppHandler {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn browser_cursor_captured() -> bool {
+    web_sys::window()
+        .expect("browser window")
+        .document()
+        .expect("browser document")
+        .pointer_lock_element()
+        .is_some()
+}
+
 impl ApplicationHandler for AppHandler {
+    #[cfg(target_arch = "wasm32")]
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if !browser_cursor_captured() {
+            return;
+        }
+        if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            let Some(window) = &self.window else {
+                return;
+            };
+            let size = window.inner_size();
+            let x = (self.last_cursor.0 as f64 + dx)
+                .clamp(0.0, f64::from(size.width.saturating_sub(1))) as i32;
+            let y = (self.last_cursor.1 as f64 + dy)
+                .clamp(0.0, f64::from(size.height.saturating_sub(1))) as i32;
+            self.last_cursor = (x, y);
+            report_window_send(
+                self.events_tx
+                    .try_send(HostMsg::Event(GameEvent::MouseMove {
+                        x,
+                        y,
+                        xrel: 0,
+                        yrel: 0,
+                    })),
+            );
+        }
+    }
     fn user_event(&mut self, event_loop: &ActiveEventLoop, (): ()) {
         self.process_cmds();
         if self.events_tx.is_closed() {
@@ -1209,6 +1250,10 @@ impl ApplicationHandler for AppHandler {
             }
             WindowEvent::KeyboardInput { event, .. } => self.handle_keyboard_input(event),
             WindowEvent::CursorMoved { position, .. } => {
+                #[cfg(target_arch = "wasm32")]
+                if browser_cursor_captured() {
+                    return;
+                }
                 let x = position.x as i32;
                 let y = position.y as i32;
                 tracing::trace!("winit CursorMoved: ({x}, {y})");

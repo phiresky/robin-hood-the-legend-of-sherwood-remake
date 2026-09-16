@@ -485,7 +485,12 @@ impl AudioBackend for KiraAudioBackend {
     }
 
     fn pause_music(&mut self) {
-        if let Some(h) = &mut self.music_handle {
+        if let Some(h) = &mut self.music_handle
+            && !matches!(
+                h.state(),
+                kira::sound::PlaybackState::Paused | kira::sound::PlaybackState::Pausing
+            )
+        {
             h.pause(Tween::default());
         }
     }

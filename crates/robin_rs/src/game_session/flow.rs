@@ -494,6 +494,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             world,
             timeline: runtime,
             http,
+            control,
             ..
         } = runtime;
         let mut startup_timer = (runtime.frame_number() <= 1)
@@ -501,6 +502,14 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let profiling = super::frame_perf::enabled();
         let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
+        frontend
+            .audio
+            .pause_replay_music(runtime.replay().playback().is_some_and(|player| {
+                control.manual_pause
+                    || player.is_finished()
+                    || frontend.ui.pause_menu.is_some()
+                    || frontend.ui.active_ui_task.is_some()
+            }));
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
         if let Some(timer) = startup_timer.as_mut() {
             timer.step("audio");

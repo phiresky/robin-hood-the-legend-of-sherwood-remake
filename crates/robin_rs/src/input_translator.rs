@@ -225,6 +225,7 @@ pub struct InputTranslator {
     pub screen_height: f32,
     /// Whether the user is "locked" (UI modal, cutscene, etc.).
     user_locked: bool,
+    edge_scrolling: bool,
 }
 
 impl Default for InputTranslator {
@@ -236,6 +237,7 @@ impl Default for InputTranslator {
             screen_width: 1024.0,
             screen_height: 768.0,
             user_locked: false,
+            edge_scrolling: true,
         }
     }
 }
@@ -392,6 +394,10 @@ impl InputTranslator {
         self.user_locked = locked;
     }
 
+    pub fn set_edge_scrolling(&mut self, enabled: bool) {
+        self.edge_scrolling = enabled;
+    }
+
     // --- State reset ---
 
     /// Reset stored keyboard state.  Called when re-entering gameplay.
@@ -414,7 +420,7 @@ impl InputTranslator {
 
         let point = ScreenPoint::new(x, y);
 
-        if !is_in_dead_zone(&self.dead_zones, point) {
+        if self.edge_scrolling && !is_in_dead_zone(&self.dead_zones, point) {
             if x <= 1.0 {
                 tracing::trace!(x, y, "edge-scroll: Left");
                 actions.push(GameAction::ScrollLeft);
@@ -692,6 +698,23 @@ mod tests {
         let t = make_translator();
         let actions = t.translate_mouse(0.0, 400.0, 0);
         assert!(actions.contains(&GameAction::ScrollLeft));
+    }
+
+    #[test]
+    fn free_cursor_disables_only_edge_scrolling() {
+        let mut t = make_translator();
+        t.set_edge_scrolling(false);
+        assert_eq!(t.translate_mouse(0.0, 0.0, 1), vec![GameAction::ZoomIn]);
+        assert_eq!(
+            t.translate_mouse(1023.0, 767.0, -1),
+            vec![GameAction::ZoomOut]
+        );
+        assert!(t.translate_mouse(0.0, 400.0, 0).is_empty());
+        t.set_edge_scrolling(true);
+        assert!(
+            t.translate_mouse(0.0, 400.0, 0)
+                .contains(&GameAction::ScrollLeft)
+        );
     }
 
     #[test]
