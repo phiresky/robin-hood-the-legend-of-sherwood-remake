@@ -105,6 +105,7 @@ impl RollbackChecker {
             return;
         };
         let Some(start) = history.restore_recent(
+            &self.assets,
             start_frame,
             robin_engine::sim_timeline::RestorePolicy::Exact,
         ) else {

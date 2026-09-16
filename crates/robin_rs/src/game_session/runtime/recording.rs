@@ -5,7 +5,7 @@ use super::{
     BootstrapSaveBoundary, MissionFrame, RecorderFrameState, ReplayFrameOrdinal, TimelineFrame,
 };
 use crate::game_session::MissionError;
-use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
+use crate::save_file::{CompressedGameRuntimeSnapshot, ReplaySaveIdentity};
 use robin_engine::engine::Engine;
 use robin_engine::player_command::PlayerCommand;
 #[cfg(test)]
@@ -98,11 +98,11 @@ pub(in crate::game_session) struct ReplayLifecycle {
     // restart identity cannot be reopened by a later process.
     saved_frames: BTreeMap<ReplaySaveIdentity, (ReplayFrameOrdinal, TimelineFrame)>,
     player: Option<ReplayPlayer>,
-    pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,
+    pinned_saves: BTreeMap<u32, CompressedGameRuntimeSnapshot>,
     control: crate::replay_service::ReplayRecordingControl,
     initial_state: Option<(
-        robin_engine::engine::Engine,
-        GameRuntimeSnapshot,
+        robin_engine::engine::CompressedEngineSnapshot,
+        CompressedGameRuntimeSnapshot,
         super::super::session_policy::SessionModalScheduler,
     )>,
 }
@@ -573,10 +573,12 @@ impl ReplayLifecycle {
             let mut modals = super::super::session_policy::SessionModalScheduler::default();
             modals.checkpoint(0, &host.effects);
             self.initial_state = Some((
-                manager.engine.clone(),
-                GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
-                    MissionError::replay(format!("capture replay start: {error:#}"))
-                })?,
+                robin_engine::engine::CompressedEngineSnapshot::capture(&manager.engine).map_err(
+                    |error| MissionError::replay(format!("compress replay start: {error}")),
+                )?,
+                CompressedGameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(
+                    |error| MissionError::replay(format!("capture replay start: {error:#}")),
+                )?,
                 modals,
             ));
         }
@@ -610,7 +612,9 @@ impl ReplayLifecycle {
             .map_err(|error| MissionError::replay(format!("restore replay start: {error}")))?;
         // Seeking is rollback, not a save load: retain the exact pre-frame-zero
         // engine, including runtime queues that persisted-load reconciliation changes.
-        manager.engine = engine.clone();
+        manager.engine = engine
+            .restore(assets)
+            .map_err(|error| MissionError::replay(format!("decode replay start: {error}")))?;
         game.apply_post_load_sync(false);
         game.post_load_resolution_resync();
         modals.restore(0, &mut host.effects);

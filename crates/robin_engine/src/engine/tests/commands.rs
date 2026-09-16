@@ -1999,8 +1999,8 @@ fn frame_hourglass_preserves_and_advances_the_owned_camera_display() {
 
     // The first frame consumes the initial Redraw operation. The second must
     // retain that reset and apply the director's Scroll operation.
-    engine.perform_frame_hourglass(&assets, false);
-    engine.perform_frame_hourglass(&assets, false);
+    engine.perform_frame_hourglass(&assets, false, None);
+    engine.perform_frame_hourglass(&assets, false, None);
 
     assert_ne!(
         engine.feedback.cutscene_camera.view_position,

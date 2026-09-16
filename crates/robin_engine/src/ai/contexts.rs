@@ -470,11 +470,9 @@ pub struct AiGlobalState {
     /// preserves owner-ordered mutations.
     #[serde(skip)]
     #[state_hash(skip)]
-    #[bitcode(skip)]
     pub primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
     #[serde(skip)]
     #[state_hash(skip)]
-    #[bitcode(skip)]
     pub primary_target_multiplicity_initialized: bool,
 }
 

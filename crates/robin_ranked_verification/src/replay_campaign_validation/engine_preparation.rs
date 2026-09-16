@@ -37,8 +37,8 @@ impl ApprovedReplayEngine {
 }
 
 impl ApprovedReplayCampaignContent {
-    /// Consume the phase-two proof directly into a ranked engine with the
-    /// board's simulation policy installed. Ranked verification never enables
+    /// Consume the phase-two proof into an engine whose initial configuration
+    /// matches the board's policy. Ranked verification never enables
     /// Original RNG parity replay.
     pub fn construct_ranked_engine(
         self,
@@ -54,24 +54,29 @@ impl ApprovedReplayCampaignContent {
         let starting_campaign_score =
             campaign.get_value(robin_engine::campaign::CampaignValue::Score);
         let assets = level.assets;
-        let mut engine = robin_engine::engine::Engine::new_ranked(
-            robin_engine::engine::EngineArgs {
-                campaign,
-                level: robin_engine::engine::LevelLoadArgs {
-                    assets: &mut *assets,
-                    level_directory: level.level_directory,
-                    progress: &mut *level.progress,
-                    loaded: level.loaded,
-                    bg_pixel_dims: level.bg_pixel_dims,
+        simulation_policy
+            .validate_config(sim_config)
+            .map_err(
+                |error| robin_engine::engine::EngineError::MissionLevelStage {
+                    stage: "ranked simulation policy",
+                    reason: error.to_string(),
                 },
-                ground_mark_sprite,
-                titbit_row_frame_counts,
-                rng_seed,
-                original_rng_replay: None,
-                sim_config,
+            )?;
+        let mut engine = robin_engine::engine::Engine::new(robin_engine::engine::EngineArgs {
+            campaign,
+            level: robin_engine::engine::LevelLoadArgs {
+                assets: &mut *assets,
+                level_directory: level.level_directory,
+                progress: &mut *level.progress,
+                loaded: level.loaded,
+                bg_pixel_dims: level.bg_pixel_dims,
             },
-            simulation_policy,
-        )?;
+            ground_mark_sprite,
+            titbit_row_frame_counts,
+            rng_seed,
+            original_rng_replay: None,
+            sim_config,
+        })?;
         // Frame-zero hashes follow client startup: register campaign names,
         // connect the host, and consume the pending startup effects.
         let mut names = std::array::from_fn(|_| None);

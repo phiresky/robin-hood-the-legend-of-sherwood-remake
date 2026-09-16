@@ -6344,7 +6344,7 @@ fn replay_sound_boundary_consumes_prior_npc_before_current_select_bark() {
     }]);
 
     engine
-        .hourglass_phase_sound_boundary(sim, &assets)
+        .hourglass_phase_sound_boundary(sim, &assets, None)
         .expect("replay sound boundary");
     engine.apply_commands(
         sim,
@@ -6362,7 +6362,7 @@ fn replay_sound_boundary_consumes_prior_npc_before_current_select_bark() {
     // bark queued by this boundary's input; Original will first expose it
     // to the host sound manager after the engine frame is recorded.
     engine
-        .hourglass_phase_sound_boundary(sim, &assets)
+        .hourglass_phase_sound_boundary(sim, &assets, None)
         .expect("live sound boundary");
 
     assert_eq!(

@@ -99,14 +99,14 @@ fn retention_prunes_commands_to_the_oldest_replayable_checkpoint() {
         Some(1)
     );
     assert!(matches!(
-        history.restore(10, RestorePolicy::LatestAtOrBefore),
+        history.restore(&assets, 10, RestorePolicy::LatestAtOrBefore),
         Err(RestoreError::CheckpointUnavailable {
             target_frame: 10,
             policy: RestorePolicy::LatestAtOrBefore,
         })
     ));
     let snapshot = history
-        .restore(11, RestorePolicy::Exact)
+        .restore(&assets, 11, RestorePolicy::Exact)
         .expect("oldest retained checkpoint");
     assert_eq!(snapshot.frame, 11);
     assert_eq!(snapshot.engine.frame_counter(), 11);
@@ -134,12 +134,12 @@ fn truncating_at_the_command_horizon_preserves_the_branch_checkpoint() {
     assert!(history.commands_for(11).is_none());
     assert_eq!(
         history
-            .restore(11, RestorePolicy::Exact)
+            .restore(&assets, 11, RestorePolicy::Exact)
             .expect("pre-tick branch checkpoint remains valid")
             .frame,
         11
     );
-    assert!(history.restore(12, RestorePolicy::Exact).is_err());
+    assert!(history.restore(&assets, 12, RestorePolicy::Exact).is_err());
 
     engine.test_set_frame_counter(11);
     history.begin_frame(11, &engine);
@@ -173,7 +173,7 @@ fn truncating_before_the_retained_horizon_is_a_no_op() {
     assert_eq!(history.next_record_frame(), 23);
     assert!(history.commands_for(21).is_some());
     assert!(history.commands_for(22).is_some());
-    assert!(history.restore(22, RestorePolicy::Exact).is_ok());
+    assert!(history.restore(&assets, 22, RestorePolicy::Exact).is_ok());
 }
 
 #[test]

@@ -690,7 +690,7 @@ mod tests {
         let checkpoint = timeline
             .history()
             .buffer()
-            .restore_recent(2, robin_engine::sim_timeline::RestorePolicy::Exact)
+            .restore_recent(&assets, 2, robin_engine::sim_timeline::RestorePolicy::Exact)
             .unwrap();
         assert_eq!(state_hash(&checkpoint.engine), corrected_pre_tick_hash);
 

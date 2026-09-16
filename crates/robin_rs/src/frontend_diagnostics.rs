@@ -13,6 +13,8 @@ pub struct FrontendDiagnostics {
     last_tick_ms: u32,
     max_pending_sounds: usize,
     native_refresh_present_cost_us: u64,
+    #[serde(default)]
+    native_refresh_last_present_us: u64,
     pending_console_output: Vec<String>,
 }
 
@@ -70,7 +72,11 @@ impl FrontendDiagnostics {
     pub fn native_refresh_present_cost_us(&self) -> u64 {
         self.native_refresh_present_cost_us
     }
-    pub fn observe_present_cost(&mut self, micros: u64) {
+    pub fn native_refresh_last_present_us(&self) -> u64 {
+        self.native_refresh_last_present_us
+    }
+    pub fn observe_present_cost(&mut self, micros: u64, finished_at_us: u64) {
+        self.native_refresh_last_present_us = finished_at_us;
         self.native_refresh_present_cost_us = micros;
     }
     pub fn queue_console_output(&mut self, line: String) {

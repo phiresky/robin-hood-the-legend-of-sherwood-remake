@@ -83,16 +83,17 @@ fn mission_script_and_side_effects_roundtrip_with_persisted_clone() {
     let effects_native = bitcode::encode(effects);
     let json_effects: crate::engine::SideEffects = serde_json::from_str(&effects_json).unwrap();
     let native_effects: crate::engine::SideEffects = bitcode::decode(&effects_native).unwrap();
+    assert_eq!(bitcode::encode(&native_effects), effects_native);
+    assert_eq!(
+        native_effects.pending_minimap_position,
+        effects.pending_minimap_position
+    );
+    assert_eq!(json_effects.pending_minimap_position, None);
     for restored in [&json_effects, &native_effects] {
         assert_eq!(serde_json::to_string(restored).unwrap(), effects_json);
-        assert_eq!(bitcode::encode(restored), effects_native);
         assert_eq!(
             robin_util::state_hash::compute(restored),
             robin_util::state_hash::compute(effects),
-        );
-        assert_eq!(
-            restored.pending_minimap_position, None,
-            "host position is transient"
         );
     }
 
@@ -108,7 +109,7 @@ fn mission_script_and_side_effects_roundtrip_with_persisted_clone() {
         );
         assert_eq!(
             bitcode::encode(&restored.feedback),
-            bitcode::encode(&engine.feedback)
+            bitcode::encode(&engine.feedback.persisted_clone())
         );
         assert_eq!(
             restored

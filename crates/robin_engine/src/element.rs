@@ -1253,7 +1253,6 @@ pub struct HumanData {
     /// Shared sorting key for nested coordination and target-selection calls.
     /// Every owning operation writes its keys before reading them; a saved
     /// frame never depends on values left by the preceding operation.
-    #[bitcode(skip)]
     #[state_hash(skip)]
     pub sorting_distance: f32,
 

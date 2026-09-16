@@ -187,8 +187,7 @@ impl std::fmt::Display for RankedSimulationConfigField {
     }
 }
 
-/// Engine-owned immutable ranked-policy capability derived only from the
-/// signed typed rules identity.
+/// Immutable simulation policy selected by the verifier's board rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RankedSimulationPolicy {
     identity: RankedSimulationPolicyV1,

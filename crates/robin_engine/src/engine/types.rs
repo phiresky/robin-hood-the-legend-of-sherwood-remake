@@ -798,7 +798,6 @@ pub struct SideEffects {
     /// `PlayerProfile`'s `minimap_x` / `minimap_y` and persisting the
     /// profile.
     #[state_hash(skip)]
-    #[bitcode(skip)]
     #[serde(skip)]
     pub pending_minimap_position: Option<crate::coordinates::ScreenPoint>,
     /// Script/sequence-driven minimap show/hide requests produced this

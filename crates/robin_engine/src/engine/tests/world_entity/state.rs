@@ -215,7 +215,7 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -261,7 +261,7 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -306,7 +306,7 @@ fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request()
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
 
     assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
     let retained = &engine.feedback.sound_sim.pending_exclamations[0];
@@ -349,7 +349,7 @@ fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets);
+    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets, None);
 }
 
 #[test]
@@ -367,7 +367,7 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::Arrow);
 
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
 
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(engine.control.frame_counter, 100);
@@ -633,9 +633,9 @@ fn matured_mytalk_completion_precedes_following_console_command() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
     engine.control.frame_counter = 103;
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
     engine.dispatch_sim_console_command(
         &sim,
         &assets,
