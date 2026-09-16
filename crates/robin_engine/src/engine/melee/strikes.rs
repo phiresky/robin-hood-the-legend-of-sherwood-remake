@@ -1810,8 +1810,8 @@ impl EngineInner {
                 position.z + increment.z,
             ));
         Self::publish_flight_position(entity);
-        entity.element_data_mut().sprite.display_order_ref = None;
-        entity.element_data_mut().sprite.behind_display_order_ref = true;
+        // Recomputing the transient depth key does not change the retained
+        // display-order reference or its behind/front flag.
         let raw_post = entity.element_data().position();
         let raw_map = entity.element_data().position_map();
         match motion {
@@ -2919,6 +2919,35 @@ mod tests {
             order_id,
             order_type: OrderType::FallingPushedUpright,
         });
+    }
+
+    #[test]
+    fn flight_position_updates_preserve_retained_display_order_relationship() {
+        use crate::sprite::MotionState;
+        for behind in [false, true] {
+            let mut engine = EngineInner::new();
+            let reference = engine.add_test_entity(falling_pushed_soldier(false));
+            for display_reference in [None, Some(reference)] {
+                let victim = engine.add_test_entity(falling_pushed_soldier(false));
+                let sprite = &mut engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite;
+                sprite.display_order_ref = display_reference;
+                sprite.behind_display_order_ref = behind;
+                for motion in [
+                    MotionState::Start,
+                    MotionState::InProgress,
+                    MotionState::Terminated,
+                ] {
+                    engine.perform_combat_flight_position(victim, motion);
+                    let sprite = engine.get_entity(victim).unwrap().sprite();
+                    assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
+                    assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
+                }
+            }
+        }
     }
 
     #[test]
