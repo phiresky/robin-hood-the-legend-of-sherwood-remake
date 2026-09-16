@@ -1751,6 +1751,9 @@ mod tests {
 
     fn rewind_with_horizon(manager: &EngineManager, start: u32, end: u32) -> RewindBuffer {
         let mut rewind = RewindBuffer::new();
+        // Model a snapshot-adopted history: an arbitrary start frame needs
+        // an anchor before its inputs can form a replayable journal.
+        rewind.seed_initial_anchor(start, &manager.engine);
         for frame in start..end {
             rewind.begin_frame(frame, &manager.engine);
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
