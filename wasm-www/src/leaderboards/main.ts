@@ -377,7 +377,7 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
             ['Edition', editionLabel(run.edition)],
             ['Original score', formatInteger(run.metrics.originalScoreDelta)],
             ['Active time', formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration)],
-            ['Ransom collected', formatInteger(run.metrics.ransomCollected)],
+            ['Net money', formatInteger(run.metrics.ransomCollected)],
             ['Campaign score', `${run.startingCampaignScore} → ${run.finalCampaignScore}`],
             ['Verified', formatDate(run.verifiedAtUnixMs)],
         ]),

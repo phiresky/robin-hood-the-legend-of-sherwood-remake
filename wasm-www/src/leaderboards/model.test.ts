@@ -273,3 +273,10 @@ test('owner status responses bind the submission, owner key and exact signed req
     assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'failed', code: 'other', safe_message: 'x' }), request), /code/u);
     assert.throws(() => parseSubmissionOwnerStatusResponse(response({ state: 'queued', run_id: 'run-1' }), request), /unknown field run_id/u);
 });
+
+
+test('run detail preserves negative net mission money', () => {
+    const run = runDetail();
+    (run.metrics as Record<string, unknown>).ransom_collected = -50;
+    assert.equal(parseRunDetail(run).metrics.ransomCollected, -50);
+});

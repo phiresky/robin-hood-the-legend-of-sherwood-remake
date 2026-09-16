@@ -16,7 +16,8 @@ use crate::{
 pub struct RunMetricsV1 {
     pub original_score_delta: i64,
     pub active_simulation_ticks: u64,
-    pub ransom_collected: u64,
+    /// Signed net mission money, including spending.
+    pub ransom_collected: i64,
 }
 
 /// Exact ranked value of one run for one board metric.

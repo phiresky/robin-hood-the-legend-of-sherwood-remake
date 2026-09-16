@@ -349,7 +349,7 @@ async function selectedFullReplayDatadir(
     return { url: content.url, identity: content };
 }
 
-async function verifyDemoDatadir(
+async function verifyDatadir(
     datadir: Uint8Array<ArrayBuffer>,
     identity: DemoDatadirIdentity,
     signal: AbortSignal,
@@ -357,7 +357,7 @@ async function verifyDemoDatadir(
     const digest = new Uint8Array(await withAbort(signal, () => crypto.subtle.digest('SHA-256', datadir)));
     const hex = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
     if (datadir.byteLength !== identity.byteLength || hex !== identity.sha256) {
-        throw new Error('Demo datadir does not match the selected build manifest');
+        throw new Error('Game data does not match the selected replay or build');
     }
 }
 
@@ -417,7 +417,7 @@ async function main(): Promise<void> {
                 signal,
             );
             const datadir = new Uint8Array(await withAbort(signal, () => response.arrayBuffer()));
-            if (demo.identity !== undefined) await verifyDemoDatadir(datadir, demo.identity, signal);
+            if (demo.identity !== undefined) await verifyDatadir(datadir, demo.identity, signal);
             return { datadir, dataBaseUrl: demo.url.slice(0, demo.url.lastIndexOf('/')) };
         },
         preloadLocalAssets,

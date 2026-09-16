@@ -1190,7 +1190,7 @@ async fn run_detail(
         metrics: RunMetricsV1 {
             original_score_delta: run.original_score_delta,
             active_simulation_ticks: run.active_simulation_ticks,
-            ransom_collected: run.ransom_collected,
+            ransom_collected: signed_mission_money(run.ransom_collected)?,
         },
         max_concurrent_players: run.max_concurrent_players,
         participant_instance_count: run.participant_instance_count,
@@ -1413,7 +1413,7 @@ async fn player_run_history(
                     metrics: RunMetricsV1 {
                         original_score_delta: record.original_score_delta,
                         active_simulation_ticks: record.active_simulation_ticks,
-                        ransom_collected: record.ransom_collected,
+                        ransom_collected: signed_mission_money(record.ransom_collected)?,
                     },
                 },
                 verified_at_unix_ms: record.verified_at_ms,
@@ -1896,6 +1896,16 @@ async fn operator_delete_diagnostic(
     authorize_operator(&state, &headers)?;
     state.database.delete_diagnostic_report(&id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// Stored verifier evidence retains the engine's wrapping 32-bit counter.
+// Public money statistics use its signed net value, including spending.
+fn signed_mission_money(raw: u64) -> Result<i64, ApiError> {
+    let bits = u32::try_from(raw).map_err(|_| {
+        tracing::error!(raw, "stored mission money exceeds its 32-bit counter");
+        ApiError::Internal
+    })?;
+    Ok(i64::from(bits as i32))
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@ export function parseRunMetrics(value: unknown, path: string): RunMetrics {
     return {
         originalScoreDelta: safeInteger(obj.original_score_delta, `${path}.original_score_delta`),
         activeSimulationTicks: nonNegativeInteger(obj.active_simulation_ticks, `${path}.active_simulation_ticks`),
-        ransomCollected: nonNegativeInteger(obj.ransom_collected, `${path}.ransom_collected`),
+        ransomCollected: safeInteger(obj.ransom_collected, `${path}.ransom_collected`),
     };
 }
 

@@ -162,7 +162,7 @@ export function playerTables(
                     }),
                     element('span', {
                         className: 'fingerprint',
-                        text: `${formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration)} active · ${formatInteger(entry.run.metrics.ransomCollected)} ransom`,
+                        text: `${formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration)} active · ${formatInteger(entry.run.metrics.ransomCollected)} net money`,
                     }),
                 ]),
             ]),

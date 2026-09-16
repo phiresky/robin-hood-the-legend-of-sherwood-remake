@@ -380,3 +380,13 @@ async fn diagnostics_accept_retry_limit_and_protect_operator_access() {
         .unwrap();
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
 }
+
+#[test]
+fn mission_money_exposes_signed_net_changes() {
+    assert_eq!(
+        super::signed_mission_money(u64::from((-50_i32) as u32)).unwrap(),
+        -50
+    );
+    assert_eq!(super::signed_mission_money(250).unwrap(), 250);
+    assert!(super::signed_mission_money(u64::from(u32::MAX) + 1).is_err());
+}
