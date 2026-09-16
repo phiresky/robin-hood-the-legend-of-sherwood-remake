@@ -3442,7 +3442,7 @@ fn copied_authored_movement_interruption_reaches_cross_sequence_linked_seek() {
                 &mut Vec::new(),
                 movement_id,
                 0,
-                CascadeFlags::NEXT_LEVEL,
+                CascadeFlags::FOLLOWING,
             )
         },
     );
