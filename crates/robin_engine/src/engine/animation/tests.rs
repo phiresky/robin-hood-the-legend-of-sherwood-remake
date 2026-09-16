@@ -811,6 +811,11 @@ fn falling_landing_depends_on_death_not_unconsciousness() {
                 OrderType::FallingHitWithSword,
                 MotionState::Terminated,
             );
+            finish_flight_action_state(
+                &mut entity,
+                OrderType::FallingHitWithSword,
+                MotionState::Terminated,
+            );
             assert_eq!(
                 entity.element_data().posture(),
                 if dead {
@@ -1307,6 +1312,18 @@ fn falling_hit_sword_start_and_termination_restore_original_states() {
     assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert_eq!(
         entity.actor_data().unwrap().action_state,
+        ActionState::Moving
+    );
+    // A landing callback observes the inner action and can change it;
+    // the enclosing flight action still restores its family afterward.
+    entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
+    finish_flight_action_state(
+        &mut entity,
+        OrderType::FallingHitWithSword,
+        MotionState::Terminated,
+    );
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
         ActionState::WaitingSword
     );
 }
@@ -1405,6 +1422,16 @@ fn falling_pushed_bow_start_and_termination_restore_original_states() {
     );
 
     assert_eq!(entity.element_data().posture(), Posture::Lying);
+    assert_eq!(
+        entity.actor_data().unwrap().action_state,
+        ActionState::WaitingSword
+    );
+    entity.actor_data_mut().unwrap().action_state = ActionState::Menacing;
+    finish_flight_action_state(
+        &mut entity,
+        OrderType::FallingPushedWithBow,
+        MotionState::Terminated,
+    );
     assert_eq!(
         entity.actor_data().unwrap().action_state,
         ActionState::AimingWithBow

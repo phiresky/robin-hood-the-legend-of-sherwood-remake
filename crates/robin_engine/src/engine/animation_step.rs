@@ -1741,6 +1741,14 @@ impl EngineInner {
             apply_being_dead_start_side_effect(entity, anim_type, motion_state);
             if uses_perform_flight(anim_type) {
                 self.finish_combat_flight(sim, assets, entity_id, motion_state);
+                finish_flight_action_state(
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .expect("flight owner disappeared"),
+                    anim_type,
+                    motion_state,
+                );
             }
             apply_combat_injury_side_effect(self, sim, assets, anim_type, motion_state, entity_id);
             if motion_state == MotionState::Done {

@@ -1908,12 +1908,35 @@ fn apply_falling_completion_side_effect(
         // Hit-induced landing completes on the done state, but the outer
         // FALLING_HIT_HARDER_* wrapper restores its action family only
         // when the sprite later reports TERMINATED.
+        let action_state = if uses_perform_flight(anim_type) {
+            match anim_type {
+                OrderType::FallingPushedUpright
+                | OrderType::FallingPushedWithBow
+                | OrderType::FallingPushedWithSword
+                | OrderType::FallingPushedCrouched => Some(ActionState::WaitingSword),
+                _ => None,
+            }
+        } else {
+            action_state
+        };
         if !hard_hit_done
             && let Some(action) = action_state
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = action;
         }
+    }
+}
+
+/// Restore the enclosing action family after landing callbacks return.
+fn finish_flight_action_state(entity: &mut Entity, anim_type: OrderType, motion: MotionState) {
+    if motion == MotionState::Terminated && uses_perform_flight(anim_type) {
+        let (_, action) = fall_landing_states(anim_type, entity.is_dead())
+            .expect("flight order has no landing state");
+        entity
+            .actor_data_mut()
+            .expect("flight owner is not an actor")
+            .action_state = action.expect("flight order has no final action");
     }
 }
 
