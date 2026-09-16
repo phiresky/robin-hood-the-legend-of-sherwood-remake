@@ -13,7 +13,7 @@ const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
 /** Host-only fixes for archived runtimes; simulation and replay schemas stay identical. */
 export function runPlaybackBuild(recordedBuild: string): string {
     // Interactive checkpoint restoration and background sidecar loading.
-    if (recordedBuild === 'e7557179eb05') return 'e8a05403acdc';
+    if (recordedBuild === 'e7557179eb05') return '32ef2b9dc08e';
     // Save isolation, viewer camera/audio controls, and replay speech handling.
     return recordedBuild === '1699bc12ffb8' ? '1f546fbb6547' : recordedBuild;
 }
