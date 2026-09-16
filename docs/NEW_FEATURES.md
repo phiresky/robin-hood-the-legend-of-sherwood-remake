@@ -1294,12 +1294,15 @@ then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publish
 the datadir corpus. The matching recorded browser runtime must also be published.
 Reviewed fixes that change only the host can select a patched playback build;
 game data and replay provenance remain bound to the recorded build. Runtime
-`340d66324974` adds save isolation to recordings from `1699bc12ffb8`.
+`1f546fbb6547` adds save isolation, replay camera/audio controls, and corrected
+speech handling to recordings from `1699bc12ffb8`.
 
-TODO: end-of-replay seeking can still resolve queued host speech after its
-simulation request has gone away. Run `01a0a8ba-426f-74a5-867c-ee3394a64a16`
-reaches both final save markers without accessing player saves, then seeking to
-ordinal 4444 triggers the authoritative-pending-speech assertion in `tick.rs`.
+Replay viewers can drag the world with the left mouse button, including while
+paused. Pausing replay playback pauses music and resuming continues it. Browser
+play starts with a free cursor and edge scrolling disabled; **Capture cursor**
+enables pointer capture and edge scrolling, and Escape releases it. Embedded
+leaderboard replays start in the free-cursor mode as well. These controls affect
+presentation only and never produce simulation input in a replay.
 
 - Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.
 

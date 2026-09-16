@@ -1,4 +1,5 @@
 import { fullGameContentBuild } from './mission-launch.ts';
+import { installCursorMode } from './cursor-mode.js';
 import { installDiagnostics } from './diagnostics.js';
 import { requestFullContentFolder } from './content-picker.js';
 import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport.js';
@@ -368,6 +369,12 @@ window.addEventListener('pagehide', event => {
 });
 
 async function main(): Promise<void> {
+    const disposeCursorMode = installCursorMode(
+        document.querySelector<HTMLCanvasElement>('#canvas')!,
+        document.querySelector<HTMLButtonElement>('#cursor-capture')!,
+        document.querySelector<HTMLElement>('#cursor-status')!,
+    );
+    window.addEventListener('pagehide', () => disposeCursorMode(), { once: true });
     if (pageParams.get('embed') === '1') document.documentElement.classList.add('embedded-replay');
     if (runQuery !== null && (pageParams.has('replay') || capturedBrowserJoinCode !== undefined)) {
         throw new Error('run= cannot be combined with replay= or a multiplayer invitation');

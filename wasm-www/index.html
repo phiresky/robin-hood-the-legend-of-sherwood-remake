@@ -29,6 +29,10 @@
         .embedded-replay #canvas { width: 100% !important; height: calc(100dvh - 48px) !important; margin: 0; object-fit: contain; }
         .embedded-replay #toolbar, .embedded-replay #log { display: none; }
         .embedded-replay #replay-timeline { min-height: 36px; }
+        #cursor-controls { display: flex; gap: 8px; align-items: center; justify-content: center; font: 12px system-ui, sans-serif; }
+        #cursor-capture { color: #eee; background: #222; border: 1px solid #666; border-radius: 4px; padding: 5px 8px; cursor: pointer; }
+        .embedded-replay #cursor-controls { position: absolute; top: 6px; right: 6px; z-index: 2; background: #111d; padding: 4px; border-radius: 5px; }
+        .embedded-replay #cursor-status { max-width: 120px; }
         .embedded-replay #canvas:fullscreen { height: 100vh !important; }
         #canvas:fullscreen {
             width: 100vw;
@@ -172,6 +176,10 @@
             <input id="multiplayer-content-files" type="file" webkitdirectory multiple hidden>
         </div>
     </section>
+    <div id="cursor-controls">
+        <button id="cursor-capture" type="button" aria-pressed="false">Capture cursor</button>
+        <span id="cursor-status" role="status">Edge scrolling off</span>
+    </div>
     <div id="replay-timeline"></div>
     <div id="toolbar">
         <button id="share-replay" type="button" title="Copy a shareable URL of the current replay">
