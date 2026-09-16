@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{hash::Hasher, hint::black_box};
 
 const SAMPLES: usize = 9;
-const OPERATIONS: usize = 128;
+const OPERATIONS: usize = 32;
 const RETAINED: usize = 8;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -103,9 +103,11 @@ fn main() {
         let mut decode = Samples::default();
         let mut compressed_encode = Samples::default();
         let mut compressed_decode = Samples::default();
+        let mut zstd_encode = Samples::default();
+        let mut zstd_decode = Samples::default();
         for round in 0..=SAMPLES {
-            for offset in 0..5 {
-                let mode = (round + offset) % 5;
+            for offset in 0..7 {
+                let mode = (round + offset) % 7;
                 let mut warmup = Samples::default();
                 match mode {
                     0 => sample(
@@ -135,7 +137,7 @@ fn main() {
                             &mut compressed_encode
                         },
                     ),
-                    _ => sample(
+                    4 => sample(
                         || {
                             let decoded = decompressor
                                 .decompress(black_box(&compressed), bytes.len())
@@ -146,6 +148,31 @@ fn main() {
                             &mut warmup
                         } else {
                             &mut compressed_decode
+                        },
+                    ),
+                    5 => sample(
+                        || {
+                            compressor
+                                .compress(black_box(&bytes))
+                                .unwrap()
+                                .into_boxed_slice()
+                        },
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut zstd_encode
+                        },
+                    ),
+                    _ => sample(
+                        || {
+                            decompressor
+                                .decompress(black_box(&compressed), bytes.len())
+                                .unwrap()
+                        },
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut zstd_decode
                         },
                     ),
                 }
@@ -169,6 +196,8 @@ fn main() {
                 "bitcode_decode": decode.summary(),
                 "bitcode_zstd_encode": compressed_encode.summary(),
                 "bitcode_zstd_decode": compressed_decode.summary(),
+                "zstd_encode": zstd_encode.summary(),
+                "zstd_decode": zstd_decode.summary(),
             })
         );
     }
