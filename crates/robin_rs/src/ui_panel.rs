@@ -16,7 +16,6 @@
 use crate::host::HostFrontend;
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
-use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::engine::PresentationView;
 use robin_engine::player_command::PlayerId;
