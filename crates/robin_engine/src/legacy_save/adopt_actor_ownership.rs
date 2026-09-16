@@ -200,6 +200,7 @@ impl LegacyActorOwnershipAdoptionPlan {
                 );
             }
 
+            engine.install_actor_order(planned.entity, planned.installed_order);
             let actor = engine
                 .world
                 .entities
@@ -207,7 +208,6 @@ impl LegacyActorOwnershipAdoptionPlan {
                 .and_then(Entity::actor_data_mut)
                 .expect("preflighted actor ownership entity changed kind");
             actor.selected_sequence_element = planned.selected_element;
-            actor.installed_order = planned.installed_order;
             actor.post_seek_sequence = planned.post_seek_sequence;
             if let Some(heap) = planned.vm_heap {
                 engine

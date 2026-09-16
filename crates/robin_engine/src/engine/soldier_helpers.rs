@@ -563,9 +563,11 @@ impl EngineInner {
                     detached = ?actor.installed_order,
                     "condolation card detaching installed order"
                 );
-                actor.installed_order = None;
                 actor.selected_sequence_element = None;
             }
+        }
+        if detaches_selected_order {
+            self.install_actor_order(owner, None);
         }
         if let Some(provenance) = &goal_owner_provenance {
             let selected = self.world.entities.current_element_for_actor(owner);

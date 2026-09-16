@@ -3249,14 +3249,20 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         std::num::NonZeroU32::new(1).unwrap(),
     ));
     let sequence = sequences.insert_element(element);
-    pc.actor_data_mut().unwrap().installed_order = Some(crate::element::InstalledActorOrder::new(
+    let installed = crate::element::InstalledActorOrder::new(
         crate::sequence::SequenceElementRef::new(sequence, 0),
         sequences
             .get_element(sequence, 0)
             .unwrap()
             .current_order()
             .unwrap(),
-    ));
+    );
+    sequences
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .lease_slot(installed.slot);
+    pc.actor_data_mut().unwrap().installed_order = Some(installed);
     pc_host.entities.push(Some(pc));
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();

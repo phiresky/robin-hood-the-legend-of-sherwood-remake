@@ -1382,7 +1382,9 @@ impl SequenceElement {
     /// span. Rust pathfinding may complete after one or more launch transitions
     /// have already played, so this count describes the current queue rather
     /// than the queue originally stamped by `generate_transition`.
-    pub fn pop_current_order(&mut self) -> Option<Order> {
+    /// Returns the removed storage identity; installation owns any leased object
+    /// until the actor advances its reference.
+    pub fn pop_current_order(&mut self) -> Option<u64> {
         let popped = self.orders.pop_front()?;
         self.num_transition_orders = self.num_transition_orders.saturating_sub(1);
         Some(popped)

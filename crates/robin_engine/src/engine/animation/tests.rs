@@ -47,9 +47,8 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         0,
         crate::sequence::CascadeFlags::NEXT_LEVEL,
     );
-    // Interrupting an independently selected-away element retires its orders.
-    // Its old handle is not dereferenceable before the next installation or
-    // selected-owner completion boundary.
+    // Queue membership ends first; the installed object remains readable through
+    // owner notification until the next installation or selected-owner completion.
     assert!(
         engine
             .orders
@@ -67,6 +66,10 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
             .unwrap()
             .installed_order,
         installed_wait
+    );
+    assert_eq!(
+        engine.live_actor_animation(owner),
+        Some(OrderType::WaitingCapeAnonymousArcher)
     );
 
     engine.element_impossible(&sim, &assets, &mut Vec::new(), movement, 0);

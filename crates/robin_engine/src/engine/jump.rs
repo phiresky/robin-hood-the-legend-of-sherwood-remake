@@ -852,13 +852,7 @@ impl EngineInner {
                 .current_order()
                 .expect("jump translation produced no orders"),
         );
-        self.world
-            .entities
-            .get_mut(owner)
-            .expect("jump owner disappeared")
-            .actor_data_mut()
-            .expect("jump owner is not an actor")
-            .installed_order = Some(installed);
+        self.install_actor_order(owner, Some(installed));
 
         tracing::debug!(
             entity = ?owner,

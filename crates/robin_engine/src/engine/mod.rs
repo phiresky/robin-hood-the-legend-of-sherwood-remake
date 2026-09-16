@@ -328,6 +328,63 @@ mod actor_order_type_tests {
     fn null_installed_pointer_exposes_original_nonanimation_sentinel() {
         assert_eq!(resolve_actor_order_type(None), OrderType::NonanimationEnd);
     }
+
+    #[test]
+    fn engine_clone_owns_detached_installation_independently() {
+        let mut engine = super::EngineInner::new();
+        let owner = engine.add_test_entity(super::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let installed = engine.install_test_order(owner, OrderType::WaitingUpright);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders
+            .clear();
+        let mut saved = engine.clone_authoritative_state();
+        engine.install_actor_order(owner, Some(installed));
+        assert_eq!(
+            engine.actor_installed_order(owner).unwrap().order_type,
+            OrderType::WaitingUpright
+        );
+        engine.install_actor_order(owner, None);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .resolve(installed.slot)
+                .is_none()
+        );
+        assert_eq!(
+            saved.actor_installed_order(owner).unwrap().order_type,
+            OrderType::WaitingUpright
+        );
+        saved.remove_entity(owner);
+        assert!(
+            saved
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .resolve(installed.slot)
+                .is_none()
+        );
+    }
 }
 
 impl EngineInner {
@@ -1544,6 +1601,50 @@ impl EngineInner {
             .map(|handle| handle.resolve(&self.orders.sequence_manager))
     }
 
+    /// Change installation ownership without changing sequence selection.
+    pub(crate) fn install_actor_order(
+        &mut self,
+        actor: EntityId,
+        installed: Option<crate::element::InstalledActorOrder>,
+    ) {
+        let previous = self
+            .world
+            .entities
+            .expect_actor_data(actor, format_args!("order installation owner"))
+            .installed_order;
+        if previous == installed {
+            return;
+        }
+        if let Some(previous) = previous {
+            self.orders
+                .sequence_manager
+                .get_element_mut(previous.element.sequence_id, previous.element.element_index)
+                .expect("installed order owner storage disappeared")
+                .orders
+                .release_slot(previous.slot);
+        }
+        if let Some(installed) = installed {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(
+                    installed.element.sequence_id,
+                    installed.element.element_index,
+                )
+                .expect("new installed order storage disappeared");
+            assert_eq!(
+                element.owner,
+                Some(actor),
+                "installed order belongs to a different actor"
+            );
+            element.orders.lease_slot(installed.slot);
+        }
+        self.world
+            .entities
+            .expect_actor_data_mut(actor, format_args!("order installation owner"))
+            .installed_order = installed;
+    }
+
     /// Install the selected element's current canonical order at an update,
     /// accepted instruction, or movement retranslation boundary.
     pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
@@ -1558,11 +1659,7 @@ impl EngineInner {
                 )
             });
         tracing::trace!(?actor, ?installed_order, "publishing installed order");
-        self.get_entity_mut(actor)
-            .expect("installed order publication owner disappeared")
-            .actor_data_mut()
-            .expect("installed order publication owner lost actor data")
-            .installed_order = installed_order;
+        self.install_actor_order(actor, installed_order);
     }
 
     /// Original-game animation selection: the live sequence order,

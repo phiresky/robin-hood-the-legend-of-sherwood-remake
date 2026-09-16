@@ -35,12 +35,7 @@ impl EngineInner {
             // the delayed position. With no selected order it
             // clears the pointer, then an execution freeze returns
             // before lazy Wait and the second movement snapshot.
-            self.world
-                .entities
-                .get_mut(entity_id)
-                .and_then(Entity::actor_data_mut)
-                .expect("frozen actor disappeared before mpOrder clear")
-                .installed_order = None;
+            self.install_actor_order(entity_id, None);
             self.debug_refresh_view_lifecycle(
                 "derived_tail_frozen_without_order",
                 entity_id,
@@ -98,6 +93,7 @@ impl EngineInner {
                 order,
             )
         });
+        self.install_actor_order(entity_id, installed_at_entry);
         {
             let actor = self
                 .world
@@ -105,7 +101,6 @@ impl EngineInner {
                 .get_mut(entity_id)
                 .and_then(Entity::actor_data_mut)
                 .expect("actor disappeared before installing its update order");
-            actor.installed_order = installed_at_entry;
             if let Some((_, _, order_id)) = selected_order {
                 actor.select_execute_order(order_id);
             }

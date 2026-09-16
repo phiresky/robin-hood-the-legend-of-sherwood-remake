@@ -346,11 +346,11 @@ mod tests {
             let (mut engine, assets, owner, target) =
                 super::super::battle_decision_observation_tests::fixture(false);
             let installed = installed.map(|action| engine.install_test_order(owner, action));
+            engine.install_actor_order(owner, installed);
             let entity = engine.get_entity_mut(owner).unwrap();
             entity.sprite_mut().last_action = displayed;
             let actor = entity.actor_data_mut().unwrap();
             actor.action_state = crate::element::ActionState::HoldingShield;
-            actor.installed_order = installed;
             entity.enemy_ai_mut().unwrap().base.current_substate =
                 Substate::AttackingProtectingWithShield;
             let mut stimulus = Stimulus::new(StimulusType::EventArrowLaunched);

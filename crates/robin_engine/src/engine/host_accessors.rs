@@ -569,13 +569,13 @@ impl EngineInner {
             // latching a terminated motion, so that latch has to be replaced
             // for the frame snapshot to show the successor's motion.
             if let Some(owner) = owner {
+                self.install_actor_order(owner, Some(next_order));
                 let actor = self
                     .world
                     .entities
                     .get_mut(owner)
                     .and_then(Entity::actor_data_mut)
                     .expect("next-order owner disappeared before mpOrder publication");
-                actor.installed_order = Some(next_order);
                 actor.continuation.motion_state = crate::sprite::MotionState::InProgress;
             }
             return;
@@ -584,12 +584,7 @@ impl EngineInner {
         // Clear the exhausted order while retaining selection through the
         // termination callback, which owns goal and selection cleanup.
         if let Some(owner) = owner {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("exhausted-order owner disappeared before mpOrder clear")
-                .installed_order = None;
+            self.install_actor_order(owner, None);
         }
 
         // Terminate the element. Do not eagerly install Wait here:
@@ -688,6 +683,15 @@ impl EngineInner {
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
         let id = id.into();
+        if self
+            .world
+            .entities
+            .get(id)
+            .and_then(Entity::actor_data)
+            .is_some()
+        {
+            self.install_actor_order(id, None);
+        }
         // Alert counters track constructed soldier brains, not registry membership.
         // Removing an entity does not reverse its last music-alert contribution.
         self.world.entities.remove(id);

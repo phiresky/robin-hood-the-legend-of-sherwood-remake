@@ -286,6 +286,16 @@ pub(crate) struct LegacySequenceAdoptionPlan {
 
 impl LegacySequenceAdoptionPlan {
     pub(crate) fn apply(self, engine: &mut crate::engine::EngineInner) {
+        for slot in 0..engine.world.entities.len() {
+            let actor = engine
+                .world
+                .entities
+                .get_legacy_slot(slot as u32)
+                .and_then(|(id, entity)| entity.actor_data().map(|_| id));
+            if let Some(actor) = actor {
+                engine.install_actor_order(actor, None);
+            }
+        }
         engine
             .orders
             .sequence_manager

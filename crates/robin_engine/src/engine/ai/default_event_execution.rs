@@ -655,7 +655,7 @@ mod movement_tests {
             .unwrap()
             .installed_order
             .unwrap();
-        engine
+        let orders = &mut engine
             .orders
             .sequence_manager
             .get_element_mut(
@@ -663,8 +663,11 @@ mod movement_tests {
                 installed.element.element_index,
             )
             .unwrap()
-            .orders
-            .clear();
+            .orders;
+        // Deliberately invalidate this fixture's handle to test the guard's
+        // short circuit independently of the normal installed-order lifetime.
+        orders.release_slot(installed.slot);
+        orders.clear();
         engine
             .get_entity_mut(owner)
             .unwrap()

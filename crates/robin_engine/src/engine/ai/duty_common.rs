@@ -59,7 +59,7 @@ mod tests {
     }
 
     #[test]
-    fn distant_destination_does_not_read_an_order_retired_during_owner_notification() {
+    fn arrival_during_owner_notification_reads_the_removed_installed_order() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
         let installed = engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
@@ -73,6 +73,54 @@ mod tests {
             .unwrap()
             .orders
             .clear();
+        let destination = engine.live_ai_position(owner);
+
+        engine.duty_go_to_speed(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            destination,
+            GotoFlags::empty(),
+            1.0,
+        );
+
+        assert!(enemy(&engine, owner).base.already_on_point);
+        assert_eq!(
+            engine.actor_installed_order(owner).unwrap().order_type,
+            crate::order::OrderType::WaitingUpright
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn distant_destination_does_not_read_an_order_retired_during_owner_notification() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let installed = engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
+        let orders = &mut engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders;
+        // Deliberately invalidate this fixture's handle to test the guard's
+        // short circuit independently of the normal installed-order lifetime.
+        orders.release_slot(installed.slot);
+        orders.clear();
 
         engine.duty_go_to_speed(
             &crate::sim_rng::test_context(),

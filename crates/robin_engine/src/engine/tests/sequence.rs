@@ -2806,11 +2806,11 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
             .current_order()
             .unwrap(),
     );
+    engine.install_actor_order(owner, Some(installed));
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         let actor = entity.actor_data_mut().unwrap();
         actor.action_state = ActionState::Bored;
-        actor.installed_order = Some(installed);
         entity.sprite_mut().last_processed_order_id = old_order_id.get();
     }
 

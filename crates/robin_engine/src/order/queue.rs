@@ -3,7 +3,8 @@ use std::collections::VecDeque;
 
 /// Canonical orders with stable queue-local identities. Insertion always creates
 /// a new identity; mutation and movement within the queue retain it. Removed
-/// identities are never reused, including after clearing the queue.
+/// identities are never reused, including after clearing the queue. An installed
+/// order remains owned by its lease after removal until the actor replaces it.
 #[derive(
     Debug,
     Clone,
@@ -17,6 +18,32 @@ use std::collections::VecDeque;
 pub struct OrderQueue {
     orders: VecDeque<Order>,
     next_slot: u64,
+    installed: Option<InstalledOrderLease>,
+}
+
+/// Installation keeps exactly one canonical order alive until the actor replaces
+/// it. Queue removal transfers that object into the lease without copying it.
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+enum InstalledOrderLease {
+    Queued(u64),
+    Detached(Box<Order>),
+}
+
+impl InstalledOrderLease {
+    fn slot(&self) -> u64 {
+        match self {
+            Self::Queued(slot) => *slot,
+            Self::Detached(order) => order.storage_slot,
+        }
+    }
 }
 
 impl OrderQueue {
@@ -34,13 +61,52 @@ impl OrderQueue {
     }
 
     pub fn resolve(&self, slot: u64) -> Option<&Order> {
-        self.orders.iter().find(|order| order.storage_slot == slot)
+        self.orders
+            .iter()
+            .find(|order| order.storage_slot == slot)
+            .or_else(|| match &self.installed {
+                Some(InstalledOrderLease::Detached(order)) if order.storage_slot == slot => {
+                    Some(order)
+                }
+                _ => None,
+            })
     }
 
     pub fn resolve_mut(&mut self, slot: u64) -> Option<&mut Order> {
         self.orders
             .iter_mut()
             .find(|order| order.storage_slot == slot)
+            .or_else(|| match &mut self.installed {
+                Some(InstalledOrderLease::Detached(order)) if order.storage_slot == slot => {
+                    Some(order)
+                }
+                _ => None,
+            })
+    }
+
+    pub(crate) fn lease_slot(&mut self, slot: u64) {
+        if let Some(installed) = &self.installed {
+            assert_eq!(
+                installed.slot(),
+                slot,
+                "order queue already leased to a different installation"
+            );
+            return;
+        }
+        assert!(
+            self.orders.iter().any(|order| order.storage_slot == slot),
+            "cannot install an absent order"
+        );
+        self.installed = Some(InstalledOrderLease::Queued(slot));
+    }
+
+    pub(crate) fn release_slot(&mut self, slot: u64) {
+        assert_eq!(
+            self.installed.as_ref().map(InstalledOrderLease::slot),
+            Some(slot),
+            "released order is not installed"
+        );
+        self.installed = None;
     }
 
     pub fn push_back(&mut self, order: Order) {
@@ -53,17 +119,33 @@ impl OrderQueue {
         self.orders.insert(index, order);
     }
 
-    pub fn pop_front(&mut self) -> Option<Order> {
-        self.orders.pop_front()
+    pub fn pop_front(&mut self) -> Option<u64> {
+        self.remove(0)
     }
-    pub fn remove(&mut self, index: usize) -> Option<Order> {
-        self.orders.remove(index)
+    pub fn remove(&mut self, index: usize) -> Option<u64> {
+        let order = self.orders.remove(index)?;
+        let slot = order.storage_slot;
+        if matches!(self.installed, Some(InstalledOrderLease::Queued(installed)) if installed == slot)
+        {
+            self.installed = Some(InstalledOrderLease::Detached(Box::new(order)));
+        }
+        Some(slot)
     }
     pub fn clear(&mut self) {
+        if let Some(InstalledOrderLease::Queued(slot)) = self.installed {
+            let index = self
+                .orders
+                .iter()
+                .position(|order| order.storage_slot == slot)
+                .expect("installed queue order disappeared");
+            self.remove(index);
+        }
         self.orders.clear();
     }
     pub fn truncate(&mut self, len: usize) {
-        self.orders.truncate(len);
+        while self.orders.len() > len {
+            self.remove(self.orders.len() - 1);
+        }
     }
     pub fn front_mut(&mut self) -> Option<&mut Order> {
         self.orders.front_mut()
@@ -165,6 +247,7 @@ mod tests {
         let mut queue = OrderQueue::new();
         queue.push_back(order());
         let slot = queue.front().unwrap().storage_slot;
+        queue.lease_slot(slot);
         queue.front_mut().unwrap().order_type = OrderType::WaitingUprightBoredRandom;
         queue.front_mut().unwrap().order_id = std::num::NonZeroU32::new(999).unwrap();
         queue.insert(0, order());
@@ -178,9 +261,8 @@ mod tests {
     fn removing_and_clearing_retire_slots_without_reuse() {
         let mut queue = OrderQueue::new();
         queue.push_back(order());
-        let removed = queue.pop_front().unwrap();
-        let first = removed.storage_slot;
-        queue.push_back(removed);
+        let first = queue.pop_front().unwrap();
+        queue.push_back(order());
         let second = queue.front().unwrap().storage_slot;
         assert_ne!(first, second);
         assert!(queue.resolve(first).is_none());
@@ -209,5 +291,58 @@ mod tests {
             saved.push_back(order());
             assert!(saved.resolve(slot).is_none());
         }
+    }
+
+    #[test]
+    fn detached_installation_is_canonical_isolated_and_released_explicitly() {
+        use robin_util::state_hash::StateHash;
+        use std::hash::{DefaultHasher, Hasher};
+        let hash = |queue: &OrderQueue| {
+            let mut hasher = DefaultHasher::new();
+            queue.state_hash(&mut hasher);
+            hasher.finish()
+        };
+        let mut queue = OrderQueue::new();
+        queue.push_back(order());
+        let slot = queue.front().unwrap().storage_slot;
+        queue.lease_slot(slot);
+        queue.clear();
+        assert!(queue.is_empty());
+        queue.lease_slot(slot);
+        assert_eq!(
+            queue.resolve(slot).unwrap().order_type,
+            OrderType::WaitingUprightBored
+        );
+        let saved_hash = hash(&queue);
+        let snapshots = [
+            queue.clone(),
+            serde_json::from_str::<OrderQueue>(&serde_json::to_string(&queue).unwrap()).unwrap(),
+            bitcode::decode::<OrderQueue>(&bitcode::encode(&queue)).unwrap(),
+        ];
+        queue.resolve_mut(slot).unwrap().order_type = OrderType::WaitingUpright;
+        assert_ne!(hash(&queue), saved_hash);
+        for mut saved in snapshots {
+            assert_eq!(hash(&saved), saved_hash);
+            saved.push_back(order());
+            let replacement_slot = saved.front().unwrap().storage_slot;
+            assert_ne!(slot, replacement_slot);
+            assert_eq!(
+                saved.resolve(slot).unwrap().order_type,
+                OrderType::WaitingUprightBored
+            );
+            saved.release_slot(slot);
+            assert!(saved.resolve(slot).is_none());
+            assert!(saved.resolve(replacement_slot).is_some());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "already leased to a different installation")]
+    fn queue_cannot_replace_a_live_installation_without_releasing_it() {
+        let mut queue = OrderQueue::new();
+        queue.push_back(order());
+        queue.push_back(order());
+        queue.lease_slot(queue[0].storage_slot);
+        queue.lease_slot(queue[1].storage_slot);
     }
 }

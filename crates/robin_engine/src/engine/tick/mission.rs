@@ -704,24 +704,33 @@ impl EngineInner {
             // The human shoot list stores raw sequence-element references. A
             // retail save can retain a terminal pointer past Friday cleanup;
             // the allocation then remains readable as stale legacy state.
-            // Keep the Rust backing sequence alive while that explicit pointer
-            // emulation exists, rather than turning the next shoot-list update
-            // call into a missing-element panic.
-            let retained_shoot_sequences = self
+            // Keep backing storage alive while a shoot-list reference or an
+            // actor installation still owns it.
+            let retained_sequences = self
                 .world
                 .entities
                 .occupied()
-                .filter_map(|(_, entity)| entity.human_data())
-                .flat_map(|human| {
-                    human
-                        .pending_shoots
-                        .iter()
-                        .map(|element_ref| element_ref.sequence_id)
+                .flat_map(|(_, entity)| {
+                    entity
+                        .human_data()
+                        .into_iter()
+                        .flat_map(|human| {
+                            human
+                                .pending_shoots
+                                .iter()
+                                .map(|element_ref| element_ref.sequence_id)
+                        })
+                        .chain(
+                            entity
+                                .actor_data()
+                                .and_then(|actor| actor.installed_order)
+                                .map(|installed| installed.element.sequence_id),
+                        )
                 })
                 .collect::<std::collections::BTreeSet<_>>();
             self.orders
                 .sequence_manager
-                .friday_evening_cleanup_preserving(&retained_shoot_sequences);
+                .friday_evening_cleanup_preserving(&retained_sequences);
         }
 
         // ── Process pending AI orders ─────────────────────────────

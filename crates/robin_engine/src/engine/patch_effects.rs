@@ -429,10 +429,7 @@ impl EngineInner {
                                         order,
                                     )
                                 });
-                            self.get_entity_mut(id)
-                                .and_then(crate::element::Entity::actor_data_mut)
-                                .expect("retranslated movement owner lost actor data")
-                                .installed_order = installed_order;
+                            self.install_actor_order(id, installed_order);
                         }
                         MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);

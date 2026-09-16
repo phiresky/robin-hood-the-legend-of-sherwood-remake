@@ -33,13 +33,7 @@ impl EngineInner {
                 .current_order()
                 .unwrap(),
         );
-        self.world
-            .entities
-            .get_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(installed);
+        self.install_actor_order(owner, Some(installed));
         installed
     }
 

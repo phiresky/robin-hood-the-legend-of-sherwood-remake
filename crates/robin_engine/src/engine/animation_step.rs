@@ -787,13 +787,7 @@ impl EngineInner {
             if let Some(carried) = carried {
                 if order_is_initialising {
                     self.actor_freeze_execution(sim, assets, carried);
-                    self.world
-                        .entities
-                        .get_mut(carried)
-                        .expect("shoulder rider disappeared")
-                        .actor_data_mut()
-                        .expect("shoulder rider must be actor")
-                        .installed_order = None;
+                    self.install_actor_order(carried, None);
                 }
                 let direction = (self
                     .expect_entity(entity_id, "shoulder helper")
