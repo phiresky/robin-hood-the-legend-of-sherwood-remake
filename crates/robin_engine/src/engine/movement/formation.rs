@@ -1761,6 +1761,16 @@ mod shared_resolution_tests {
         engine.control.sim_config.amount_of_speaking = 8;
         engine.world.fast_grid_mut().size_map(16, 16);
         engine.world.fast_grid_mut().allocate_layers(1);
+        // Both circle slots straddle this wall. The click lies on the wall,
+        // so there is no authorized normal-side push toward the click.
+        engine.world.fast_grid_mut().add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(400.0, 300.0),
+                MapPoint::new(400.0, 500.0),
+                true,
+            ),
+            0,
+        );
         let mut assets = LevelAssets::new();
         std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
