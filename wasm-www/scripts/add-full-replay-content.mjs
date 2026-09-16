@@ -30,7 +30,14 @@ export async function addFullReplayContent({ corpus, source, build, retainedGene
             || createHash('sha256').update(content).digest('hex') !== file.sha256) {
             throw new Error(`Full content mismatch: ${file.path}`);
         }
-        await install(`${base}/${file.path}`, content);
+        if (file === manifest.datadir && content.length > 25 * 1024 * 1024) {
+            const chunkSize = 24 * 1024 * 1024;
+            for (let offset = 0, part = 0; offset < content.length; offset += chunkSize, part++) {
+                await install(`${base}/${file.path}.part${part}`, content.subarray(offset, offset + chunkSize));
+            }
+        } else {
+            await install(`${base}/${file.path}`, content);
+        }
     }
     await install(`datadirs/replays/${build}.json`, Buffer.from(JSON.stringify({
         url: `/${base}/datadir.bin`, sha256: manifest.datadir.sha256,

@@ -124,15 +124,19 @@ function record(value: unknown, label: string): Record<string, unknown> {
 
 /** Resolve a published, build-specific Full replay content binding. */
 export function parseHostedReplayContent(value: unknown, origin: string): {
-    readonly url: string; readonly sha256: string; readonly byteLength: number;
+    readonly url: string; readonly sha256: string; readonly byteLength: number; readonly parts: readonly string[];
 } {
     const content = record(value, 'replay content');
     if (typeof content.url !== 'string'
         || !/^\/datadirs\/full\/[0-9a-f]{64}\/datadir\.bin$/u.test(content.url)
         || typeof content.sha256 !== 'string' || !SHA256_RE.test(content.sha256)
         || typeof content.byteLength !== 'number' || !Number.isSafeInteger(content.byteLength)
-        || content.byteLength <= 0 || content.byteLength > 25 * 1024 * 1024) {
+        || content.byteLength <= 0 || content.byteLength > 256 * 1024 * 1024) {
         throw new Error('Full replay data is not available for this player version');
     }
-    return { url: new URL(content.url, origin).toString(), sha256: content.sha256, byteLength: content.byteLength };
+    const url = new URL(content.url, origin).toString();
+    const parts = content.byteLength > 25 * 1024 * 1024
+        ? Array.from({ length: Math.ceil(content.byteLength / (24 * 1024 * 1024)) }, (_, index) => `${url}.part${index}`)
+        : [url];
+    return { url, sha256: content.sha256, byteLength: content.byteLength, parts };
 }

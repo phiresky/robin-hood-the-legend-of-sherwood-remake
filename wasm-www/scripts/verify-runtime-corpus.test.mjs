@@ -575,3 +575,19 @@ test('hosted Full replay content preserves Demo data and rejects tampered bindin
     await writeFile(bindingPath, JSON.stringify({ ...binding, sha256: '0'.repeat(64) }));
     await assert.rejects(verifyDatadirCorpus(corpus), /digest|sha256/u);
 });
+
+test('large Full data is split into verified parts below the static asset limit', async t => {
+    const demo = await demoPackage();
+    const full = await demoPackage({ edition: 'full', datadirText: Buffer.alloc(26 * 1024 * 1024, 7) });
+    const root = await mkdtemp(resolve(tmpdir(), 'full-replay-parts-'));
+    t.after(() => Promise.all([demo.root, full.root, root].map(path => rm(path, { recursive: true, force: true }))));
+    const corpus = resolve(root, 'corpus');
+    await assembleDatadirCorpus({ existing: null, demo: demo.root, output: corpus });
+    await addFullReplayContent({ corpus: corpus, source: full.root, build: '1699bc12ffb8', retainedGenerations: [] });
+    const binding = JSON.parse(await readFile(resolve(corpus, 'datadirs/replays/1699bc12ffb8.json'), 'utf8'));
+    const part = resolve(corpus, `${binding.url.slice(1)}.part0`);
+    assert.equal((await readFile(part)).length, 24 * 1024 * 1024);
+    await assert.rejects(readFile(resolve(corpus, binding.url.slice(1))), /ENOENT/u);
+    await writeFile(part, Buffer.alloc(24 * 1024 * 1024, 8));
+    await assert.rejects(verifyDatadirCorpus(corpus), /digest/u);
+});

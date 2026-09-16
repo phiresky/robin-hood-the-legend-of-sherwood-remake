@@ -411,8 +411,20 @@ export async function verifyDatadirCorpus(directory, { retainedGenerations = [],
         const base = path.slice(0, path.lastIndexOf('/'));
         for (const file of [manifest.datadir, ...manifest.files]) {
             const object = `${base}/${file.path}`;
-            await verifyContentObject(root, object, file, 'Full replay content');
-            expected.add(object);
+            if (file === manifest.datadir && file.byte_length > 25 * 1024 * 1024) {
+                const chunks = [];
+                for (let offset = 0, part = 0; offset < file.byte_length; offset += 24 * 1024 * 1024, part++) {
+                    const name = `${object}.part${part}`;
+                    const bytes = await readFile(resolve(root, name));
+                    exact(bytes.length, Math.min(24 * 1024 * 1024, file.byte_length - offset), 'Full data part length');
+                    chunks.push(bytes);
+                    expected.add(name);
+                }
+                exact(sha256(Buffer.concat(chunks)), file.sha256, 'Full data parts digest');
+            } else {
+                await verifyContentObject(root, object, file, 'Full replay content');
+                expected.add(object);
+            }
         }
     }
     for (const path of files) {
@@ -420,10 +432,10 @@ export async function verifyDatadirCorpus(directory, { retainedGenerations = [],
         const binding = json(await readFile(resolve(root, path)), path);
         exactKeys(binding, ['url', 'sha256', 'byteLength'], path);
         const match = /^\/datadirs\/full\/([0-9a-f]{64})\/datadir\.bin$/u.exec(binding.url);
-        if (match === null || !expected.has(binding.url.slice(1))) throw new Error(`${path} references missing Full data`);
-        await verifyContentObject(root, binding.url.slice(1), {
-            sha256: binding.sha256, byte_length: binding.byteLength,
-        }, path);
+        if (match === null || !expected.has(`datadirs/full/${match[1]}/robinhood-web-content.json`)) throw new Error(`${path} references missing Full data`);
+        const manifest = parseWebContentManifest(await readFile(resolve(root, `datadirs/full/${match[1]}/robinhood-web-content.json`)), path, 'full');
+        exact(binding.sha256, manifest.datadir.sha256, `${path} data digest`);
+        exact(binding.byteLength, manifest.datadir.byte_length, `${path} data length`);
         expected.add(path);
     }
     const extra = [...files].filter(path => path !== '_headers' && !expected.has(path));

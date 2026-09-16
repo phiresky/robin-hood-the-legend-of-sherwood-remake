@@ -83,3 +83,11 @@ test('hosted Full replay bindings stay content-addressed and on the game origin'
     }
     assert.throws(() => parseHostedReplayContent({ ...binding, byteLength: 0 }, 'https://game.example'));
 });
+
+test('large Full replay data downloads in ordered static-asset parts', () => {
+    const binding = { url: `/datadirs/full/${'a'.repeat(64)}/datadir.bin`, sha256: 'b'.repeat(64), byteLength: 50_669_539 };
+    const content = parseHostedReplayContent(binding, 'https://game.example');
+    assert.deepEqual(content.parts, [0, 1, 2].map(index => `https://game.example${binding.url}.part${index}`));
+    assert.equal(content.byteLength, binding.byteLength);
+    assert.throws(() => parseHostedReplayContent({ ...binding, byteLength: 257 * 1024 * 1024 }, 'https://game.example'));
+});

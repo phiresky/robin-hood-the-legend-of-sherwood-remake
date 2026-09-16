@@ -342,11 +342,11 @@ async function selectedDemoDatadir(
 
 async function selectedFullReplayDatadir(
     _base: string, build: BuildSelection, signal: AbortSignal,
-): Promise<{ readonly url: string; readonly identity: DemoDatadirIdentity }> {
+): Promise<{ readonly url: string; readonly identity: DemoDatadirIdentity; readonly parts: readonly string[] }> {
     const content = parseHostedReplayContent(await fetchJson<unknown>(
         `${BINARIES_BASE}/datadirs/replays/${build.short}.json`, signal,
     ), BINARIES_BASE);
-    return { url: content.url, identity: content };
+    return { url: content.url, identity: content, parts: content.parts };
 }
 
 async function verifyDatadir(
@@ -407,16 +407,29 @@ async function main(): Promise<void> {
         },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (base, build, signal) => {
-            const demo = runReplay?.edition === 'full'
+            const demo: { url: string; identity?: DemoDatadirIdentity; parts?: readonly string[] } = runReplay?.edition === 'full'
                 ? await selectedFullReplayDatadir(base, build, signal)
                 : await selectedDemoDatadir(base, build, signal);
-            const response = await fetchWithProgress(
-                demo.url, build.source === 'latest' ? 'no-cache' : 'force-cache', 'application/zstd',
-                (loaded, total) => bootProgress('gamedata', 'loading game data…',
-                    total > 0 ? loaded / total : 0, progressDetail(loaded, total)),
-                signal,
-            );
-            const datadir = new Uint8Array(await withAbort(signal, () => response.arrayBuffer()));
+            const urls = demo.parts ?? [demo.url];
+            const chunks: Uint8Array<ArrayBuffer>[] = [];
+            let completed = 0;
+            for (const url of urls) {
+                const response = await fetchWithProgress(
+                    url, build.source === 'latest' ? 'no-cache' : 'force-cache', 'application/zstd',
+                    (loaded, total) => {
+                        const expected = demo.identity?.byteLength ?? total;
+                        bootProgress('gamedata', 'loading game data…',
+                            expected > 0 ? (completed + loaded) / expected : 0,
+                            progressDetail(completed + loaded, expected));
+                    }, signal,
+                );
+                const chunk = new Uint8Array(await withAbort(signal, () => response.arrayBuffer()));
+                chunks.push(chunk);
+                completed += chunk.byteLength;
+            }
+            const datadir = new Uint8Array(completed);
+            let offset = 0;
+            for (const chunk of chunks) { datadir.set(chunk, offset); offset += chunk.byteLength; }
             if (demo.identity !== undefined) await verifyDatadir(datadir, demo.identity, signal);
             return { datadir, dataBaseUrl: demo.url.slice(0, demo.url.lastIndexOf('/')) };
         },
