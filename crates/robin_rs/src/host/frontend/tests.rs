@@ -371,7 +371,10 @@ mod host_resource_tests {
                 effects.take_modals(HostModalPhase::Dialogue),
                 vec![ModalKind::Dialog { dialog_id: 7 }]
             );
-            assert_eq!(effects.take_popup_texts(), vec![11]);
+            assert_eq!(
+                effects.take_modals(HostModalPhase::Popup),
+                vec![ModalKind::PopupText { text_id: 11 }]
+            );
             assert_eq!(
                 effects.background_blits.len(),
                 1,
@@ -392,8 +395,18 @@ mod host_resource_tests {
         effects.request_signal(HostSignal::ShowConsole);
         effects.request_signal(HostSignal::ResetInput);
 
-        assert_eq!(effects.take_dialogues(), vec![7, 8, 9]);
-        assert_eq!(effects.take_popup_texts(), vec![11]);
+        assert_eq!(
+            effects.take_modals(robin_engine::engine::HostModalPhase::Dialogue),
+            vec![
+                engine_player_command::ModalKind::Dialog { dialog_id: 7 },
+                engine_player_command::ModalKind::Dialog { dialog_id: 8 },
+                engine_player_command::ModalKind::Dialog { dialog_id: 9 },
+            ]
+        );
+        assert_eq!(
+            effects.take_modals(robin_engine::engine::HostModalPhase::Popup),
+            vec![engine_player_command::ModalKind::PopupText { text_id: 11 },]
+        );
         assert!(effects.take_sherwood_report());
         assert!(!effects.take_sherwood_report());
         assert!(effects.take_signal(HostSignal::ResetInput));

@@ -1413,8 +1413,8 @@ fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
             .feedback
             .pending_side_effects
             .host_effects
-            .take_popup_texts(),
-        vec![11]
+            .take_modals(crate::engine::HostModalPhase::Popup),
+        vec![crate::player_command::ModalKind::PopupText { text_id: 11 }]
     );
 }
 

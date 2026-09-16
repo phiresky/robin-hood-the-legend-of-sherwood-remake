@@ -135,42 +135,6 @@ impl HostEffects {
             .collect()
     }
 
-    pub fn take_dialogues(&mut self) -> Vec<i32> {
-        self.take_modals(HostModalPhase::Dialogue)
-            .into_iter()
-            .map(|kind| {
-                let ModalKind::Dialog { dialog_id } = kind else {
-                    unreachable!()
-                };
-                dialog_id
-            })
-            .collect()
-    }
-
-    pub fn take_popup_texts(&mut self) -> Vec<i32> {
-        self.take_modals(HostModalPhase::Popup)
-            .into_iter()
-            .map(|kind| {
-                let ModalKind::PopupText { text_id } = kind else {
-                    unreachable!()
-                };
-                text_id
-            })
-            .collect()
-    }
-
-    pub fn take_debriefings(&mut self) -> Vec<engine_player_command::DebriefingTextId> {
-        self.take_modals(HostModalPhase::Debriefing)
-            .into_iter()
-            .map(|kind| {
-                let ModalKind::Debriefing { text_id } = kind else {
-                    unreachable!()
-                };
-                text_id
-            })
-            .collect()
-    }
-
     pub fn request_signal(&mut self, signal: HostSignal) {
         if !self.signals.contains(&signal) {
             self.signals.push(signal);
@@ -267,7 +231,13 @@ mod tests {
                 ModalKind::Dialog { dialog_id: 8 },
             ]
         );
-        assert_eq!(pending.take_popup_texts(), vec![3, 4]);
+        assert_eq!(
+            pending.take_modals(HostModalPhase::Popup),
+            vec![
+                ModalKind::PopupText { text_id: 3 },
+                ModalKind::PopupText { text_id: 4 }
+            ]
+        );
         assert!(pending.take_sherwood_report());
         assert!(!pending.take_sherwood_report());
         assert!(pending.take_signal(HostSignal::ResetInput));

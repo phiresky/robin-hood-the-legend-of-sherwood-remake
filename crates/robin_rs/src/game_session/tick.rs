@@ -1158,9 +1158,18 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
             host.effects.has_signal(HostSignal::MissionStatePopup),
         );
     }
-    drop(host.effects.take_dialogues());
-    drop(host.effects.take_popup_texts());
-    drop(host.effects.take_debriefings());
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Dialogue),
+    );
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Popup),
+    );
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Debriefing),
+    );
     host.effects.take_sherwood_report();
     host.effects.take_signal(HostSignal::MissionStatePopup);
     n
