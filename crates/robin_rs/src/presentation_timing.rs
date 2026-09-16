@@ -49,6 +49,8 @@ struct Timings {
     intervals: Vec<u64>,
     sample_ages: Vec<u64>,
     cadence_errors: Vec<u64>,
+    estimated_dropped_frames: u64,
+    dropped_frame_events: u64,
 }
 thread_local! { static TIMINGS: RefCell<Timings> = RefCell::new(Timings::default()); }
 
@@ -84,6 +86,17 @@ impl Timings {
             let sample_interval = sample.sampled_at_us.saturating_sub(previous.sampled_at_us);
             let cadence_error = interval.abs_diff(sample_interval);
             let camera_step = (sample.x - previous.x).hypot(sample.y - previous.y) * sample.zoom;
+            let dropped = estimated_dropped_frames(interval);
+            self.estimated_dropped_frames += dropped;
+            if dropped > 0 {
+                self.dropped_frame_events += 1;
+                tracing::info!(target: "presentation_perf",
+                    target_fps = 60, estimated_dropped_frames = dropped,
+                    interval_us = interval, fixed_tick = sample.fixed_tick,
+                    acquire_us = swap.acquire_us, submit_us = swap.submit_us, swap_us = swap.swap_us,
+                    sample_age_us = age, camera_step_px = camera_step,
+                    "dropped frames (estimated from CPU presentation interval)");
+            }
             self.intervals.push(interval);
             self.sample_ages.push(age);
             self.cadence_errors.push(cadence_error);
@@ -102,10 +115,15 @@ impl Timings {
                 let (_, cadence_error_p95_us, cadence_error_max_us) =
                     quantiles(&mut self.cadence_errors);
                 tracing::info!(target: "presentation_perf", frames = 120,
+                    target_fps = 60,
+                    estimated_dropped_frames = self.estimated_dropped_frames,
+                    dropped_frame_events = self.dropped_frame_events,
                     fps = 120_000_000.0 / elapsed.max(1) as f64,
                     interval_p50_us, interval_p95_us, interval_max_us,
                     sample_age_p95_us, sample_age_max_us, cadence_error_p95_us, cadence_error_max_us,
                     "camera presentation timing (CPU, not scanout)");
+                self.estimated_dropped_frames = 0;
+                self.dropped_frame_events = 0;
                 self.intervals.clear();
                 self.sample_ages.clear();
                 self.cadence_errors.clear();
@@ -114,6 +132,12 @@ impl Timings {
         self.previous = Some((sample, swap.completed_at_us));
     }
 }
+// Round to the nearest 60 Hz slot: tolerate sub-half-frame scheduling jitter.
+// This is a target-budget estimate, not a display refresh or scanout measurement.
+fn estimated_dropped_frames(interval_us: u64) -> u64 {
+    ((u128::from(interval_us) * 60 + 500_000) / 1_000_000).saturating_sub(1) as u64
+}
+
 fn quantiles(values: &mut [u64]) -> (u64, u64, u64) {
     values.sort_unstable();
     let rank = |percent: usize| values[(values.len() * percent).div_ceil(100) - 1];
@@ -123,6 +147,17 @@ fn quantiles(values: &mut [u64]) -> (u64, u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dropped_frame_estimates_tolerate_jitter_and_count_long_stalls() {
+        for interval in [0, 8_333, 16_667, 20_835, 24_999] {
+            assert_eq!(estimated_dropped_frames(interval), 0);
+        }
+        assert_eq!(estimated_dropped_frames(25_000), 1);
+        assert_eq!(estimated_dropped_frames(33_333), 1);
+        assert_eq!(estimated_dropped_frames(50_000), 2);
+        assert_eq!(estimated_dropped_frames(543_027), 32);
+    }
+
     #[test]
     fn steady_presents_can_hide_irregular_camera_sampling() {
         let mut timings = Timings::default();
