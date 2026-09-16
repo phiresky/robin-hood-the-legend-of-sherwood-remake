@@ -26,6 +26,12 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
     engine.select_sequence_element(owner, Some((wait_id, 0)));
     engine.element_in_progress(&sim, &assets, &mut Vec::new(), wait_id, 0);
     engine.publish_selected_order_as_installed(owner);
+    let installed_wait = engine
+        .get_entity(owner)
+        .unwrap()
+        .actor_data()
+        .unwrap()
+        .installed_order;
 
     let movement = engine.launch_element(
         &sim,
@@ -41,9 +47,26 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         0,
         crate::sequence::CascadeFlags::NEXT_LEVEL,
     );
+    // Interrupting an independently selected-away element retires its orders.
+    // Its old handle is not dereferenceable before the next installation or
+    // selected-owner completion boundary.
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(wait_id, 0)
+            .unwrap()
+            .orders
+            .is_empty()
+    );
     assert_eq!(
-        engine.live_actor_animation(owner),
-        Some(OrderType::WaitingCapeAnonymousArcher)
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order,
+        installed_wait
     );
 
     engine.element_impossible(&sim, &assets, &mut Vec::new(), movement, 0);

@@ -1143,7 +1143,7 @@ mod tests {
     }
 
     #[test]
-    fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
+    fn make_crouched_keeps_installed_order_live_through_start_and_end_transitions() {
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(Entity::Pc(ActorPc {
@@ -1215,8 +1215,11 @@ mod tests {
             engine
                 .actor_installed_order(owner)
                 .map(|order| (order.order_id, order.order_type)),
-            Some((walk_order_id, OrderType::WalkingCrouched)),
-            "the live installed order observes walk 6 -> crouched walk 16 before transition 81 is inserted"
+            Some((
+                walk_order_id,
+                OrderType::TransitionWalkingCrouchedWaitingCrouched
+            )),
+            "the installed order retains its identity while end-transition insertion relabels it"
         );
     }
 

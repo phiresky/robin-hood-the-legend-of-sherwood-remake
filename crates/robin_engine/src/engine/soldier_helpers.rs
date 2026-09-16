@@ -1661,12 +1661,11 @@ mod tests {
             .sequence_manager
             .sequences_iter()
             .find(|sequence| {
-                sequence
-                    .elements
-                    .iter()
-                    .any(|element| element.owner == Some(pc))
+                sequence.elements.first().is_some_and(|element| {
+                    element.owner == Some(pc) && element.command == Command::WaitTimer
+                })
             })
-            .expect("door-fight sequence")
+            .expect("door-fight sequence beginning with its timed wait")
     }
 
     #[test]
