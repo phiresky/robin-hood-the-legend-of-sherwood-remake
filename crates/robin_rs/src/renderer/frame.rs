@@ -1323,6 +1323,7 @@ impl FrameState {
         enum BoundPipeline {
             Quad,
             MaskedQuad,
+            Map,
             Colorize,
             BgAlpha,
             ViewCone,
@@ -1367,6 +1368,14 @@ impl FrameState {
 
         for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.operation {
+                DrawOperation::Map(_) => {
+                    if last_pipeline != Some(BoundPipeline::Map) {
+                        flush_run!();
+                        pass.set_pipeline(&pipelines.map_pipeline);
+                        last_pipeline = Some(BoundPipeline::Map);
+                        last_blend = None;
+                    }
+                }
                 DrawOperation::ColorizeFrozen => {
                     if last_pipeline != Some(BoundPipeline::Colorize) {
                         flush_run!();

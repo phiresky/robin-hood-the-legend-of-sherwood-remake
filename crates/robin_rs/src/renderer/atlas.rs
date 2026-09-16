@@ -57,6 +57,7 @@ pub(super) struct AtlasSlot {
     pub layer: u32,
     /// `(u0, v0, u1, v1)` sub-rect in 0..1 layer coords.
     pub uv: [f32; 4],
+    pub texel_origin: (u32, u32),
     pub width: u16,
     pub height: u16,
 }
@@ -362,6 +363,7 @@ impl SpriteAtlas {
         let size = self.layers[layer_idx].packer.size as f32;
         AtlasSlot {
             layer: layer_idx as u32,
+            texel_origin: (x, y),
             uv: [
                 x as f32 / size,
                 y as f32 / size,

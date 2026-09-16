@@ -341,6 +341,23 @@ fn render_frame_lookup_preserves_active_rows_and_rejects_missing_frames() {
     assert!(current_render_frame(&sprite).is_none());
 }
 
+/// Transform both map-pixel edges without independently snapping position or size.
+/// Replacement pixels must sample exactly the same world coordinates as terrain.
+pub(crate) fn map_sprite_bounds(
+    origin: MapPoint,
+    width: u32,
+    height: u32,
+    view: MapPoint,
+    zoom: f32,
+) -> BBox {
+    BBox::from_coords(
+        (origin.x - view.x) * zoom,
+        (origin.y - view.y) * zoom,
+        (origin.x + width as f32 - view.x) * zoom,
+        (origin.y + height as f32 - view.y) * zoom,
+    )
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SpritePlacement {
     world_origin: MapPoint,

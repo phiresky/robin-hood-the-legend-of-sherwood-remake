@@ -20,6 +20,7 @@ pub(super) struct PipelineStore {
     pub(super) pipelines: [wgpu::RenderPipeline; 4],
     pub(super) masked_pipelines: [wgpu::RenderPipeline; 4],
     pub(super) blit_pipeline: wgpu::RenderPipeline,
+    pub(super) map_pipeline: wgpu::RenderPipeline,
     pub(super) colorize_pipeline: wgpu::RenderPipeline,
     pub(super) bg_alpha_pipeline: wgpu::RenderPipeline,
     pub(super) view_cone_pipeline: wgpu::RenderPipeline,
@@ -84,6 +85,24 @@ impl PipelineStore {
             gpu.surface_format,
             false,
         );
+        let map_module = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("map_quad.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../shaders/map_quad.wgsl").into(),
+                ),
+            });
+        let map_pipeline = build_single_quad_pipeline(
+            &gpu.device,
+            &map_module,
+            &quad_layout,
+            "quad/map",
+            "fs_main",
+            BlendMode::Blend.to_wgpu(),
+            output_format,
+            true,
+        );
         let colorize_pipeline = build_single_quad_pipeline(
             &gpu.device,
             &quad_module,
@@ -135,6 +154,7 @@ impl PipelineStore {
             pipelines,
             masked_pipelines,
             blit_pipeline,
+            map_pipeline,
             colorize_pipeline,
             bg_alpha_pipeline,
             view_cone_pipeline,
