@@ -336,15 +336,11 @@ pub(super) fn take_next_scripted_batch(
         }
         let items: VecDeque<_> = match lane {
             ScriptedModalLane::Dialogue => effects
-                .take_dialogues()
-                .into_iter()
-                .map(|dialog_id| ModalKind::Dialog { dialog_id })
-                .collect(),
+                .take_modals(robin_engine::engine::HostModalPhase::Dialogue)
+                .into(),
             ScriptedModalLane::Popup => effects
-                .take_popup_texts()
-                .into_iter()
-                .map(|text_id| ModalKind::PopupText { text_id })
-                .collect(),
+                .take_modals(robin_engine::engine::HostModalPhase::Popup)
+                .into(),
             ScriptedModalLane::SherwoodReport => {
                 if effects.take_sherwood_report() {
                     VecDeque::from([ModalKind::SherwoodReport])
@@ -354,13 +350,17 @@ pub(super) fn take_next_scripted_batch(
             }
             ScriptedModalLane::Debriefing => {
                 let (lost, won): (Vec<_>, Vec<_>) = effects
-                    .take_debriefings()
+                    .take_modals(robin_engine::engine::HostModalPhase::Debriefing)
                     .into_iter()
-                    .partition(|id| matches!(id, DebriefingTextId::Lose { .. }));
-                lost.into_iter()
-                    .chain(won)
-                    .map(|text_id| ModalKind::Debriefing { text_id })
-                    .collect()
+                    .partition(|kind| {
+                        matches!(
+                            kind,
+                            ModalKind::Debriefing {
+                                text_id: DebriefingTextId::Lose { .. }
+                            }
+                        )
+                    });
+                lost.into_iter().chain(won).collect()
             }
             ScriptedModalLane::LeaveMission => {
                 if effects.take_signal(HostSignal::MissionStatePopup) {

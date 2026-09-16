@@ -525,7 +525,8 @@ impl EngineInner {
         let decal = self.snapshot_patch_transition_decal(entity_id);
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: false,
@@ -538,7 +539,8 @@ impl EngineInner {
     pub(crate) fn queue_restore_fx_bg(&mut self, entity_id: crate::element::EntityId) {
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: true,

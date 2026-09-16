@@ -482,12 +482,20 @@ mod tests {
             &mut dev,
             robin_engine::engine::SideEffects {
                 ui_has_focus: true,
-                pending_show_console: true,
+                host_effects: {
+                    let mut requests = robin_engine::engine::HostEffects::default();
+                    requests.request_signal(crate::host::HostSignal::ShowConsole);
+                    requests
+                },
                 ..Default::default()
             },
         );
         assert!(!input.controls.has_focus);
-        assert!(prepared.pending_show_console);
+        assert!(
+            prepared
+                .host_effects
+                .has_signal(crate::host::HostSignal::ShowConsole)
+        );
         assert!(prepared.ui_has_focus);
         assert_eq!(dev.noise_display_start_radius, 7);
     }

@@ -240,7 +240,10 @@ impl EngineInner {
                     let pc_id = self.players.selection_before_user_lock[index];
                     self.select_pc(sim, assets, 0, pc_id, true, false);
                 }
-                self.feedback.pending_side_effects.pending_reset_input = true;
+                self.feedback
+                    .pending_side_effects
+                    .host_effects
+                    .request_signal(crate::engine::HostSignal::ResetInput);
             }
             _ => unreachable!("apply_script_user_lock received {command:?}"),
         }

@@ -72,6 +72,7 @@ mod special_motion;
 pub(crate) mod state;
 #[doc(hidden)]
 pub use state::ScriptDomains;
+mod host_effects;
 #[cfg(test)]
 mod resource_environment_tests;
 pub mod target_interaction;
@@ -87,6 +88,7 @@ mod titbit_sync;
 mod trading;
 mod transitions;
 mod types;
+pub use host_effects::*;
 mod wasp_nest;
 
 pub(crate) use commands::command_action_distance_animation;
@@ -238,7 +240,7 @@ pub struct EngineInner {
 
     /// Deterministic sound, marker, director-camera, and tick-output state.
     pub(crate) feedback: FeedbackRuntime,
-    // (Deferred bg-blits live on `pending_side_effects.bg_blits` now;
+    // (Deferred bg-blits live on `pending_side_effects.host_effects`;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
@@ -857,7 +859,7 @@ impl EngineInner {
     /// via [`EngineCommand::Win`]) re-toggles `mission_won_first_time`.
     /// When `show_window == false`, the Sherwood start/quit-mission
     /// widgets are flipped via
-    /// [`SideEffects::pending_silent_win_widget_swap`].
+    /// [`HostSignal::SilentWinWidgetSwap`].
     pub(crate) fn win(&mut self, show_window: bool) {
         self.mission_domain.state.mission_won_first_time = show_window;
         self.mission_domain.state.mission_won = true;
@@ -865,7 +867,8 @@ impl EngineInner {
         if !show_window {
             self.feedback
                 .pending_side_effects
-                .pending_silent_win_widget_swap = true;
+                .host_effects
+                .request_signal(crate::engine::HostSignal::SilentWinWidgetSwap);
         }
     }
 

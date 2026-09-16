@@ -3804,8 +3804,8 @@ impl EngineInner {
                     tracing::debug!("StartDialog({dialog_id}): queued for game session");
                     self.feedback
                         .pending_side_effects
-                        .pending_dialogues
-                        .push(dialog_id);
+                        .host_effects
+                        .extend_dialogues([dialog_id]);
                     // The original game's dialog start is synchronous and its menu-screen
                     // constructor re-enters the game refresh before returning
                     // to the script VM.
@@ -3827,7 +3827,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
-                    self.feedback.pending_side_effects.pending_show_console = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_signal(crate::engine::HostSignal::ShowConsole);
                     self.forward_message(
                         sim,
                         assets,
@@ -3985,8 +3988,8 @@ impl EngineInner {
                     tracing::debug!("DisplayPopupText({text_id}): queued for UI system");
                     self.feedback
                         .pending_side_effects
-                        .pending_popup_texts
-                        .push(text_id);
+                        .host_effects
+                        .extend_popup_texts([text_id]);
                     // Displaying scripted popup text opens the popup scroll synchronously. The first
                     // popup in a universal frame constructs its colorized
                     // background and re-enters game refresh with
@@ -4004,7 +4007,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
-                    self.feedback.pending_side_effects.pending_sherwood_report = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_sherwood_report();
                     self.forward_message(
                         sim,
                         assets,

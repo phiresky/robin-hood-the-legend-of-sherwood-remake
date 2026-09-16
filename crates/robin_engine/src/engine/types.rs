@@ -764,55 +764,18 @@ pub struct SideEffects {
     /// Whether the host should skip the render pass this frame.
     /// Used by fast-forward mode (render only every 32nd frame).
     pub skip_render: bool,
-    /// Dialogue IDs queued this tick by `StartDialog` script commands.
-    /// Host accumulates into its own queue and displays via the
-    /// dialogue menu.
-    pub pending_dialogues: Vec<i32>,
-    /// Popup-scroll text IDs queued this tick by `DisplayPopupText` /
-    /// `DisplayAllPopupTexts`. Host accumulates and renders through the
-    /// popup parchment widget.
-    pub pending_popup_texts: Vec<i32>,
-    /// Debriefing text IDs queued this tick by the `DisplayAllDebriefings`
-    /// cheat.
-    pub pending_debriefings: Vec<crate::player_command::DebriefingTextId>,
-    /// Set when the `DisplaySherwoodReport` script native fired this tick.
-    pub pending_sherwood_report: bool,
-    /// Exact authoritative outcomes for Sherwood sale commands.  Presentation
-    /// waits for these receipts instead of assuming a click succeeded.
-    pub trade_receipts: Vec<crate::trading::TradeReceipt>,
-    /// Set when the `DisplayConsole` script native (or cheat key) fired
-    /// this tick.
-    pub pending_show_console: bool,
+    /// Deferred modal, signal, receipt and render requests, consumed using
+    /// the same typed representation on the host after rollback admission.
+    pub host_effects: super::HostEffects,
     /// Entities the sim asked to render a one-frame full-alpha outline
     /// on this tick.  Currently only populated by the
     /// `AddPCToMissionTeam` native, marking the PC after it is added.
     /// Host merges into [`CursorFeedback::marked_pc_ids`] each frame.
     pub pending_mark_pc_ids: Vec<crate::element::EntityId>,
-    /// Deferred patch-effect background decal inserts and
-    /// removals (`RestoreBackground`).  Produced by
-    /// patch transitions; drained host-side where
-    /// renderer-owned sprite textures are available (see
-    /// `robin_rs::blit_to_map`).
-    pub bg_blits: Vec<super::PendingBgBlit>,
-    /// Set when a silent `Win(false)` fired this tick (ambush/tactical
-    /// silent win). Host flips the Sherwood start-mission /
-    /// quit-mission widgets.
-    pub pending_silent_win_widget_swap: bool,
-    /// Set on the first-frame-after-mission-won mission-state banner.
-    /// Host drains the flag, flips `quit_mission_enabled` to false,
-    /// and shows the "you may leave the mission now" popup; choosing
-    /// Yes then drives the normal quit-mission flow.
-    pub pending_mission_state_notice: bool,
     /// `CenterOn` forces a rubber-band cancel (clears the multi-select
     /// / multi-unselect flags). The host clears the two flags on
     /// [`InputState`] in `apply_side_effects`.
     pub cancel_multi_selection: bool,
-    /// Set when `SimpleMessage::ResetInput` was consumed from the
-    /// messenger this tick. Zeroes the cached mouse/keyboard state
-    /// and drops held-key edges after a modal closes. The host drains
-    /// this by clearing the ThreadedInput pressed-key cache, resetting
-    /// latch state, and re-syncing the cursor.
-    pub pending_reset_input: bool,
     /// Swordfight-drag ignore-mouse-event bracket: when the selected PC
     /// was swordfighting at the start of `perform_hourglass` but is no
     /// longer swordfighting after the per-element / sequence-manager
@@ -864,18 +827,9 @@ impl SideEffects {
             fade_to_black: _,
             set_draw_hidden: _,
             skip_render: _,
-            pending_dialogues: _,
-            pending_popup_texts: _,
-            pending_debriefings: _,
-            pending_sherwood_report: _,
-            trade_receipts: _,
-            pending_show_console: _,
+            host_effects: _,
             pending_mark_pc_ids: _,
-            bg_blits: _,
-            pending_silent_win_widget_swap: _,
-            pending_mission_state_notice: _,
             cancel_multi_selection: _,
-            pending_reset_input: _,
             pending_swordfight_drag_ignore: _,
             ui_has_focus: _,
             pending_minimap_position,

@@ -36,10 +36,17 @@ fn populated_engine() -> EngineInner {
         frames_remaining: 7,
     }));
     effects.set_draw_hidden = Some(false);
-    effects.pending_dialogues = vec![5, -1, 99];
-    effects.pending_popup_texts = vec![42];
-    effects.pending_sherwood_report = true;
-    effects.pending_mission_state_notice = true;
+    effects.host_effects.extend_dialogues(vec![5, -1, 99]);
+    effects.host_effects.extend_popup_texts(vec![42]);
+    effects.host_effects.request_sherwood_report();
+    {
+        effects
+            .host_effects
+            .request_signal(crate::engine::HostSignal::MissionStateNotice);
+        effects
+            .host_effects
+            .request_signal(crate::engine::HostSignal::MissionStatePopup);
+    };
     effects.ui_has_focus = true;
     effects.pending_minimap_position = Some(crate::coordinates::ScreenPoint::new(56.0, 78.0));
     effects.pending_minimap_display_maps = vec![crate::engine::MinimapDisplayRequest {

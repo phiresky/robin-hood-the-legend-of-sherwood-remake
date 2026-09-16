@@ -45,9 +45,7 @@ mod effects;
 mod transport;
 mod viewport;
 pub(crate) use effects::SherwoodTradingAccess;
-pub use effects::{
-    DeferredAudioRequest, HostAudio, HostEffectBatches, HostModalRequest, HostSignal,
-};
+pub use effects::{DeferredAudioRequest, HostAudio, HostEffectBatches, HostSignal};
 pub(crate) use transport::CommittedSnapshotTransition;
 pub use transport::{
     HostTransport, PendingSnapshotTransition, PendingSnapshotTransitionPayload, SnapshotSave,

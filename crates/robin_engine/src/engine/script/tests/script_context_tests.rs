@@ -1409,7 +1409,11 @@ fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
     );
     assert_eq!(engine.control.popup_scroll_last_display_frame, Some(48479));
     assert_eq!(
-        engine.feedback.pending_side_effects.pending_popup_texts,
+        engine
+            .feedback
+            .pending_side_effects
+            .host_effects
+            .take_popup_texts(),
         vec![11]
     );
 }

@@ -2739,8 +2739,8 @@ impl EngineInner {
                     );
                     self.feedback
                         .pending_side_effects
-                        .pending_dialogues
-                        .push(id);
+                        .host_effects
+                        .extend_dialogues([id]);
                 }
                 self.sequence_presentation_reset_input(sim, assets);
             }
@@ -2753,8 +2753,8 @@ impl EngineInner {
                     );
                     self.feedback
                         .pending_side_effects
-                        .pending_popup_texts
-                        .push(id);
+                        .host_effects
+                        .extend_popup_texts([id]);
                 }
                 self.sequence_presentation_reset_input(sim, assets);
             }

@@ -133,7 +133,8 @@ fn mission_state_transitions() {
         engine
             .feedback
             .pending_side_effects
-            .pending_silent_win_widget_swap
+            .host_effects
+            .has_signal(crate::engine::HostSignal::SilentWinWidgetSwap)
     );
 }
 
@@ -143,7 +144,7 @@ fn mission_won_first_time_raises_mission_state_notice() {
     // On the first post-win frame with no PC guarded, the engine
     // fires the `LEAVE_MISSION_NOW` mission-state notice +
     // `EnableWidgetQuitMission(false)`.  Both are routed through
-    // `SideEffects.pending_mission_state_notice`.
+    // the shared host-effects queue.
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
@@ -152,7 +153,9 @@ fn mission_won_first_time_raises_mission_state_notice() {
         engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
-        side_effects.pending_mission_state_notice,
+        side_effects
+            .host_effects
+            .has_signal(crate::engine::HostSignal::MissionStateNotice),
         "expected pending_mission_state_notice side effect"
     );
 }
