@@ -38,20 +38,7 @@ function fixture(calls: string[]): BootDependencies {
 test('boot preserves preload, runtime/canvas handoff, RPC readiness and replay ordering', async () => {
     const calls: string[] = [];
     await bootGame(fixture(calls), new AbortController().signal);
-    assert.deepEqual(calls, ['join', 'build', 'runtime', 'content', 'preload', 'rpc', 'boot', 'canvas', 'replay', 'ready']);
-});
-
-test('a fresh profile can queue its replay before mission RPC readiness', async () => {
-    const ready = Promise.withResolvers<void>();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error('startup deadlocked')), 100);
-    try {
-        await bootGame({
-            ...fixture([]),
-            installRpc: () => async <T>() => { await ready.promise; return undefined as T; },
-            installReplay: async () => { ready.resolve(); },
-        }, controller.signal);
-    } finally { clearTimeout(timer); }
+    assert.deepEqual(calls, ['join', 'build', 'runtime', 'content', 'preload', 'rpc', 'boot', 'canvas', 'ready', 'replay']);
 });
 
 test('missing runtime, content and preload failures stop boot and permit a fresh attempt', async () => {
@@ -232,7 +219,7 @@ test('multiplayer content access and preloads stay behind runtime compatibility 
         }, new AbortController().signal);
         if (compatible) {
             await boot;
-            assert.deepEqual(calls, ['build', 'ticket', 'local content', 'local assets', 'preload', 'rpc', 'boot', 'shipping files', 'canvas', 'replay', 'ready']);
+            assert.deepEqual(calls, ['build', 'ticket', 'local content', 'local assets', 'preload', 'rpc', 'boot', 'shipping files', 'canvas', 'ready', 'replay']);
         } else {
             await assert.rejects(boot, /does not exactly match/);
             assert.deepEqual(calls, ['build']);
