@@ -37,7 +37,7 @@ fn replay() -> ReplayFile {
     }
 }
 
-fn compact(file: ReplayFile) -> String {
+fn compact(file: ReplayFile) -> Vec<u8> {
     let data: ReplayData = file.try_into().unwrap();
     robin_replay_format::encode_compact(&data, ENGINE_VERSION_HASH).unwrap()
 }
@@ -64,19 +64,26 @@ fn hostile_transport_and_oversized_input_fail_closed() {
         .lock()
         .expect("helper fixture lock poisoned");
     assert!(matches!(
-        native_admission::validate_in_native_child(
-            &"x".repeat(LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_input_bytes + 1)
-        ),
+        native_admission::validate_in_native_child(&vec![
+            b'x';
+            LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
+                .max_input_bytes
+                + 1
+        ]),
         Err(AdmissionError::Compact(_))
     ));
     assert!(
-        native_admission::validate_in_native_child(&format!("rhrec-{ENGINE_VERSION_HASH}-AA"))
-            .is_err()
+        native_admission::validate_in_native_child(
+            format!("rhrec-{ENGINE_VERSION_HASH}-AA").as_bytes()
+        )
+        .is_err()
     );
-    let malformed_prefix = compact(replay()).replacen(ENGINE_VERSION_HASH, "not-a-commit", 1);
+    let mut malformed_prefix = compact(replay());
+    malformed_prefix[6] = b'z';
     assert!(native_admission::validate_in_native_child(&malformed_prefix).is_err());
     // The recorded source hash is provenance, not a compatibility gate.
-    let other_commit = compact(replay()).replacen(ENGINE_VERSION_HASH, "0123456789ab", 1);
+    let mut other_commit = compact(replay());
+    other_commit[6..18].copy_from_slice(b"0123456789ab");
     native_admission::validate_in_native_child(&other_commit).unwrap();
 }
 

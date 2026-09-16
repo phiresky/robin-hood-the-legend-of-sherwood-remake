@@ -233,9 +233,8 @@ fn prepare_source(source: &Path, staging: &Path) -> Result<(ReplayFile, u32)> {
         )
     } else {
         let bytes = source_bytes.context("replay input is not a file or mission directory")?;
-        if bytes.starts_with(b"rhrec-") {
-            let (_, data) =
-                crate::replay_format::decode_compact(std::str::from_utf8(&bytes)?.trim())?;
+        if bytes.starts_with(crate::replay_format::COMPACT_PREFIX) {
+            let (_, data) = crate::replay_format::decode_compact(&bytes)?;
             let version = data.header().version;
             (data, version)
         } else {

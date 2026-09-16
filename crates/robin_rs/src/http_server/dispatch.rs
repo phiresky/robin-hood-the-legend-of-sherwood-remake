@@ -366,13 +366,10 @@ pub(super) fn drain_pre_engine(server: &HttpServer) {
 /// browser and native RPC accept exactly the canonical compact envelope.
 pub(super) fn decode_load_replay(
     launches: &crate::replay_service::ReplayLaunches,
-    data: &str,
+    data: &[u8],
     paused: bool,
 ) -> Reply {
-    // Compact admission is byte-canonical: whitespace is not discarded.
-    // Local JSONL tooling likewise emits its header at byte zero.
-    let trimmed = data;
-    let replay = crate::replay_format::decode_compact_for_public_playback(trimmed)
+    let replay = crate::replay_format::decode_compact_for_public_playback(data)
         .map(|(_, replay)| replay)
         .map_err(|error| RpcError::replay_load("decode compact replay", error))?;
     let frame_count = replay.frame_count();

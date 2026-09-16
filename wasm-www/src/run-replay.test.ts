@@ -4,7 +4,7 @@ import test from 'node:test';
 import { fetchRunReplay, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
 
 const build = '0123456789ab';
-const replay = new TextEncoder().encode(`rhrec-${build}-AAAA`);
+const replay = new TextEncoder().encode(`RHREC\x01${build}\x28\xb5\x2f\xfd`);
 
 function runDocument(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -46,7 +46,7 @@ test('run query ids are bounded opaque text', () => {
 test('a run launches its recorded engine build with the exact published replay', async () => {
     const { fetchImpl, urls } = api(runDocument());
     const result = await fetchRunReplay('run-1', 'https://robinhood.example/api/v1/', fetchImpl, new AbortController().signal);
-    assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, content: `rhrec-${build}-AAAA` });
+    assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, content: replay });
     assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay']);
 });
 
@@ -68,7 +68,7 @@ test('run playback refuses unavailable, Full, mismatched and tampered runs', asy
     tampered[tampered.length - 1] = 0x42;
     await assert.rejects(fetchRunReplay('run-1', '/api/v1', api(runDocument(), tampered).fetchImpl, signal), /published identity/u);
     await assert.rejects(fetchRunReplay('run-1', '/api/v1', api(runDocument(), replay, 'application/jsonl').fetchImpl, signal), /did not return/u);
-    const otherBuild = new TextEncoder().encode('rhrec-ffffffffffff-AAAA');
+    const otherBuild = new TextEncoder().encode('RHREC\x01ffffffffffff\x28\xb5\x2f\xfd');
     const otherDocument = runDocument();
     ((otherDocument.replay as Record<string, unknown>).artifact as Record<string, unknown>).sha256 = createHash('sha256').update(otherBuild).digest('hex');
     await assert.rejects(fetchRunReplay('run-1', '/api/v1', api(otherDocument, otherBuild).fetchImpl, signal), /not recorded by engine build/u);

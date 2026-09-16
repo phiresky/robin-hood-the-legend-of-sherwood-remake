@@ -15,7 +15,7 @@ pub const USERNAME_UPDATE_SIGNATURE_DOMAIN_V2: &[u8] =
 
 /// The one wire/storage format accepted for ranked replays. JSONL and older
 /// Rust replay containers are local developer formats, not protocol lanes.
-pub const RANKED_REPLAY_MEDIA_TYPE_V1: &str = "application/x-robin-rhrec+compact";
+pub const RANKED_REPLAY_MEDIA_TYPE_V1: &str = "application/x-robin-rhrec";
 
 /// Mutable display name of one identity key. Usernames are not part of run
 /// submissions and are not required to be unique. The server only accepts an

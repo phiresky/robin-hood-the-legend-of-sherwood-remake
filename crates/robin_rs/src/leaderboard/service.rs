@@ -269,17 +269,15 @@ pub fn decode_submission_owner_status(
 }
 
 fn validate_canonical_replay_bytes(bytes: &[u8]) -> Result<String, LeaderboardServiceError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| LeaderboardServiceError::InvalidCompactReplay("not UTF-8".to_owned()))?;
     let limits = robin_replay_format::ReplayAdmissionLimits {
         max_input_bytes: bytes.len(),
         ..Default::default()
     };
-    let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(text, &limits)
+    let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(bytes, &limits)
         .map_err(|error| LeaderboardServiceError::InvalidCompactReplay(error.to_string()))?;
     let canonical = robin_replay_format::encode_compact(&replay, &engine_hash)
         .map_err(|error| LeaderboardServiceError::InvalidCompactReplay(error.to_string()))?;
-    if canonical.as_bytes() != bytes {
+    if canonical.as_slice() != bytes {
         return Err(LeaderboardServiceError::InvalidCompactReplay(
             "bytes do not equal their canonical re-encoding".to_owned(),
         ));
@@ -381,7 +379,6 @@ mod tests {
             single_frame_replay(bitcode::encode(&robin_engine::campaign::Campaign::default()));
         robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
             .unwrap()
-            .into_bytes()
     }
 
     fn artifact(bytes: &[u8]) -> ReplayArtifactV1 {

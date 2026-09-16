@@ -5,7 +5,6 @@ use std::ffi::OsString;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
-use crate::replay_format::COMPACT_PREFIX;
 use robin_engine::engine as engine_api;
 
 /// Extension required for replay files — keeps the format searchable
@@ -22,19 +21,12 @@ fn parse_record_path(s: &str) -> Result<String, String> {
     }
 }
 
-/// clap `value_parser` for `--replay`: accepts either an inline
-/// `rhrec-…` compact string (shared replay pasted on the command line)
-/// or a filesystem path. Path validation is lenient because the loader
-/// (`replay_format::load_replay_spec`) auto-detects JSONL vs. a file
-/// holding a `rhrec-…` string, regardless of extension.
+/// Replay artifacts are binary files; developer recordings may also name an archive.
 fn parse_replay_spec(s: &str) -> Result<String, String> {
-    if s.trim_start().starts_with(COMPACT_PREFIX) {
-        return Ok(s.to_string());
+    if s.is_empty() {
+        return Err("replay path must not be empty".into());
     }
-    // A path — we don't require any particular extension, but a
-    // friendlier error is easy to give when the user clearly fat-
-    // fingered a `rhrec` variant.
-    Ok(s.to_string())
+    Ok(s.to_owned())
 }
 
 /// Robin Hood — The Legend of Sherwood (Rust port)
@@ -85,8 +77,7 @@ pub struct CliArgs {
     pub record: Option<String>,
 
     /// Play back a replay. Accepts any of:
-    ///   - an inline `rhrec-…` compact string (the sharing format),
-    ///   - a file containing a `rhrec-…` string,
+    ///   - a binary `.rhrec` file,
     ///   - a mission recording directory (or any chunk within it),
     ///   - a legacy `*.rhrec.jsonl` recording.
     ///
@@ -497,12 +488,12 @@ fn wasm_cli_args_from_location() -> CliArgs {
             CliArgs::default()
         }
     };
-    if args.replay.is_some() {
-        // URL replays are loaded by the shell over RPC after Rust has
-        // finished initialization, so the mission header can choose the
-        // correct mission without racing demo auto-start.
-        args.wait_for_command = true;
-        args.replay = None;
+    if let Some(replay) = args.replay.take() {
+        // Binary share links are loaded by the shell over RPC. A bare build
+        // hash only selects the runtime and must not suppress normal startup.
+        if replay.starts_with("rhrec1-") {
+            args.wait_for_command = true;
+        }
     }
     install_global_options(&args);
     args

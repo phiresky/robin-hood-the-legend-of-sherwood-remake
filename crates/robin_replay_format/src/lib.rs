@@ -1,8 +1,8 @@
 //! Canonical compact replay encoding and untrusted-input admission.
 //!
 //! Production accepts exactly one replay representation:
-//! `rhrec-{12-lowercase-hex-build}-{base64url-no-pad(zstd(bitcode(ReplayFile)))}`.
-//! There is no format tag, content negotiation, JSON/JSONL fallback, or
+//! `RHREC\x01` + 12 lowercase hexadecimal build bytes + `zstd(bitcode(ReplayFile))`.
+//! There is no content negotiation, JSON/JSONL fallback, or
 //! compatibility decoder at this boundary. JSONL is a crash-safe *local
 //! recorder* format and is deliberately kept in the game-facing developer
 //! facade instead of this crate.
@@ -22,10 +22,8 @@
 //! non-shared linear memory with a CI-inspected 384 MiB maximum. A normal game
 //! wasm instance is not an allocation boundary.
 
-use base64::Engine as _;
 #[cfg(all(feature = "native-admission", not(target_arch = "wasm32")))]
 pub mod native_admission;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use robin_engine::campaign::Campaign;
 use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile, ReplayFrame};
 use serde::Serialize;
@@ -42,7 +40,8 @@ use std::io::Read as _;
 /// compatibility.
 pub const ENGINE_VERSION_HASH: &str = env!("ROBIN_GIT_HASH");
 
-pub const COMPACT_PREFIX: &str = "rhrec-";
+pub const COMPACT_PREFIX: &[u8] = b"RHREC\x01";
+pub const HEADER_BYTES: usize = COMPACT_PREFIX.len() + VERSION_HASH_BYTES;
 pub const VERSION_HASH_BYTES: usize = 12;
 const ZSTD_LEVEL: i32 = 19;
 
@@ -55,11 +54,9 @@ const ZSTD_LEVEL: i32 = 19;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ReplayAdmissionLimits {
-    /// Entire ASCII envelope.
+    /// Entire binary artifact.
     pub max_input_bytes: usize,
-    /// Base64url payload before decoding.
-    pub max_base64_payload_bytes: usize,
-    /// Zstd frame bytes after base64url decoding.
+    /// Zstd frame bytes after the fixed header.
     pub max_compressed_bytes: usize,
     /// Bitcode bytes emitted by zstd.
     pub max_decompressed_bytes: usize,
@@ -106,7 +103,6 @@ pub struct ReplayAdmissionLimits {
 
 pub const DEFAULT_REPLAY_ADMISSION_LIMITS: ReplayAdmissionLimits = ReplayAdmissionLimits {
     max_input_bytes: 16 * 1024 * 1024 + 64,
-    max_base64_payload_bytes: 16 * 1024 * 1024,
     max_compressed_bytes: 12 * 1024 * 1024,
     max_decompressed_bytes: 16 * 1024 * 1024,
     // The decoded artifact itself is capped at 16 MiB, so a canonical stream
@@ -139,7 +135,6 @@ pub const DEFAULT_REPLAY_ADMISSION_LIMITS: ReplayAdmissionLimits = ReplayAdmissi
 /// a separate trust-policy decision, not a transport-size side effect.
 pub const LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS: ReplayAdmissionLimits = ReplayAdmissionLimits {
     max_input_bytes: 64 * 1024 * 1024 + 64,
-    max_base64_payload_bytes: 64 * 1024 * 1024,
     max_compressed_bytes: 48 * 1024 * 1024,
     max_decompressed_bytes: 64 * 1024 * 1024,
     max_zstd_window_log: 26,
@@ -173,7 +168,6 @@ impl Default for ReplayAdmissionLimits {
 #[serde(rename_all = "snake_case")]
 pub enum ReplayLimitKind {
     CompactInputBytes,
-    Base64PayloadBytes,
     CompressedBytes,
     DecompressedBytes,
     ZstdWindowBytes,
@@ -211,23 +205,14 @@ pub enum ReplayMetadataKind {
 pub enum CanonicalStage {
     Bitcode,
     Zstd,
-    Base64Url,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
-    #[error("missing `rhrec-` prefix")]
+    #[error("missing binary RHREC version 1 header")]
     MissingPrefix,
-    #[error("missing build/payload separator")]
-    MissingSeparator,
-    #[error("compact replay contains leading/trailing or non-ASCII bytes")]
-    NonCanonicalEnvelopeText,
     #[error("build identity must be exactly 12 lowercase hexadecimal characters")]
     InvalidVersionHash,
-    #[error("compact replay payload is not unpadded base64url")]
-    InvalidBase64UrlText,
-    #[error("base64url decode failed: {0}")]
-    Base64(#[from] base64::DecodeError),
     #[error("zstd decode failed: {0}")]
     Zstd(std::io::Error),
     #[error("bitcode decode failed: {0}")]
@@ -278,91 +263,71 @@ pub enum FormatError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CompactTransportPreflight<'a> {
     pub version_hash: &'a str,
-    pub base64_payload: &'a str,
-    /// Upper bound implied by base64 length; the exact byte count is checked
-    /// after decoding inside the sandbox.
-    pub estimated_compressed_bytes: usize,
+    pub compressed_payload: &'a [u8],
 }
 
-/// Validate the only accepted envelope grammar without decoding attacker
-/// controlled zstd/bitcode in the API process.
+/// Check the binary header and exact byte limits without decompressing in the API.
 pub fn preflight_compact_transport<'a>(
-    text: &'a str,
+    bytes: &'a [u8],
     limits: &ReplayAdmissionLimits,
 ) -> Result<CompactTransportPreflight<'a>, FormatError> {
     check_limit(
         ReplayLimitKind::CompactInputBytes,
-        text.len(),
+        bytes.len(),
         limits.max_input_bytes,
     )?;
-    if !text.is_ascii() || text.trim() != text {
-        return Err(FormatError::NonCanonicalEnvelopeText);
-    }
-    let rest = text
+    let rest = bytes
         .strip_prefix(COMPACT_PREFIX)
         .ok_or(FormatError::MissingPrefix)?;
-    let (version_hash, payload) = rest.split_once('-').ok_or(FormatError::MissingSeparator)?;
+    let hash = rest
+        .get(..VERSION_HASH_BYTES)
+        .ok_or(FormatError::InvalidVersionHash)?;
+    let version_hash = std::str::from_utf8(hash).map_err(|_| FormatError::InvalidVersionHash)?;
     validate_version_hash(version_hash)?;
     check_limit(
         ReplayLimitKind::VersionHashBytes,
-        version_hash.len(),
+        hash.len(),
         limits.max_version_hash_bytes,
     )?;
-    check_limit(
-        ReplayLimitKind::Base64PayloadBytes,
-        payload.len(),
-        limits.max_base64_payload_bytes,
-    )?;
-    if payload.is_empty()
-        || payload.len() % 4 == 1
-        || !payload
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return Err(FormatError::InvalidBase64UrlText);
-    }
-    let estimated_compressed_bytes =
-        payload
-            .len()
-            .checked_mul(3)
-            .ok_or(FormatError::CountOverflow {
-                kind: ReplayLimitKind::CompressedBytes,
-            })?
-            / 4;
+    let compressed_payload = &rest[VERSION_HASH_BYTES..];
     check_limit(
         ReplayLimitKind::CompressedBytes,
-        estimated_compressed_bytes,
+        compressed_payload.len(),
         limits.max_compressed_bytes,
     )?;
+    // A replay contains one ordinary Zstd frame, never a skippable frame.
+    if !compressed_payload.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        return Err(FormatError::InvalidZstdHeader("missing Zstd magic".into()));
+    }
     Ok(CompactTransportPreflight {
         version_hash,
-        base64_payload: payload,
-        estimated_compressed_bytes,
+        compressed_payload,
     })
 }
 
 /// Encode one canonical compact representation.
-pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatError> {
+pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<Vec<u8>, FormatError> {
     validate_version_hash(hash)?;
     validate_replay_data(data)?;
     let file = ReplayFile::from(data);
     let encoded = bitcode::encode(&file);
     let compressed = zstd::encode_all(encoded.as_slice(), ZSTD_LEVEL).map_err(FormatError::Zstd)?;
-    Ok(format!(
-        "{COMPACT_PREFIX}{hash}-{}",
-        BASE64.encode(compressed)
-    ))
+    let mut bytes = Vec::with_capacity(HEADER_BYTES + compressed.len());
+    bytes.extend_from_slice(COMPACT_PREFIX);
+    bytes.extend_from_slice(hash.as_bytes());
+    bytes.extend_from_slice(&compressed);
+    Ok(bytes)
 }
 
 /// Decode a trusted compact replay while still enforcing canonical bytes and
 /// the current replay schema. This lane does not apply public resource limits.
-pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
-    decode_compact_inner(text, None)
+pub fn decode_compact(bytes: &[u8]) -> Result<(String, ReplayData), FormatError> {
+    decode_compact_inner(bytes, None)
 }
 
 /// Decode the current replay schema under explicit limits. This does not
 /// create a sandbox: it must execute inside a resource-limited worker when
-/// `text` came from an untrusted submitter.
+/// `bytes` came from an untrusted submitter.
 ///
 /// The returned recorded source hash is provenance, not a compatibility gate;
 /// re-encoding with it reproduces the canonical bytes. Ranked admission
@@ -375,14 +340,14 @@ pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
 ///   384-MiB worker while fitting the engine's maximum valid 16-MiB canonical
 ///   Spellforge package): [`LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS`].
 pub fn decode_compact_bounded(
-    text: &str,
+    bytes: &[u8],
     limits: &ReplayAdmissionLimits,
 ) -> Result<(String, ReplayData), FormatError> {
-    decode_compact_inner(text, Some(limits))
+    decode_compact_inner(bytes, Some(limits))
 }
 
 fn decode_compact_inner(
-    text: &str,
+    bytes: &[u8],
     limits: Option<&ReplayAdmissionLimits>,
 ) -> Result<(String, ReplayData), FormatError> {
     let unbounded_limits;
@@ -391,7 +356,6 @@ fn decode_compact_inner(
     } else {
         unbounded_limits = ReplayAdmissionLimits {
             max_input_bytes: usize::MAX,
-            max_base64_payload_bytes: usize::MAX,
             max_compressed_bytes: usize::MAX,
             max_decompressed_bytes: usize::MAX,
             max_zstd_window_log: 31,
@@ -416,8 +380,8 @@ fn decode_compact_inner(
         };
         &unbounded_limits
     };
-    let preflight = preflight_compact_transport(text, parse_limits)?;
-    let compressed = BASE64.decode(preflight.base64_payload.as_bytes())?;
+    let preflight = preflight_compact_transport(bytes, parse_limits)?;
+    let compressed = preflight.compressed_payload;
     if let Some(limits) = limits {
         check_limit(
             ReplayLimitKind::CompressedBytes,
@@ -443,7 +407,7 @@ fn decode_compact_inner(
         });
     }
 
-    validate_canonical_bytes(&file, &encoded, &compressed, preflight.base64_payload)?;
+    validate_canonical_bytes(&file, &encoded, compressed)?;
     let data = ReplayData::try_from(file).map_err(FormatError::InvalidLayout)?;
     validate_replay_data(&data)?;
     Ok((preflight.version_hash.to_owned(), data))
@@ -453,7 +417,6 @@ fn validate_canonical_bytes(
     file: &ReplayFile,
     encoded: &[u8],
     compressed: &[u8],
-    payload: &str,
 ) -> Result<(), FormatError> {
     let canonical_encoded = bitcode::encode(file);
     if canonical_encoded != encoded {
@@ -466,11 +429,6 @@ fn validate_canonical_bytes(
     if canonical_compressed != compressed {
         return Err(FormatError::NonCanonical {
             stage: CanonicalStage::Zstd,
-        });
-    }
-    if BASE64.encode(canonical_compressed) != payload {
-        return Err(FormatError::NonCanonical {
-            stage: CanonicalStage::Base64Url,
         });
     }
     Ok(())
@@ -1415,8 +1373,8 @@ mod tests {
         file
     }
 
-    fn envelope(hash: &str, compressed: &[u8]) -> String {
-        format!("{COMPACT_PREFIX}{hash}-{}", BASE64.encode(compressed))
+    fn envelope(hash: &str, compressed: &[u8]) -> Vec<u8> {
+        [COMPACT_PREFIX, hash.as_bytes(), compressed].concat()
     }
 
     #[test]
@@ -1434,7 +1392,6 @@ mod tests {
                 error,
                 FormatError::LimitExceeded {
                     kind: ReplayLimitKind::CompactInputBytes
-                        | ReplayLimitKind::Base64PayloadBytes
                         | ReplayLimitKind::CompressedBytes
                         | ReplayLimitKind::DecompressedBytes,
                     ..
@@ -1446,7 +1403,7 @@ mod tests {
             .expect("local isolated-worker limits must fit a max-valid Spellforge package");
     }
 
-    fn encode_file(file: &ReplayFile) -> String {
+    fn encode_file(file: &ReplayFile) -> Vec<u8> {
         let encoded = bitcode::encode(file);
         let compressed = zstd::encode_all(encoded.as_slice(), ZSTD_LEVEL).unwrap();
         envelope(TEST_HASH, &compressed)
@@ -1807,10 +1764,13 @@ mod tests {
     }
 
     #[test]
-    fn compact_roundtrip_is_exactly_bitcode_zstd_base64url() {
+    fn compact_roundtrip_is_exactly_binary_header_and_zstd_bitcode() {
         let encoded = encode_compact(&sample_data(), TEST_HASH).unwrap();
-        assert!(encoded.starts_with("rhrec-0123456789ab-"));
-        assert!(!encoded.contains('='));
+        assert!(encoded.starts_with(b"RHREC\x010123456789ab\x28\xb5\x2f\xfd"));
+        let compressed =
+            zstd::encode_all(bitcode::encode(&sample_file()).as_slice(), ZSTD_LEVEL).unwrap();
+        assert_eq!(&encoded[HEADER_BYTES..], compressed);
+        assert_eq!(encoded.len(), HEADER_BYTES + compressed.len());
         let (hash, decoded) = decode_compact_bounded(&encoded, &Default::default()).unwrap();
         assert_eq!(hash, TEST_HASH);
         assert_eq!(decoded.header().mission_id, "Dem_Lei_MP");
@@ -1818,21 +1778,22 @@ mod tests {
     }
 
     #[test]
-    fn transport_preflight_rejects_every_noncanonical_text_shape() {
+    fn transport_preflight_rejects_invalid_headers_and_legacy_text() {
         let valid = encode_file(&sample_file());
-        for invalid in [
-            format!(" {valid}"),
-            format!("{valid}\n"),
-            valid.replacen(TEST_HASH, "ABCDEF012345", 1),
-            valid.replacen(TEST_HASH, "0123456789a", 1),
-            format!("{valid}="),
-            valid.replacen("rhrec-", "RHREC-", 1),
-        ] {
-            assert!(
-                preflight_compact_transport(&invalid, &Default::default()).is_err(),
-                "accepted noncanonical envelope: {invalid}"
-            );
+        for end in 0..HEADER_BYTES + 4 {
+            assert!(preflight_compact_transport(&valid[..end], &Default::default()).is_err());
         }
+        for index in 0..HEADER_BYTES + 4 {
+            let mut invalid = valid.clone();
+            invalid[index] = 0xff;
+            assert!(preflight_compact_transport(&invalid, &Default::default()).is_err());
+        }
+        assert!(
+            preflight_compact_transport(b"rhrec-0123456789ab-KLUv_Q", &Default::default()).is_err()
+        );
+        let mut trailing = valid.clone();
+        trailing.push(0);
+        assert!(decode_compact(&trailing).is_err());
     }
 
     #[test]
@@ -1882,13 +1843,6 @@ mod tests {
                     ..Default::default()
                 },
                 ReplayLimitKind::VersionHashBytes,
-            ),
-            (
-                ReplayAdmissionLimits {
-                    max_base64_payload_bytes: 1,
-                    ..Default::default()
-                },
-                ReplayLimitKind::Base64PayloadBytes,
             ),
             (
                 ReplayAdmissionLimits {
@@ -2219,7 +2173,7 @@ mod tests {
     fn canonical_encoder_window_fits_the_output_bound() {
         let valid = encode_file(&sample_file());
         let preflight = preflight_compact_transport(&valid, &Default::default()).unwrap();
-        let compressed = BASE64.decode(preflight.base64_payload).unwrap();
+        let compressed = preflight.compressed_payload;
         let window = zstd_frame_window_size(&compressed).unwrap();
         assert!(window <= 1 << DEFAULT_REPLAY_ADMISSION_LIMITS.max_zstd_window_log);
         assert!(window <= DEFAULT_REPLAY_ADMISSION_LIMITS.max_decompressed_bytes);

@@ -4,8 +4,8 @@
 Usage: client_soak.py BINARY EVIDENCE_DIR DATADIR SECONDS [client arguments...]
 DISPLAY must identify an already-running isolated display. Sampling does not
 claim GPU memory: /proc RSS is process residency, renderer logs cover its atlas.
-Diagnostic-only --replay-export PATH consumes the JSON /get-replay response and
-passes its exact compact content through the normal client --replay option.
+Diagnostic-only --replay-export PATH passes the binary /get-replay download path
+through the normal client --replay option.
 """
 import json
 import os
@@ -18,8 +18,7 @@ import time
 binary, destination, datadir, duration, *arguments = sys.argv[1:]
 if "--replay-export" in arguments:
     index = arguments.index("--replay-export")
-    exported = json.loads(Path(arguments[index+1]).read_text())
-    arguments[index:index+2] = ["--replay", exported["content"]]
+    arguments[index:index+2] = ["--replay", str(Path(arguments[index+1]).resolve())]
 destination = Path(destination).resolve()
 destination.mkdir(parents=True, exist_ok=True)
 environment = dict(os.environ)

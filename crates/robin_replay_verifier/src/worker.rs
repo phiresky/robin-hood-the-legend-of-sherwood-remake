@@ -170,7 +170,7 @@ fn verify(
                 "replay_hash_coverage_invalid",
             )
         })?;
-    if canonical.as_bytes() != replay_bytes.as_slice() {
+    if canonical.as_slice() != replay_bytes.as_slice() {
         return Err(stage.reject(
             VerificationRejectionCodeV1::MalformedReplay,
             "replay_is_not_canonical",
@@ -438,11 +438,7 @@ fn decode_replay_bounded(
     expected_schema: u32,
     limits: &robin_replay_format::ReplayAdmissionLimits,
 ) -> Result<(String, robin_engine::replay::ReplayData), ReplayRejection> {
-    let text = std::str::from_utf8(bytes).map_err(|_| ReplayRejection {
-        code: VerificationRejectionCodeV1::MalformedReplay,
-        detail: "compact_replay_not_utf8",
-    })?;
-    let (recorded_hash, replay) = robin_replay_format::decode_compact_bounded(text, limits)
+    let (recorded_hash, replay) = robin_replay_format::decode_compact_bounded(bytes, limits)
         .map_err(compact_replay_rejection)?;
     // Ranked boards admit only shipped SCB content. Custom mission archives
     // and embedded Spellforge executables are rejected immediately after the
@@ -499,10 +495,6 @@ fn replay_admission_limits(
         |value: u64, ceiling: usize| usize::try_from(value).unwrap_or(usize::MAX).min(ceiling);
     let mut limits = compiled;
     limits.max_input_bytes = lower(configured.max_input_bytes, compiled.max_input_bytes);
-    limits.max_base64_payload_bytes = lower(
-        configured.max_base64_payload_bytes,
-        compiled.max_base64_payload_bytes,
-    );
     limits.max_compressed_bytes = lower(
         configured.max_compressed_bytes,
         compiled.max_compressed_bytes,
@@ -729,8 +721,7 @@ mod tests {
         let replay = single_frame_replay_with_commands(4_096);
         let compact =
             robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-                .unwrap()
-                .into_bytes();
+                .unwrap();
         let limits = robin_replay_format::ReplayAdmissionLimits {
             max_input_bytes: compact.len(),
             max_entries_per_frame: 64,
@@ -746,15 +737,11 @@ mod tests {
         let replay = single_frame_replay_with_commands(0);
         let recorded_hash = "0123456789ab";
         assert_ne!(recorded_hash, robin_replay_format::ENGINE_VERSION_HASH);
-        let compact = robin_replay_format::encode_compact(&replay, recorded_hash)
-            .unwrap()
-            .into_bytes();
+        let compact = robin_replay_format::encode_compact(&replay, recorded_hash).unwrap();
         let (hash, decoded) = decode_replay_bounded(&compact, SCHEMA, &Default::default()).unwrap();
         assert_eq!(hash, recorded_hash);
         assert_eq!(
-            robin_replay_format::encode_compact(&decoded, &hash)
-                .unwrap()
-                .into_bytes(),
+            robin_replay_format::encode_compact(&decoded, &hash).unwrap(),
             compact
         );
         let failure = decode_replay_bounded(&compact, SCHEMA + 1, &Default::default()).unwrap_err();
@@ -769,8 +756,7 @@ mod tests {
             .unwrap();
         let compact =
             robin_replay_format::encode_compact(&archive, robin_replay_format::ENGINE_VERSION_HASH)
-                .unwrap()
-                .into_bytes();
+                .unwrap();
         let failure = decode_replay_bounded(&compact, SCHEMA, &Default::default()).unwrap_err();
         assert_eq!(failure.code, VerificationRejectionCodeV1::ContentNotAllowed);
         assert_eq!(failure.detail, "ranked_archive_mission_not_allowed");
@@ -780,8 +766,7 @@ mod tests {
             .unwrap();
         let compact =
             robin_replay_format::encode_compact(&archive, robin_replay_format::ENGINE_VERSION_HASH)
-                .unwrap()
-                .into_bytes();
+                .unwrap();
         let failure = decode_replay_bounded(&compact, SCHEMA, &Default::default()).unwrap_err();
         assert_eq!(failure.code, VerificationRejectionCodeV1::ContentNotAllowed);
         assert_eq!(failure.detail, "ranked_spellforge_package_not_allowed");
@@ -802,7 +787,6 @@ mod tests {
             max_input_bytes: u64::MAX,
             max_compressed_bytes: u64::MAX,
             max_decompressed_bytes: u64::MAX,
-            max_base64_payload_bytes: u64::MAX,
             max_campaign_bytes: u64::MAX,
             max_frames: u32::MAX,
             max_version_bytes: u32::MAX,

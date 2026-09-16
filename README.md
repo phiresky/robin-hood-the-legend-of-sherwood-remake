@@ -235,7 +235,7 @@ verification rejects a missing, substituted, tampered, orphaned, or vault
 module. The shell can expand deterministic `.gz` wasm objects with the browser's
 `DecompressionStream` when the static response has no `Content-Encoding`. It
 falls back to the ordinary files for old browsers and local development. With
-`?replay=rhrec-<hash>-...`, it loads the current runtime and checks the
+`?replay=rhrec1-<base64url binary artifact>`, it loads the current runtime and checks the
 replay schema during bounded admission; the recorded commit is provenance.
 An explicit `?replay=<hash>` still selects an archived runtime.
 
@@ -247,8 +247,7 @@ compatibility versions when engine changes make existing recordings
 incompatible; matching schema numbers alone cannot repair a simulation
 divergence. A leaderboard run page links to `/?run=<run id>`: the shell fetches
 the run and its replay from `/api/v1/runs/<run id>` and boots
-`/wasm/<recorded engine version>/`, the hash in the replay's `rhrec-<hash>-`
-prefix, with the Demo generation that build's manifest pins. Full-edition runs
+`/wasm/<recorded engine version>/`, the hash in the replay's binary header, with the Demo generation that build's manifest pins. Full-edition runs
 are download-only for now.
 
 The game data is not rebuilt by CI because the source game

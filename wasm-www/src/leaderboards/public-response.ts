@@ -50,7 +50,7 @@ import {
 } from './participants-metrics.js';
 import { parsePlayerProfile } from './account-contract.js';
 
-export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec+compact';
+export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec';
 
 export function parseBoardMetadata(value: unknown): BoardMetadata {
     const obj = versionedObjectV2(value, 'metadata', ['tick_duration', 'boards']);

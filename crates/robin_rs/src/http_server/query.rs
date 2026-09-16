@@ -96,6 +96,13 @@ fn decode_component(raw: &str) -> Result<Cow<'_, str>, RpcError> {
     })
 }
 
+pub(crate) fn replay_paused(query: &str) -> Result<bool, RpcError> {
+    let mut query = QueryParameters::parse(query)?;
+    let paused = query.flag("paused")?.unwrap_or(false);
+    query.finish()?;
+    Ok(paused)
+}
+
 pub(crate) fn screenshot(query: &str) -> Result<ScreenshotRequest, RpcError> {
     let mut query = QueryParameters::parse(query)?;
     let request = ScreenshotRequest {
@@ -149,6 +156,21 @@ pub(crate) fn decompile_class(query: &str) -> Result<Option<String>, RpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_pause_query_is_strict_and_defaults_to_running() {
+        assert!(!replay_paused("").unwrap());
+        assert!(!replay_paused("paused=false").unwrap());
+        assert!(!replay_paused("paused=0").unwrap());
+        for invalid in [
+            "paused=maybe",
+            "paused=0&paused=1",
+            "unknown=1",
+            "paused=%FF",
+        ] {
+            assert!(replay_paused(invalid).is_err());
+        }
+    }
 
     #[test]
     fn parameters_borrow_plain_components_and_own_only_decoded_text() {

@@ -41,9 +41,9 @@ if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --
 const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resolve(values.site), core = resolve(values.core);
 const outputBase = resolve(values.output);
 let output = outputBase;
-const replayContent = values.replay ? (await readFile(resolve(values.replay), 'utf8')).trim() : undefined;
+const replayContent = values.replay ? await readFile(resolve(values.replay)) : undefined;
 if (values['replay-eof'] && !replayContent) throw new Error('--replay-eof requires --replay');
-const replayBuild = replayContent?.match(/^rhrec-([0-9a-f]{12})-/)?.[1];
+const replayBuild = replayContent?.subarray(0, 18).toString('ascii').match(/^RHREC\x01([0-9a-f]{12})$/)?.[1];
 if (replayContent !== undefined && !replayBuild) throw new Error('--replay must contain a compact rhrec replay');
 if (replayContent !== undefined && values.mission !== 'auto') throw new Error('Replay header must select the mission; omit --mission');
 // Reuse one origin and Chrome profile: query changes must not change asset identity.
@@ -51,8 +51,8 @@ if (replayContent !== undefined && values.mission !== 'auto') throw new Error('R
 const replayRuns = [{ path: values.replay, content: replayContent }];
 for (const path of values['repeat-replay']) {
     if (!replayBuild) throw new Error('--repeat-replay requires --replay');
-    const content = (await readFile(resolve(path), 'utf8')).trim();
-    if (content.match(/^rhrec-([0-9a-f]{12})-/)?.[1] !== replayBuild) {
+    const content = await readFile(resolve(path));
+    if (content.subarray(0, 18).toString('ascii').match(/^RHREC\x01([0-9a-f]{12})$/)?.[1] !== replayBuild) {
         throw new Error('Repeated replay must use the supplied package build identity');
     }
     replayRuns.push({ path, content });
@@ -266,7 +266,7 @@ try {
         const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
         if (values.mission === 'auto') query.delete('mission');
         for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
-        if (replayContent !== undefined) { query.set('replay', replayRun.content); query.set('paused', '0'); }
+        if (replayContent !== undefined) { query.set('replay', 'rhrec1-' + replayRun.content.toString('base64url')); query.set('paused', '0'); }
         if (values.trace) await send('Tracing.start', {
             categories: 'devtools.timeline,blink.user_timing,v8,gpu,disabled-by-default-v8.cpu_profiler',
             transferMode: 'ReturnAsStream',

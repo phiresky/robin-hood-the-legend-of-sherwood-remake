@@ -32,7 +32,7 @@ manager. A durable Ed25519 public key is the player identity; usernames are
 owner-signed display metadata and must be registered before uploading.
 
 Exactly one replay representation is ranked:
-`application/x-robin-rhrec+compact`. Uploaded bytes are the verifier input,
+`application/x-robin-rhrec`. Uploaded bytes are the verifier input,
 the retained object and the public download, unchanged. The replay embeds its
 starting campaign; there is no separate campaign upload.
 
@@ -123,14 +123,14 @@ an anonymous run to a key (`404` for a target the key does not own).
    (duplicate keys and unknown fields rejected). A V2-shaped submission from
    an old client is `400`.
 2. `replay`: the compact replay with media type
-   `application/x-robin-rhrec+compact`.
+   `application/x-robin-rhrec`.
 
 Before anything is reserved the API checks: the signed request (window and
 signature), the board exists, the mission is on the board, the requested
 metrics are offered by the board, the uploader has a registered username, the
 replay length and SHA-256 equal the signed artifact, and the replay passes the
-allocation-free lexical compact-transport scan (the API never
-base64/zstd/bitcode-decodes hostile bytes). A red storage/capacity check
+allocation-free binary-header check (the API never
+zstd/bitcode-decodes hostile bytes). A red storage/capacity check
 reserves nothing.
 
 One SQLite transaction then acquires an upload lease for the replay. A replay
@@ -447,3 +447,10 @@ Crash and bug reports use `/api/v1/diagnostics` and the private operator
 endpoints. See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
 for payload limits, retention and client behavior. Diagnostics are included in
 the normal SQLite backup and maintenance fencing.
+
+Replay transport is binary: `RHREC` + version byte `1` + 12 ASCII lowercase
+hexadecimal build bytes + a Zstd frame containing bitcode. Uploads, stored
+objects, verifier input, and downloads use these exact bytes and the media type
+`application/x-robin-rhrec`. Text-format replays are no longer accepted; existing
+text artifacts are not converted by this change. Deploy clients, API, and verifier
+together, with freshly published verifier manifests for the binary contract.

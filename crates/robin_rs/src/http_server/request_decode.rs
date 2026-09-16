@@ -78,7 +78,7 @@ struct SetPausedBody {
 
 #[derive(Serialize, Deserialize)]
 struct LoadReplayBody {
-    data: String,
+    data: Vec<u8>,
     #[serde(default)]
     paused: bool,
 }
@@ -296,7 +296,7 @@ mod tests {
             // Preflight checks the envelope, not the compressed replay contents.
             (
                 "load-replay",
-                serde_json::json!({"data":"rhrec-abcdef012345-AA"}),
+                serde_json::json!({"data": b"RHREC\x01abcdef012345\x28\xb5\x2f\xfd".to_vec()}),
                 true,
             ),
         ] {

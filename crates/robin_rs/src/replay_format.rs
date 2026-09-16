@@ -47,16 +47,16 @@ pub fn validate_replay_data(
 pub fn encode_compact(
     data: &robin_engine::replay::ReplayData,
     hash: &str,
-) -> Result<String, robin_replay_format::FormatError> {
+) -> Result<Vec<u8>, robin_replay_format::FormatError> {
     validate_replay_data(data)?;
     robin_replay_format::encode_compact(data, hash)
 }
 
 /// Decode a trusted compact replay and apply the game-runtime executable gate.
 pub fn decode_compact(
-    text: &str,
+    bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
-    let decoded = robin_replay_format::decode_compact(text)?;
+    let decoded = robin_replay_format::decode_compact(bytes)?;
     validate_spellforge_runtime_package(&decoded.1)?;
     Ok(decoded)
 }
@@ -64,10 +64,10 @@ pub fn decode_compact(
 /// Decode the current public format under the canonical resource limits and
 /// reject packages targeting another Spellforge VM ABI.
 pub fn decode_compact_for_admission(
-    text: &str,
+    bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
     let decoded = robin_replay_format::decode_compact_bounded(
-        text,
+        bytes,
         &robin_replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS,
     )?;
     validate_spellforge_runtime_package(&decoded.1)?;
@@ -76,10 +76,10 @@ pub fn decode_compact_for_admission(
 
 /// Decode the bounded local-custom lane after/inside isolated containment.
 pub fn decode_compact_for_local_playback(
-    text: &str,
+    bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
     let decoded = robin_replay_format::decode_compact_bounded(
-        text,
+        bytes,
         &robin_replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
     )?;
     validate_spellforge_runtime_package(&decoded.1)?;
@@ -111,7 +111,7 @@ pub enum ReplayLoadError {
     #[error("browser compact replay was not validated by the isolated Web Worker")]
     BrowserWorkerValidationRequired,
     #[cfg(target_arch = "wasm32")]
-    #[error("browser replay loading accepts only an inline compact replay")]
+    #[error("browser replay loading requires the binary RPC transport")]
     BrowserCompactOnly,
 }
 
@@ -120,44 +120,43 @@ pub enum ReplayLoadError {
 /// OS memory/CPU limits. Browser builds require the shell's dedicated Worker
 /// to install a one-shot digest proof before this call.
 pub fn decode_compact_for_public_playback(
-    text: &str,
+    bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), ReplayLoadError> {
-    AdmittedReplay::admit(text)?.decode()
+    AdmittedReplay::admit(bytes)?.decode()
 }
 
 /// Process-local capability for these exact immutable bytes. Deliberately
 /// neither serializable nor publicly constructible: a deserialized digest is
 /// not evidence that the isolated worker ran.
 struct AdmittedReplay<'a> {
-    text: &'a str,
+    bytes: &'a [u8],
 }
 
 impl<'a> AdmittedReplay<'a> {
-    fn admit(text: &'a str) -> Result<Self, ReplayLoadError> {
+    fn admit(bytes: &'a [u8]) -> Result<Self, ReplayLoadError> {
         #[cfg(not(target_arch = "wasm32"))]
-        native::validate_in_native_child(text)?;
+        native::validate_in_native_child(bytes)?;
         #[cfg(target_arch = "wasm32")]
-        consume_browser_worker_proof(text)?;
-        Ok(Self { text })
+        consume_browser_worker_proof(bytes)?;
+        Ok(Self { bytes })
     }
 
     // The isolated worker validated and canonically re-encoded these exact
     // immutable bytes. Repeating typed decode here is safe: collection/string
     // sizes and total work were already proven under external containment.
     fn decode(self) -> Result<(String, robin_engine::replay::ReplayData), ReplayLoadError> {
-        decode_compact_for_local_playback(self.text).map_err(Into::into)
+        decode_compact_for_local_playback(self.bytes).map_err(Into::into)
     }
 }
 
 /// Explicitly local CLI/developer loader. Production network/server code must
 /// call the canonical crate's bounded admission API and has no JSONL branch.
 pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, ReplayLoadError> {
-    if spec.starts_with(COMPACT_PREFIX) {
-        return decode_compact_for_public_playback(spec).map(|(_, replay)| replay);
-    }
-
     #[cfg(target_arch = "wasm32")]
-    return Err(ReplayLoadError::BrowserCompactOnly);
+    {
+        let _ = spec;
+        return Err(ReplayLoadError::BrowserCompactOnly);
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -188,8 +187,8 @@ pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, 
         }
 
         // Every other path is a production compact artifact. Bound acquisition
-        // before allocating a String so hostile local/URL-derived paths cannot
-        // bypass the codec's transport preflight with `read_to_string`.
+        // before allocating a byte buffer so hostile local/URL-derived paths cannot
+        // bypass the codec's transport preflight with an unbounded read.
         use std::io::Read as _;
         let limit = LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_input_bytes;
         let file = std::fs::File::open(spec)?;
@@ -216,13 +215,7 @@ pub fn load_replay_spec(spec: &str) -> Result<robin_engine::replay::ReplayData, 
             }
             .into());
         }
-        let contents = std::str::from_utf8(&bytes).map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("compact replay is not UTF-8: {error}"),
-            )
-        })?;
-        decode_compact_for_public_playback(contents).map(|(_, replay)| replay)
+        decode_compact_for_public_playback(&bytes).map(|(_, replay)| replay)
     }
 }
 
@@ -237,20 +230,20 @@ thread_local! {
 /// the exact canonical compact replay. This performs transport preflight only;
 /// it never zstd/bitcode-decodes in the main wasm instance.
 #[cfg(target_arch = "wasm32")]
-pub fn mark_browser_worker_validated(text: &str) -> Result<(), ReplayLoadError> {
+pub fn mark_browser_worker_validated(bytes: &[u8]) -> Result<(), ReplayLoadError> {
     use sha2::Digest as _;
 
-    preflight_compact_transport(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
-    let digest: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+    preflight_compact_transport(bytes, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
+    let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
     BROWSER_WORKER_PROOF.with(|proof| *proof.borrow_mut() = Some(digest));
     Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn consume_browser_worker_proof(text: &str) -> Result<(), ReplayLoadError> {
+fn consume_browser_worker_proof(bytes: &[u8]) -> Result<(), ReplayLoadError> {
     use sha2::Digest as _;
 
-    let digest: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+    let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
     let accepted = BROWSER_WORKER_PROOF.with(|proof| proof.borrow_mut().take()) == Some(digest);
     if accepted {
         Ok(())

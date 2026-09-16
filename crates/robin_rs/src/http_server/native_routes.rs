@@ -34,11 +34,7 @@ fn classify(method: &Method, path: &str) -> Option<Route> {
 }
 
 fn replay_body_limit() -> usize {
-    const JSON_OVERHEAD_BYTES: usize = 1024;
-    crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
-        .max_input_bytes
-        .checked_add(JSON_OVERHEAD_BYTES)
-        .expect("replay JSON transport limit fits usize")
+    crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_input_bytes
 }
 
 pub(super) fn body_limit(method: &Method, path: &str) -> Option<usize> {
@@ -84,7 +80,22 @@ pub(super) async fn dispatch(
             {
                 return (400, error.wire_body().into());
             }
-            request_decode::decode_json(kind, req.body_bytes())
+            if matches!(kind, RequestKind::LoadReplay) {
+                crate::replay_format::preflight_compact_transport(
+                    req.body_bytes(),
+                    &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
+                )
+                .map_err(|error| RpcError::replay_format("invalid binary replay", error))
+                .and_then(|_| {
+                    let paused = crate::http_server::query::replay_paused(query)?;
+                    Ok(HttpPayload::LoadReplay {
+                        data: req.body_bytes().to_vec(),
+                        paused,
+                    })
+                })
+            } else {
+                request_decode::decode_json(kind, req.body_bytes())
+            }
         }
         None => {
             return (
@@ -116,12 +127,12 @@ pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, RpcE
         ));
     }
     let content_type = req.header("Content-Type").ok_or_else(|| {
-        RpcError::invalid_request("load-replay requires Content-Type: application/json")
+        RpcError::invalid_request("load-replay requires Content-Type: application/x-robin-rhrec")
     })?;
     let media_type = content_type.split(';').next().unwrap_or_default().trim();
-    if !media_type.eq_ignore_ascii_case("application/json") {
+    if !media_type.eq_ignore_ascii_case("application/x-robin-rhrec") {
         return Err(RpcError::invalid_request(
-            "load-replay requires Content-Type: application/json",
+            "load-replay requires Content-Type: application/x-robin-rhrec",
         ));
     }
     let declared = req.body_length().ok_or_else(|| {
@@ -129,7 +140,7 @@ pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, RpcE
     })?;
     if declared > limit {
         return Err(RpcError::capacity(format!(
-            "load-replay JSON body observed {declared} bytes, limit is {limit}"
+            "load-replay binary body observed {declared} bytes, limit is {limit}"
         )));
     }
     Ok(limit)

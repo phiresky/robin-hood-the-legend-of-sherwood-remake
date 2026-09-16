@@ -12,7 +12,10 @@ pub(super) async fn resolve_deferred_reply(reply: Reply) -> Reply {
             .map_err(|error| {
                 RpcError::internal(format!("replay export worker dropped its result: {error}"))
             })?
-            .map(|content| ReplyBody::Json(serde_json::json!({ "content": content })))
+            .map(|data| ReplyBody::Binary {
+                content_type: "application/x-robin-rhrec",
+                data,
+            })
             .map_err(|error| match error {
                 crate::replay_service::ExportError::Capacity(message) => {
                     RpcError::capacity(message)

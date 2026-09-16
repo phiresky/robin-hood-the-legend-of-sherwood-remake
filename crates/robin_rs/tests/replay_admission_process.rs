@@ -72,12 +72,9 @@ fn cold_native_worker_accepts_only_the_exact_current_compact_artifact() {
         robin_rs::replay_format::ENGINE_VERSION_HASH,
     )
     .expect("encode current compact replay");
-    let reply = run_cold_worker(compact.as_bytes());
+    let reply = run_cold_worker(&compact);
     assert_eq!(reply["status"], "accepted");
-    assert_eq!(
-        reply["sha256"],
-        hex::encode(sha2::Sha256::digest(compact.as_bytes()))
-    );
+    assert_eq!(reply["sha256"], hex::encode(sha2::Sha256::digest(&compact)));
 
     let rejected = run_cold_worker(b"{\"plausible\":\"json\"}\n");
     assert_eq!(rejected["status"], "rejected");
@@ -98,7 +95,7 @@ fn contained_worker_rejects_nested_campaign_allocation_amplification_and_survive
         robin_rs::replay_format::ENGINE_VERSION_HASH,
     )
     .expect("encode nested campaign amplification fixture");
-    let rejected = run_cold_worker(compact.as_bytes());
+    let rejected = run_cold_worker(&compact);
     assert_eq!(rejected["status"], "rejected");
     assert!(
         rejected["error"]
@@ -115,5 +112,5 @@ fn contained_worker_rejects_nested_campaign_allocation_amplification_and_survive
         robin_rs::replay_format::ENGINE_VERSION_HASH,
     )
     .expect("encode post-rejection replay");
-    assert_eq!(run_cold_worker(valid.as_bytes())["status"], "accepted");
+    assert_eq!(run_cold_worker(&valid)["status"], "accepted");
 }
