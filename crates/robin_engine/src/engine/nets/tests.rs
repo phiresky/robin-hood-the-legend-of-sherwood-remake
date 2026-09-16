@@ -950,7 +950,13 @@ fn capture_sets_victim_display_order_behind_net() {
         y: LAND_Y,
         z: LAND_Z,
     };
-    let net_id = engine.add_test_entity(make_net(landing));
+    let mut entity = make_net(landing);
+    let Entity::Net(net) = &mut entity else {
+        unreachable!()
+    };
+    net.projectile.flying = true;
+    net.net.was_flying = true;
+    let net_id = engine.add_test_entity(entity);
     // The victim already has a default Sprite (non-Option).
     let victim_id = add_soldier(
         &mut engine,
@@ -963,7 +969,8 @@ fn capture_sets_victim_display_order_behind_net() {
         false,
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    // The owner tick publishes captured victims' depth after the capture callback.
+    engine.tick_net(sim, &assets, net_id);
 
     let sprite = engine.get_entity(victim_id).unwrap().sprite();
     assert_eq!(

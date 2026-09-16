@@ -1925,10 +1925,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
 
     let mut engine = EngineInner::new();
 
-    // All same priority (soldier); sort falls back to display_order
-    // then EntityId (insertion / creation order).  Soldiers with no
-    // sprite fall back to position.y as their display_order (matches
-    // sort_for_display).
+    // Equal-priority soldiers sort by published depth, then creation order.
     let mk = |y: f32| {
         let mut element = {
             let mut initial_element = ElementData::default();
@@ -1936,6 +1933,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
             initial_element
         };
         element.set_position(WorldPoint3D { x: 0.0, y, z: 0.0 });
+        element.sprite.compute_display_depth();
         Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),
