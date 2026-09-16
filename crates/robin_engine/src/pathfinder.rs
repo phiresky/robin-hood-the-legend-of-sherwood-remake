@@ -2536,6 +2536,7 @@ mod tests {
         let partition = PathPartition::from_graph(&graph);
         for (attempts, expected) in [(1, NodeIdx(0)), (0, NodeIdx(1))] {
             let mut scratch = PathSearchScratch::default();
+            scratch.shortest_distance_found = 2e10;
             scratch.search_nodes = graph.nodes.iter().map(NodeSearchState::capture).collect();
             scratch.open_nodes = [NodeIdx(0), NodeIdx(1)].into();
             let mut search = PathSearch {
