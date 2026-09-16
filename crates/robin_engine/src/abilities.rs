@@ -3672,11 +3672,6 @@ mod tests {
             sprite.last_action = OrderType::ClimbingUpOnShoulders;
             sprite.current_frame = 5;
             sprite.frame_count = 1;
-            climber.actor_data_mut().unwrap().installed_order =
-                Some(crate::element::InstalledActorOrder {
-                    order_id: std::num::NonZeroU32::new(1).unwrap(),
-                    order_type: OrderType::ClimbingUpOnShoulders,
-                });
         }
         sync_shoulder_climb_animation(&mut entities, climber_id, OrderType::ClimbingUpOnShoulders);
         let helper = entities.get(helper_id).unwrap().element_data();
@@ -3798,10 +3793,6 @@ mod tests {
         // the carrier-relative goal 11.
         climber.element.set_direction_instantly(12);
         climber.element.set_direction_goal(11);
-        climber.actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: OrderType::ClimbingUpOnShoulders,
-        });
 
         entities.push(Some(Entity::Pc(helper)));
         entities.push(Some(Entity::Pc(climber)));

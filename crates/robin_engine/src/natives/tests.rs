@@ -3239,11 +3239,6 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
     let mut pc = native_test_pc(Vec::new(), Vec::new());
     // The current-action query reads the actor's installed order (Original
     // actor order), which instruction handling publishes from the selected sequence order.
-    pc.actor_data_mut().unwrap().installed_order = Some(crate::element::InstalledActorOrder {
-        order_id: std::num::NonZeroU32::new(1).unwrap(),
-        order_type: crate::order::OrderType::RunningUpright,
-    });
-    pc_host.entities.push(Some(pc));
     let mut sequences = crate::sequence::SequenceManager::new();
     let mut element =
         crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(pc_id));
@@ -3253,7 +3248,16 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
         0.0,
         std::num::NonZeroU32::new(1).unwrap(),
     ));
-    sequences.insert_element(element);
+    let sequence = sequences.insert_element(element);
+    pc.actor_data_mut().unwrap().installed_order = Some(crate::element::InstalledActorOrder::new(
+        crate::sequence::SequenceElementRef::new(sequence, 0),
+        sequences
+            .get_element(sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap(),
+    ));
+    pc_host.entities.push(Some(pc));
     let mut sounds = crate::sound_source::SoundSourceManager::new();
     let weather = crate::engine::WeatherState::default();
     let frame = 123;

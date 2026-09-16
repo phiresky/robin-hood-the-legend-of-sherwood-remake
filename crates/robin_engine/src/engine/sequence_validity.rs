@@ -2354,21 +2354,7 @@ mod tests {
                 sequence,
                 0,
             );
-            let installed_order = engine
-                .orders
-                .sequence_manager
-                .get_element(sequence, 0)
-                .and_then(SequenceElement::current_order)
-                .map(|order| crate::element::InstalledActorOrder {
-                    order_id: order.order_id,
-                    order_type: order.order_type,
-                })
-                .unwrap();
-            let actor = engine
-                .get_entity_mut(healer)
-                .and_then(Entity::actor_data_mut)
-                .unwrap();
-            actor.installed_order = Some(installed_order);
+            engine.publish_selected_order_as_installed(healer);
 
             let assets = LevelAssets::new();
 

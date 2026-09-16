@@ -9,10 +9,24 @@ fn entity_slots_fit_within_two_kibibytes() {
 fn frozen_actor_execute_selection_keeps_independent_installed_identity() {
     let previous = std::num::NonZeroU32::new(10).unwrap();
     let selected = std::num::NonZeroU32::new(11).unwrap();
-    let installed = InstalledActorOrder {
-        order_id: previous,
-        order_type: crate::order::OrderType::WaitingUpright,
-    };
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+    let mut element = crate::sequence::SequenceElement::new(1, Command::Wait, Some(owner));
+    element.push_order(crate::order::Order::new(
+        crate::order::OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        previous,
+    ));
+    let sequence = sequences.insert_element(element);
+    let installed = InstalledActorOrder::new(
+        crate::sequence::SequenceElementRef::new(sequence, 0),
+        sequences
+            .get_element(sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap(),
+    );
     let mut actor = ActorData {
         execution_frozen: true,
         installed_order: Some(installed),

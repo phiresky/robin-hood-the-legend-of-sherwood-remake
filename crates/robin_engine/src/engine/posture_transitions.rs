@@ -37,52 +37,6 @@ use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceI
 use super::EngineInner;
 
 impl EngineInner {
-    fn selected_order_action(&self, entity: EntityId) -> Option<OrderType> {
-        self.orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, entity)
-            .map(|(_, _, order)| order.order_type)
-    }
-
-    /// A make_* rewrite retargets the selected order's action in place and
-    /// leaves its identity alone. The original game's actor order points at that same
-    /// mutated object, so animation queries observe the new action
-    /// immediately even though the sprite does not execute it until its next
-    /// actor slot. Keep the installed-order copy pointed at that rewritten
-    /// action without publishing a
-    /// newly inserted, not-yet-installed order. Call this both before and
-    /// after `post_process_path`: ordinary paths insert a new transition ID
-    /// that the second call rejects, while loaded PassDoor tails can rewrite
-    /// the live legacy order in place during post-processing.
-    fn synchronize_rewritten_selected_order(
-        &mut self,
-        entity: EntityId,
-        action_before: Option<OrderType>,
-    ) {
-        let Some(selected_after) = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, entity)
-            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
-            })
-        else {
-            return;
-        };
-        if action_before == Some(selected_after.order_type) {
-            return;
-        }
-        if let Some(actor) = self.get_entity_mut(entity).and_then(|e| e.actor_data_mut()) {
-            if actor
-                .installed_order
-                .is_some_and(|installed| installed.order_id == selected_after.order_id)
-            {
-                actor.installed_order = Some(selected_after);
-            }
-        }
-    }
-
     /// Upgrade walking to running for `entity`.
     pub(crate) fn actor_make_fast(
         &mut self,
@@ -110,11 +64,10 @@ impl EngineInner {
         }
 
         if let Some(selected_movement) = self.selected_movement_element(entity) {
-            let action_before = self.selected_order_action(entity);
             self.orders
                 .sequence_manager
                 .make_fast(&self.world.entities, entity);
-            self.synchronize_rewritten_selected_order(entity, action_before);
+
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -123,7 +76,6 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             // Base fast-movement conversion still recurses into a same-owner
             // following/postponed movement even when the selected element is
@@ -142,11 +94,10 @@ impl EngineInner {
         entity: EntityId,
     ) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
-            let action_before = self.selected_order_action(entity);
             self.orders
                 .sequence_manager
                 .make_slow(&self.world.entities, entity);
-            self.synchronize_rewritten_selected_order(entity, action_before);
+
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -155,7 +106,6 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else if self.selected_element(entity).is_some() {
             self.orders
                 .sequence_manager
@@ -180,11 +130,11 @@ impl EngineInner {
     ) {
         if self.selected_element(entity).is_some() {
             let selected_movement = self.selected_movement_element(entity);
-            let action_before = self.selected_order_action(entity);
+
             self.orders
                 .sequence_manager
                 .make_upright(&self.world.entities, entity);
-            self.synchronize_rewritten_selected_order(entity, action_before);
+
             if let Some(selected_movement) = selected_movement {
                 if let Some(pathfinder_index) =
                     self.pending_pathfinder_index(entity, selected_movement)
@@ -195,7 +145,7 @@ impl EngineInner {
                     return;
                 }
                 self.after_make_rewrite(sim, entity, selected_movement);
-                self.synchronize_rewritten_selected_order(entity, action_before);
+
                 return;
             }
         }
@@ -216,11 +166,10 @@ impl EngineInner {
         entity: EntityId,
     ) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
-            let action_before = self.selected_order_action(entity);
             self.orders
                 .sequence_manager
                 .make_crouched(&self.world.entities, entity);
-            self.synchronize_rewritten_selected_order(entity, action_before);
+
             if let Some(pathfinder_index) = self.pending_pathfinder_index(entity, selected_movement)
             {
                 self.orders
@@ -229,7 +178,6 @@ impl EngineInner {
                 return;
             }
             self.after_make_rewrite(sim, entity, selected_movement);
-            self.synchronize_rewritten_selected_order(entity, action_before);
         } else {
             if self.selected_element(entity).is_some() {
                 // As in crouched-movement conversion, recurse into its linked
@@ -1029,10 +977,7 @@ fn decide_transitions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{
-        ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, InstalledActorOrder,
-        PcData,
-    };
+    use crate::element::{ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, PcData};
     use crate::engine::LevelAssets;
     use crate::order::Order;
     use crate::sequence::SequenceElement;
@@ -1170,17 +1115,7 @@ mod tests {
     #[test]
     fn in_place_make_rewrite_updates_matching_installed_order_after_door_crossing() {
         let (mut engine, owner, sequence, order_id) = selected_running_pc();
-        {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
-            actor.installed_order = Some(InstalledActorOrder {
-                order_id,
-                order_type: OrderType::RunningUpright,
-            });
-        }
+        engine.publish_selected_order_as_installed(owner);
         engine
             .orders
             .sequence_manager
@@ -1191,15 +1126,11 @@ mod tests {
             .expect("movement has an order")
             .order_type = OrderType::TransitionRunningUprightWalkingCrouched;
 
-        engine.synchronize_rewritten_selected_order(owner, Some(OrderType::RunningUpright));
-
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
         assert_eq!(
-            actor.installed_order,
-            Some(InstalledActorOrder {
-                order_id,
-                order_type: OrderType::TransitionRunningUprightWalkingCrouched,
-            })
+            engine
+                .actor_installed_order(owner)
+                .map(|order| (order.order_id, order.order_type)),
+            Some((order_id, OrderType::TransitionRunningUprightWalkingCrouched))
         );
         assert!(
             engine
@@ -1264,15 +1195,7 @@ mod tests {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        engine
-            .get_entity_mut(owner)
-            .expect("test PC")
-            .actor_data_mut()
-            .expect("test actor")
-            .installed_order = Some(InstalledActorOrder {
-            order_id: walk_order_id,
-            order_type: OrderType::WalkingUpright,
-        });
+        engine.publish_selected_order_as_installed(owner);
 
         engine.actor_make_crouched(&crate::sim_rng::test_context(), &assets, owner);
 
@@ -1290,15 +1213,9 @@ mod tests {
         assert_ne!(selected.order_id, walk_order_id);
         assert_eq!(
             engine
-                .get_entity(owner)
-                .expect("test PC")
-                .actor_data()
-                .expect("test actor")
-                .installed_order,
-            Some(InstalledActorOrder {
-                order_id: walk_order_id,
-                order_type: OrderType::WalkingCrouched,
-            }),
+                .actor_installed_order(owner)
+                .map(|order| (order.order_id, order.order_type)),
+            Some((walk_order_id, OrderType::WalkingCrouched)),
             "the live installed order observes walk 6 -> crouched walk 16 before transition 81 is inserted"
         );
     }
@@ -1457,16 +1374,7 @@ mod tests {
     #[test]
     fn make_rewrite_does_not_install_a_different_selected_order_identity() {
         let (mut engine, owner, sequence, _) = selected_running_pc();
-        let detached_id = engine.orders.allocate_order_id();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(InstalledActorOrder {
-            order_id: detached_id,
-            order_type: OrderType::RunningUpright,
-        });
+        let detached = engine.install_test_order(owner, OrderType::RunningUpright);
         engine
             .orders
             .sequence_manager
@@ -1477,8 +1385,6 @@ mod tests {
             .expect("movement has an order")
             .order_type = OrderType::TransitionRunningUprightWalkingCrouched;
 
-        engine.synchronize_rewritten_selected_order(owner, Some(OrderType::RunningUpright));
-
         assert_eq!(
             engine
                 .get_entity(owner)
@@ -1486,10 +1392,11 @@ mod tests {
                 .actor_data()
                 .unwrap()
                 .installed_order,
-            Some(InstalledActorOrder {
-                order_id: detached_id,
-                order_type: OrderType::RunningUpright,
-            })
+            Some(detached)
+        );
+        assert_eq!(
+            engine.actor_installed_order(owner).unwrap().order_type,
+            OrderType::RunningUpright
         );
     }
 }

@@ -359,7 +359,7 @@ impl EngineInner {
             victim
                 .actor_data()
                 .and_then(|actor| actor.installed_order)
-                .map(|order| order.order_type)
+                .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type)
                 .unwrap_or(crate::order::OrderType::NonanimationEnd),
             self.actor_command(victim_id),
             ai.couldnt_reachpoint,
@@ -391,7 +391,7 @@ impl EngineInner {
             victim
                 .actor_data()
                 .and_then(|actor| actor.installed_order)
-                .map(|order| order.order_type)
+                .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type)
                 .unwrap_or(crate::order::OrderType::NonanimationEnd),
             self.actor_command(victim_id),
             ai.couldnt_reachpoint,

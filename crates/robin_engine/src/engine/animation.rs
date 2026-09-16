@@ -2519,42 +2519,7 @@ fn finish_actor_execute_result(
     let seq_id = arm_ctx.seq_id;
     let elem_idx = arm_ctx.elem_idx;
     let outcome = motion.map(|m| dispatch_arm_completion(sim, anim_type, m, arm_ctx));
-    // These execution branches mutate the live order in place and
-    // assign a new ID rather than selecting another order. Mirror
-    // the changed object after the arm runs; manager
-    // selection alone cannot update the explicit actor-order
-    // snapshot.
-    let mutated_installed_order = matches!(
-        anim_type,
-        OrderType::WaitingUprightBored
-            | OrderType::WaitingUprightBoredRandom
-            | OrderType::LyingStuckUnderNet
-            | OrderType::WriggleUnderNet
-    )
-    .then(|| {
-        arm_ctx
-            .engine
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| element.current_order())
-            .map(|order| crate::element::InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
-            })
-    })
-    .flatten();
-    if let Some(installed_order) = mutated_installed_order {
-        arm_ctx
-            .engine
-            .world
-            .entities
-            .get_mut(entity_id)
-            .expect("animation owner disappeared")
-            .actor_data_mut()
-            .expect("in-place order mutation owner lost actor data")
-            .installed_order = Some(installed_order);
-    }
+
     let effective_motion = match outcome.unwrap_or_else(|| {
         panic!(
             "actor {entity_id:?} {anim_type:?} produced no Execute motion at {seq_id:?}/{elem_idx}"
@@ -3293,7 +3258,9 @@ mod shoulder_idle_initialization_tests {
         assert_eq!(order.order_type, OrderType::WaitingOnShoulders);
         let climber = engine.get_entity(climber_id).unwrap().actor_data().unwrap();
         assert_eq!(
-            climber.installed_order.map(|order| order.order_type),
+            engine
+                .actor_installed_order(climber_id)
+                .map(|order| order.order_type),
             Some(OrderType::WaitingOnShoulders)
         );
         assert_eq!(climber.continuation.motion_state, MotionState::InProgress);

@@ -89,6 +89,7 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
             .unwrap()
             .installed_order
             .unwrap()
+            .resolve(&engine.orders.sequence_manager)
             .order_id,
         replacement_order
     );
@@ -169,6 +170,7 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
             .unwrap()
             .installed_order
             .unwrap()
+            .resolve(&engine.orders.sequence_manager)
             .order_id,
         nested_order
     );

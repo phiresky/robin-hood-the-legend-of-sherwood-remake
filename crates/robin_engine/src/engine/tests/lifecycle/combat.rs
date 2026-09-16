@@ -215,7 +215,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
             .actor_data()
             .unwrap()
             .installed_order
-            .map(|order| order.order_type),
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(OrderType::TransitionRaisingSword),
         "order advancement must publish the successor in the same owner boundary"
     );

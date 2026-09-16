@@ -541,12 +541,12 @@ impl EngineInner {
                         );
                     }
                 }
-                let next_order =
-                    elem.current_order()
-                        .map(|order| crate::element::InstalledActorOrder {
-                            order_id: order.order_id,
-                            order_type: order.order_type,
-                        });
+                let next_order = elem.current_order().map(|order| {
+                    crate::element::InstalledActorOrder::new(
+                        crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+                        order,
+                    )
+                });
                 (elem.owner, next_order)
             })
         else {

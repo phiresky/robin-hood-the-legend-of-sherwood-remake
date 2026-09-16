@@ -2,22 +2,17 @@ use super::*;
 
 #[test]
 fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal() {
-    use crate::element::InstalledActorOrder;
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = make_engine();
     let victim = engine.add_test_entity(make_pc(wp(100.0, 100.0), None));
-    let order_id = engine.orders.allocate_order_id();
+    engine.install_test_order(victim, OrderType::WaitingSword);
     let goal = crate::coordinates::MapPoint::new(120.0, 130.0);
     let entity = engine.get_entity_mut(victim).unwrap();
     entity.set_posture(Posture::StuckUnderNet);
     entity.position_iface_mut().set_map_goal(goal);
     let actor = entity.actor_data_mut().unwrap();
-    actor.installed_order = Some(InstalledActorOrder {
-        order_id,
-        order_type: OrderType::WaitingSword,
-    });
     actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
 
     // A second net translates to an accepted instruction with no orders.
@@ -856,8 +851,7 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        let old_order =
-            engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -873,11 +867,8 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
                 .actor_data_mut()
                 .unwrap();
             actor.action_state = ActionState::MovingSword;
-            actor.installed_order = Some(crate::element::InstalledActorOrder {
-                order_id: old_order,
-                order_type: OrderType::WalkingWithSword,
-            });
         }
+        engine.publish_selected_order_as_installed(victim);
         let profiles = std::sync::Arc::get_mut(&mut assets.profile_manager).unwrap();
         profiles.soldiers[0].fighting = 50;
         let incoming_thrust = &mut profiles.hth_weapons[0].thrusts[SwordStrike::A as usize];

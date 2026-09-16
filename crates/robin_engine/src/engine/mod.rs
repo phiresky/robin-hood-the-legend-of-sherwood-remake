@@ -297,13 +297,9 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
-/// Resolve the original game's actor-order animation identity from the explicit
-/// installed pointer mirror. A selected SequenceManager element is not a
-/// substitute: selection and instruction/order-advancement reference publication are
-/// observably separate boundaries in the Original.
-fn resolve_actor_order_type(
-    installed: Option<crate::element::InstalledActorOrder>,
-) -> crate::order::OrderType {
+/// Read the installed order's live action. Selection and installation occur at
+/// different boundaries, so a selected element is not a substitute.
+fn resolve_actor_order_type(installed: Option<&crate::order::Order>) -> crate::order::OrderType {
     installed
         .map(|order| order.order_type)
         .unwrap_or(crate::order::OrderType::NonanimationEnd)
@@ -312,16 +308,18 @@ fn resolve_actor_order_type(
 #[cfg(test)]
 mod actor_order_type_tests {
     use super::resolve_actor_order_type;
-    use crate::{element::InstalledActorOrder, order::OrderType};
+    use crate::order::{Order, OrderType};
     use std::num::NonZeroU32;
 
     #[test]
     fn installed_order_is_authoritative() {
         assert_eq!(
-            resolve_actor_order_type(Some(InstalledActorOrder {
-                order_id: NonZeroU32::new(7).unwrap(),
-                order_type: OrderType::TransitionWaitingUprightBoredWaitingUpright,
-            })),
+            resolve_actor_order_type(Some(&Order::new(
+                OrderType::TransitionWaitingUprightBoredWaitingUpright,
+                0.0,
+                0.0,
+                NonZeroU32::new(7).unwrap(),
+            ))),
             OrderType::TransitionWaitingUprightBoredWaitingUpright
         );
     }
@@ -1530,21 +1528,34 @@ impl EngineInner {
     pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
         self.get_entity(actor)
             .and_then(|entity| entity.actor_data())
-            .map(|actor| resolve_actor_order_type(actor.installed_order))
+            .map(|actor| {
+                resolve_actor_order_type(
+                    actor
+                        .installed_order
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager)),
+                )
+            })
     }
 
-    /// Mirror an original-game boundary that assigns the order from the selected
-    /// sequence element's current order. Callers must invoke this only where
-    /// the original game performs that assignment (update, accepted instruction,
-    /// or corrected movement retranslation), never as a read-time fallback.
+    pub fn actor_installed_order(&self, actor: EntityId) -> Option<&crate::order::Order> {
+        self.get_entity(actor)?
+            .actor_data()?
+            .installed_order
+            .map(|handle| handle.resolve(&self.orders.sequence_manager))
+    }
+
+    /// Install the selected element's current canonical order at an update,
+    /// accepted instruction, or movement retranslation boundary.
     pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
         let installed_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(&self.world.entities, actor)
-            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
+            .map(|(sequence_id, element_index, order)| {
+                crate::element::InstalledActorOrder::new(
+                    crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                    order,
+                )
             });
         tracing::trace!(?actor, ?installed_order, "publishing installed order");
         self.get_entity_mut(actor)

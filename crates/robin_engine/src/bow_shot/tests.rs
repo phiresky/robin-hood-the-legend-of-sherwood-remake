@@ -63,7 +63,6 @@ fn run_test_bow_owner(
         return;
     };
     let order_id = order.order_id;
-    let order_type = order.order_type;
     let mut engine = crate::engine::EngineInner::new();
     engine.world.entities = std::mem::take(entities);
     engine.orders.sequence_manager = std::mem::replace(sequences, SequenceManager::new());
@@ -78,17 +77,7 @@ fn run_test_bow_owner(
         sequence,
         selected.element_index,
     ));
-    engine
-        .world
-        .entities
-        .get_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .installed_order = Some(crate::element::InstalledActorOrder {
-        order_id,
-        order_type,
-    });
+    engine.publish_selected_order_as_installed(owner);
     engine.control.set_actors_frozen(frozen);
     engine.tick_bow_shot_for(sim, &crate::engine::LevelAssets::new(), owner, order_id);
     *entities = engine.world.entities;

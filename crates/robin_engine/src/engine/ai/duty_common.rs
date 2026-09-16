@@ -1090,7 +1090,7 @@ impl EngineInner {
         let actor = entity.actor_data().expect("duty movement requires actor");
         let animation = actor
             .installed_order
-            .map(|order| order.order_type)
+            .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type)
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
         let civilian = entity.is_civilian();
         let ai = entity

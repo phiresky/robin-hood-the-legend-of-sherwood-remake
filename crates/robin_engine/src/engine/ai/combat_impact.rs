@@ -325,7 +325,7 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{Command, InstalledActorOrder};
+    use crate::element::Command;
     use crate::order::OrderType;
 
     #[test]
@@ -345,14 +345,12 @@ mod tests {
         ] {
             let (mut engine, assets, owner, target) =
                 super::super::battle_decision_observation_tests::fixture(false);
+            let installed = installed.map(|action| engine.install_test_order(owner, action));
             let entity = engine.get_entity_mut(owner).unwrap();
             entity.sprite_mut().last_action = displayed;
             let actor = entity.actor_data_mut().unwrap();
             actor.action_state = crate::element::ActionState::HoldingShield;
-            actor.installed_order = installed.map(|order_type| InstalledActorOrder {
-                order_id: std::num::NonZeroU32::new(1).unwrap(),
-                order_type,
-            });
+            actor.installed_order = installed;
             entity.enemy_ai_mut().unwrap().base.current_substate =
                 Substate::AttackingProtectingWithShield;
             let mut stimulus = Stimulus::new(StimulusType::EventArrowLaunched);

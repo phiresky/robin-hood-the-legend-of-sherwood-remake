@@ -2411,21 +2411,10 @@ impl EngineInner {
                     .get(owner)
                     .and_then(Entity::actor_data)
                     .and_then(|actor| actor.installed_order);
-                if let Some(installed) = installed
-                    && let Some((seq_id, elem_idx)) =
-                        self.world.entities.current_element_for_actor(owner)
-                    && let Some(order) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(seq_id, elem_idx)
-                        .and_then(|element| {
-                            element
-                                .orders
-                                .iter_mut()
-                                .find(|order| order.order_id == installed.order_id)
-                        })
-                {
-                    order.done = true;
+                if let Some(installed) = installed {
+                    installed
+                        .resolve_mut(&mut self.orders.sequence_manager)
+                        .done = true;
                 }
             }
             MotionState::Start | MotionState::InProgress => {}

@@ -839,16 +839,19 @@ impl EngineInner {
                 order
             })
             .collect();
-        let first = orders.front().expect("jump translation produced no orders");
-        let installed = crate::element::InstalledActorOrder {
-            order_id: first.order_id,
-            order_type: first.order_type,
-        };
-        self.orders
+        let element = self
+            .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
-            .expect("jump element disappeared during translation")
-            .orders = orders;
+            .expect("jump element disappeared during translation");
+        element.orders.clear();
+        element.orders.extend(orders);
+        let installed = crate::element::InstalledActorOrder::new(
+            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+            element
+                .current_order()
+                .expect("jump translation produced no orders"),
+        );
         self.world
             .entities
             .get_mut(owner)
@@ -1659,7 +1662,7 @@ mod tests {
             .unwrap()
             .actor_data()
             .unwrap();
-        let installed = actor.installed_order.as_ref().unwrap();
+        let installed = engine.actor_installed_order(owner).unwrap();
         assert_eq!(installed.order_id, successor);
         assert_eq!(installed.order_type, OrderType::JumpingLong);
         assert_eq!(

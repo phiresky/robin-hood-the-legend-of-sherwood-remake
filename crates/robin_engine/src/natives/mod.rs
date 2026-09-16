@@ -633,7 +633,15 @@ impl NativeContext<'_, '_> {
                 .actor_data()
                 .expect("checked actor")
                 .installed_order
-                .map(|order| order.order_type)
+                .map(|handle| {
+                    handle
+                        .resolve(
+                            self.sequence_manager
+                                .as_ref()
+                                .expect("installed action query requires sequence storage"),
+                        )
+                        .order_type
+                })
                 .unwrap_or(OrderType::NonanimationEnd),
         )
     }

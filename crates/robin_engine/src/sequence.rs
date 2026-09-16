@@ -1047,7 +1047,7 @@ pub struct SequenceElement<P: robin_util::state_hash::StateHash = Option<PostSee
     pub point_seek_route_provenance: PointSeekRouteProvenance,
 
     /// The sub-steps (movement waypoints, animation frames, etc.) for this element.
-    pub orders: VecDeque<Order>,
+    pub orders: crate::order::OrderQueue,
 
     /// Subtype-specific data.
     pub data: SequenceElementData<P>,
@@ -1189,7 +1189,7 @@ impl SequenceElement {
             num_transition_orders: 0,
             recorded_gate_path: None,
             point_seek_route_provenance: PointSeekRouteProvenance::Live,
-            orders: VecDeque::new(),
+            orders: crate::order::OrderQueue::new(),
             data: SequenceElementData::Simple,
             next: None,
             postponed: None,
@@ -1367,10 +1367,7 @@ impl SequenceElement {
                 len: self.orders.len(),
             });
         }
-        // VecDeque doesn't have insert, so we convert
-        let mut temp: Vec<Order> = self.orders.drain(..).collect();
-        temp.insert(index, order);
-        self.orders = temp.into();
+        self.orders.insert(index, order);
         Ok(())
     }
 

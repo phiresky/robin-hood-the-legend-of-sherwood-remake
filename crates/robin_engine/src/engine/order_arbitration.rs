@@ -834,11 +834,7 @@ impl EngineInner {
         let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
             Self::priority_resolver(&engine.world.entities)(element)
         };
-        let selected_movement_before_stop = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, owner)
-            .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
+
         tracing::trace!(target: "parity_stop", ?owner, "before stop_movement_for_owner");
         self.stop_movement_for_owner(
             sim,
@@ -849,27 +845,7 @@ impl EngineInner {
             stop_priority,
             &resolver,
         );
-        let rewritten_selected_order = if let Some((before_seq, before_idx, before_id)) =
-            selected_movement_before_stop
-            && let Some((after_seq, after_idx, after_order)) = self
-                .orders
-                .sequence_manager
-                .current_order_for_actor(&self.world.entities, owner)
-            && after_seq == before_seq
-            && after_idx == before_idx
-            && after_order.order_id != before_id
-        {
-            // Stopping movement mutates the first
-            // the order's action and assigns a new ID in place. The actor order still points
-            // at that same object, so update Rust's explicit pointer mirror
-            // only when the selected element survived with a rewritten ID.
-            Some(crate::element::InstalledActorOrder {
-                order_id: after_order.order_id,
-                order_type: after_order.order_type,
-            })
-        } else {
-            None
-        };
+
         tracing::trace!(target: "parity_stop", ?owner, "after stop_movement_for_owner");
         // Path-request cleanup pairs cancellation with
         // failed-path-retry removal whenever a movement element
@@ -882,14 +858,7 @@ impl EngineInner {
             .failed_path_requests
             .retain(|r| r.owner != owner);
         self.orders.pending_path_requests.cancel_for_owner(owner);
-        if let Some(installed_order) = rewritten_selected_order {
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("rewritten movement-stop owner lost actor data")
-                .installed_order = Some(installed_order);
-        }
+
         tracing::trace!(target: "parity_stop", ?owner, "before sequence stop_owner");
         if include_pending {
             self.stop_owner(sim, assets, active_scripts, owner, stop_priority, &resolver);

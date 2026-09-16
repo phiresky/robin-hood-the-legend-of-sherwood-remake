@@ -150,15 +150,9 @@ fn instruction_publication_follows_actor_selection_before_progress_promotion() {
 
     assert_eq!(
         engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order,
-        Some(crate::element::InstalledActorOrder {
-            order_id: incoming_order_id,
-            order_type: OrderType::LoweringShield,
-        })
+            .actor_installed_order(owner)
+            .map(|order| (order.order_id, order.order_type)),
+        Some((incoming_order_id, OrderType::LoweringShield))
     );
 }
 
@@ -757,6 +751,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
             .unwrap()
             .installed_order
             .unwrap()
+            .resolve(&engine.orders.sequence_manager)
             .order_id,
         fresh_order.order_id
     );
@@ -1395,14 +1390,14 @@ fn manager_redundant_parry_skips_instruct_epilogue_after_generated_transition() 
 #[test]
 fn redundant_raise_shield_preserves_prior_look_left_start_edge() {
     let assets = LevelAssets::default();
-    use crate::element::{ActionState, Command, InstalledActorOrder, Posture};
+    use crate::element::{ActionState, Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceState};
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
     let soldier = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    let look_order_id = engine.orders.allocate_order_id();
+    engine.install_test_order(soldier, OrderType::LookingLeft);
     {
         let actor = engine
             .get_entity_mut(soldier)
@@ -1411,10 +1406,6 @@ fn redundant_raise_shield_preserves_prior_look_left_start_edge() {
             .unwrap();
         actor.action_state = ActionState::HoldingShield;
         actor.continuation.motion_state = MotionState::Start;
-        actor.installed_order = Some(InstalledActorOrder {
-            order_id: look_order_id,
-            order_type: OrderType::LookingLeft,
-        });
     }
 
     // Original-game actor translation terminates this command immediately.
@@ -2762,7 +2753,7 @@ fn same_building_entity_seek_keeps_replaced_movement_goal_when_translation_is_em
 
 #[test]
 fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
-    use crate::element::{ActionState, Command, InstalledActorOrder, Posture};
+    use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequencePriority, SequenceState};
@@ -2805,14 +2796,15 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
         old_sequence,
         0,
     );
+    let installed = crate::element::InstalledActorOrder::new(
+        crate::sequence::SequenceElementRef::new(old_sequence, 0),
+        engine.orders.sequence_manager.get_element(old_sequence, 0).unwrap().current_order().unwrap(),
+    );
     {
         let entity = engine.get_entity_mut(owner).unwrap();
         let actor = entity.actor_data_mut().unwrap();
         actor.action_state = ActionState::Bored;
-        actor.installed_order = Some(InstalledActorOrder {
-            order_id: old_order_id,
-            order_type: OrderType::WaitingUprightBored,
-        });
+        actor.installed_order = Some(installed);
         entity.sprite_mut().last_processed_order_id = old_order_id.get();
     }
 
@@ -2873,15 +2865,9 @@ fn same_sector_seek_waiting_for_pass_door_installs_generated_transition() {
     assert_eq!(seek.current_order().unwrap().order_type, transition);
     assert_eq!(
         engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order,
-        Some(InstalledActorOrder {
-            order_id: transition_order_id,
-            order_type: transition,
-        }),
+            .actor_installed_order(owner)
+            .map(|order| (order.order_id, order.order_type)),
+        Some((transition_order_id, transition)),
         "seek refresh's PassDoor return must preserve the actor instruction's generated transition"
     );
 }

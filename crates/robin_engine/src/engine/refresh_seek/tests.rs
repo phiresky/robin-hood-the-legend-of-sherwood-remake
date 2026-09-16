@@ -484,6 +484,7 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
         .unwrap()
         .increase_elements_in_progress();
     engine.orders.sequence_manager.rebuild_indices();
+    engine.publish_selected_order_as_installed(owner);
     {
         let actor = engine
             .get_entity_mut(owner)
@@ -491,10 +492,6 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
             .actor_data_mut()
             .unwrap();
 
-        actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: OrderType::TransitionRunningUprightWaitingUpright,
-        });
         actor.continuation.motion_state = MotionState::InProgress;
     }
 

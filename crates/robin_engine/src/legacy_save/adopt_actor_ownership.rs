@@ -112,10 +112,8 @@ impl LegacyActorOwnershipAdoptionPlan {
             }
 
             let resolved_order = sequences.resolve_order("order", saved.order)?;
-            let installed_order = resolved_order.map(|(_, _, order)| InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
-            });
+            let installed_order =
+                resolved_order.map(|(element, _, order)| InstalledActorOrder::new(element, order));
             match (selected_element, resolved_order) {
                 (None, Some(_)) => {
                     return Err(site.error(AdoptErrorKind::OrderWithoutElement));

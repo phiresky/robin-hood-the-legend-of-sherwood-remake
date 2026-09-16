@@ -57,7 +57,8 @@ impl EngineInner {
             .expect("boredom requires actor")
             .installed_order
             .is_some_and(|order| {
-                order.order_type == crate::order::OrderType::WaitingUprightBoredRandom
+                order.resolve(&self.orders.sequence_manager).order_type
+                    == crate::order::OrderType::WaitingUprightBoredRandom
             });
         if entity.enemy_ai().is_none()
             || ai.current_substate != Substate::DefaultOnPost
@@ -610,7 +611,7 @@ mod tests {
 mod movement_tests {
     use super::*;
     use crate::coordinates::{MapPoint, WorldPoint3D};
-    use crate::element::{ActionState, Command, InstalledActorOrder};
+    use crate::element::{ActionState, Command};
     use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
     use crate::order::OrderType;
     use crate::sequence::{Field, FieldValue, SequenceElementData};
@@ -637,11 +638,8 @@ mod movement_tests {
         entity
             .element_data_mut()
             .set_position_map(MapPoint::new(100.0, 200.0));
-        entity.actor_data_mut().unwrap().installed_order = Some(InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: animation,
-        });
         let owner = engine.add_test_entity(entity);
+        engine.install_test_order(owner, animation);
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.enter_ai_think_frame(owner);

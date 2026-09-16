@@ -136,7 +136,7 @@ fn crouched_pc_take_uses_stamped_crouched_animation() {
             .expect("crouched PC retains actor data")
             .installed_order
             .as_ref()
-            .map(|order| order.order_type),
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(OrderType::TakingCrouched),
         "PC Translate(Take) must use the interaction element's Crouched post-transition stamp"
     );
