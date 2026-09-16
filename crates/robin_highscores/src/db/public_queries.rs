@@ -106,7 +106,7 @@ impl Database {
     ) -> Result<Vec<BoardRow>, DbError> {
         let watermark = watermark_i64(accepted_sequence_watermark)?;
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT r.id, s.replay_sha256, m.value, r.max_concurrent_players, \
+            "SELECT r.id, s.replay_sha256, m.value, r.original_score_delta, r.active_simulation_ticks, r.ransom_collected, r.max_concurrent_players, \
                     r.participant_instance_count, r.accepted_sequence, r.verified_at_ms, \
                     s.public_disclosure, s.uploader_public_key, i.username ",
         );
@@ -159,6 +159,15 @@ impl Database {
                     })?,
                     run_id: row.try_get("id")?,
                     metric_value,
+                    original_score_delta: row.try_get("original_score_delta")?,
+                    active_simulation_ticks: nonnegative_u64(
+                        row.try_get("active_simulation_ticks")?,
+                        "active_simulation_ticks",
+                    )?,
+                    ransom_collected: nonnegative_u64(
+                        row.try_get("ransom_collected")?,
+                        "ransom_collected",
+                    )?,
                     max_concurrent_players: checked_count(
                         &row,
                         "max_concurrent_players",

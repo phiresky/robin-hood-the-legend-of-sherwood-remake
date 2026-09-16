@@ -1,3 +1,4 @@
+import { fullGameContentBuild } from './mission-launch.ts';
 import { installDiagnostics } from './diagnostics.js';
 import { requestFullContentFolder } from './content-picker.js';
 import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport.js';
@@ -413,8 +414,9 @@ async function main(): Promise<void> {
         },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (base, build, signal) => {
-            const demo: { url: string; identity?: DemoDatadirIdentity; parts?: readonly string[] } = runReplay?.edition === 'full'
-                ? await selectedFullReplayDatadir(runReplay.runtimeBuild, signal)
+            const fullBuild = fullGameContentBuild(build.short, pageParams.get('edition'), runReplay, replayQuery !== null);
+            const demo: { url: string; identity?: DemoDatadirIdentity; parts?: readonly string[] } = fullBuild !== null
+                ? await selectedFullReplayDatadir(fullBuild, signal)
                 : await selectedDemoDatadir(base, build, signal);
             const urls = demo.parts ?? [demo.url];
             const chunks: Uint8Array<ArrayBuffer>[] = [];

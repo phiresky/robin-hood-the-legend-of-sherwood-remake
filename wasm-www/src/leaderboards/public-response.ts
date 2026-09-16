@@ -224,18 +224,25 @@ export function parseLeaderboardEntry(value: unknown, path: string): Leaderboard
         'position', 'rank', 'run_id', 'metric_value', 'max_concurrent_players',
         'participant_instance_count', 'uploader', 'replay_sha256', 'accepted_sequence',
         'verified_at_unix_ms',
-    ]);
+    ], ['metrics']);
     const position = positiveInteger(obj.position, `${path}.position`);
     const rank = positiveInteger(obj.rank, `${path}.rank`);
     if (rank > position) throw new Error(`${path}.rank cannot exceed its snapshot position`);
     const maxConcurrentPlayers = replaySeatCount(obj.max_concurrent_players, `${path}.max_concurrent_players`);
     const participantInstanceCount = u16(obj.participant_instance_count, `${path}.participant_instance_count`);
     validateParticipantCounts(maxConcurrentPlayers, participantInstanceCount, path);
+    const metricValue = parseMetricValue(obj.metric_value, `${path}.metric_value`);
+    const metrics = obj.metrics === undefined ? null : parseRunMetrics(obj.metrics, `${path}.metrics`);
+    if (metrics !== null && (metricValue.metric === 'original_score'
+        ? metricValue.points !== metrics.originalScoreDelta
+        : metricValue.activeSimulationTicks !== metrics.activeSimulationTicks)) {
+        throw new Error(`${path}.metrics does not match its ranked value`);
+    }
     return {
         position,
         rank,
         runId: opaqueId(obj.run_id, `${path}.run_id`),
-        metricValue: parseMetricValue(obj.metric_value, `${path}.metric_value`),
+        metricValue, metrics,
         maxConcurrentPlayers,
         participantInstanceCount,
         uploader: parseUploader(obj.uploader, `${path}.uploader`),

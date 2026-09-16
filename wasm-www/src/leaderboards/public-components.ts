@@ -101,7 +101,7 @@ export function playerTables(
                         ? 'Any player count'
                         : `${formatInteger(best.filter.maxConcurrentPlayers)} players`,
                 }),
-                element('td', {}, [runLink(best.runId, 'Details')]),
+                element('td', {}, [runLink(best.runId, 'Watch replay')]),
             );
             body.append(row);
         }
@@ -167,7 +167,7 @@ export function playerTables(
                 text: participationLabel(entry.run.maxConcurrentPlayers, entry.run.participantInstanceCount),
             }),
             element('td', { className: 'hide-small', text: formatDate(entry.verifiedAtUnixMs) }),
-            element('td', {}, [runLink(entry.run.runId, 'Details')]),
+            element('td', {}, [runLink(entry.run.runId, 'Watch replay')]),
         );
         return row;
     }

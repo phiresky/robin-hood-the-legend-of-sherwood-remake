@@ -74,7 +74,7 @@ export class HighscoreApi {
         const page = parseBoardPage(await this.getJson(
             ['leaderboards'],
             signal,
-            filtersToApiQuery(filters),
+            { ...filtersToApiQuery(filters), include_metrics: 'true' },
         ));
         if ((page.previousCursor?.opaqueToken ?? null) !== filters.cursor) {
             throw new PublicApiError(

@@ -116,6 +116,7 @@ fn metric_boards(board: &BoardV2, mission_id: &str, max_players: u16) -> Vec<Mis
             metric,
             max_concurrent_players: Some(max_players),
             player_public_key: None,
+            include_metrics: None,
             limit: DEFAULT_BOARD_PAGE_LIMIT,
             cursor: None,
         },

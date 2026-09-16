@@ -250,7 +250,7 @@ test('leaderboard route sends the flat V2 query and rejects cursor substitution'
         );
         assert.equal(
             requests[0],
-            'https://scores.example/api/v1/leaderboards?schema_version=2&board_id=demo-standard-normal&mission_id=Dem_Lei_MP&metric=original_score&limit=25&cursor=requested-cursor',
+            'https://scores.example/api/v1/leaderboards?schema_version=2&board_id=demo-standard-normal&mission_id=Dem_Lei_MP&metric=original_score&limit=25&cursor=requested-cursor&include_metrics=true',
         );
     } finally {
         globalThis.fetch = originalFetch;

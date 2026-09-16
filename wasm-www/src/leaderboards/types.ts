@@ -71,6 +71,7 @@ export type LeaderboardEntry = {
     readonly rank: number;
     readonly runId: string;
     readonly metricValue: BoardMetricValue;
+    readonly metrics: RunMetrics | null;
     readonly maxConcurrentPlayers: number;
     readonly participantInstanceCount: number;
     /** Named uploader, or null when the uploader chose anonymous disclosure. */

@@ -55,6 +55,8 @@ export function missionLabel(id: string, fallback: string, demo = false): string
 export function browsableMetadata(metadata: BoardMetadata): BoardMetadata {
     return { ...metadata, boards: metadata.boards.map(board => ({
         ...board,
+        presetName: board.presetId === 'any' ? 'All rules' : board.presetName,
+        displayName: board.displayName.replaceAll('Any ruleset', 'All rules'),
         missions: board.missions.filter(mission => isWinnableMission(mission.missionId)).map(mission => ({
             ...mission, displayName: missionLabel(mission.missionId, mission.displayName, board.edition === 'demo'),
         })).sort((a, b) => {

@@ -170,6 +170,9 @@ pub struct LeaderboardQueryV2 {
     pub player_public_key: Option<PublicKey32>,
     pub limit: u16,
     pub cursor: Option<String>,
+    /// Include both result metrics; omitted by older clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_metrics: Option<bool>,
 }
 
 impl LeaderboardQueryV2 {
@@ -245,6 +248,9 @@ pub struct LeaderboardEntryV2 {
     pub replay_sha256: Digest32,
     pub accepted_sequence: u64,
     pub verified_at_unix_ms: u64,
+    /// Only returned when explicitly requested, preserving older client responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<RunMetricsV1>,
 }
 
 impl Validate for LeaderboardEntryV2 {
@@ -261,6 +267,25 @@ impl Validate for LeaderboardEntryV2 {
         }
         crate::validation::nonzero("leaderboard_entry.replay_sha256", &self.replay_sha256)?;
         self.metric_value.validate()?;
+        if let Some(metrics) = &self.metrics {
+            BoardMetricValueV2::OriginalScore {
+                points: metrics.original_score_delta,
+            }
+            .validate()?;
+            let matches = match self.metric_value {
+                BoardMetricValueV2::OriginalScore { points } => {
+                    points == metrics.original_score_delta
+                }
+                BoardMetricValueV2::FastestSuccess {
+                    active_simulation_ticks,
+                } => active_simulation_ticks == metrics.active_simulation_ticks,
+            };
+            if !matches {
+                return Err(ValidationError::ClaimMismatch {
+                    field: "leaderboard_entry.metrics",
+                });
+            }
+        }
         validate_participants(
             self.max_concurrent_players,
             self.participant_instance_count,
@@ -856,6 +881,7 @@ mod tests {
             rank,
             run_id: OpaqueId::new(format!("run-{position}")).unwrap(),
             metric_value: BoardMetricValueV2::OriginalScore { points },
+            metrics: None,
             max_concurrent_players: 1,
             participant_instance_count: 1,
             uploader: None,

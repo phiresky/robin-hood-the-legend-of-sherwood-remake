@@ -1303,3 +1303,5 @@ game data and replay provenance remain bound to the recorded build. Runtime
 ### Leaderboard browsing and latest submissions
 
 The leaderboard site defaults to the full game and combines full-game and demo missions in one numbered, grouped selector. Locations without a mission victory are excluded. Times show hundredths of a second, preserving every 25 Hz simulation frame. The first results page also shows the ten most recently verified public runs across missions, via `GET /api/v1/latest-runs`; anonymous uploads remain anonymous and removed runs are excluded.
+
+The leaderboard home page puts recent submissions before mission rankings, offers submission instructions and mission launch links, and shows score and exact time together. `include_metrics=true` adds verified run metrics to leaderboard entries; existing clients retain the previous response shape. Browser mission links select the demo or hosted full-game content for the chosen build.

@@ -1087,7 +1087,15 @@ async fn leaderboard(
         let position = first_position
             .checked_add(u64::try_from(offset).map_err(|_| ApiError::Internal)?)
             .or_internal("leaderboard position overflows u64")?;
-        entries.push(board_entry(row, position, query.metric)?);
+        let mut entry = board_entry(row, position, query.metric)?;
+        if query.include_metrics == Some(true) {
+            entry.metrics = Some(RunMetricsV1 {
+                original_score_delta: row.original_score_delta,
+                active_simulation_ticks: row.active_simulation_ticks,
+                ransom_collected: signed_mission_money(row.ransom_collected)?,
+            });
+        }
+        entries.push(entry);
     }
     let next_cursor = if has_more {
         let (entry, row) = entries
@@ -1612,6 +1620,7 @@ fn board_entry(
         rank: row.rank,
         run_id: opaque(&row.run_id)?,
         metric_value: board_metric_value(metric, row.metric_value)?,
+        metrics: None,
         max_concurrent_players: row.max_concurrent_players,
         participant_instance_count: row.participant_instance_count,
         uploader: row.uploader.as_ref().map(public_participant),

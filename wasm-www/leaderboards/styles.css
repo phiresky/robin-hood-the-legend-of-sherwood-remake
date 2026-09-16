@@ -291,3 +291,29 @@ summary { cursor: pointer; color: var(--muted); }
     .latest-submissions td[data-label]::before { content: attr(data-label); display: block; color: var(--muted); font-size: .7rem; margin-bottom: .2rem; }
     .latest-submissions .fingerprint { display: block; margin-top: .2rem; }
 }
+
+.submission-help { margin-bottom: 1.25rem; padding: 1rem; }
+.submission-help summary { font-weight: 700; }
+.submission-help li { margin-block: .75rem; line-height: 1.6; }
+.latest-submissions { margin-bottom: 2rem; }
+#mission-rankings { scroll-margin-top: 1rem; }
+#mission-rankings > h2 { font: 700 1.4rem Georgia, serif; }
+.rules-help { margin-top: 1rem; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+details > summary, details > summary * { cursor: pointer; }
+th[aria-sort] { color: var(--gold); }
+th[aria-sort="descending"]::after { content: ' ↓'; }
+th[aria-sort="ascending"]::after { content: ' ↑'; }
+.state-panel .actions { justify-content: center; }
+.ranking-table td[data-label="Time"] { white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+    .ranking-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .ranking-table table, .ranking-table tbody { display: block; }
+    .ranking-table caption { display: block; width: 100%; }
+    .ranking-table tr { display: grid; grid-template-columns: 3rem 1fr 1fr; gap: .25rem; padding: .65rem; border-top: 1px solid var(--border); }
+    .ranking-table td { border: 0; padding: .3rem; }
+    .ranking-table .rank { grid-column: 1; grid-row: 1 / 4; width: auto; text-align: left; }
+    .ranking-table td:nth-child(2), .ranking-table td:last-child { grid-column: 2 / -1; }
+    .ranking-table td[data-label="Score"] { grid-column: 2; }
+    .ranking-table td[data-label="Time"] { grid-column: 3; }
+    .ranking-table td[data-label]::before { content: attr(data-label); display: block; color: var(--muted); font-size: .7rem; font-weight: 400; }
+}

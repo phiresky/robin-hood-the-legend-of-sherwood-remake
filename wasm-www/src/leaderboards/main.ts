@@ -1,5 +1,6 @@
+import { missionPlayUrl, rulesHelp } from './browsing.js';
 import { missionGroup } from './missions.js';
-import { renderUsernameForm, renderDeletionForm, renderReportForm } from './account-forms.js';
+import { renderUsernameForm, renderDeletionForm } from './account-forms.js';
 import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters, type NormalizedBoardFilters } from './board-filters.js';
 import {
     appendAchievements,
@@ -19,7 +20,6 @@ import {
     formatBytes,
     formatDate,
     formatInteger,
-    formatMetricValue,
     metricLabel,
 } from './format.js';
 import {
@@ -27,6 +27,7 @@ import {
     type BoardMetadata,
     type BoardMetric,
     type LeaderboardEntry,
+    type LatestRun,
     type PlayerRunHistoryPage,
     type RunDetail,
 } from './types.js';
@@ -133,18 +134,41 @@ async function renderLeaderboard(
     validateBoardView(page, filters);
 
     const heading = pageHeading('Leaderboards', boardIntro());
-    const controls = renderFilters(metadata, filters);
-    const latest = filters.cursor === null ? renderLatestRuns(api, metadata, signal) : null;
+    const help = submissionHelp();
+    const browse = element('button', { className: 'button secondary', text: 'Browse mission rankings', attrs: { type: 'button' } });
+    browse.addEventListener('click', () => document.getElementById('mission-rankings')?.scrollIntoView({ block: 'start' }));
+    const actions = element('div', { className: 'actions' }, [browse]);
+    const join = element('button', { className: 'button', text: 'Get on the leaderboard', attrs: { type: 'button', 'aria-controls': 'how-to-submit', 'aria-expanded': 'false' } });
+    join.addEventListener('click', () => { help.open = !help.open; if (help.open) help.scrollIntoView({ block: 'nearest' }); });
+    help.addEventListener('toggle', () => join.setAttribute('aria-expanded', String(help.open)));
+    actions.append(join);
+    heading.append(actions);
+    const rankings = element('section', { attrs: { id: 'mission-rankings', 'aria-label': 'Mission rankings' } });
+    rankings.append(element('h2', { text: 'Mission rankings' }), renderFilters(metadata, filters));
+    const emptyActions = element('div', { className: 'actions' }, [
+        link('Play this mission', missionPlayUrl(window.location.href, filters.board.edition, filters.missionId), 'button'),
+    ]);
+    const latest = filters.cursor === null ? renderLatestRuns(api, metadata, signal, entries => {
+        if (page.entries.length !== 0) return;
+        const other = entries.find(entry => entry.run.missionId !== filters.missionId
+            && metadata.boards.some(board => board.boardId === entry.run.boardId));
+        if (other === undefined) return;
+        const board = metadata.boards.find(board => board.boardId === other.run.boardId)!;
+        const url = new URL(urlWithFilters(window.location.href, {
+            ...filtersForBoard(board, filters), missionId: other.run.missionId, maxConcurrentPlayers: null,
+        }));
+        emptyActions.append(internalLink(`Browse ${runLabels(metadata, other.run.boardId, other.run.missionId).missionLabel}`, url));
+    }) : null;
+    replace(app, heading, help, ...(latest === null ? [] : [latest]), rankings);
     if (page.entries.length === 0) {
-        replace(app, heading, controls, statePanel(
-            'Be the first to set a record',
-            'No runs match these choices yet. Play this mission and submit your replay to join the leaderboard.',
-        ));
-        if (latest !== null) app.append(latest);
+        const empty = statePanel('Be the first to set a record',
+            'No runs match these choices yet. Win this mission, then choose “Submit this run” on the results screen.');
+        empty.append(emptyActions);
+        rankings.append(empty);
         return;
     }
 
-    const tablePanel = element('section', { className: 'panel table-panel' });
+    const tablePanel = element('section', { className: 'panel table-panel ranking-table' });
     const tableScroll = element('div', { className: 'table-scroll' });
     const table = element('table');
     table.append(element('caption', {
@@ -153,9 +177,9 @@ async function renderLeaderboard(
     const head = element('thead');
     const row = element('tr');
     for (const [label, className] of [
-        ['Rank', 'rank'], ['Player', ''], [metricHeading(filters.metric), ''],
+        ['Rank', 'rank'], ['Player', ''], ['Score', ''], ['Time', ''],
         ['Players', 'hide-small'], ['Added', 'hide-small'], ['Replay', ''],
-    ] as const) row.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
+    ] as const) row.append(element('th', { text: label, className, attrs: { scope: 'col', ...(label === metricHeading(filters.metric) ? { 'aria-sort': filters.metric === 'original_score' ? 'descending' : 'ascending' } : {}) } }));
     head.append(row);
     const body = element('tbody');
     for (const entry of page.entries) body.append(renderBoardRow(entry, metadata));
@@ -165,8 +189,20 @@ async function renderLeaderboard(
     if (page.nextCursor !== null || previousPageUrls.has(window.location.href)) {
         tablePanel.append(renderPagination(page.nextCursor, filters));
     }
-    replace(app, heading, controls, tablePanel);
-    if (latest !== null) app.append(latest);
+    rankings.append(tablePanel);
+}
+
+function submissionHelp(): HTMLDetailsElement {
+    const steps = element('ol');
+    for (const text of [
+        'Win a mission in the remake.',
+        'On the results screen, choose “Submit this run”. To submit future wins automatically, enable “Always submit won runs”.',
+        'Your replay is checked automatically. Once it passes, your score and time appear here.',
+    ]) steps.append(element('li', { text }));
+    return element('details', { className: 'panel submission-help', attrs: { id: 'how-to-submit' } }, [
+        element('summary', { text: 'How to get on the leaderboard' }), steps,
+        link('Play Robin Hood', '../', 'button'),
+    ]);
 }
 
 function boardIntro(): string {
@@ -215,7 +251,7 @@ function renderFilters(metadata: BoardMetadata, filters: NormalizedBoardFilters)
     });
     missionField.append(missionSelect);
     fields.append(missionField);
-    if (facets.presets.length > 1) fields.append(optionSelect('Rules', facets.presets, board.presetId, value => {
+    if (facets.presets.length > 1) fields.append(optionSelect('Rules', facets.presets.map(item => ({ ...item, label: item.id === 'any' ? 'All rules' : item.label })), board.presetId, value => {
         switchBoard(boardForFacet(metadata, board, { presetId: value }));
     }));
     if (facets.difficulties.length > 1) fields.append(optionSelect('Difficulty', facets.difficulties, board.difficultyId, value => {
@@ -231,7 +267,8 @@ function renderFilters(metadata: BoardMetadata, filters: NormalizedBoardFilters)
         },
     ));
     fields.append(maxConcurrentPlayersInput(filters));
-    panel.append(fields, tabs);
+    const rules = element('details', { className: 'rules-help' }, [element('summary', { text: 'What do these rules mean?' }), element('p', { text: rulesHelp })]);
+    panel.append(fields, rules, tabs);
     return panel;
 }
 
@@ -282,20 +319,26 @@ function renderBoardRow(entry: LeaderboardEntry, metadata: BoardMetadata): HTMLT
     row.append(
         element('td', { className: 'rank', text: `#${entry.rank}` }),
         element('td', {}, [uploaderView(entry.uploader, playerLink)]),
-        element('td', { className: 'primary-metric', text: formatMetricValue(entry.metricValue, metadata.tickDuration) }),
+        element('td', { className: entry.metricValue.metric === 'original_score' ? 'primary-metric' : '', attrs: { 'data-label': 'Score' },
+            text: entry.metrics !== null ? formatInteger(entry.metrics.originalScoreDelta)
+                : entry.metricValue.metric === 'original_score' ? formatInteger(entry.metricValue.points) : 'Unavailable' }),
+        element('td', { className: entry.metricValue.metric === 'fastest_success' ? 'primary-metric' : '', attrs: { 'data-label': 'Time' },
+            text: entry.metrics !== null ? formatActiveTime(entry.metrics.activeSimulationTicks, metadata.tickDuration)
+                : entry.metricValue.metric === 'fastest_success' ? formatActiveTime(entry.metricValue.activeSimulationTicks, metadata.tickDuration) : 'Unavailable' }),
         element('td', { className: 'hide-small', text: participationLabel(entry.maxConcurrentPlayers, entry.participantInstanceCount) }),
         element('td', { className: 'hide-small', text: formatDate(entry.verifiedAtUnixMs) }),
-        element('td', {}, [runLink(entry.runId, 'Details')]),
+        element('td', {}, [runLink(entry.runId, 'Watch replay')]),
     );
     return row;
 }
 
-function renderLatestRuns(api: HighscoreApi, metadata: BoardMetadata, signal: AbortSignal): HTMLElement {
+function renderLatestRuns(api: HighscoreApi, metadata: BoardMetadata, signal: AbortSignal, loaded: (entries: readonly LatestRun[]) => void): HTMLElement {
     const section = element('section', { className: 'panel table-panel player-results latest-submissions', attrs: { 'aria-label': 'Latest submissions' } });
     const heading = element('h2', { text: 'Latest submissions' });
     section.append(heading, element('p', { className: 'section-intro', text: 'Loading recent runs…' }));
     void api.latestRuns(signal).then(entries => {
         signal.throwIfAborted();
+        loaded(entries);
         const intro = element('p', { className: 'section-intro', text: entries.length === 0
             ? 'No submissions yet. Yours could be the first!'
             : 'The latest verified runs across all missions.' });
@@ -314,10 +357,12 @@ function renderLatestRuns(api: HighscoreApi, metadata: BoardMetadata, signal: Ab
             const row = element('tr');
             row.append(
                 element('td', {}, [uploaderView(run.uploader, playerLink), element('small', { className: 'fingerprint', text: formatDate(verifiedAtUnixMs) })]),
-                element('td', { text: runLabels(metadata, run.boardId, run.missionId).missionLabel }),
+                element('td', {}, [internalLink(runLabels(metadata, run.boardId, run.missionId).missionLabel,
+                    new URL(urlWithFilters(window.location.href, { boardId: run.boardId, missionId: run.missionId,
+                        metric: 'original_score', maxConcurrentPlayers: null, cursor: null })))]),
                 element('td', { text: formatInteger(run.metrics.originalScoreDelta), attrs: { 'data-label': 'Score' } }),
                 element('td', { text: formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration), attrs: { 'data-label': 'Time' } }),
-                element('td', {}, [runLink(run.runId, 'Watch')]),
+                element('td', {}, [runLink(run.runId, 'Watch replay')]),
             );
             body.append(row);
         }
@@ -357,7 +402,6 @@ async function renderPlayer(
     panel.append(ownerBridge === null
         ? signerUnavailableNotice('To change your name, open this page in the browser you use to play.')
         : renderUsernameForm(api, profile, ownerBridge, signal));
-    panel.append(renderReportForm(api, { kind: 'player', public_key: profile.publicKey }, signal));
     const { renderPlayerPersonalBests, renderPlayerRunHistory } = playerTables(runLink, renderPlayerPagination, metadata);
     replace(
         app,
@@ -445,7 +489,6 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     ]), renderSimConfig(run));
     appendAchievements(record, run.achievements);
     record.append(technical);
-    record.append(renderReportForm(api, { kind: 'run', run_id: run.runId }, signal));
     record.append(ownerBridge === null
         ? signerUnavailableNotice('To delete your run, open this page in the browser you used to submit it.')
         : renderDeletionForm(api, ownerBridge, { kind: 'run', run_id: run.runId }, signal));

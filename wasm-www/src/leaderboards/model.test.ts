@@ -280,3 +280,13 @@ test('run detail preserves negative net mission money', () => {
     (run.metrics as Record<string, unknown>).ransom_collected = -50;
     assert.equal(parseRunDetail(run).metrics.ransomCollected, -50);
 });
+
+test('optional leaderboard metrics preserve older responses and bind both metrics to the ranked result', () => {
+    const document = leaderboardPage();
+    const entries = document.entries as Record<string, unknown>[];
+    assert.equal(parseBoardPage(document).entries[0]!.metrics, null);
+    entries[0]!.metrics = { original_score_delta: 500, active_simulation_ticks: 1501, ransom_collected: 4 };
+    assert.equal(parseBoardPage(document).entries[0]!.metrics!.activeSimulationTicks, 1501);
+    entries[0]!.metrics = { original_score_delta: 501, active_simulation_ticks: 1501, ransom_collected: 4 };
+    assert.throws(() => parseBoardPage(document), /does not match its ranked value/u);
+});

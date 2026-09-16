@@ -638,3 +638,39 @@ async fn latest_runs_are_newest_first_bounded_and_preserve_public_visibility() {
     assert_eq!(runs[0]["run"]["run_id"], ids[9].as_str());
     assert_eq!(runs[9]["run"]["run_id"], ids[0].as_str());
 }
+
+#[tokio::test]
+async fn both_metrics_are_opt_in_and_do_not_change_rankings() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[0x93; 32]);
+    rig.rename(&owner, "Score and time", Ipv4Addr::new(127, 0, 9, 3))
+        .await;
+    rig.publish_run(
+        &owner,
+        "both-metrics",
+        432,
+        1501,
+        ParticipantPublicDisclosureV1::NamedProfile,
+    )
+    .await;
+    for metric in ["original_score", "fastest_success"] {
+        let uri = leaderboard_uri(BOARD_ID, metric, 25, None);
+        let plain = page(&rig, &uri).await;
+        assert!(plain.entries[0].metrics.is_none());
+        assert!(
+            serde_json::to_value(&plain.entries[0])
+                .unwrap()
+                .get("metrics")
+                .is_none()
+        );
+        let enhanced = page(&rig, &format!("{uri}&include_metrics=true")).await;
+        let metrics = enhanced.entries[0].metrics.as_ref().unwrap();
+        assert_eq!(metrics.original_score_delta, 432);
+        assert_eq!(metrics.active_simulation_ticks, 1501);
+        assert_eq!(plain.entries[0].rank, enhanced.entries[0].rank);
+        assert_eq!(
+            plain.entries[0].metric_value,
+            enhanced.entries[0].metric_value
+        );
+    }
+}

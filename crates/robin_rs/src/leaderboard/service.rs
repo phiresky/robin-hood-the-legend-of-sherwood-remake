@@ -473,6 +473,7 @@ mod tests {
             metric: robin_run_protocol::BoardMetricV1::OriginalScore,
             max_concurrent_players: Some(1),
             player_public_key: None,
+            include_metrics: None,
             limit: DEFAULT_BOARD_PAGE_LIMIT,
             cursor: None,
         };

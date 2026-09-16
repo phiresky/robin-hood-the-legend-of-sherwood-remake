@@ -14,7 +14,7 @@ export function validateBoardView(page: BoardPage, filters: SelectedBoardFilters
 
 export function boardPolicyLabel(board: Board): string {
     const settings = board.simulationPolicy.kind === 'any_config'
-        ? 'Any rules'
+        ? 'All rules'
         : `${board.presetName} / ${board.difficultyName}`;
     return `${settings} · ${board.allowStateLoad ? 'Save loading allowed' : 'No save loading'}`;
 }

@@ -1085,6 +1085,7 @@ mod tests {
             metric,
             max_concurrent_players: Some(1),
             player_public_key: None,
+            include_metrics: None,
             limit: 50,
             cursor: None,
         }
