@@ -23,19 +23,6 @@ impl EngineInner {
         carrier_pos: crate::coordinates::MapPoint,
         carrier_direction: u16,
     ) {
-        if let Some(carrier) = self.get_entity_mut(carrier_id) {
-            if let Some(pc) = carrier.pc_data_mut() {
-                pc.carried = None;
-            }
-            self.set_entity_posture(carrier_id, crate::element::Posture::Upright);
-            let carrier = self
-                .get_entity_mut(carrier_id)
-                .expect("corpse-drop carrier disappeared");
-            if let Some(actor) = carrier.actor_data_mut() {
-                actor.action_state = crate::element::ActionState::Waiting;
-            }
-        }
-
         let (carrier_sector, carrier_layer, carrier_obstacle, carrier_plane, drop_box_origin) =
             self.get_entity(carrier_id)
                 .map(|e| {
@@ -93,7 +80,6 @@ impl EngineInner {
         });
 
         if self.get_entity(target_id).is_some() {
-            self.set_entity_posture(target_id, drop_posture);
             let target = self
                 .get_entity_mut(target_id)
                 .expect("corpse-drop target disappeared");
@@ -127,17 +113,21 @@ impl EngineInner {
                 }
             }
             elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
-            // Original-game corpse dropping unlinks the carrier, whose
-            // release path restores the carrier's facing as the corpse's
-            // direction goal after setting its current direction to +12.
-            elem.set_direction_goal(carrier_direction as i16);
-            if let Some(human) = target.human_data_mut() {
-                human.carrier = None;
-            }
+            self.set_entity_posture(target_id, drop_posture);
+            let target = self
+                .get_entity_mut(target_id)
+                .expect("corpse-drop target disappeared");
             if let Some(actor) = target.actor_data_mut() {
                 actor.execution_frozen = false;
                 actor.action_state = crate::element::ActionState::Waiting;
             }
+        }
+        self.set_entity_posture(carrier_id, crate::element::Posture::Upright);
+        if let Some(actor) = self
+            .get_entity_mut(carrier_id)
+            .and_then(|entity| entity.actor_data_mut())
+        {
+            actor.action_state = crate::element::ActionState::Waiting;
         }
         self.actor_wait(sim, assets, target_id);
 
@@ -151,6 +141,21 @@ impl EngineInner {
                 elem.active = true;
             }
         }
+        let target = self
+            .get_entity_mut(target_id)
+            .expect("corpse-drop target disappeared before unlink");
+        target
+            .element_data_mut()
+            .set_direction_goal(carrier_direction as i16);
+        target
+            .human_data_mut()
+            .expect("corpse-drop target is not human")
+            .carrier = None;
+        self.get_entity_mut(carrier_id)
+            .expect("corpse-drop carrier disappeared before unlink")
+            .pc_data_mut()
+            .expect("corpse-drop carrier is not a PC")
+            .carried = None;
         tracing::debug!(
             carrier = ?carrier_id,
             target = ?target_id,
