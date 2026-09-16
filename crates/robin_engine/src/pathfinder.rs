@@ -981,6 +981,7 @@ impl PathPartition {
         layer: usize,
         area: usize,
         state: u32,
+        mut set_obstacle_active: impl FnMut(&MotionObstacle, bool),
     ) -> Vec<usize> {
         for obstacle in 0..self.layers[layer][area].len() {
             for index in (0..self.layers[layer][area][obstacle].len()).rev() {
@@ -1020,6 +1021,7 @@ impl PathPartition {
         while index < active.len() {
             let required = obstacles[active[index]].state_id;
             if required & state != required {
+                set_obstacle_active(&obstacles[active[index]], false);
                 inactive.push(active.remove(index));
             } else {
                 index += 1;
@@ -1031,6 +1033,7 @@ impl PathPartition {
             let required = obstacles[inactive[index]].state_id;
             if required & state == required {
                 let obstacle = inactive.remove(index);
+                set_obstacle_active(&obstacles[obstacle], true);
                 active.push(obstacle);
                 appeared.push(obstacle);
             } else {
@@ -1123,6 +1126,7 @@ impl PathFinder {
                     layer,
                     area,
                     self.states[layer][area],
+                    |_, _| {},
                 );
             }
         }
@@ -1163,6 +1167,7 @@ impl PathFinder {
                     layer,
                     area,
                     self.states[layer][area],
+                    |_, _| {},
                 );
             }
         }
@@ -1209,8 +1214,21 @@ impl PathFinder {
             current.wrapping_sub(bit)
         };
         self.states[layer][area] = state;
-        let appeared =
-            std::sync::Arc::make_mut(&mut self.partition).set_state_area(graph, layer, area, state);
+        let appeared = std::sync::Arc::make_mut(&mut self.partition).set_state_area(
+            graph,
+            layer,
+            area,
+            state,
+            |obstacle, active| {
+                for &line in &obstacle.grid_line_indices {
+                    grid.set_line_active(line, active);
+                }
+                let sector = obstacle
+                    .grid_sector_index
+                    .expect("motion obstacle lacks sector binding");
+                grid.set_sector_active(u32::from(sector), active);
+            },
+        );
         let Some(motion_area) = graph
             .static_data
             .move_layers
@@ -1223,16 +1241,6 @@ impl PathFinder {
             );
             return Vec::new();
         };
-        for (index, obstacle) in motion_area.motion_obstacles.iter().enumerate() {
-            let active = self.partition.motion[layer][area].contains(&index);
-            for &line in &obstacle.grid_line_indices {
-                grid.set_line_active(line, active);
-            }
-            let sector = obstacle
-                .grid_sector_index
-                .expect("motion obstacle lacks sector binding");
-            grid.set_sector_active(u32::from(sector), active);
-        }
         appeared
             .into_iter()
             .map(|index| {
@@ -3029,6 +3037,59 @@ mod tests {
             native.partition.layers[0][0][0],
             vec![NodeIdx(0), NodeIdx(1), NodeIdx(2)]
         );
+    }
+
+    #[test]
+    fn obstacle_toggle_leaves_unchanged_members_grid_flags_untouched() {
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![0]];
+        graph.layers = vec![vec![Vec::new()]];
+        graph.alternative_layers = graph.layers.clone();
+        let sector_a = crate::fast_find_grid::SectorIndex::new(0).unwrap();
+        let line_a = crate::fast_find_grid::LineIndex::new(0).unwrap();
+        let line_b = crate::fast_find_grid::LineIndex::new(1).unwrap();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: [1, 0]
+                .into_iter()
+                .enumerate()
+                .map(|(index, state_id)| MotionObstacle {
+                    state_id,
+                    active: true,
+                    bounding_box: MapBBox::default(),
+                    polygon: Vec::new(),
+                    grid_sector_index: crate::fast_find_grid::SectorIndex::new(index as u32),
+                    grid_line_indices: vec![
+                        crate::fast_find_grid::LineIndex::new(index as u32).unwrap(),
+                    ],
+                })
+                .collect(),
+        }]];
+        let mut grid = FastFindGrid::new();
+        grid.line_active = vec![true, true];
+        grid.sector_active = vec![true, true];
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+        finder.synchronize_motion_obstacle_sectors(&graph, &mut grid);
+
+        grid.set_line_active(line_b, false);
+        grid.set_sector_active(1, false);
+        assert!(
+            finder
+                .toggle_obstacle_state(&graph, &mut grid, 0, 0, 0)
+                .is_empty()
+        );
+        assert!(!grid.is_line_active(line_a));
+        assert_eq!(grid.line_active, [false, false]);
+        assert_eq!(grid.sector_active, [false, false]);
+
+        assert_eq!(
+            finder.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0),
+            vec![sector_a]
+        );
+        assert_eq!(grid.line_active, [true, false]);
+        assert_eq!(grid.sector_active, [true, false]);
     }
 
     #[test]
