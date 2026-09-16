@@ -2952,19 +2952,6 @@ fn movement_action(element: &SequenceElement) -> OrderType {
     *action
 }
 
-fn loaded_v48_state() -> LegacyV48SequenceElementState {
-    LegacyV48SequenceElementState {
-        deleted: false,
-        raw_dormant_posture_after_transition: None,
-        raw_dormant_action_state_after_transition: None,
-        mummy: None,
-        raw_sword_strike: None,
-        raw_dormant_movement_action: None,
-        order_state: Vec::new(),
-        generic_raw_unions: Vec::new(),
-    }
-}
-
 #[test]
 fn make_fast_rewrites_walking_orders_to_running() {
     let mut elem = movement_elem(
