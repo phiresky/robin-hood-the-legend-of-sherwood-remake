@@ -254,7 +254,9 @@ fn domino_propagates_to_actors_in_flight_path() {
     // stay inside DOMINO_DISTANCE for the front pair.
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
 
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, mid, hitter),

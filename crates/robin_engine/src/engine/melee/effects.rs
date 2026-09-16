@@ -77,7 +77,7 @@ fn push_flight_facing(flight_x: f32, flight_y: f32) -> i16 {
 }
 
 #[inline]
-fn ready_for_takeoff_increment(delta: f32, frames: u16) -> f32 {
+pub(super) fn ready_for_takeoff_increment(delta: f32, frames: u16) -> f32 {
     // Original-game 3D vector division uses `(1 / k) * vector`, not
     // component-wise division. Preserve the reciprocal's f32 rounding before
     // the multiply; direct `delta / frames` differs by one ULP for captured
@@ -344,31 +344,49 @@ impl EngineInner {
     /// to the ladder's low entry point.
     pub(crate) fn translate_ladder_wall_fall(
         &mut self,
+        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
+        self.say_ouch(sim, assets, victim_id, None);
         let victim = self.expect_entity(victim_id, "ladder damage effect victim");
-        let (victim_pos3, victim_sector) = (
-            victim.position_iface().get_position(),
-            victim.element_data().sector(),
-        );
+        let victim_sector = victim.element_data().sector();
 
-        // Destination is the ladder's low entry point, resolved to 3D
-        // via the low sector's projection-area plane.  If we can't
-        // locate it, leave the victim in place — the animation still
-        // plays so the visual feedback is correct.
-        let low_entry = victim_sector.and_then(|s| self.find_lift_low_entry(assets, u16::from(s)));
-
-        // The sector should be a lift.  Log a warning if not rather
-        // than crashing — we fall through to the safe path.
-        if low_entry.is_none() {
-            tracing::warn!(
-                entity = ?victim_id,
-                sector = ?victim_sector,
-                "translate_ladder_wall_fall: no lowest door found for lift sector"
+        let postponed = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .expect("ladder-fall damage element disappeared")
+            .postponed;
+        if let Some(postponed) = postponed {
+            self.element_interrupted(
+                sim,
+                assets,
+                &mut Vec::new(),
+                postponed.sequence_id,
+                postponed.element_index,
+                crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         }
+        let low_entry = victim_sector
+            .and_then(|s| self.find_lift_low_entry(assets, u16::from(s)))
+            .expect("ladder-fall victim has no lift low entry");
+        let mut order = crate::order::Order::new(
+            OrderType::FallingLadderWall,
+            0.0,
+            0.0,
+            self.orders.allocate_order_id(),
+        );
+        order.compute_direction = false;
+        order.destination_3d = [
+            low_entry.point.x,
+            low_entry.point.y + low_entry.z,
+            low_entry.z,
+        ];
+        self.orders
+            .sequence_manager
+            .push_order_on(damage_element.0, damage_element.1, order);
 
         // Free the lift occupancy so other actors can climb it.
         // Uses the `active_lift` marker that was set when the victim
@@ -414,62 +432,34 @@ impl EngineInner {
             }
         }
 
-        // Insert FallingLadderWall onto the damage element.  Landing
-        // (position snap, concussion, lying posture, order retirement)
-        // is applied by the ladder-fall arm of `tick_push_flights` when
-        // the tick countdown hits zero.
-        self.queue_damage_anim(victim_id, damage_element, OrderType::FallingLadderWall);
-        // Constant-speed fall toward the 3D low entry point: the
-        // per-tick increment has fixed 3D length 10 and the flight
-        // lasts `0.1 * distance` ticks.  A fall shorter than one step
-        // installs no flight — the fall order then never arrives and
-        // only ends when its sprite runs out, like the original.
-        if let Some(entity) = self.world.entities.get_mut(victim_id)
-            && let Some(entry) = &low_entry
-        {
-            // 3D vector from the victim's cached world position to the
-            // low entry point (world y = map y + z).
-            let dx = entry.point.x - victim_pos3.x;
-            let dy3 = (entry.point.y + entry.z) - victim_pos3.y;
-            let dz = entry.z - victim_pos3.z;
-            let distance = (dx * dx + dy3 * dy3 + dz * dz).sqrt();
-            let wait = (0.1 * distance) as u32;
-            if distance > f32::EPSILON && wait > 0 {
-                let scale = 10.0 / distance;
-                let actor = entity
-                    .actor_data_mut()
-                    .expect("ladder-flight victim lost actor data");
-                // Ladder falls accumulate in 3D world space (the flight
-                // tick adds these to the cached 3D position and
-                // re-derives the map position), so `increment_y` holds
-                // the 3D world-y advance here — not the map-space
-                // advance the generic flights store.  Deriving the map
-                // advance up front would round differently from the
-                // original's per-tick 3D accumulation.
-                actor.active_flight = Some(Box::new(crate::element::ActiveFlight {
-                    geometry: crate::element::FlightGeometry::World3d,
-                    increment_x: dx * scale,
-                    increment_y: dy3 * scale,
-                    increment_z: dz * scale,
-                    goal_x: entry.point.x,
-                    goal_y: entry.point.y,
-                    goal_z: entry.z,
-                    frames_remaining: wait.min(u16::MAX as u32) as u16,
-                    // Ladder/wall fall: domino effect is not invoked.
-                    antagonist: None,
-                    goal_layer: entry.layer,
-                    goal_sector: Some(entry.sector),
-                    obstacle: entry.obstacle,
-                    ladder_fall: true,
-                }));
-            }
-        }
-
         tracing::debug!(
             entity = ?victim_id,
             ?low_entry,
             "Ladder/wall fall translated"
         );
+    }
+
+    /// Initialize the timed fall from the actor's live takeoff position.
+    pub(crate) fn initialize_ladder_fall(&mut self, victim_id: EntityId, destination: [f32; 3]) {
+        let entity = self.expect_entity_mut(victim_id, "ladder-fall victim");
+        entity.set_posture(Posture::Flying);
+        let position = entity.position_iface().get_position();
+        let dx = destination[0] - position.x;
+        let dy = destination[1] - position.y;
+        let dz = destination[2] - position.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let scale = 10.0 / distance;
+        entity
+            .actor_data_mut()
+            .expect("ladder-fall victim lost actor data")
+            .wait_time = (0.1 * distance) as u32;
+        entity
+            .position_iface_mut()
+            .set_projectile_increment(crate::coordinates::WorldVec3D::new(
+                dx * scale,
+                dy * scale,
+                dz * scale,
+            ));
     }
 
     /// Dispatch `Command::Fall` to an actor.
@@ -771,10 +761,7 @@ impl EngineInner {
         );
     }
 
-    /// Computes a strike-type-specific flight vector, validates the
-    /// destination against walkable terrain, and sets up an
-    /// `ActiveFlight` that advances the victim position each frame
-    /// over the animation duration.
+    /// Author a strike-specific falling reaction for execution by the victim.
     pub(super) fn apply_push_effect(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -853,7 +840,7 @@ impl EngineInner {
         // Entities on a ladder/wall get the ladder-fall variant
         // instead of the normal push flight.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
             return true;
         }
 
@@ -984,8 +971,7 @@ impl EngineInner {
     }
 
     /// Prepare takeoff for an authored falling-pushed order.
-    /// Translation deliberately leaves no `active_flight`: the original
-    /// samples the attacker's live direction and both actors' live positions
+    /// Sample the attacker's live direction and both actors' live positions
     /// during pushed-fall initialization.
     pub(crate) fn initialize_push_flight(
         &mut self,
@@ -1160,32 +1146,22 @@ impl EngineInner {
         let dx = goal.x - victim_pos.x;
         let dz = goal_z - victim_z;
         let dy_world = (goal.y + goal_z) - (victim_pos.y + victim_z);
-        let actor = self
-            .get_entity_mut(victim_id)
-            .expect("falling-pushed victim vanished")
-            .actor_data_mut()
-            .expect("falling-pushed victim lost actor data");
         // Takeoff preparation always installs its increment and goal. A rejected
         // horizontal push can still have a few-ULP vertical difference when
         // the landing plane recomputes the cached takeoff map point; Original
         // applies that tiny increment on every flight tick. Collapsing
         // sub-centimetre flights here makes the position appear moving
         // falsely remain clear.
-        actor.active_flight = Some(Box::new(crate::element::ActiveFlight {
-            geometry: crate::element::FlightGeometry::World3d,
-            increment_x: ready_for_takeoff_increment(dx, frames),
-            increment_y: ready_for_takeoff_increment(dy_world, frames),
-            goal_x: goal.x,
-            goal_y: goal.y,
-            frames_remaining: frames,
-            antagonist: Some(attacker_id),
-            increment_z: ready_for_takeoff_increment(dz, frames),
-            goal_z,
-            goal_layer: layer,
-            goal_sector: sector,
-            obstacle,
-            ladder_fall: false,
-        }));
+        position.set_flight_goal_and_increment(
+            crate::coordinates::WorldPoint3D::new(goal.x, goal.y + goal_z, goal_z),
+            crate::coordinates::WorldVec3D::new(
+                ready_for_takeoff_increment(dx, frames),
+                ready_for_takeoff_increment(dy_world, frames),
+                ready_for_takeoff_increment(dz, frames),
+            ),
+            sector,
+            sector.and_then(|sector| sector.arena_index()),
+        );
     }
 
     // ─── Rolling on slopes ──────────────────────────────────────────

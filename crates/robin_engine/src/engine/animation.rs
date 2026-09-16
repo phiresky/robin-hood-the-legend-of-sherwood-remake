@@ -2631,6 +2631,25 @@ impl EngineInner {
 
     /// Initialize live takeoff and death placement before generic sprite dispatch.
     fn initialize_actor_animation_placement(&mut self, assets: &LevelAssets, entity_id: EntityId) {
+        let ladder = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execute_order_initialising)
+            .then(|| {
+                self.orders
+                    .sequence_manager
+                    .current_order_for_actor(&self.world.entities, entity_id)
+                    .filter(|(_, _, order)| order.order_type == OrderType::FallingLadderWall)
+                    .map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.destination_3d))
+            })
+            .flatten();
+        if let Some((seq_id, elem_idx, destination)) = ladder {
+            self.execute_non_interruptable_lifts((seq_id, elem_idx));
+            self.initialize_ladder_fall(entity_id, destination);
+        }
+
         // Hit-damage translation only appends a FALLING_HIT_* order. Original
         // Hit-induced falling samples live geometry and prepares takeoff
         // during initialization, so actors whose creation slot has already
@@ -2645,10 +2664,12 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .current_order_for_actor(&self.world.entities, entity_id)
-                    .map(|(_, _, order)| (order.order_type, order.antagonist))
+                    .map(|(seq_id, elem_idx, order)| {
+                        (seq_id, elem_idx, order.order_type, order.antagonist)
+                    })
             })
             .flatten()
-            .filter(|(anim, _)| {
+            .filter(|(_, _, anim, _)| {
                 matches!(
                     anim,
                     OrderType::FallingHitUpright
@@ -2657,7 +2678,8 @@ impl EngineInner {
                         | OrderType::FallingHitCrouched
                 )
             });
-        if let Some((anim, antagonist)) = initial_hit_flight {
+        if let Some((seq_id, elem_idx, anim, antagonist)) = initial_hit_flight {
+            self.execute_non_interruptable_lifts((seq_id, elem_idx));
             self.initialize_hit_flight(assets, entity_id, antagonist, anim);
         }
 
@@ -2689,6 +2711,7 @@ impl EngineInner {
                 )
             });
         if let Some((sequence_id, element_index, anim)) = initial_push_flight {
+            self.execute_non_interruptable_lifts((sequence_id, element_index));
             self.initialize_push_flight(assets, entity_id, (sequence_id, element_index), anim);
         }
 

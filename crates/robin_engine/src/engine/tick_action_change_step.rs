@@ -362,9 +362,6 @@ impl EngineInner {
                 "owner_post_execute",
             );
         }
-        if let Some(flight_motion) = self.tick_push_flight_for_owner(sim, assets, entity_id) {
-            motion = flight_motion;
-        }
         if motion == MotionState::Start
             && self
                 .world

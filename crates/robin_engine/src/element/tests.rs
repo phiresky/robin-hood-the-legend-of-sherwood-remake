@@ -1,58 +1,6 @@
 use super::*;
 
 #[test]
-fn optional_actor_payloads_preserve_wire_format_and_hashes() {
-    use robin_util::state_hash::StateHash;
-    use std::hash::Hasher;
-
-    let flight = ActiveFlight {
-        frames_remaining: 17,
-        increment_x: 1.25,
-        ..Default::default()
-    };
-    let shield = crate::bow_shot::compute_shield_obstacle(
-        MapPoint::new(13.0, 27.0),
-        4.0,
-        3,
-        &crate::bow_shot::shield_params_for_pc(false),
-    );
-    let unboxed = vec![(None, None), (Some(flight), Some(shield))];
-    let boxed = unboxed
-        .iter()
-        .cloned()
-        .map(|(flight, shield)| (flight.map(Box::new), shield.map(Box::new)))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        serde_json::to_value(&unboxed).unwrap(),
-        serde_json::to_value(&boxed).unwrap()
-    );
-    let bytes = bitcode::encode(&unboxed);
-    assert_eq!(bytes, bitcode::encode(&boxed));
-    let decoded: Vec<(
-        Option<Box<ActiveFlight>>,
-        Option<Box<crate::sight_obstacle::SightObstacle>>,
-    )> = bitcode::decode(&bytes).unwrap();
-    assert_eq!(
-        serde_json::to_value(&decoded).unwrap(),
-        serde_json::to_value(&unboxed).unwrap()
-    );
-    let mut before = std::hash::DefaultHasher::new();
-    let mut after = std::hash::DefaultHasher::new();
-    unboxed.state_hash(&mut before);
-    boxed.state_hash(&mut after);
-    assert_eq!(before.finish(), after.finish());
-
-    let actor = ActorData {
-        active_flight: boxed[1].0.clone(),
-        shield_obstacle: boxed[1].1.clone(),
-        ..Default::default()
-    };
-    let mut snapshot = actor.clone();
-    snapshot.active_flight.as_mut().unwrap().frames_remaining = 0;
-    assert_eq!(actor.active_flight.as_ref().unwrap().frames_remaining, 17);
-}
-
-#[test]
 fn entity_slots_fit_within_two_kibibytes() {
     assert!(std::mem::size_of::<Option<Entity>>() <= 2048);
 }
