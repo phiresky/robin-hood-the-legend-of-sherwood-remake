@@ -726,7 +726,7 @@ pub fn begin_heal(
 ///
 /// Called when `Command::WhistleCmd` is dispatched.
 ///
-/// Arms `whistle_wait_time = TIME_LISTEN_WAIT` (25) so owner-local dispatch
+/// Arms `wait_time = TIME_LISTEN_WAIT` (25) so owner-local dispatch
 /// can decrement it each frame and `render_listen_ping` can draw the
 /// expanding noise ellipse during the final `TIME_LISTEN` (5) frames
 /// (the Whistling arm of the shared Listen/Whistle ellipse render).
@@ -755,11 +755,8 @@ pub fn begin_whistle(
     // the whistling order.  In particular, it does not call `Stop()` or
     // overwrite the actor's logical action state: a PC that was bored or
     // moving keeps that state until the animation reaches its terminal
-    // state-reset boundary. The wait timer is the actor's single serialized
-    // countdown, so keep the renderer-only mirror synchronized with it.
+    // state-reset boundary. Rendering reads the same countdown as execution.
     actor.wait_time = TIME_LISTEN_WAIT;
-    actor.seek_refresh_wait = TIME_LISTEN_WAIT;
-    actor.whistle_wait_time = TIME_LISTEN_WAIT;
 
     let mut order = Order::new(OrderType::Whistling, 0.0, 0.0, order_id);
     order.compute_direction = false;
@@ -992,8 +989,6 @@ pub fn begin_listen(
     // serialized wait timer immediately. The transition animation owns
     // the sprite independently of that logical state.
     actor.wait_time = TIME_LISTEN_WAIT;
-    actor.seek_refresh_wait = TIME_LISTEN_WAIT;
-    actor.listen_wait_time = 0;
 
     let mut order = Order::new(
         OrderType::TransitionWaitingUprightListening,

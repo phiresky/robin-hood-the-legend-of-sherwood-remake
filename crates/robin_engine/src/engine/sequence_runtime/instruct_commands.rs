@@ -1308,13 +1308,7 @@ impl EngineInner {
         self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
     }
 
-    /// Jump: build a step list covering the run-up,
-    /// airborne trajectory, and landing
-    /// transitions, then drive the actor through
-    /// them via `tick_active_jump_for`.  If the jump
-    /// can't be installed (missing data) the
-    /// element is terminated so the sequence
-    /// doesn't stall.
+    /// Author the run-up, trajectory, and landing as ordinary sequence orders.
     pub(super) fn instruct_jump(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1329,7 +1323,7 @@ impl EngineInner {
                 entity = ?owner,
                 seq = ?seq_id,
                 elem = elem_idx,
-                "Jump: failed to install ActiveJump — terminating element"
+                "Jump: failed to translate orders — terminating element"
             );
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }

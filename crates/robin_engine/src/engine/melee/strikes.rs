@@ -486,7 +486,7 @@ impl EngineInner {
             entity
                 .actor_data_mut()
                 .expect("loaded combat-flight entity lost actor data")
-                .active_flight = Some(crate::element::ActiveFlight {
+                .active_flight = Some(Box::new(crate::element::ActiveFlight {
                 geometry: crate::element::FlightGeometry::World3d,
                 increment_x: position.increment.x,
                 increment_y: position.increment.y,
@@ -504,7 +504,7 @@ impl EngineInner {
                 goal_sector: Some(goal_sector),
                 obstacle: position.obstacle,
                 ladder_fall: false,
-            });
+            }));
         }
 
         candidates.len()
@@ -2017,7 +2017,7 @@ impl EngineInner {
         let eligible = |entity: &Entity| {
             entity
                 .actor_data()
-                .and_then(|actor| actor.active_flight)
+                .and_then(|actor| actor.active_flight.as_deref().copied())
                 .is_some_and(|flight| {
                     (!terminal_only || flight.frames_remaining == 0)
                         && (!skip_terminal || flight.frames_remaining != 0)
@@ -2047,7 +2047,9 @@ impl EngineInner {
                 .get_mut(entity_id)
                 .expect("selected flight actor disappeared before flight execution");
             // Read flight state without holding a mutable borrow.
-            let flight_info = entity.actor_data().and_then(|a| a.active_flight);
+            let flight_info = entity
+                .actor_data()
+                .and_then(|a| a.active_flight.as_deref().copied());
 
             let mut flight = match flight_info {
                 Some(f) => f,
@@ -2167,7 +2169,12 @@ impl EngineInner {
                 flight.increment_x = 0.0;
                 flight.increment_y = 0.0;
                 flight.increment_z = 0.0;
-                entity.actor_data_mut().unwrap().active_flight = Some(flight);
+                *entity
+                    .actor_data_mut()
+                    .unwrap()
+                    .active_flight
+                    .as_deref_mut()
+                    .expect("selected flight disappeared") = flight;
             }
 
             // Takeoff preparation writes these values into the position interface,
@@ -2305,14 +2312,9 @@ impl EngineInner {
                     let actor = entity.actor_data_mut().unwrap();
                     actor.active_flight = None;
                     if flight.ladder_fall {
-                        // The countdown just hit zero. Original stores the
-                        // ladder countdown and seek-refresh countdown in the
-                        // same wait-time scalar, so landing overwrites the
-                        // dormant seek mirror too. Keep the retained seek
-                        // target/continuation themselves intact: only their
-                        // split Rust countdown copy has become stale.
+                        // Landing exhausts the shared timer while preserving
+                        // the retained seek target and continuation.
                         actor.wait_time = 0;
-                        actor.seek_refresh_wait = 0;
                         ladder_arrivals.push(entity_id.into());
                     }
                 }
@@ -2385,7 +2387,7 @@ impl EngineInner {
                 let post_position_map = entity.element_data().position_map();
                 let frames_remaining_after = entity
                     .actor_data()
-                    .and_then(|actor| actor.active_flight)
+                    .and_then(|actor| actor.active_flight.as_deref().copied())
                     .map(|active| active.frames_remaining);
                 crate::movement_diagnostics::record_parity_flight_step(
                     crate::movement_diagnostics::ParityFlightStep {
@@ -3332,7 +3334,7 @@ mod tests {
 
         let actor = ActorData {
             action_state: ActionState::WaitingSword,
-            active_flight: Some(crate::element::ActiveFlight {
+            active_flight: Some(Box::new(crate::element::ActiveFlight {
                 increment_x: 5.0,
                 goal_x: 15.0,
                 goal_y: 20.0,
@@ -3341,7 +3343,7 @@ mod tests {
                 goal_layer: 3,
                 goal_sector: SectorHandle::new(4),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
 
@@ -3433,6 +3435,8 @@ mod tests {
             .actor_data()
             .unwrap()
             .active_flight
+            .as_deref()
+            .copied()
             .expect("restored flight");
         assert_eq!(flight.increment_x, -2.0);
         assert_eq!(flight.increment_y, -2.0);
@@ -3462,7 +3466,7 @@ mod tests {
 
         let mut actor = ActorData {
             action_state: ActionState::Moving,
-            active_flight: Some(crate::element::ActiveFlight {
+            active_flight: Some(Box::new(crate::element::ActiveFlight {
                 increment_x: 5.0,
                 goal_x: 15.0,
                 goal_y: 20.0,
@@ -3471,7 +3475,7 @@ mod tests {
                 goal_layer: 3,
                 goal_sector: SectorHandle::new(4),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
@@ -3540,7 +3544,6 @@ mod tests {
                 .actor_data_mut()
                 .unwrap();
             actor.wait_time = 1;
-            actor.seek_refresh_wait = 24;
             actor.seek_target = Some(victim);
             actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
         }
@@ -3550,8 +3553,6 @@ mod tests {
 
         let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
         assert_eq!(actor.wait_time, 0);
-        assert_eq!(actor.seek_refresh_wait, 0);
-        assert_eq!(engine.actor_legacy_wait_time(victim), 0);
         assert_eq!(actor.seek_target, Some(victim));
         assert!(actor.post_seek_sequence.is_some());
     }
@@ -3562,21 +3563,22 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut victim = falling_pushed_soldier(false);
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
-        victim.actor_data_mut().unwrap().active_flight = Some(crate::element::ActiveFlight {
-            geometry: crate::element::FlightGeometry::World3d,
-            increment_x: 1.25,
-            increment_y: 0.75,
-            increment_z: 0.5,
-            goal_x: 30.0,
-            goal_y: 40.0,
-            goal_z: 5.0,
-            frames_remaining: 8,
-            antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
-            goal_layer: 3,
-            goal_sector: SectorHandle::new(4)
-                .map(|sector| sector.with_arena_index(goal_sector_index)),
-            ..Default::default()
-        });
+        victim.actor_data_mut().unwrap().active_flight =
+            Some(Box::new(crate::element::ActiveFlight {
+                geometry: crate::element::FlightGeometry::World3d,
+                increment_x: 1.25,
+                increment_y: 0.75,
+                increment_z: 0.5,
+                goal_x: 30.0,
+                goal_y: 40.0,
+                goal_z: 5.0,
+                frames_remaining: 8,
+                antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
+                goal_layer: 3,
+                goal_sector: SectorHandle::new(4)
+                    .map(|sector| sector.with_arena_index(goal_sector_index)),
+                ..Default::default()
+            }));
         let victim_id = engine.add_test_entity(victim);
         install_falling_pushed_order(&mut engine, victim_id);
 
@@ -3639,6 +3641,8 @@ mod tests {
                 .actor_data()
                 .unwrap()
                 .active_flight
+                .as_deref()
+                .copied()
                 .unwrap()
                 .frames_remaining,
             0
@@ -4182,6 +4186,8 @@ mod tests {
                 .actor_data()
                 .unwrap()
                 .active_flight
+                .as_deref()
+                .copied()
                 .unwrap()
                 .frames_remaining,
             0
@@ -4211,6 +4217,8 @@ mod tests {
                 .actor_data()
                 .unwrap()
                 .active_flight
+                .as_deref()
+                .copied()
                 .unwrap()
                 .frames_remaining,
             0

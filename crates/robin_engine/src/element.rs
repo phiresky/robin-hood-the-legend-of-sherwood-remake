@@ -661,25 +661,6 @@ pub struct ActiveFlight {
     pub ladder_fall: bool,
 }
 
-/// Door identity retained while its ordinary order chain executes.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveDoorPass {
-    pub door_index: crate::gate::DoorIndex,
-    pub direct: bool,
-    /// Direction of the owning movement element, retained across a restored crossing.
-    pub position_direct: bool,
-    /// First trigger crosses the gate; the second enables anti-collision.
-    pub triggers_fired: u8,
-}
-
 /// Exact representation of the original game's installed actor order.
 ///
 /// Sequence-manager selection is deliberately not sufficient: an element can
@@ -739,22 +720,6 @@ pub struct ActorData {
     // Wait
     pub wait_time: u32,
 
-    /// Countdown for the Listen ability's one-shot reveal.  Armed to
-    /// `TIME_LISTEN_WAIT` (25) by the ai.rs section 2a listen pass
-    /// when the PC enters the Listening order, then
-    /// decremented each subsequent frame.  When it reaches 0, the blip
-    /// reveal + FX target `Heard()` callback fires exactly once and
-    /// execution advances to the exit transition.
-    pub listen_wait_time: u32,
-
-    /// Countdown for the Whistle ability's expanding-noise ellipse
-    /// render pass.  Armed to `TIME_LISTEN_WAIT` (25) on the first
-    /// tick of the whistle animation, decremented each subsequent
-    /// frame until 0.  Read by `render_listen_ping` to draw the
-    /// expanding circle during the last `TIME_LISTEN` (5) frames (the
-    /// Whistling arm of the shared Listen/Whistle ellipse render).
-    pub whistle_wait_time: u32,
-
     // Seeking
     pub seek_target: Option<EntityId>,
     pub last_seek_target_position: MapPoint,
@@ -762,12 +727,6 @@ pub struct ActorData {
     /// requested by the transient Seek command. Moving-target refreshes
     /// derive their concrete tolerance from this stable base each time.
     pub seek_distance: f32,
-    /// Countdown before the actor may re-issue a seek against a moving
-    /// target.  Armed to `TIME_SEEK_REFRESH` (25) at seek launch and
-    /// after each seek refresh; decremented by entity-target seeking
-    /// owner execution when that call does not return through a successful
-    /// post-seek arrival.
-    pub seek_refresh_wait: u32,
     // Note: concrete seek tolerance/flags/sector/layer live on the active
     // `Movement` element. `seek_distance` is deliberately actor-owned
     // because seek refresh repeatedly derives concrete moving-target
@@ -781,12 +740,6 @@ pub struct ActorData {
     pub passing_door_directly: bool,
 
     pub script_class: String,
-
-    /// Multi-step door-pass state. When set, the movement tick processes
-    /// steps one at a time: walk steps set waypoints, PassingDoor steps
-    /// fire the layer/sector callback, and Transition steps play
-    /// animations in place. See [`ActiveDoorPass`].
-    pub active_door_pass: Option<ActiveDoorPass>,
 
     /// Destination point for rolling after a death/knockout fall on a slope.
     /// When `combat_anim` finishes and this is set, a Rolling animation is
@@ -803,7 +756,9 @@ pub struct ActorData {
     /// Active push-flight.  When `Some`, the entity is being pushed through
     /// the air by a push/circle/charge strike.  Each frame the position
     /// advances by the stored increment.
-    pub active_flight: Option<ActiveFlight>,
+    /// Large optional action states are boxed so inactive actors and smaller
+    /// entity variants do not reserve their payload in every entity slot.
+    pub active_flight: Option<Box<ActiveFlight>>,
 
     // -- Lift climb state --
     /// If the actor currently owns a ladder-lift reservation, which sector
@@ -824,24 +779,7 @@ pub struct ActorData {
     /// call sites and retained between them. Used by `tick_arrows` to block
     /// incoming arrows.
     ///
-    pub shield_obstacle: Option<crate::sight_obstacle::SightObstacle>,
-
-    /// Active line-jump state.  Populated by
-    /// [`EngineInner::start_jump`](crate::engine::EngineInner::start_jump) and
-    /// drained by [`EngineInner::tick_active_jump_for`]; the actor is
-    /// position-driven by the jump module while this is `Some`.
-    pub active_jump: Option<crate::engine::jump::ActiveJump>,
-    /// Target 3D point of the currently-executing jump step.  Stashed
-    /// here so the flight can interpolate toward it on each frame
-    /// without re-peeking the consumed step.
-    pub active_jump_target_3d: Option<WorldPoint3D>,
-    /// Whether the currently-executing jump step is airborne (drives
-    /// `jump_z_offset` during interpolation).
-    pub active_jump_airborne: bool,
-    /// Visual lift applied to the sprite during airborne jump steps.
-    /// The renderer subtracts this from the sprite's world Y so the
-    /// character appears above the ground.  `0.0` on the ground.
-    pub jump_z_offset: f32,
+    pub shield_obstacle: Option<Box<crate::sight_obstacle::SightObstacle>>,
 
     /// Last computed produced-noise volume.  Persists across frames
     /// to implement the `RHMATERIAL_LIGHT_SHADOW` carry-over in
@@ -877,22 +815,14 @@ impl Default for ActorData {
             execute_order_initialising: false,
 
             wait_time: 0,
-            listen_wait_time: 0,
-            whistle_wait_time: 0,
             seek_target: None,
             last_seek_target_position: MapPoint::default(),
             seek_distance: 0.0,
-            seek_refresh_wait: 0,
             post_seek_sequence: None,
             passing_door_directly: false,
             script_class: String::new(),
-            active_door_pass: None,
             pending_roll: None,
             shield_face_point: None,
-            active_jump: None,
-            active_jump_target_3d: None,
-            active_jump_airborne: false,
-            jump_z_offset: 0.0,
             active_flight: None,
             active_lift: None,
             last_executed_rider_charge_order_id: None,
@@ -914,47 +844,11 @@ impl ActorData {
     }
 
     /// StartPostSeekSequence's teardown before an out-of-range PC Hit aborts.
-    /// The overloaded wait value is folded before the invalid interaction is
-    /// reported. Preserve the seek distance/last position and independent
+    /// Preserve the shared wait timer, seek distance/last position and independent
     /// order, action, jump, and ability latches for their owning callbacks.
     pub(crate) fn abort_out_of_range_hit_seek(&mut self) {
-        self.wait_time = self.seek_refresh_wait;
         self.seek_target = None;
         self.post_seek_sequence = None;
-        self.active_door_pass = None;
-    }
-
-    /// Install a translated jump without advancing its first Execute slot.
-    /// The outgoing action and airborne latches deliberately survive until
-    /// that slot; they are independently observable Original state.
-    pub(crate) fn install_jump(
-        &mut self,
-        jump: crate::engine::jump::ActiveJump,
-        first_order: InstalledActorOrder,
-    ) {
-        self.active_jump = Some(jump);
-        self.jump_z_offset = 0.0;
-        self.installed_order = Some(first_order);
-    }
-
-    /// Release completed jump ownership and visual lift. Do not erase the
-    /// last step's target/airborne latches or choose the next action here:
-    /// landing callbacks and the selected-order path own those boundaries.
-    pub(crate) fn finish_jump(&mut self) {
-        self.active_jump = None;
-        self.jump_z_offset = 0.0;
-    }
-
-    /// Publish a selected step and its movement latches together. The caller
-    /// must already have selected a live jump owner.
-    pub(crate) fn install_jump_step(&mut self, state: crate::engine::jump::CurrentStepState) {
-        let jump = self
-            .active_jump
-            .as_mut()
-            .expect("selected jump step has no live jump owner");
-        self.active_jump_target_3d = state.step.target_3d;
-        self.active_jump_airborne = state.step.airborne;
-        jump.current = Some(state);
     }
 }
 

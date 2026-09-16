@@ -4,13 +4,9 @@
 //! different serialized stores.  Original-compatible QA slots must never be
 //! consumed merely because a PC also has automatic work pending.
 //!
-//! Two parallel collections per PC in [`MacroStore`]:
-//!
-//! * `slots` — exactly the three Original-compatible QA memory slots.
-//! * `maul_titbits` — **one
-//!   titbit ID per QA slot**. The id is assigned to a quick-action marker
-//!   when the input action records the macro. The portrait widget blits a *single*
-//!   frame for that slot, resolved via `Titbits::get_phase`.
+//! Each PC owns three quick-action slots. A slot owns its action payload,
+//! interaction metadata, and marker ID together, so shifting a slot transfers
+//! its complete state without synchronizing another representation.
 //!
 //! The dotted-chain segments connecting the PC to each recorded step's
 //! world position come from `Titbits::draw_lines`; we retain the recorded
@@ -244,7 +240,7 @@ pub enum QaReplayCommand {
 /// `position` drives the dotted chain; `replay` carries enough to
 /// reconstruct a `PlayerCommand` so `EngineInner::start_quick_action`
 /// can re-dispatch each step.  **There is no per-step titbit id**:
-/// titbits are registered once per *slot* via `maul_titbits[level]`,
+/// titbits are registered once per slot,
 /// not once per step.
 #[derive(
     Debug,
@@ -298,14 +294,15 @@ pub struct QuickActionSlot {
     /// commands, so playback launches copies of the retained payloads.
     legacy_action_sequence: Option<Sequence>,
     legacy_seek_sequence: Option<Sequence>,
-    /// Exact non-sequence quick action restored from an Original save.
-    legacy_quickito: Option<LegacyQuickito>,
+    pub(crate) quickito: LegacyQuickito,
+    titbit: Option<crate::titbit::TitbitId>,
 }
 
 #[derive(
     Debug,
     Clone,
     Copy,
+    Default,
     Serialize,
     Deserialize,
     PartialEq,
@@ -331,7 +328,8 @@ impl PartialEq for QuickActionSlot {
                 .expect("serialize legacy QA seek for equality")
                 == serde_json::to_value(&other.legacy_seek_sequence)
                     .expect("serialize legacy QA seek for equality")
-            && self.legacy_quickito == other.legacy_quickito
+            && self.quickito == other.quickito
+            && self.titbit == other.titbit
     }
 }
 
@@ -339,7 +337,7 @@ impl QuickActionSlot {
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
             && self.legacy_action_sequence.is_none()
-            && self.legacy_quickito.is_none()
+            && self.quickito.kind == QuickAction::None
     }
     pub fn len(&self) -> usize {
         self.steps
@@ -349,7 +347,7 @@ impl QuickActionSlot {
                     .as_ref()
                     .map_or(0, |sequence| sequence.len()),
             )
-            .max(usize::from(self.legacy_quickito.is_some()))
+            .max(usize::from(self.quickito.kind != QuickAction::None))
     }
 
     pub(crate) fn legacy_sequences(&self) -> Option<(&Sequence, Option<&Sequence>)> {
@@ -358,8 +356,34 @@ impl QuickActionSlot {
             .map(|action| (action, self.legacy_seek_sequence.as_ref()))
     }
 
+    pub(crate) fn retained_sequence_sizes(&self) -> (Option<usize>, Option<usize>) {
+        (
+            self.legacy_action_sequence
+                .as_ref()
+                .map(|sequence| sequence.len()),
+            self.legacy_seek_sequence
+                .as_ref()
+                .map(|sequence| sequence.len()),
+        )
+    }
+
     pub(crate) fn legacy_quickito(&self) -> Option<LegacyQuickito> {
-        self.legacy_quickito
+        (self.quickito.kind != QuickAction::None).then_some(self.quickito)
+    }
+
+    pub(crate) fn retained(
+        action: Option<Sequence>,
+        seek: Option<Sequence>,
+        quickito: LegacyQuickito,
+        titbit: Option<crate::titbit::TitbitId>,
+    ) -> Self {
+        Self {
+            steps: Vec::new(),
+            legacy_action_sequence: action,
+            legacy_seek_sequence: seek,
+            quickito,
+            titbit,
+        }
     }
 }
 
@@ -380,11 +404,9 @@ impl QuickActionSlot {
     bitcode::Decode,
 )]
 pub struct PcMacroState {
-    slots: Vec<QuickActionSlot>,
-    /// One titbit ID per QA slot, `None` when empty.  Set at the
-    /// quick-action titbit creation / sequence assignment
-    /// site in the input-action flow.
-    maul_titbits: Vec<Option<crate::titbit::TitbitId>>,
+    slots: [QuickActionSlot; NUMBER_OF_QA_MEMORY],
+    /// Counters belong to memory positions and do not move with slot tetris.
+    special_counts: [u16; NUMBER_OF_QA_MEMORY],
     recording_slot: Option<u8>,
     /// Whether the armed manual slot still contains its previous QA. Original
     /// keeps that state live until the first replacement action is captured.
@@ -398,10 +420,8 @@ pub struct PcMacroState {
 impl Default for PcMacroState {
     fn default() -> Self {
         Self {
-            slots: (0..NUMBER_OF_QA_MEMORY)
-                .map(|_| QuickActionSlot::default())
-                .collect(),
-            maul_titbits: vec![None; NUMBER_OF_QA_MEMORY],
+            slots: std::array::from_fn(|_| QuickActionSlot::default()),
+            special_counts: [0; NUMBER_OF_QA_MEMORY],
             recording_slot: None,
             recording_replaces_existing: false,
         }
@@ -450,23 +470,23 @@ impl PcMacroState {
             .map(|slot| slot as u8)
     }
 
-    /// Read a slot's titbit id.  Returns `None` for an empty slot.
+    /// Read the retained marker ID, including a consumed slot awaiting tetris.
     pub fn get_slot_titbit(&self, slot: usize) -> Option<crate::titbit::TitbitId> {
-        self.maul_titbits.get(slot).copied().flatten()
+        self.slots.get(slot).and_then(|slot| slot.titbit)
     }
 
     /// Write a slot's titbit id.  Called from the
     /// `set_quick_action_sequence` flow once the recorder knows which
     /// titbit id to associate with the slot.
     pub fn set_slot_titbit(&mut self, slot: usize, id: crate::titbit::TitbitId) {
-        if let Some(cell) = self.maul_titbits.get_mut(slot) {
-            *cell = Some(id);
+        if let Some(slot) = self.slots.get_mut(slot) {
+            slot.titbit = Some(id);
         }
     }
 
     pub fn clear_slot_titbit(&mut self, slot: usize) {
-        if let Some(cell) = self.maul_titbits.get_mut(slot) {
-            *cell = None;
+        if let Some(slot) = self.slots.get_mut(slot) {
+            slot.titbit = None;
         }
     }
 
@@ -499,9 +519,16 @@ impl PcMacroState {
     pub fn append_if_recording(&mut self, step: QuickActionStep) {
         if let Some(idx) = self.recording_slot {
             let idx = usize::from(idx);
-            if self.recording_replaces_existing {
-                self.slots[idx] = QuickActionSlot::default();
-                self.maul_titbits[idx] = None;
+            if self.recording_replaces_existing || self.slots[idx].steps.is_empty() {
+                let quickito = LegacyQuickito {
+                    kind: QuickAction::None,
+                    ..self.slots[idx].quickito
+                };
+                self.slots[idx] = QuickActionSlot {
+                    quickito,
+                    ..QuickActionSlot::default()
+                };
+                self.special_counts[idx] = 0;
                 self.recording_replaces_existing = false;
             }
             self.slots[idx].steps.push(step);
@@ -515,10 +542,8 @@ impl PcMacroState {
             s.steps.clear();
             s.legacy_action_sequence = None;
             s.legacy_seek_sequence = None;
-            s.legacy_quickito = None;
-        }
-        if let Some(cell) = self.maul_titbits.get_mut(slot_idx) {
-            *cell = None;
+            s.quickito = LegacyQuickito::default();
+            s.titbit = None;
         }
         if self.recording_slot == Some(slot_idx as u8) {
             self.recording_slot = None;
@@ -526,10 +551,45 @@ impl PcMacroState {
         }
     }
 
+    /// Consume a quick action while retaining its marker identity until tetris.
+    pub(crate) fn complete_slot(&mut self, slot: usize) {
+        let titbit = self.slots[slot].titbit;
+        self.clear_slot(slot);
+        self.slots[slot].titbit = titbit;
+    }
+
+    pub(crate) fn complete_sequence_slot(&mut self, slot: usize) {
+        let metadata = self.slots[slot].quickito;
+        self.complete_slot(slot);
+        self.slots[slot].quickito = metadata;
+        self.reset_special_count(slot);
+    }
+
+    pub(crate) fn special_count(&self, slot: usize) -> u16 {
+        self.special_counts[slot]
+    }
+
+    pub(crate) fn reset_special_count(&mut self, slot: usize) {
+        self.special_counts[slot] = 0;
+    }
+
+    pub(crate) fn deactivate_slot(&mut self, slot: usize) {
+        let metadata = self.slots[slot].quickito;
+        self.clear_slot(slot);
+        self.slots[slot].quickito = LegacyQuickito {
+            kind: QuickAction::None,
+            ..metadata
+        };
+        self.reset_special_count(slot);
+    }
+
+    pub(crate) fn adopt_slot(&mut self, slot: usize, value: QuickActionSlot, special_count: u16) {
+        self.slots[slot] = value;
+        self.special_counts[slot] = special_count;
+    }
+
     /// Shift every later slot down by one. Called once every PC has completed
     /// a given macro slot so the remaining slots collapse forward.
-    ///
-    /// Shifted state: `steps` and `maul_titbits[i] = maul_titbits[i+1]`.
     ///
     /// The recording-state guard is defensive — the tetris message is
     /// only posted after every PC has completed slot N, ruling out a
@@ -541,16 +601,9 @@ impl PcMacroState {
         }
         for i in slot_idx..self.slots.len() - 1 {
             self.slots.swap(i, i + 1);
-            self.maul_titbits[i] = self.maul_titbits[i + 1];
         }
-        if self.slots.len() > NUMBER_OF_QA_MEMORY {
-            self.slots.pop();
-            self.maul_titbits.pop();
-        } else {
-            let last = NUMBER_OF_QA_MEMORY - 1;
-            self.slots[last] = QuickActionSlot::default();
-            self.maul_titbits[last] = None;
-        }
+        let last = NUMBER_OF_QA_MEMORY - 1;
+        self.slots[last] = QuickActionSlot::default();
         if let Some(rs) = self.recording_slot
             && (rs as usize) >= slot_idx
         {
@@ -675,11 +728,8 @@ impl AutoQueueStore {
     }
 }
 
-/// PC-keyed macro store — each PC owns its own slots / titbit-id arrays.
-///
-/// A flat map instead of a field on a PC struct because entities are
-/// id-keyed and there isn't a central per-PC struct to hang this off
-/// of.
+/// Authoritative per-PC quick-action state. Keeping it separate from entity
+/// components allows recording and validation to borrow actor state directly.
 #[derive(
     Debug,
     Clone,
@@ -726,46 +776,6 @@ impl MacroStore {
             .iter_mut()
             .find(|(id, _)| *id == pc)
             .map(|(_, s)| s)
-    }
-
-    pub(crate) fn adopt_legacy_sequence_slot(
-        &mut self,
-        pc: EntityId,
-        slot: usize,
-        action: Sequence,
-        seek: Option<Sequence>,
-        titbit: Option<crate::titbit::TitbitId>,
-    ) {
-        assert!(
-            slot < NUMBER_OF_QA_MEMORY,
-            "legacy QA slot {slot} is out of range"
-        );
-        let state = self.get_or_insert(pc);
-        state.slots[slot].steps.clear();
-        state.slots[slot].legacy_action_sequence = Some(action);
-        state.slots[slot].legacy_seek_sequence = seek;
-        state.slots[slot].legacy_quickito = None;
-        state.maul_titbits[slot] = titbit;
-    }
-
-    pub(crate) fn adopt_legacy_quickito_slot(
-        &mut self,
-        pc: EntityId,
-        slot: usize,
-        quickito: LegacyQuickito,
-        titbit: Option<crate::titbit::TitbitId>,
-    ) {
-        assert!(
-            slot < NUMBER_OF_QA_MEMORY,
-            "legacy Quickito slot {slot} is out of range"
-        );
-        assert_ne!(quickito.kind, QuickAction::None, "empty legacy Quickito");
-        let state = self.get_or_insert(pc);
-        state.slots[slot].steps.clear();
-        state.slots[slot].legacy_action_sequence = None;
-        state.slots[slot].legacy_seek_sequence = None;
-        state.slots[slot].legacy_quickito = Some(quickito);
-        state.maul_titbits[slot] = titbit;
     }
 
     /// Append to any PC currently recording.  Convenience wrapper for
@@ -1110,7 +1120,11 @@ mod tests {
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new(1, Command::Wait, Some(pc)));
         let mut store = MacroStore::new();
-        store.adopt_legacy_sequence_slot(pc, 1, sequence, None, None);
+        store.get_or_insert(pc).adopt_slot(
+            1,
+            QuickActionSlot::retained(Some(sequence), None, LegacyQuickito::default(), None),
+            0,
+        );
 
         let state = store.get(pc).expect("adopted PC macro state");
         assert!(state.has_macro(1));
@@ -1129,15 +1143,19 @@ mod tests {
         let pc = EntityId::new(8, crate::element::EntityIdKind::Pc);
         let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
         let mut store = MacroStore::new();
-        store.adopt_legacy_quickito_slot(
-            pc,
+        store.get_or_insert(pc).adopt_slot(
             2,
-            LegacyQuickito {
-                kind: QuickAction::Interact,
-                interactor: Some(target),
-                button: 0x0008,
-            },
-            None,
+            QuickActionSlot::retained(
+                None,
+                None,
+                LegacyQuickito {
+                    kind: QuickAction::Interact,
+                    interactor: Some(target),
+                    button: 0x0008,
+                },
+                None,
+            ),
+            0,
         );
 
         let state = store.get(pc).expect("adopted PC macro state");
@@ -1171,6 +1189,136 @@ mod tests {
         s.begin_recording(0);
         assert_eq!(s.slots[0].len(), 1);
         assert!(s.is_recording());
+    }
+
+    #[test]
+    fn retained_sequence_presence_is_independent_of_element_count_and_seek_storage() {
+        let mut state = PcMacroState::default();
+        state.adopt_slot(
+            0,
+            QuickActionSlot::retained(Some(Sequence::new()), None, LegacyQuickito::default(), None),
+            0,
+        );
+        state.adopt_slot(
+            1,
+            QuickActionSlot::retained(None, Some(Sequence::new()), LegacyQuickito::default(), None),
+            0,
+        );
+        assert!(state.has_macro(0));
+        assert!(!state.has_macro(1));
+        assert_eq!(
+            state.slot(0).unwrap().retained_sequence_sizes(),
+            (Some(0), None)
+        );
+        assert_eq!(
+            state.slot(1).unwrap().retained_sequence_sizes(),
+            (None, Some(0))
+        );
+    }
+
+    #[test]
+    fn completion_and_deactivation_preserve_distinct_retained_metadata() {
+        let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
+        let titbit = Some(crate::titbit::TitbitId::new(41).unwrap());
+        let metadata = LegacyQuickito {
+            kind: QuickAction::None,
+            interactor: Some(target),
+            button: 8,
+        };
+        let sequence_slot = QuickActionSlot::retained(
+            Some(Sequence::new()),
+            Some(Sequence::new()),
+            metadata,
+            titbit,
+        );
+        let mut state = PcMacroState::default();
+        state.adopt_slot(0, sequence_slot, 7);
+        state.complete_sequence_slot(0);
+        assert!(!state.has_macro(0));
+        assert_eq!(state.slots[0].quickito, metadata);
+        assert_eq!(state.get_slot_titbit(0), titbit);
+        assert_eq!(state.special_count(0), 0);
+        assert_eq!(state.slots[0].retained_sequence_sizes(), (None, None));
+
+        let quickito_slot = QuickActionSlot::retained(
+            None,
+            None,
+            LegacyQuickito {
+                kind: QuickAction::Interact,
+                ..metadata
+            },
+            titbit,
+        );
+        state.adopt_slot(1, quickito_slot.clone(), 8);
+        state.complete_slot(1);
+        assert!(!state.has_macro(1));
+        assert_eq!(state.slots[1].quickito, LegacyQuickito::default());
+        assert_eq!(state.get_slot_titbit(1), titbit);
+        assert_eq!(state.special_count(1), 8);
+
+        state.adopt_slot(2, quickito_slot, 9);
+        state.deactivate_slot(2);
+        assert!(!state.has_macro(2));
+        assert_eq!(state.slots[2].quickito, metadata);
+        assert_eq!(state.get_slot_titbit(2), None);
+        assert_eq!(state.special_count(2), 0);
+    }
+
+    #[test]
+    fn tetris_moves_retained_payloads_but_leaves_special_counts_at_memory_positions() {
+        let mut state = PcMacroState::default();
+        for slot in 0..NUMBER_OF_QA_MEMORY {
+            state.adopt_slot(
+                slot,
+                QuickActionSlot::retained(
+                    Some(Sequence::new()),
+                    None,
+                    LegacyQuickito {
+                        button: slot as u16 + 10,
+                        ..LegacyQuickito::default()
+                    },
+                    Some(crate::titbit::TitbitId::new(slot as u32 + 20).unwrap()),
+                ),
+                slot as u16 + 30,
+            );
+        }
+        let second = state.slots[1].clone();
+        let third = state.slots[2].clone();
+        state.complete_sequence_slot(0);
+        state.do_tetris(0);
+        assert_eq!(state.slots, [second, third, QuickActionSlot::default()]);
+        assert_eq!(state.special_counts, [0, 31, 32]);
+    }
+
+    #[test]
+    fn recording_into_seek_only_slot_discards_stale_payload_but_keeps_interaction_metadata() {
+        let mut state = PcMacroState::default();
+        let metadata = LegacyQuickito {
+            kind: QuickAction::None,
+            interactor: Some(EntityId::new(9, crate::element::EntityIdKind::Soldier)),
+            button: 8,
+        };
+        state.adopt_slot(
+            0,
+            QuickActionSlot::retained(
+                None,
+                Some(Sequence::new()),
+                metadata,
+                Some(crate::titbit::TitbitId::new(41).unwrap()),
+            ),
+            7,
+        );
+        state.begin_recording(0);
+        state.append_if_recording(step(Action::Bow, 1.0, 2.0));
+        assert_eq!(state.slots[0].retained_sequence_sizes(), (None, None));
+        assert_eq!(state.slots[0].quickito, metadata);
+        assert_eq!(state.get_slot_titbit(0), None);
+        assert_eq!(state.special_count(0), 0);
+        let marker = crate::titbit::TitbitId::new(42).unwrap();
+        state.set_slot_titbit(0, marker);
+        state.append_if_recording(step(Action::Bow, 3.0, 4.0));
+        assert_eq!(state.get_slot_titbit(0), Some(marker));
+        assert_eq!(state.slots[0].len(), 2);
     }
 
     #[test]
@@ -1315,8 +1463,8 @@ mod tests {
     fn clear_slot_also_stops_recording_and_resets_titbit() {
         let mut s = PcMacroState::default();
         s.begin_recording(2);
-        s.set_slot_titbit(2, crate::titbit::TitbitId::new(42).unwrap());
         s.append_if_recording(step(Action::Stone, 0.0, 0.0));
+        s.set_slot_titbit(2, crate::titbit::TitbitId::new(42).unwrap());
         s.clear_slot(2);
         assert!(!s.is_recording());
         assert!(!s.has_macro(2));
@@ -1341,12 +1489,12 @@ mod tests {
         let mut s = PcMacroState::default();
         // slot 0: empty (just completed)
         s.begin_recording(1);
-        s.set_slot_titbit(1, crate::titbit::TitbitId::new(101).unwrap());
         s.append_if_recording(step(Action::Bow, 1.0, 1.0));
+        s.set_slot_titbit(1, crate::titbit::TitbitId::new(101).unwrap());
         s.stop_recording();
         s.begin_recording(2);
-        s.set_slot_titbit(2, crate::titbit::TitbitId::new(202).unwrap());
         s.append_if_recording(step(Action::Hit, 2.0, 2.0));
+        s.set_slot_titbit(2, crate::titbit::TitbitId::new(202).unwrap());
         s.stop_recording();
 
         s.do_tetris(0);
@@ -1371,8 +1519,8 @@ mod tests {
     fn do_tetris_on_last_slot_just_clears_it() {
         let mut s = PcMacroState::default();
         s.begin_recording(2);
-        s.set_slot_titbit(2, crate::titbit::TitbitId::new(55).unwrap());
         s.append_if_recording(step(Action::Hit, 0.0, 0.0));
+        s.set_slot_titbit(2, crate::titbit::TitbitId::new(55).unwrap());
         s.stop_recording();
 
         s.do_tetris(2);
@@ -1465,8 +1613,8 @@ mod tests {
     fn serde_roundtrip() {
         let mut s = PcMacroState::default();
         s.begin_recording(0);
-        s.set_slot_titbit(0, crate::titbit::TitbitId::new(99).unwrap());
         s.append_if_recording(step(Action::Bow, 12.0, 34.0));
+        s.set_slot_titbit(0, crate::titbit::TitbitId::new(99).unwrap());
         s.stop_recording();
 
         let json = serde_json::to_string(&s).unwrap();

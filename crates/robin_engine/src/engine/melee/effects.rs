@@ -446,7 +446,7 @@ impl EngineInner {
                 // advance the generic flights store.  Deriving the map
                 // advance up front would round differently from the
                 // original's per-tick 3D accumulation.
-                actor.active_flight = Some(crate::element::ActiveFlight {
+                actor.active_flight = Some(Box::new(crate::element::ActiveFlight {
                     geometry: crate::element::FlightGeometry::World3d,
                     increment_x: dx * scale,
                     increment_y: dy3 * scale,
@@ -461,7 +461,7 @@ impl EngineInner {
                     goal_sector: Some(entry.sector),
                     obstacle: entry.obstacle,
                     ladder_fall: true,
-                });
+                }));
             }
         }
 
@@ -1171,7 +1171,7 @@ impl EngineInner {
         // applies that tiny increment on every flight tick. Collapsing
         // sub-centimetre flights here makes the position appear moving
         // falsely remain clear.
-        actor.active_flight = Some(crate::element::ActiveFlight {
+        actor.active_flight = Some(Box::new(crate::element::ActiveFlight {
             geometry: crate::element::FlightGeometry::World3d,
             increment_x: ready_for_takeoff_increment(dx, frames),
             increment_y: ready_for_takeoff_increment(dy_world, frames),
@@ -1185,7 +1185,7 @@ impl EngineInner {
             goal_sector: sector,
             obstacle,
             ladder_fall: false,
-        });
+        }));
     }
 
     // ─── Rolling on slopes ──────────────────────────────────────────

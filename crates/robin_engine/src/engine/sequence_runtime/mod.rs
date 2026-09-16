@@ -1388,12 +1388,6 @@ impl EngineInner {
                 .world
                 .entities
                 .expect_actor_data_mut(owner, format_args!("WAIT_TIMER owner during translation"));
-            // The original game has one overloaded wait-time scalar. Keep the
-            // seek-side Rust mirror synchronized with this WAIT_TIMER write:
-            // if the timer is interrupted while dormant post-seek ownership
-            // is still present, the isomorphic legacy view may select that
-            // mirror after the current command changes to Wait.
-            actor.seek_refresh_wait = timer;
             actor.wait_time = timer;
         }
         if is_pc
@@ -1405,7 +1399,6 @@ impl EngineInner {
                 .entities
                 .expect_actor_data_mut(owner, format_args!("Wait translation listening owner"));
             const TIME_LISTEN_WAIT: u32 = 25;
-            actor.seek_refresh_wait = 0;
             actor.wait_time = TIME_LISTEN_WAIT;
         }
         if set_posture_stuck_under_net {

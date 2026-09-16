@@ -1648,7 +1648,7 @@ impl EngineInner {
         // the current order. The entry and exit transitions
         // are one-shot animations driven here; the middle CountingDown
         // phase is a loop driven by the idle-pose animation driver
-        // plus the `listen_wait_time` countdown in
+        // plus the shared `wait_time` countdown in
         // the selected PC owner arm.
         if kind == AbilityKind::Listen {
             return Some(self.tick_listen(sim, assets, entity_id, &ability, sprite_frozen));
@@ -1707,6 +1707,10 @@ impl EngineInner {
         let direction = u16::try_from(entity.element_data().direction()).unwrap_or_else(|_| {
             panic!("{kind:?} owner {entity_id:?} has invalid animation direction")
         });
+        if kind == AbilityKind::Whistle && entity.actor_data().unwrap().execute_order_initialising {
+            entity.actor_data_mut().unwrap().wait_time = crate::abilities::TIME_LISTEN_WAIT;
+        }
+
         // Drive the animation through the sprite state machine.
         let motion = if sprite_frozen {
             SpriteMotionState::InProgress
@@ -1727,13 +1731,9 @@ impl EngineInner {
         // `TIME_LISTEN_WAIT` in `begin_whistle`.
         if kind == AbilityKind::Whistle {
             let actor = entity.actor_data_mut().unwrap();
-            if actor.whistle_wait_time != 0 {
-                actor.whistle_wait_time -= 1;
-            }
             if actor.wait_time != 0 {
                 actor.wait_time -= 1;
             }
-            actor.seek_refresh_wait = actor.wait_time;
         }
 
         // Carried sprites follow the action before its completion can change the relationship.
@@ -1986,11 +1986,9 @@ impl EngineInner {
                     // animation.rs idle-pose fallback) and hand off
                     // to the ai.rs countdown.
                     actor.action_state = ActionState::Listening;
-                    actor.listen_wait_time = crate::abilities::TIME_LISTEN_WAIT;
                     self.apply_ability_listen_entered(sim, assets, entity_id);
                 } else if order_type == OrderType::TransitionListeningWaitingUpright {
                     actor.action_state = ActionState::Waiting;
-                    actor.listen_wait_time = 0;
                     self.apply_ability_listen_done(sim, assets, entity_id);
                 }
             }

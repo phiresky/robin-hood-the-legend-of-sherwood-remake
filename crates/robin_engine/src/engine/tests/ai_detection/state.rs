@@ -200,7 +200,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 
 #[test]
 fn ambush_owner_inputs_preserve_committed_door_side() {
-    use crate::element::{ActiveDoorPass, Camp, Command};
+    use crate::element::{Camp, Command};
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::scb::{SCB_VERSION, ScbFile};
     use crate::sector::SectorNumber;
@@ -234,12 +234,10 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
         owner
             .element_data_mut()
             .set_position_map(MapPoint::new(21.0, 31.0));
-        owner.actor_data_mut().unwrap().active_door_pass = Some(ActiveDoorPass {
-            door_index: DoorIndex::new(0).unwrap(),
-            direct: direction != 0,
-            position_direct: direction != 0,
-            triggers_fired: 0,
-        });
+        owner.position_iface_mut().set_door(
+            crate::position_interface::DoorHandle::new(0).unwrap(),
+            direction != 0,
+        );
         let mut pass = crate::sequence::SequenceElement::new_movement(
             1,
             Command::PassDoor,

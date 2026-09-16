@@ -1,7 +1,5 @@
 //! Behavior-faithful owner-local execution of the rolling animation.
 
-use std::collections::BTreeMap;
-
 use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 use crate::order::OrderType;
@@ -72,30 +70,7 @@ impl EngineInner {
             .execute_order_initialising;
         let goal = MapPoint::new(order.target_x, order.target_y);
 
-        let mut mobile_points: BTreeMap<u16, Vec<crate::repulsive::RepulsivePoint>> =
-            BTreeMap::new();
-        let mut mobile_lines: BTreeMap<u16, Vec<crate::fast_find_grid::GridLine>> = BTreeMap::new();
-        let mut mobile_polygons: BTreeMap<u16, Vec<Vec<MapPoint>>> = BTreeMap::new();
-        for mobile in &self.world.mobile_elements {
-            if !mobile.active {
-                continue;
-            }
-            mobile_points
-                .entry(mobile.layer)
-                .or_default()
-                .extend(mobile.repulsive_points());
-            mobile_lines
-                .entry(mobile.layer)
-                .or_default()
-                .extend(mobile.repulsive_lines());
-            mobile_polygons
-                .entry(mobile.layer)
-                .or_default()
-                .push(mobile.motion_polygon.clone());
-        }
-
         let old_pos;
-        let layer;
         let motion;
         let speed;
         {
@@ -103,7 +78,6 @@ impl EngineInner {
                 .as_mut()
                 .expect("Rolling owner disappeared");
             old_pos = entity.element_data().position_map();
-            layer = entity.element_data().layer();
             if initialising {
                 let direction = rolling_initial_direction(old_pos, goal);
                 entity.element_data_mut().set_direction_instantly(direction);
@@ -183,12 +157,6 @@ impl EngineInner {
                     profiles: &assets.profile_manager,
                 },
                 &self.ai.global.repulsive_points,
-                mobile_points.get(&layer).map(Vec::as_slice).unwrap_or(&[]),
-                mobile_lines.get(&layer).map(Vec::as_slice).unwrap_or(&[]),
-                mobile_polygons
-                    .get(&layer)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
                 Some(&self.world.fast_grid),
                 Some(&mut state),
                 cached.x,

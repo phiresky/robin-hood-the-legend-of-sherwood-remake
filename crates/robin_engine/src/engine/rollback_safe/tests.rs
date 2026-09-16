@@ -816,10 +816,6 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(40.0, 60.0, 10.0));
-        entity
-            .actor_data_mut()
-            .expect("presentation test actor")
-            .jump_z_offset = 8.0;
     }
     let previous_hash = crate::replay::state_hash(&previous);
     let current_hash = crate::replay::state_hash(&current);
@@ -837,10 +833,6 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
     assert_eq!(
         sampled.element_data().position_map(),
         crate::coordinates::MapPoint::new(10.0, 12.5)
-    );
-    assert_eq!(
-        sampled.actor_data().expect("sampled actor").jump_z_offset,
-        2.0
     );
 
     presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);

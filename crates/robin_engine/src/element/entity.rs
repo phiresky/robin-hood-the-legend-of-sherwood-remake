@@ -650,17 +650,14 @@ impl Entity {
     /// Targets are special: their `position_map` is the action/interact
     /// point, while the visible sprite is authored at the preserved 3D
     /// `position` (effect elements draw the generated edge map from the
-    /// same sprite position as the target sprite). Other actors keep using
-    /// `position_map`, adjusted by jump height so airborne sprites and
-    /// their outlines stay together.
+    /// same sprite position as the target sprite). Actors use their computed
+    /// map position, including airborne motion.
     pub fn sprite_visual_map_position(&self) -> MapPoint {
         let elem = self.element_data();
         if self.is_fx_target() {
             elem.position().to_map()
         } else {
-            let pos = elem.position_map();
-            let jump_z = self.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
-            MapPoint::new(pos.x, pos.y - jump_z)
+            elem.position_map()
         }
     }
 

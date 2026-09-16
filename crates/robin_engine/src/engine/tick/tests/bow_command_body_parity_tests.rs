@@ -336,18 +336,6 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
             .wait_time,
         7
     );
-    assert_eq!(
-        engine
-            .world
-            .entities
-            .get(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .seek_refresh_wait,
-        7,
-        "WAIT_TIMER writes Original's shared mulWaitTime, so every Rust storage mirror must retain the same value across interruption"
-    );
     let element = engine
         .orders
         .sequence_manager
@@ -402,98 +390,15 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
         idle_sequence,
         0,
     );
-    assert_eq!(engine.actor_legacy_wait_time(owner), 7);
-
-    // Savegame_linux3/Profile_003/Savegame_065 replay-003 frame
-    // 16245: a long jump starts while these post-seek pointers remain
-    // retained. The original game's airborne execution branch overwrites the wait timer
-    // with the flight duration, so that live owner must take precedence
-    // over the dormant seek-refresh copy.
-    {
-        use crate::engine::jump::{ActiveJump, CurrentStepState, JumpStep};
-        use crate::sequence::SequenceId;
-        use std::collections::VecDeque;
-        use std::num::NonZeroU32;
-
-        let actor = engine
-            .world
-            .entities
-            .get_mut(owner)
+    assert_eq!(
+        engine
+            .get_entity(owner)
             .unwrap()
-            .actor_data_mut()
-            .unwrap();
-        actor.wait_time = 4;
-        actor.seek_refresh_wait = 0;
-        actor.active_jump = Some(ActiveJump {
-            steps: VecDeque::new(),
-            current: Some(CurrentStepState {
-                start_x: 0.0,
-                start_y: 0.0,
-                start_z: 0.0,
-                total_frames: 5,
-                frames_elapsed: 1,
-                order_id: NonZeroU32::new(1).unwrap(),
-                airborne_increment: None,
-                step: JumpStep {
-                    anim: OrderType::JumpingLong,
-                    target_3d: None,
-                    airborne: true,
-                    max_frames: None,
-                },
-            }),
-            sequence_id: SequenceId(1),
-            element_index: 0,
-            dest_sector: None,
-            dest_layer: 0,
-            source_direction_goal: 0,
-            dest_projection_point: crate::coordinates::MapPoint::default(),
-        });
-    }
-    assert_eq!(engine.actor_legacy_wait_time(owner), 4);
-    engine
-        .world
-        .entities
-        .get_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_jump
-        .as_mut()
-        .unwrap()
-        .current
-        .as_mut()
-        .unwrap()
-        .step
-        .airborne = false;
-    assert_eq!(engine.actor_legacy_wait_time(owner), 0);
-}
-
-#[test]
-fn ladder_fall_wait_owns_legacy_scalar_over_dormant_seek() {
-    let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
-    let actor = engine
-        .world
-        .entities
-        .get_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
-
-    // A swordstrike post-seek may remain attached while a non-interruptible
-    // ladder/wall fall runs. The original game's ladder/wall fall execution owns
-    // the single wait-timer scalar for the flight countdown in this state.
-    actor.seek_target = Some(owner);
-    actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
-    actor.seek_refresh_wait = 0;
-    actor.wait_time = 2;
-    actor.active_flight = Some(crate::element::ActiveFlight {
-        frames_remaining: 2,
-        ladder_fall: true,
-        ..crate::element::ActiveFlight::default()
-    });
-
-    assert_eq!(engine.actor_legacy_wait_time(owner), 2);
+            .actor_data()
+            .unwrap()
+            .wait_time,
+        7
+    );
 }
 
 #[test]
@@ -552,7 +457,6 @@ fn wait_timer_wraps_beggar_execute_and_generic_execute_once_each() {
             std::sync::Arc::new(conversion),
         );
         owner_entity.actor_data_mut().unwrap().wait_time = wait_time;
-        owner_entity.actor_data_mut().unwrap().seek_refresh_wait = wait_time;
         let owner = engine.add_test_entity(owner_entity);
 
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
@@ -953,7 +857,7 @@ fn whistle_instruction_accepts_whistling_order() {
             .unwrap()
             .actor_data()
             .unwrap()
-            .whistle_wait_time,
+            .wait_time,
         25
     );
 }
@@ -1361,7 +1265,6 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
-        0,
     );
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
     engine.execute_pass_door(
@@ -1370,7 +1273,6 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         false,
-        0,
     );
 
     let lift = engine.world.fast_grid_mut().lift_state_mut(0);

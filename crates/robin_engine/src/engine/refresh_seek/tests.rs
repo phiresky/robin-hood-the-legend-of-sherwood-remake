@@ -1333,7 +1333,7 @@ fn running_stairs_refreshes_a_moved_target_before_its_second_motion() {
         .unwrap();
     actor.seek_target = Some(target);
     actor.seek_distance = 10.0;
-    actor.seek_refresh_wait = 1;
+    actor.wait_time = 1;
     actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
 
     crate::movement_diagnostics::begin_parity_movement_capture();
@@ -1445,7 +1445,7 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
 
         actor.seek_target = Some(target);
         actor.seek_distance = 10.0;
-        actor.seek_refresh_wait = 0;
+        actor.wait_time = 0;
         actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
     }
 
@@ -1614,7 +1614,7 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
             .actor_data_mut()
             .unwrap();
 
-        actor.seek_refresh_wait = 0;
+        actor.wait_time = 0;
         actor.last_seek_target_position = MapPoint::ZERO;
     }
 
@@ -1634,7 +1634,7 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
             .unwrap()
             .actor_data()
             .unwrap()
-            .seek_refresh_wait,
+            .wait_time,
         0
     );
 }
@@ -1697,7 +1697,7 @@ fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
 
         actor.seek_target = Some(actor_target);
         actor.seek_distance = 10.0;
-        actor.seek_refresh_wait = 0;
+        actor.wait_time = 0;
         actor.last_seek_target_position = MapPoint::new(40.0, 10.0);
     }
 
@@ -1795,7 +1795,7 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
             .expect("owner is an actor");
 
         actor.seek_target = Some(target);
-        actor.seek_refresh_wait = 0;
+        actor.wait_time = 0;
         actor.seek_distance = 10.0;
         actor.last_seek_target_position = MapPoint::ZERO;
     }

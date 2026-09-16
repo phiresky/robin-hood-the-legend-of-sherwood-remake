@@ -2,7 +2,7 @@
 //!
 //! ## Semantics
 //!
-//! A seek arms its `seek_refresh_wait` countdown to `TIME_SEEK_REFRESH`
+//! A seek arms the actor's `wait_time` countdown to `TIME_SEEK_REFRESH`
 //! (=25) at launch and again at the tail of each refresh. Entity-target
 //! Seeking decrements it at the owner movement boundary unless an
 //! in-range post-seek interaction returns first. Once it is zero AND the
@@ -710,7 +710,7 @@ impl crate::engine::EngineInner {
         // Zero and wrapped high-bit wait-timer values are expired. They
         // remain expired rather than delaying refresh for another 2^32
         // owner ticks.
-        if !seek_refresh_wait_elapsed(actor.seek_refresh_wait) {
+        if !seek_refresh_wait_elapsed(actor.wait_time) {
             return None;
         }
         let last = actor.last_seek_target_position;
@@ -772,7 +772,6 @@ impl crate::engine::EngineInner {
         {
             actor.last_seek_target_position = new_target_pos;
             actor.wait_time = 25;
-            actor.seek_refresh_wait = 25;
         }
 
         if self.try_dispatch_cross_sector_entity_seek(

@@ -807,8 +807,7 @@ impl EngineInner {
         // ── Listen ability frame tick. ──────────────────────
         // Each frame a PC executes the Listening order:
         //
-        //  - Arm `listen_wait_time` to `TIME_LISTEN_WAIT` on the
-        //    first observation.
+        //  - Arm `wait_time` to `TIME_LISTEN_WAIT` on order initialization.
         //  - Decrement the countdown. On a nonterminal frame, call `Turn()`
         //    and drive the `LISTENING` sprite while deliberately ignoring its
         //    completion state. On the frame the countdown reaches 0,
@@ -832,21 +831,14 @@ impl EngineInner {
                 Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
                 None => panic!("Listen owner {pc_id:?} disappeared"),
             };
-            if pc.actor.listen_wait_time == 0 {
-                // First frame in the CountingDown phase — arm the
-                // countdown. Original stores this in the actor's single
-                // serialized wait timer; the phase-local field is only a
-                // Rust control-flow mirror and must remain synchronized.
-                pc.actor.listen_wait_time = TIME_LISTEN_WAIT;
+            if pc.actor.execute_order_initialising {
                 pc.actor.wait_time = TIME_LISTEN_WAIT;
-                pc.actor.seek_refresh_wait = TIME_LISTEN_WAIT;
             }
-            pc.actor.listen_wait_time -= 1;
+            let reveal = pc.actor.wait_time == 1;
             if pc.actor.wait_time != 0 {
                 pc.actor.wait_time -= 1;
             }
-            pc.actor.seek_refresh_wait = pc.actor.wait_time;
-            if pc.actor.listen_wait_time != 0 {
+            if !reveal {
                 // Player-character execution performs the visual action only
                 // after the timer's terminal early return. Its sprite result
                 // never advances the sequence; the wait timer is authoritative.

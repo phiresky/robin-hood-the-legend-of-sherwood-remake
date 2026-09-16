@@ -142,7 +142,7 @@ fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
         actor.seek_target = Some(target);
         actor.last_seek_target_position = MapPoint::new(100.0, 300.0);
         actor.seek_distance = 5.0;
-        actor.seek_refresh_wait = 20;
+        actor.wait_time = 20;
 
         let mut movement = SequenceElement::new_movement(1, Command::MoveOk, Some(owner), action);
         movement.state = SequenceState::InProgress;

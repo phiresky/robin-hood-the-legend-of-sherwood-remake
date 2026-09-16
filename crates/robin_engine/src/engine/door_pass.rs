@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{ActiveDoorPass, EntityId, Posture};
+use crate::element::{EntityId, Posture};
 use crate::gate::DoorType;
 use crate::order::OrderType;
 use crate::sector::LiftType;
@@ -437,7 +437,6 @@ fn translate_default(ctx: &DoorPassContext, s: &mut DoorOrders<'_>) {
 /// is installed so the element's root action reads WalkingCrouched
 /// instead of the upstream-chosen `ctx.action`.
 struct BuiltDoorPass {
-    pass: ActiveDoorPass,
     root_action: OrderType,
     post_chain_action_recursive: Option<OrderType>,
     /// Whether this door type's translation marks direct door passage.
@@ -580,7 +579,7 @@ impl EngineInner {
             .expect("door instruction owner disappeared")
             .position_iface_mut()
             .set_door(door_index, direct);
-        let mut built = self.build_door_pass(
+        let built = self.build_door_pass(
             seq_id,
             elem_idx,
             entity_id,
@@ -598,9 +597,11 @@ impl EngineInner {
         // when the actor has already crossed. Queued, untranslated v48
         // PassDoor elements have no orders and their dormant direction word
         // is not authoritative; Original derives those from the live sector.
-        if restored_translated_from_v48 {
-            built.pass.position_direct = saved_direction != 0;
-        }
+        let position_direct = if restored_translated_from_v48 {
+            saved_direction != 0
+        } else {
+            direct
+        };
         // The original PassDoor translation only rewrites the movement
         // element's action for building / default / gate / trap doors and
         // for stairs lifts, and only on the element itself.  Ladder and
@@ -632,9 +633,8 @@ impl EngineInner {
             .entities
             .expect_actor_data_mut(entity_id, format_args!("door instruction owner"));
         if built.sets_passing_door_directly {
-            actor.passing_door_directly = built.pass.position_direct;
+            actor.passing_door_directly = position_direct;
         }
-        actor.active_door_pass = Some(built.pass);
         tracing::debug!(
             entity = ?entity_id,
             door = %door_index,
@@ -927,12 +927,6 @@ impl EngineInner {
         };
 
         BuiltDoorPass {
-            pass: ActiveDoorPass {
-                door_index,
-                direct,
-                position_direct: direct,
-                triggers_fired: 0,
-            },
             root_action: action,
             post_chain_action_recursive,
             sets_passing_door_directly,
@@ -943,12 +937,35 @@ impl EngineInner {
 // ─── Engine completion methods ─────────────────────────────
 
 impl EngineInner {
+    pub(super) fn execute_passing_door_order(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) {
+        let position = self
+            .world
+            .entities
+            .get(entity_id)
+            .expect("door order owner disappeared")
+            .position_iface();
+        if let Some(door) = position.get_door() {
+            let direct = position.get_door_direction();
+            self.execute_pass_door(sim, assets, entity_id, door, direct);
+        } else {
+            self.world
+                .entities
+                .get_mut(entity_id)
+                .expect("door order owner disappeared")
+                .position_iface_mut()
+                .set_anti_collision_on(true);
+        }
+    }
+
     /// Execute the PassDoor callback — change layer/sector and trigger
     /// building/lift callbacks.
     ///
-    /// Called by the selected PassingDoor order.
-    /// First call (trigger 0) changes layer/sector; subsequent calls
-    /// re-enable anti-collision.
+    /// Called by a PassingDoor order while the actor still owns a live door.
     pub(super) fn execute_pass_door(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -956,25 +973,7 @@ impl EngineInner {
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
         direct: bool,
-        trigger_number: u8,
     ) {
-        if trigger_number > 0 {
-            // Second (and later) trigger:
-            // Door-passing execution enables anti-collision
-            // once PassDoor() has already consumed the gate.
-            self.get_entity_mut(entity_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "PassDoor anti-collision callback for door {door_index} lost owner {entity_id:?}"
-                    )
-                })
-                .position_iface_mut()
-                .set_anti_collision_on(true);
-            return;
-        }
-
-        // ── First trigger: perform the layer/sector change ──
-
         // Snapshot door data before mutable borrows.
         let (
             target_layer,

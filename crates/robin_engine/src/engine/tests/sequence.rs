@@ -5184,16 +5184,6 @@ fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
     );
     engine.select_sequence_element(owner, Some((sequence, 0)));
 
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_door_pass
-            .is_none(),
-        "loaded selected PassDoor fixtures need not reconstruct physical choreography"
-    );
     assert_eq!(
         engine.actor_selected_pass_door(owner),
         Some((DoorIndex::new(51).expect("valid door index"), -1))

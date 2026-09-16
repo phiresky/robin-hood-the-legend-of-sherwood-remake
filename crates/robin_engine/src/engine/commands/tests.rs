@@ -4295,7 +4295,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
         .and_then(|entity| entity.actor_data())
         .expect("test PC has actor state");
     assert_eq!(actor.wait_time, 25);
-    assert_eq!(actor.seek_refresh_wait, 25);
+    assert_eq!(actor.wait_time, 25);
     assert_eq!(actor.seek_target, Some(target_id));
     assert_eq!(actor.seek_distance, 40.0);
     let post_seek = actor
@@ -6797,6 +6797,172 @@ fn quick_action_search_rechecks_nested_post_seek_target_state() {
         .active = false;
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
+}
+
+#[test]
+fn retained_quick_action_validates_borrowed_continuations_with_human_rules() {
+    let (mut engine, assets, pc, soldier) = setup_strangle_command_scene();
+    let mut action = Sequence::default();
+    let mut seek = SequenceElement::new_movement(
+        1,
+        Command::Seek,
+        Some(pc),
+        crate::order::OrderType::WalkingUpright,
+    );
+    let mut continuation = Sequence::default();
+    continuation
+        .elements
+        .push(SequenceElement::new(1, Command::RaiseShield, Some(pc)));
+    let SequenceElementData::Movement {
+        post_seek_sequence, ..
+    } = &mut seek.data
+    else {
+        unreachable!();
+    };
+    *post_seek_sequence = Some(continuation.into_post_seek());
+    action.elements.push(seek);
+    assert!(
+        super::quick_actions::legacy_quick_action_sequence_is_valid(
+            &engine, &assets, &action, true, false,
+        ),
+        "a nested shield command is not subject to the outer swordfight restriction"
+    );
+
+    let mut continuation = Sequence::default();
+    let mut nested_seek = SequenceElement::new_movement(
+        1,
+        Command::Seek,
+        Some(soldier),
+        crate::order::OrderType::WalkingUpright,
+    );
+    let SequenceElementData::Movement { element, .. } = &mut nested_seek.data else {
+        unreachable!();
+    };
+    let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
+    *element = Some(target);
+    engine
+        .get_entity_mut(target)
+        .unwrap()
+        .element_data_mut()
+        .active = false;
+    continuation.elements.push(nested_seek);
+    let SequenceElementData::Movement {
+        post_seek_sequence, ..
+    } = &mut action.elements[0].data
+    else {
+        unreachable!();
+    };
+    *post_seek_sequence = Some(continuation.into_post_seek());
+    assert!(
+        !super::quick_actions::legacy_quick_action_sequence_is_valid(
+            &engine, &assets, &action, false, false,
+        ),
+        "nested human validation includes non-PC owners and rejects their inactive targets"
+    );
+    assert!(
+        super::quick_actions::legacy_quick_action_sequence_is_valid(
+            &engine, &assets, &action, false, true,
+        ),
+        "the separately retained seek sequence does not inspect nested continuations"
+    );
+
+    action.elements[0].owner = Some(soldier);
+    assert!(
+        super::quick_actions::legacy_quick_action_sequence_is_valid(
+            &engine, &assets, &action, false, false,
+        ),
+        "a non-PC outer owner bypasses the PC quick-action continuation gate"
+    );
+}
+
+#[test]
+fn retained_quick_action_empty_fizzle_resets_count_only_after_validation() {
+    for valid in [true, false] {
+        let (mut engine, assets, pc) = setup_pc_engine(&[]);
+        let seek = (!valid).then(|| {
+            let mut sequence = Sequence::default();
+            let mut element = SequenceElement::new_movement(
+                1,
+                Command::Seek,
+                Some(pc),
+                crate::order::OrderType::WalkingUpright,
+            );
+            let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
+            engine
+                .get_entity_mut(target)
+                .unwrap()
+                .element_data_mut()
+                .active = false;
+            let SequenceElementData::Movement {
+                element: target_id, ..
+            } = &mut element.data
+            else {
+                unreachable!();
+            };
+            *target_id = Some(target);
+            sequence.elements.push(element);
+            sequence
+        });
+        engine.players.macro_store.get_or_insert(pc).adopt_slot(
+            0,
+            crate::macro_store::QuickActionSlot::retained(
+                Some(Sequence::default()),
+                seek,
+                crate::macro_store::LegacyQuickito::default(),
+                None,
+            ),
+            7,
+        );
+        assert_eq!(
+            engine.replay_legacy_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+            Some(false)
+        );
+        let state = engine.players.macro_store.get(pc).unwrap();
+        assert_eq!(state.special_count(0), if valid { 0 } else { 7 });
+        assert!(state.slot(0).unwrap().legacy_sequences().is_some());
+    }
+}
+
+#[test]
+fn retained_quick_action_without_seek_clears_previous_continuation() {
+    let (mut engine, assets, pc) = setup_pc_engine(&[]);
+    let mut previous = Sequence::default();
+    previous
+        .elements
+        .push(SequenceElement::new(1, Command::Wait, Some(pc)));
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .post_seek_sequence = Some(previous.into_post_seek());
+    let mut action = Sequence::default();
+    action
+        .elements
+        .push(SequenceElement::new(1, Command::Wait, Some(pc)));
+    engine.players.macro_store.get_or_insert(pc).adopt_slot(
+        0,
+        crate::macro_store::QuickActionSlot::retained(
+            Some(action),
+            None,
+            crate::macro_store::LegacyQuickito::default(),
+            None,
+        ),
+        0,
+    );
+    assert_eq!(
+        engine.replay_legacy_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+        Some(true)
+    );
+    assert!(
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .post_seek_sequence
+            .is_none()
+    );
 }
 
 #[test]

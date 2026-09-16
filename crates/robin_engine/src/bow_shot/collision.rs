@@ -281,8 +281,13 @@ pub(crate) fn refresh_retained_shield_obstacle(entity: &mut Entity, profiles: &P
         elem.direction(),
         &params,
     );
-    entity
+    let stored = &mut entity
         .actor_data_mut()
         .expect("shield-bearing entity must have actor data")
-        .shield_obstacle = Some(obstacle);
+        .shield_obstacle;
+    if let Some(stored) = stored {
+        **stored = obstacle;
+    } else {
+        *stored = Some(Box::new(obstacle));
+    }
 }

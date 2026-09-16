@@ -1301,7 +1301,7 @@ impl EngineInner {
         // Drop the manual slot's titbit and clear only that manual slot.
         self.remove_quick_action_titbits_for(pc, slot);
         if let Some(state) = self.players.macro_store.get_mut(pc) {
-            state.clear_slot(slot as usize);
+            state.complete_slot(slot as usize);
         }
     }
 
@@ -1763,14 +1763,7 @@ impl EngineInner {
             .macro_store
             .get_mut(pc)
             .expect("legacy Quickito macro state disappeared")
-            .clear_slot(slot as usize);
-        let saved_pc = self
-            .get_entity_mut(pc)
-            .and_then(|entity| entity.pc_data_mut())
-            .unwrap_or_else(|| panic!("legacy Quickito owner {pc:?} is not a PC"));
-        saved_pc.quick_action_types[slot as usize] = crate::element_kinds::QuickAction::None;
-        saved_pc.quick_action_buttons[slot as usize] = 0;
-        saved_pc.quick_action_interactors[slot as usize] = None;
+            .complete_slot(slot as usize);
         Some(true)
     }
 
@@ -1828,58 +1821,18 @@ impl EngineInner {
             .get_entity(pc)
             .and_then(|entity| entity.human_data())
             .is_some_and(|human| !human.opponents.is_empty());
-        fn valid(
-            engine: &EngineInner,
-            assets: &LevelAssets,
-            sequence: &crate::sequence::Sequence,
-            swordfighting: bool,
-            is_seek: bool,
-        ) -> bool {
-            sequence.elements.iter().all(|element| {
-                if swordfighting
-                    && if is_seek {
-                        element.command != Command::SpeakHeroReachDestination
-                    } else {
-                        !matches!(element.command, Command::Move | Command::Seek)
-                    }
-                {
-                    return false;
-                }
-                let owner = element
-                    .owner
-                    .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
-                let Some(entity) = engine.get_entity(owner) else {
-                    return false;
-                };
-                if entity.is_pc()
-                    && !engine.check_sequence_element_validity(assets, owner, element, false)
-                {
-                    return false;
-                }
-                if element.command == Command::Seek
-                    && let crate::sequence::SequenceElementData::Movement {
-                        post_seek_sequence: Some(post_seek),
-                        ..
-                    } = &element.data
-                    && !valid(
-                        engine,
-                        assets,
-                        &post_seek.clone().into_sequence(),
-                        swordfighting,
-                        false,
-                    )
-                {
-                    return false;
-                }
-                true
-            })
-        }
-        if action.is_empty()
-            || !valid(self, assets, action, swordfighting, false)
-            || seek
-                .as_ref()
-                .is_some_and(|sequence| !valid(self, assets, sequence, swordfighting, true))
+        if seek.as_ref().is_some_and(|sequence| {
+            !legacy_quick_action_sequence_is_valid(self, assets, sequence, swordfighting, true)
+        }) || !legacy_quick_action_sequence_is_valid(self, assets, action, swordfighting, false)
         {
+            return Some(false);
+        }
+        if action.is_empty() {
+            self.players
+                .macro_store
+                .get_mut(pc)
+                .expect("legacy QA macro state disappeared")
+                .reset_special_count(slot as usize);
             return Some(false);
         }
 
@@ -1903,27 +1856,18 @@ impl EngineInner {
             self.append_posture_recovery(pc, &mut action);
         }
 
-        if let Some(seek) = seek {
-            let actor = self
-                .get_entity_mut(pc)
-                .and_then(|entity| entity.actor_data_mut())
-                .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not an actor"));
-            actor.post_seek_sequence = Some(seek.into_post_seek());
-        }
+        self.get_entity_mut(pc)
+            .and_then(|entity| entity.actor_data_mut())
+            .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not an actor"))
+            .post_seek_sequence = seek.map(crate::sequence::Sequence::into_post_seek);
         self.remove_quick_action_titbits_for(pc, slot);
         self.launch_sequence(sim, assets, action);
-        self.players
+        let state = self
+            .players
             .macro_store
             .get_mut(pc)
-            .expect("legacy QA macro state disappeared")
-            .clear_slot(slot as usize);
-        let saved_pc = self
-            .get_entity_mut(pc)
-            .and_then(|entity| entity.pc_data_mut())
-            .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not a PC"));
-        saved_pc.quick_action_sequences[slot as usize] = None;
-        saved_pc.quick_seek_sequences[slot as usize] = None;
-        saved_pc.quick_action_special_counts[slot as usize] = 0;
+            .expect("legacy QA macro state disappeared");
+        state.complete_sequence_slot(slot as usize);
         Some(true)
     }
 
@@ -2101,4 +2045,55 @@ impl EngineInner {
             }
         }
     }
+}
+
+pub(super) fn legacy_quick_action_sequence_is_valid(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+    sequence: &crate::sequence::Sequence,
+    swordfighting: bool,
+    is_seek: bool,
+) -> bool {
+    sequence.elements.iter().all(|element| {
+        if swordfighting
+            && if is_seek {
+                element.command != Command::SpeakHeroReachDestination
+            } else {
+                !matches!(element.command, Command::Move | Command::Seek)
+            }
+        {
+            return false;
+        }
+        let owner = element
+            .owner
+            .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
+        let Some(entity) = engine.get_entity(owner) else {
+            return false;
+        };
+        if entity.is_pc() && !engine.check_sequence_element_validity(assets, owner, element, false)
+        {
+            return false;
+        }
+        if !is_seek
+            && entity.is_pc()
+            && element.command == Command::Seek
+            && let crate::sequence::SequenceElementData::Movement {
+                post_seek_sequence: Some(post_seek),
+                ..
+            } = &element.data
+            && !post_seek.elements.iter().all(|element| {
+                let owner = element
+                    .owner
+                    .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
+                let Some(entity) = engine.get_entity(owner) else {
+                    return false;
+                };
+                !entity.is_human()
+                    || engine.check_sequence_element_validity(assets, owner, element, false)
+            })
+        {
+            return false;
+        }
+        true
+    })
 }

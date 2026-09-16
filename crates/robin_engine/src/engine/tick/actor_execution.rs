@@ -264,26 +264,6 @@ impl EngineInner {
         );
     }
 
-    pub(in crate::engine) fn execute_next_jump_step(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        effect: EntityId,
-    ) {
-        let entity_id = effect;
-        if let Some((new_layer, new_sector, projection_point)) =
-            self.advance_jump_step(sim, assets, entity_id)
-        {
-            self.finalize_airborne_jump_landing(
-                assets,
-                entity_id,
-                new_layer,
-                new_sector,
-                projection_point,
-            );
-        }
-    }
-
     pub(in crate::engine) fn execute_select_hulk(&mut self, effect: (EntityId, f32)) {
         let (entity_id, speed) = effect;
         self.apply_select_hulk(entity_id, speed);
@@ -807,7 +787,6 @@ impl EngineInner {
                 .and_then(Entity::actor_data_mut)
                 .expect("validated TakingNet taker lost actor data");
             actor.wait_time = 8;
-            actor.seek_refresh_wait = 8;
         }
 
         // Actor action execution observes the order's done flag before the enclosing
@@ -848,7 +827,6 @@ impl EngineInner {
                     .and_then(Entity::actor_data_mut)
                     .expect("TakingNet taker disappeared after removal");
                 actor.wait_time = u32::from(u16::MAX);
-                actor.seek_refresh_wait = actor.wait_time;
             } else {
                 let remaining = wait - 1;
                 let actor = self
@@ -856,7 +834,6 @@ impl EngineInner {
                     .and_then(Entity::actor_data_mut)
                     .expect("TakingNet taker disappeared during pull");
                 actor.wait_time = remaining;
-                actor.seek_refresh_wait = remaining;
                 let net = self.expect_entity_mut(tick.net, "TakingNet net during pull");
                 net.position_iface_mut().update_position_map_scaled(1.0);
             }
@@ -1401,7 +1378,6 @@ mod tests {
             .and_then(Entity::actor_data_mut)
             .expect("test taker actor data");
         actor.wait_time = 8;
-        actor.seek_refresh_wait = 8;
 
         let tick = crate::engine::animation::TakingNetTick {
             taker,

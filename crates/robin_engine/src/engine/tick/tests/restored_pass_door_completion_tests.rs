@@ -14,7 +14,6 @@ fn airborne_pc() -> Entity {
         },
         actor: ActorData {
             action_state: ActionState::Moving,
-            active_door_pass: None,
             ..ActorData::default()
         },
         human: HumanData::default(),
@@ -23,7 +22,7 @@ fn airborne_pc() -> Entity {
 }
 
 #[test]
-fn restored_crenel_exit_completes_without_active_door_pass() {
+fn crenel_exit_completes_without_live_door() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(airborne_pc());
     engine.apply_door_pass_transition_completion_side_effects(
@@ -35,11 +34,11 @@ fn restored_crenel_exit_completes_without_active_door_pass() {
     let pc = engine.get_entity(owner).unwrap();
     assert_eq!(pc.element_data().posture(), Posture::Crouched);
     assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
-    assert!(pc.actor_data().unwrap().active_door_pass.is_none());
+    assert!(pc.position_iface().get_door().is_none());
 }
 
 #[test]
-fn restored_ladder_down_exits_complete_without_active_door_pass() {
+fn ladder_down_exits_complete_without_live_door() {
     for action in [
         OrderType::TransitionClimbingLadderDownWaitingUpright,
         OrderType::TransitionClimbingLadderDownWaitingUprightAlerted,
@@ -68,14 +67,18 @@ fn restored_ladder_down_exits_complete_without_active_door_pass() {
             ActionState::Waiting,
             "{action:?}"
         );
-        assert!(actor.actor_data().unwrap().active_door_pass.is_none());
+        assert!(actor.position_iface().get_door().is_none());
     }
 }
 
 #[test]
-fn unrelated_transition_still_requires_active_door_pass() {
+fn wall_down_exit_completes_without_live_door() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(airborne_pc());
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .set_posture(Posture::OnWall);
     engine.apply_door_pass_transition_completion_side_effects(
         &LevelAssets::new(),
         owner,
@@ -83,6 +86,7 @@ fn unrelated_transition_still_requires_active_door_pass() {
     );
 
     let pc = engine.get_entity(owner).unwrap();
-    assert_eq!(pc.element_data().posture(), Posture::Flying);
-    assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Moving);
+    assert_eq!(pc.element_data().posture(), Posture::Upright);
+    assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
+    assert!(pc.position_iface().get_door().is_none());
 }

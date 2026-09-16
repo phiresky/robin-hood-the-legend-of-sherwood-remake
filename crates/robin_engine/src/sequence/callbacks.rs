@@ -366,25 +366,6 @@ impl crate::engine::EngineInner {
         let interrupted_movement = element.state != state
             && state == SequenceState::Interrupted
             && element.data.is_movement();
-        let retiring_door_owner = (element.state != state
-            && element.command == Command::PassDoor
-            && matches!(
-                state,
-                SequenceState::Terminated
-                    | SequenceState::Interrupted
-                    | SequenceState::Impossible
-                    | SequenceState::Postponed
-            ))
-        .then_some(element.owner)
-        .flatten();
-        if let Some(owner) = retiring_door_owner
-            && self.world.entities.current_element_for_actor(owner) == Some((seq_id, elem_idx))
-        {
-            self.world
-                .entities
-                .expect_actor_data_mut(owner, format_args!("retiring door traversal"))
-                .active_door_pass = None;
-        }
         if interrupted_movement {
             if element.command == Command::MoveWaiting {
                 let owner = element.owner.expect("waiting movement has no owner");

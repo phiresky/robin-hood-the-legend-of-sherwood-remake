@@ -1030,8 +1030,8 @@ fn decide_transitions(
 mod tests {
     use super::*;
     use crate::element::{
-        ActiveDoorPass, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData,
-        InstalledActorOrder, PcData,
+        ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, InstalledActorOrder,
+        PcData,
     };
     use crate::engine::LevelAssets;
     use crate::order::Order;
@@ -1168,7 +1168,7 @@ mod tests {
     }
 
     #[test]
-    fn in_place_make_rewrite_updates_matching_installed_order_and_preserves_door_identity() {
+    fn in_place_make_rewrite_updates_matching_installed_order_after_door_crossing() {
         let (mut engine, owner, sequence, order_id) = selected_running_pc();
         {
             let actor = engine
@@ -1179,12 +1179,6 @@ mod tests {
             actor.installed_order = Some(InstalledActorOrder {
                 order_id,
                 order_type: OrderType::RunningUpright,
-            });
-            actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
-                direct: false,
-                position_direct: false,
-                triggers_fired: 1,
             });
         }
         engine
@@ -1207,11 +1201,14 @@ mod tests {
                 order_type: OrderType::TransitionRunningUprightWalkingCrouched,
             })
         );
-        let pass = actor.active_door_pass.as_ref().unwrap();
-        assert_eq!(pass.door_index, crate::gate::DoorIndex::new(0).unwrap());
-        assert!(!pass.direct);
-        assert!(!pass.position_direct);
-        assert_eq!(pass.triggers_fired, 1);
+        assert!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .position_iface()
+                .get_door()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1316,12 +1313,6 @@ mod tests {
                 .publish_order_posture(Posture::Crouched);
             let actor = entity.actor_data_mut().expect("test actor");
             actor.action_state = ActionState::Waiting;
-            actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(0).unwrap(),
-                direct: false,
-                position_direct: false,
-                triggers_fired: 1,
-            });
         }
         let walk_id = engine.orders.allocate_order_id();
         {
@@ -1423,12 +1414,6 @@ mod tests {
                 .actor_data_mut()
                 .expect("test actor");
             actor.action_state = ActionState::MovingSword;
-            actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
-                direct: false,
-                position_direct: false,
-                triggers_fired: 1,
-            });
         }
 
         let walk_id = engine.orders.allocate_order_id();

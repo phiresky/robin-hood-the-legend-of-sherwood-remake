@@ -383,7 +383,7 @@ fn whistle_translation_is_identical_for_immediate_and_registered_instructions() 
             vec![OrderType::Whistling]
         );
         let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
-        assert_eq!(actor.whistle_wait_time, 25);
+        assert_eq!(actor.wait_time, 25);
         assert_eq!(actor.continuation.motion_state, MotionState::InProgress);
     }
 }

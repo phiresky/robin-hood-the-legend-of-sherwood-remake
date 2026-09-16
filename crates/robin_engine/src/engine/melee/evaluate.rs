@@ -768,7 +768,7 @@ impl EngineInner {
     /// - When force-movement is set and the straight path is blocked,
     ///   try `find_authorized_position` to slide the destination into
     ///   a reachable slot.
-    pub(super) fn update_swordfight_distance(
+    pub(in crate::engine) fn update_swordfight_distance(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,

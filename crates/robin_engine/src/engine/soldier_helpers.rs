@@ -1555,13 +1555,13 @@ mod tests {
         ));
     }
 
-    fn door_fight_route_fixture(triggers_fired: u8) -> (EngineInner, EntityId, Position) {
+    fn door_fight_route_fixture(crossed: bool) -> (EngineInner, EntityId, Position) {
         use crate::element::{
-            ActiveDoorPass, ActorData, ActorPc, ElementData, HumanData, InstalledActorOrder, PcData,
+            ActorData, ActorPc, ElementData, HumanData, InstalledActorOrder, PcData,
         };
         use crate::engine::MissionScript;
         use crate::fast_find_grid::GridSector;
-        use crate::gate::{Door, DoorIndex, DoorType};
+        use crate::gate::{Door, DoorType};
         use crate::scb::{SCB_VERSION, ScbFile};
         use crate::sector::{SectorNumber, SectorType};
 
@@ -1638,13 +1638,7 @@ mod tests {
         let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
-                active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct: false,
-                    position_direct: false,
-                    triggers_fired,
-                }),
-                installed_order: (triggers_fired == 0).then_some(InstalledActorOrder {
+                installed_order: (!crossed).then_some(InstalledActorOrder {
                     order_id: std::num::NonZeroU32::new(1).unwrap(),
                     order_type: OrderType::RunningUpright,
                 }),
@@ -1657,7 +1651,7 @@ mod tests {
             },
         }));
 
-        if triggers_fired == 0 {
+        if !crossed {
             engine
                 .get_entity_mut(pc)
                 .unwrap()
@@ -1689,7 +1683,7 @@ mod tests {
         use crate::sim_rng::{RngSite, with_draw_trace};
 
         let sim = crate::sim_rng::test_context();
-        let (mut crossing, pc, goal) = door_fight_route_fixture(0);
+        let (mut crossing, pc, goal) = door_fight_route_fixture(false);
         let (_, crossing_draws) = with_draw_trace(|| {
             crossing.send_before_door_to_fight_pc(
                 &sim,
@@ -1726,7 +1720,7 @@ mod tests {
         assert_eq!(*destination, MapPoint::new(goal.x, goal.y));
         assert_eq!(*sector, goal.sector);
 
-        let (mut callback_complete, pc, goal) = door_fight_route_fixture(1);
+        let (mut callback_complete, pc, goal) = door_fight_route_fixture(true);
         let (_, callback_complete_draws) = with_draw_trace(|| {
             callback_complete.send_before_door_to_fight_pc(
                 &sim,
@@ -1762,7 +1756,7 @@ mod tests {
         use crate::sim_rng::{RngSite, with_draw_trace};
 
         let sim = crate::sim_rng::test_context();
-        let (mut engine, pc, goal) = door_fight_route_fixture(0);
+        let (mut engine, pc, goal) = door_fight_route_fixture(false);
         engine
             .get_entity_mut(pc)
             .unwrap()
@@ -1810,7 +1804,7 @@ mod tests {
         use crate::sim_rng::{RngSite, with_draw_trace};
 
         let sim = crate::sim_rng::test_context();
-        let (mut engine, pc, mut goal) = door_fight_route_fixture(1);
+        let (mut engine, pc, mut goal) = door_fight_route_fixture(true);
         let building_index = SectorIndex::new(0).unwrap();
         let authored_outside_index = SectorIndex::new(1).unwrap();
         let duplicate_outside_index = SectorIndex::new(2).unwrap();

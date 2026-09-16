@@ -276,7 +276,6 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
 #[test]
 fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() {
     use crate::ai::AmbushPoint;
-    use crate::element::ActiveDoorPass;
     use crate::fast_find_grid::GridSector;
     use crate::gate::{Door, DoorIndex, DoorType};
     use crate::scb::{SCB_VERSION, ScbFile};
@@ -322,12 +321,7 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
     };
     pc.element.active = true;
     pc.pc.life_points = 100;
-    pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex::new(0).expect("valid door index"),
-        direct: true,
-        position_direct: true,
-        triggers_fired: 0,
-    });
+
     pc.actor.passing_door_directly = true;
     // Forecast preparation only treats the actor as mid door transit while
     // its position interface still holds the live door pointer.

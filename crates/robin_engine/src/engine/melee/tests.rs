@@ -140,7 +140,7 @@ fn give_flight(
             order_id,
             order_type: crate::order::OrderType::FallingHitUpright,
         });
-        actor.active_flight = Some(ActiveFlight {
+        actor.active_flight = Some(Box::new(ActiveFlight {
             increment_x: inc_x,
             increment_y: inc_y,
             goal_x: flyer_pos.x + inc_x * frames as f32,
@@ -148,7 +148,7 @@ fn give_flight(
             frames_remaining: frames,
             antagonist: Some(antagonist),
             ..Default::default()
-        });
+        }));
     }
 }
 

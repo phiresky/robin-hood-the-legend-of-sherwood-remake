@@ -518,9 +518,6 @@ pub enum OrderCompletion {
     /// sequence normally at the later termination edge.
     UnlockDoor { door_id: crate::gate::DoorIndex },
 
-    /// Advance to the next step of an `ActiveJump`.
-    NextJumpStep,
-
     /// Soldier wasp-sting struggle cycles.  On each animation
     /// terminate, either re-push another `GETTING_FREE_FROM_WASP` order
     /// with `cycles_remaining - 1`, or terminate the element when the
@@ -604,8 +601,7 @@ pub struct Order {
     pub antagonist: Option<crate::element::EntityId>,
 
     /// Side-channel work to perform when this order's animation
-    /// completes (flip a door flag, resume a door-pass chain, advance a
-    /// jump step, …).  Default `AdvanceElement` routes through
+    /// completes. Default `AdvanceElement` routes through
     /// `do_next_order`.
     pub completion: OrderCompletion,
 }
@@ -649,8 +645,7 @@ impl Order {
     }
 
     /// Override the default `AdvanceElement` completion with a custom
-    /// side-effect hook (UnlockDoor, NextJumpStep,
-    /// WaspStruggleCycle).
+    /// side-effect hook (UnlockDoor or WaspStruggleCycle).
     pub fn with_completion(mut self, completion: OrderCompletion) -> Self {
         self.completion = completion;
         self

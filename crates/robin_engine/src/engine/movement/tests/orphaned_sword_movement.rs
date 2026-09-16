@@ -393,7 +393,7 @@ mod suite {
             4,
             &crate::bow_shot::shield_params_for_pc(false),
         );
-        pc.actor_data_mut().unwrap().shield_obstacle = Some(stale);
+        pc.actor_data_mut().unwrap().shield_obstacle = Some(stale.into());
         let owner = engine.add_test_entity(pc);
 
         let mut movement = SequenceElement::new_movement(
@@ -836,7 +836,6 @@ mod suite {
                 .unwrap();
             actor.last_seek_target_position = MapPoint::new(140.0, 100.0);
             actor.seek_target = Some(target);
-            actor.seek_refresh_wait = 0;
             actor.wait_time = 0;
             actor.seek_distance = 10.0;
         }

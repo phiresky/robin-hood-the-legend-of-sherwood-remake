@@ -2065,13 +2065,10 @@ impl EngineInner {
                             if hide_interface {
                                 pc.interface_hidden = true;
                             }
-                            pc.quick_action_types.clear();
-                            pc.quick_action_sequences.fill(None);
-                            pc.titbits.clear();
                             for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
                                 self.remove_quick_action_titbits_for(pc_id, slot);
                                 if let Some(state) = self.players.macro_store.get_mut(pc_id) {
-                                    state.clear_slot(slot as usize);
+                                    state.deactivate_slot(slot as usize);
                                 }
                             }
                         }

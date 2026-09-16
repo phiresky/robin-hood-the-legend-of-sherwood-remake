@@ -680,7 +680,7 @@ impl EngineInner {
                 let actor = entity.actor_data()?;
                 Some((
                     order_action,
-                    actor.active_door_pass.as_ref().map(|pass| pass.door_index),
+                    entity.position_iface().get_door(),
                     entity.element_data().sector(),
                     actor.execute_order_initialising,
                     entity.element_data().position_map(),
@@ -689,6 +689,11 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} is not an actor"));
         let Some(expected_lift_type) = climb_lift_type(action) else {
             return;
+        };
+        let door_index = if order_uses_distance_motion(action) {
+            self.actor_selected_pass_door(owner).map(|(door, _)| door)
+        } else {
+            door_index
         };
 
         let selected_order = self
@@ -728,7 +733,12 @@ impl EngineInner {
                 // Execute arm still calls Turn below while sprites are frozen.
                 None
             } else {
-                Some(door.sector_in)
+                Some(if order_uses_distance_motion(action) {
+                    crate::sector::SectorNumber::new(i16::from(current_sector
+                        .expect("climb execution requires its current lift sector")))
+                } else {
+                    door.sector_in
+                })
             }
         } else {
             let sector = current_sector.unwrap_or_else(|| {
@@ -930,8 +940,8 @@ impl EngineInner {
                     .get_mut(owner)
                     .and_then(|entity| entity.actor_data_mut())
                     .expect("globally frozen seek owner lost actor data");
-                actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
-                actor.wait_time = actor.seek_refresh_wait;
+                actor.wait_time = age_seek_refresh_wait(actor.wait_time);
+
                 return order_action;
             }
 
@@ -947,8 +957,8 @@ impl EngineInner {
             let actor = entity
                 .actor_data_mut()
                 .expect("globally frozen seek owner lost actor data before Turn");
-            actor.seek_refresh_wait = age_seek_refresh_wait(actor.seek_refresh_wait);
-            actor.wait_time = actor.seek_refresh_wait;
+            actor.wait_time = age_seek_refresh_wait(actor.wait_time);
+
             entity.position_iface_mut().turn();
             return order_action;
         }
