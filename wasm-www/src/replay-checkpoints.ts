@@ -1,5 +1,8 @@
 import type { RobinRpc } from './replay.ts';
 
+let installedRevision = 0;
+export function replayCheckpointRevision(): number { return installedRevision; }
+
 /** Start after the mission has entered its frame loop, without holding up boot. */
 export async function loadReplayCheckpoints(
     rpc: RobinRpc,
@@ -29,4 +32,5 @@ export async function loadReplayCheckpoints(
     await deps.validate(bytes);
     signal.throwIfAborted();
     deps.install(bytes);
+    installedRevision++;
 }

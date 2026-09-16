@@ -1,4 +1,5 @@
 import type { RobinRpc } from './replay.js';
+import { replayCheckpointRevision } from './replay-checkpoints.ts';
 
 const PRESENT_INTERVAL_MS = 40;
 const SIMULATION_BUDGET_MS = 30;
@@ -12,6 +13,7 @@ export async function seekReplay(
         progress: (frame: number) => void;
         now?: () => number;
         present?: (delay: number) => Promise<void>;
+        checkpointRevision?: () => number;
     },
 ): Promise<void> {
     const now = options.now ?? (() => performance.now());
@@ -24,13 +26,13 @@ export async function seekReplay(
     if (options.cancelled()) return;
     if (state.replay === null) throw new Error('Replay is no longer active');
     let frame = state.replay.frame;
-    let lastProbe = -Infinity;
+    const checkpointRevision = options.checkpointRevision ?? replayCheckpointRevision;
+    let lastRevision = checkpointRevision();
     const checkpointSeek = state.replay.checkpoint_seek === true;
     const restoreCheckpoint = async () => {
         const result = await rpc<{ frame: number }>('go-to-frame', { frame: target, auto_dismiss: true, checkpoint_only: true });
         if (!Number.isSafeInteger(result.frame) || result.frame < 0 || result.frame > target) throw new Error('Invalid replay checkpoint position');
         frame = result.frame;
-        lastProbe = now();
         if (!options.cancelled()) options.progress(frame);
     };
     if (checkpointSeek) {
@@ -48,7 +50,8 @@ export async function seekReplay(
     let batch = 8;
     while (frame < target && !options.cancelled()) {
         // A background download may finish while a long seek is underway.
-        if (checkpointSeek && now() - lastProbe >= 250) {
+        if (checkpointSeek && checkpointRevision() !== lastRevision) {
+            lastRevision = checkpointRevision();
             await restoreCheckpoint();
             if (options.cancelled() || frame === target) break;
         }

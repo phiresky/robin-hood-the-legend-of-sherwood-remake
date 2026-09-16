@@ -28,7 +28,8 @@ test('sidecar arriving during a seek is used without restarting', async () => {
         else { simulated += request.frame - frame; frame = request.frame; time += 40; }
         return { frame } as T;
     };
-    await seekReplay(rpc, 4010, { cancelled: () => false, progress: () => {}, now: () => time, present: async () => { time += 40; } });
+    await seekReplay(rpc, 4010, { cancelled: () => false, progress: () => {}, now: () => time,
+        checkpointRevision: () => time >= 250 ? 1 : 0, present: async () => { time += 40; } });
     assert.equal(frame, 4010);
     assert.equal(probes, 2);
     assert(simulated < 250);
@@ -59,7 +60,11 @@ test('slow presentation does not shrink fast simulation into tiny batches', asyn
     let frame = 0, time = 0;
     const batches: number[] = [];
     const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
-        if (method === 'state') return { replay: { frame } } as T;
+        if (method === 'state') return { replay: { frame, checkpoint_seek: true } } as T;
+        if ((params as { checkpoint_only?: boolean }).checkpoint_only) {
+            assert.equal(frame, 0, 'do not re-probe unchanged checkpoints between batches');
+            return { frame } as T;
+        }
         const next = (params as { frame: number }).frame;
         const work = (next - frame) * 0.6;
         batches.push(next - frame);
