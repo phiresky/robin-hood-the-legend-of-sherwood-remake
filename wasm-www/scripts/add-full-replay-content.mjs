@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseWebContentManifest, verifyDatadirCorpus, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
@@ -43,7 +43,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const [existing, source, build, output] = process.argv.slice(2);
     if (!output) throw new Error('Usage: add-full-replay-content.mjs EXISTING_CORPUS CONVERTER_OUTPUT BUILD NEW_CORPUS');
     await mkdir(output);
-    await cp(existing, output, { recursive: true });
+    await cp(await realpath(existing), output, { recursive: true });
     async function writableDirectories(path) {
         await chmod(path, 0o755);
         for (const entry of await readdir(path, { withFileTypes: true })) {
