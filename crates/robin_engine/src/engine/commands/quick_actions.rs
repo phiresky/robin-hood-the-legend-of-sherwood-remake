@@ -1031,9 +1031,8 @@ impl EngineInner {
         else {
             return;
         };
-        let launched =
-            self.check_quick_action_steps_validity(assets, pc, std::slice::from_ref(&entry.step))
-                && self.replay_auto_queue_step(sim, display, assets, pc, entry.step.clone());
+        let launched = self.check_auto_queue_step_validity(assets, pc, &entry.step)
+            && self.replay_auto_queue_step(sim, display, assets, pc, entry.step.clone());
         if !launched {
             // Automatic queues cannot wait for a user to click a failed QA
             // item. Fizzle once, discard the invalid front item, and leave
@@ -1367,15 +1366,7 @@ impl EngineInner {
                     command,
                     double_click,
                 } => {
-                    // Runtime second-line-of-defence for the per-step
-                    // validity gate.  `check_quick_action_steps_validity`
-                    // already pre-flighted missing-target steps, but a
-                    // step earlier in the replay can have removed the
-                    // target since.  Whole-sequence abort: bail out
-                    // without clearing the slot or launching posture
-                    // recovery, so the slot survives and
-                    // `apply_start_macro`'s `has_quick_action` check
-                    // fires `QuickActionFailed`.
+                    // A queued interaction retains its resolved target and gait.
                     if self.get_entity(target).is_none() {
                         return false;
                     }
@@ -1388,15 +1379,14 @@ impl EngineInner {
                     // click dispatcher would either launch a walking route
                     // twice or reduce the running click to fast-movement conversion with no
                     // newly launched route.
-                    let is_tail = true;
                     let was_aiming = self
                         .get_entity(pc)
                         .and_then(|entity| entity.actor_data())
                         .unwrap_or_else(|| panic!("quick-action owner {pc:?} has no actor state"))
                         .action_state
                         .is_bow();
-                    let command = quick_action_tail_command(command, is_tail, was_aiming);
-                    let append_recovery = is_tail && command == Command::TakeCorpse;
+                    let command = quick_action_tail_command(command, true, was_aiming);
+                    let append_recovery = command == Command::TakeCorpse;
                     self.apply_recorded_interaction_with_seek(
                         sim,
                         assets,
@@ -1611,24 +1601,7 @@ impl EngineInner {
             }
         }
 
-        // Tack a posture-restoration element (EquipBow / CrouchDown /
-        // EnterHelpingClimb / EnterBeggar) onto the end of the macro.
-        // The replay dispatches each recorded step through
-        // `apply_command` rather than building one big sequence, so
-        // recovery lands in two places:
-        //   * Move-tailed macros — `perform_group_move` already calls
-        //     `append_posture_recovery` on the move's launched
-        //     sequence (movement.rs:738/855/1940), embedding recovery
-        //     into the move's post-seek.
-        //   * Non-Move-tailed macros (Interaction / SwordStrike /
-        //     SelfAbility / etc.) — those apply paths don't add
-        //     recovery themselves, so launch a standalone recovery
-        //     element here.  Calling `append_posture_recovery` with an
-        //     empty Sequence skips the function's "last-was-SEEK →
-        //     attach to post-seek" branch (no last element to inspect)
-        //     and produces a single bare element keyed off the PC's
-        //     current posture / action_state — which is the right
-        //     element to launch into the actor's queue post-replay.
+        // Restore posture after the queued action unless its route embeds recovery.
         if !posture_recovery_embedded {
             let mut recovery = crate::sequence::Sequence::default();
             self.append_posture_recovery(pc, &mut recovery);
@@ -1685,7 +1658,7 @@ impl EngineInner {
             .quickito()?;
         let succeeded = match quickito.kind {
             crate::element_kinds::QuickAction::None => {
-                panic!("legacy Quickito slot contains QuickAction::None")
+                panic!("Quickito slot contains QuickAction::None")
             }
             crate::element_kinds::QuickAction::GoDown => {
                 self.actor_make_crouched(sim, assets, pc);
@@ -1699,7 +1672,7 @@ impl EngineInner {
                 let target = quickito
                     .interactor
                     .unwrap_or_else(|| panic!("legacy Interact Quickito has no interactor"));
-                let succeeded = self.legacy_human_mouse_clicked(sim, assets, pc, target, false);
+                let succeeded = self.quickito_human_mouse_clicked(sim, assets, pc, target, false);
                 if succeeded && quickito.button == 0x0008 {
                     // The original game inserts a literal per-frame sequence update
                     // between the synthetic leading single-click and the
@@ -1720,14 +1693,13 @@ impl EngineInner {
         self.players
             .macro_store
             .get_mut(pc)
-            .expect("legacy Quickito macro state disappeared")
+            .expect("Quickito macro state disappeared")
             .complete_slot(slot as usize);
         Some(true)
     }
 
-    /// Dedicated virtual-click equivalent for saved `QUICKITOS_INTERRACT`.
-    /// The Original recorder only creates this variant for Human targets.
-    pub(super) fn legacy_human_mouse_clicked(
+    /// Execute a retained interaction Quickito as a live human-target click.
+    pub(super) fn quickito_human_mouse_clicked(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -1737,10 +1709,10 @@ impl EngineInner {
     ) -> bool {
         let target_entity = self
             .get_entity(target)
-            .unwrap_or_else(|| panic!("legacy Quickito interactor {target:?} is missing"));
+            .unwrap_or_else(|| panic!("Quickito interactor {target:?} is missing"));
         assert!(
             target_entity.is_human(),
-            "legacy Quickito interactor {target:?} is not Human"
+            "Quickito interactor {target:?} is not Human"
         );
         let has_scroll = match target_entity {
             crate::element::Entity::Soldier(soldier) => soldier.npc.attached_scroll.is_some(),
@@ -1803,7 +1775,7 @@ impl EngineInner {
             self.players
                 .macro_store
                 .get_mut(pc)
-                .expect("legacy QA macro state disappeared")
+                .expect("quick-action macro state disappeared")
                 .reset_special_count(slot as usize);
             return Some(false);
         }
@@ -1830,7 +1802,7 @@ impl EngineInner {
 
         self.get_entity_mut(pc)
             .and_then(|entity| entity.actor_data_mut())
-            .unwrap_or_else(|| panic!("legacy QA owner {pc:?} is not an actor"))
+            .unwrap_or_else(|| panic!("quick-action owner {pc:?} is not an actor"))
             .post_seek_sequence = seek.map(crate::sequence::Sequence::into_post_seek);
         self.remove_quick_action_titbits_for(pc, slot);
         self.launch_sequence(sim, assets, action);
@@ -1838,36 +1810,20 @@ impl EngineInner {
             .players
             .macro_store
             .get_mut(pc)
-            .expect("legacy QA macro state disappeared");
+            .expect("quick-action macro state disappeared");
         state.complete_sequence_slot(slot as usize);
         Some(true)
     }
 
-    /// Pre-flight validity gate for QA replay:
-    ///
-    ///   * empty slot → fail;
-    ///   * any step references a target entity that no longer exists, or an
-    ///     interaction target/owner no longer satisfies Original's
-    ///     per-command validity gate → fail;
-    ///   * any non-MOVE/SEEK/POSTURE step while the PC is currently
-    ///     swordfighting → fail.  `Move` (which expands to MOVE/SEEK
-    ///     on dispatch) and `PostureToggle` survive the gate (the
-    ///     posture quickitos has no swordfight restriction); recorded
-    ///     interactions, sword-strikes, abilities, ground-targets,
-    ///     etc. all fail.
-    ///
-    /// Returns `true` to allow replay, `false` to fizzle.
-    pub(super) fn check_quick_action_steps_validity(
+    /// Validate one automatic item before dispatch can mutate its owner or target.
+    fn check_auto_queue_step_validity(
         &self,
         assets: &LevelAssets,
         pc: EntityId,
-        steps: &[crate::macro_store::QuickActionStep],
+        step: &crate::macro_store::QuickActionStep,
     ) -> bool {
         use crate::macro_store::QaReplayCommand;
         if !self.get_entity(pc).is_some_and(Entity::is_pc) && !self.is_tactically_controllable(pc) {
-            return false;
-        }
-        if steps.is_empty() {
             return false;
         }
         let is_swordfighting = self
@@ -1875,70 +1831,67 @@ impl EngineInner {
             .and_then(|e| e.human_data())
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
-        for step in steps {
-            let target = match &step.replay {
-                QaReplayCommand::Interaction { target, .. }
-                | QaReplayCommand::TargetInteraction { target, .. }
-                | QaReplayCommand::ScrollRead { target, .. }
-                | QaReplayCommand::Swordfight { target, .. }
-                | QaReplayCommand::SwordStrike { target, .. }
-                | QaReplayCommand::ShieldRaise {
-                    protected_pc: target,
-                    ..
-                } => Some(target),
-                _ => None,
-            };
-            if let Some(target) = target
-                && self.get_entity(*target).is_none()
-            {
+        let target = match &step.replay {
+            QaReplayCommand::Interaction { target, .. }
+            | QaReplayCommand::TargetInteraction { target, .. }
+            | QaReplayCommand::ScrollRead { target, .. }
+            | QaReplayCommand::Swordfight { target, .. }
+            | QaReplayCommand::SwordStrike { target, .. }
+            | QaReplayCommand::ShieldRaise {
+                protected_pc: target,
+                ..
+            } => Some(target),
+            _ => None,
+        };
+        if let Some(target) = target
+            && self.get_entity(*target).is_none()
+        {
+            return false;
+        }
+        // Semantic QA steps stand in for the cloned Original sequence
+        // element. Interactions may be materialised beneath a Seek at
+        // dispatch time, but quick-action startup validates those nested
+        // post-seek elements before cloning, with position checks off.
+        // Reconstruct just that interaction element so changed-state
+        // target and owner rules (Hit/Strangle, Bow, Take, Search) run
+        // before any step can mutate the world.
+        if let QaReplayCommand::Interaction {
+            target, command, ..
+        }
+        | QaReplayCommand::TargetInteraction {
+            target, command, ..
+        } = &step.replay
+            && matches!(
+                command,
+                Command::HitCmd
+                    | Command::StrangleCmd
+                    | Command::ShootBow
+                    | Command::ShootBowOnce
+                    | Command::Take
+                    | Command::SearchCmd
+                    | Command::TieCmd
+                    | Command::Untie
+            )
+        {
+            let element = SequenceElement::new_interaction(1, *command, Some(pc), Some(*target));
+            if !self.check_sequence_element_validity(assets, pc, &element, false) {
                 return false;
             }
-            // Semantic QA steps stand in for the cloned Original sequence
-            // element. Interactions may be materialised beneath a Seek at
-            // dispatch time, but quick-action startup validates those nested
-            // post-seek elements before cloning, with position checks off.
-            // Reconstruct just that interaction element so changed-state
-            // target and owner rules (Hit/Strangle, Bow, Take, Search) run
-            // before any step can mutate the world.
-            if let QaReplayCommand::Interaction {
-                target, command, ..
-            }
-            | QaReplayCommand::TargetInteraction {
-                target, command, ..
-            } = &step.replay
-                && matches!(
-                    command,
-                    Command::HitCmd
-                        | Command::StrangleCmd
-                        | Command::ShootBow
-                        | Command::ShootBowOnce
-                        | Command::Take
-                        | Command::SearchCmd
-                        | Command::TieCmd
-                        | Command::Untie
-                )
-            {
-                let element =
-                    SequenceElement::new_interaction(1, *command, Some(pc), Some(*target));
-                if !self.check_sequence_element_validity(assets, pc, &element, false) {
-                    return false;
-                }
-            }
-            // Per-element swordfight gate: while the PC is mid-fight,
-            // only MOVE, SEEK, or PostureToggle may run.  `Move`
-            // covers MOVE+SEEK on dispatch; `PostureToggle` enters
-            // through the quickitos path which has no swordfight
-            // gate, so it must also pass.
-            if is_swordfighting
-                && !matches!(
-                    &step.replay,
-                    QaReplayCommand::Move { .. }
-                        | QaReplayCommand::TacticalMove { .. }
-                        | QaReplayCommand::PostureToggle { .. }
-                )
-            {
-                return false;
-            }
+        }
+        // Per-element swordfight gate: while the PC is mid-fight,
+        // only MOVE, SEEK, or PostureToggle may run.  `Move`
+        // covers MOVE+SEEK on dispatch; `PostureToggle` enters
+        // through the quickitos path which has no swordfight
+        // gate, so it must also pass.
+        if is_swordfighting
+            && !matches!(
+                &step.replay,
+                QaReplayCommand::Move { .. }
+                    | QaReplayCommand::TacticalMove { .. }
+                    | QaReplayCommand::PostureToggle { .. }
+            )
+        {
+            return false;
         }
         true
     }
@@ -2060,7 +2013,7 @@ pub(super) fn quick_action_sequence_is_valid(
         }
         let owner = element
             .owner
-            .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
+            .unwrap_or_else(|| panic!("quick-action element {} has no owner", element.id));
         let Some(entity) = engine.get_entity(owner) else {
             return false;
         };
@@ -2078,7 +2031,7 @@ pub(super) fn quick_action_sequence_is_valid(
             && !post_seek.elements.iter().all(|element| {
                 let owner = element
                     .owner
-                    .unwrap_or_else(|| panic!("legacy QA element {} has no owner", element.id));
+                    .unwrap_or_else(|| panic!("quick-action element {} has no owner", element.id));
                 let Some(entity) = engine.get_entity(owner) else {
                     return false;
                 };

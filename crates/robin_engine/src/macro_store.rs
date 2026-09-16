@@ -314,13 +314,13 @@ pub struct Quickito {
 impl PartialEq for QuickActionSlot {
     fn eq(&self, other: &Self) -> bool {
         serde_json::to_value(&self.action_sequence)
-            .expect("serialize legacy QA action for equality")
+            .expect("serialize quick-action action for equality")
             == serde_json::to_value(&other.action_sequence)
-                .expect("serialize legacy QA action for equality")
+                .expect("serialize quick-action action for equality")
             && serde_json::to_value(&self.seek_sequence)
-                .expect("serialize legacy QA seek for equality")
+                .expect("serialize quick-action seek for equality")
                 == serde_json::to_value(&other.seek_sequence)
-                    .expect("serialize legacy QA seek for equality")
+                    .expect("serialize quick-action seek for equality")
             && self.quickito == other.quickito
             && self.titbit == other.titbit
     }
@@ -465,7 +465,7 @@ impl PcMacroState {
     }
 
     /// Begin recording into `slot_idx`. Previous contents remain in their
-    /// canonical slot until the first new step is appended, so arming and
+    /// canonical slot until a new action is captured, so arming and
     /// canceling alone does not mutate the active QA or its titbit.
     pub fn begin_recording(&mut self, slot_idx: u8) {
         assert!(

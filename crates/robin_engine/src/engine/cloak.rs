@@ -384,4 +384,76 @@ mod tests {
         assert_eq!(sequence.elements[0].command, Command::LeaveSpy);
         assert_eq!(sequence.elements[0].owner, Some(actor));
     }
+
+    #[test]
+    fn manual_cloak_playback_rechecks_feature_and_actor_state() {
+        for disable_feature in [true, false] {
+            let mut engine = EngineInner::new();
+            let actor = selected_pc(&mut engine);
+            let Entity::Pc(pc) = engine
+                .world
+                .entities
+                .get_mut(actor)
+                .expect("test PC exists")
+            else {
+                unreachable!("selected_pc creates a PC");
+            };
+            pc.element.active = true;
+            pc.element.publish_order_posture(Posture::Upright);
+            pc.pc.life_points = 100;
+            pc.actor.action_state = ActionState::Waiting;
+            engine.control.sim_config.reusable_cloaks = true;
+            let mut action = Sequence::new();
+            action.append_element(SequenceElement::new(1, Command::EnterCloak, Some(actor)));
+            let state = engine.players.macro_store.get_or_insert(actor);
+            state.begin_recording(0);
+            state.retain_sequence(action, None);
+            state.stop_recording();
+
+            if disable_feature {
+                engine.control.sim_config.reusable_cloaks = false;
+            } else {
+                engine
+                    .world
+                    .entities
+                    .get_mut(actor)
+                    .expect("test PC exists")
+                    .element_data_mut()
+                    .publish_order_posture(Posture::Crouched);
+            }
+            let assets = engine.test_runtime_assets();
+            let before = engine
+                .players
+                .macro_store
+                .get(actor)
+                .unwrap()
+                .slot(0)
+                .unwrap()
+                .clone();
+            engine.apply_command(
+                &crate::sim_rng::test_context(),
+                &mut Default::default(),
+                &mut Default::default(),
+                &assets,
+                &PlayerCommand::StartMacro {
+                    pc: Some(actor),
+                    slot: 0,
+                },
+            );
+
+            assert_eq!(
+                engine.players.macro_store.get(actor).unwrap().slot(0),
+                Some(&before)
+            );
+            assert!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .sequences_iter()
+                    .next()
+                    .is_none(),
+                "inadmissible cloak playback must not launch an actor sequence"
+            );
+        }
+    }
 }

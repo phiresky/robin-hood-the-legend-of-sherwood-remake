@@ -587,14 +587,12 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
     assert_eq!(raise.command, Command::RaiseShield);
     assert!(matches!(raise.get_property(Field::ShieldDangerPoint),
         Some(FieldValue::Point3D { x, y, z }) if *x == danger_point.x && *y == danger_point.y && *z == danger_point.z));
-    assert_eq!(
-        raise.get_property(Field::ShieldProtected),
-        Some(&FieldValue::Element(protected_pc))
-    );
-    assert_eq!(
+    assert!(matches!(raise.get_property(Field::ShieldProtected),
+        Some(FieldValue::Element(id)) if *id == protected_pc));
+    assert!(matches!(
         raise.get_property(Field::ShieldDangerPointLayer),
-        Some(&FieldValue::Integer(7))
-    );
+        Some(FieldValue::Integer(7))
+    ));
     let titbit = engine
         .feedback
         .titbit_manager
