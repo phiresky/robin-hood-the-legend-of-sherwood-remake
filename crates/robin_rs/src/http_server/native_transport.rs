@@ -388,7 +388,7 @@ mod tests {
     async fn replay_acquisition_preserves_bytes_above_the_small_command_limit() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let body = serde_json::json!({"data": "a".repeat(70_000), "paused": true}).to_string();
+        let body: Vec<u8> = (0..70_000).map(|index| index as u8).collect();
         let expected = body.clone();
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -396,7 +396,7 @@ mod tests {
                 let expected = expected.clone();
                 async move {
                     let acquired = acquire(request, port, policy()).await.unwrap();
-                    assert_eq!(acquired.body_bytes(), expected.as_bytes());
+                    assert_eq!(acquired.body_bytes(), expected.as_slice());
                     Ok::<_, std::convert::Infallible>(response(
                         200,
                         serde_json::json!({"acquired": true}).into(),
@@ -408,7 +408,17 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let reply = exchange(port, &format!("POST /load-replay HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len())).await;
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let headers = format!(
+            "POST /load-replay HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/x-robin-rhrec\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(headers.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).await.unwrap();
         assert!(reply.starts_with("HTTP/1.1 200"));
         server.await.unwrap();
     }

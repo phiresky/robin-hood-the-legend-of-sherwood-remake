@@ -9,7 +9,7 @@ class WorkerFake extends EventTarget {
     terminate(): void { this.terminated++; }
     port(): ReplayValidationWorker { return this as unknown as ReplayValidationWorker; }
 }
-const request = { compact: 'rhrec-abc-bytes', jsUrl: 'validator.js', wasmUrl: 'validator.wasm' };
+const request = { compact: new Uint8Array([0, 255, 128]), jsUrl: 'validator.js', wasmUrl: 'validator.wasm' };
 
 test('replay worker accepts only the exact reply and terminates after success or rejection', async () => {
     for (const reply of [{ status: 'accepted' }, { status: 'accepted', extra: true }, { status: 'rejected', error: 'bad replay' }, null, {}]) {

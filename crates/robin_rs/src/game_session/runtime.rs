@@ -905,6 +905,8 @@ impl TimelineRuntime {
         wait_for_multiplayer_start: bool,
         local_is_host: bool,
     ) -> Self {
+        // Headless replay owns save/load snapshots separately and has no rewind UI.
+        let capture_history = contract != FrameContract::Headless || replay.player.is_none();
         Self {
             current_frame: TimelineFrame::ZERO,
             lifecycle: FrameLifecycle::new(contract),
@@ -914,7 +916,11 @@ impl TimelineRuntime {
                 replay.recording_control,
                 replay.start_paused,
             ),
-            history: ReconstructionHistory::new(replay.rewind_buffer, replay.rollback_checker),
+            history: ReconstructionHistory::new(
+                replay.rewind_buffer,
+                replay.rollback_checker,
+                capture_history,
+            ),
             network: NetworkReconciliation::default(),
             multiplayer: MultiplayerSync::new(wait_for_multiplayer_start, local_is_host),
         }
@@ -973,7 +979,7 @@ impl TimelineRuntime {
             self.frame_number(),
             "history capture must use the authoritative timeline frame"
         );
-        self.history.buffer.begin_frame(frame, engine);
+        self.history.begin_frame(frame, engine);
     }
 
     /// Live input diverged from buffered history: truncate history, reset the
@@ -1145,7 +1151,7 @@ impl TimelineRuntime {
             frame.timeline_after.is_none(),
             "cannot reopen an already committed frame"
         );
-        self.history.buffer.begin_frame(self.frame_number(), engine);
+        self.history.begin_frame(self.frame_number(), engine);
         // Recording samples the final pre-command state, not the speculative
         // state captured before the late input arrived. Do not call open_frame:
         // it would bind twice and consume external facts a second time.
@@ -1165,7 +1171,7 @@ impl TimelineRuntime {
         self.lifecycle.clock.begin(now_ms);
         self.multiplayer.timing.begin_host_frame();
         let current_frame = self.frame_number();
-        self.history.buffer.begin_frame(current_frame, engine);
+        self.history.begin_frame(current_frame, engine);
 
         let recorder_hash = self.replay.recorder_hash(engine);
         if let Some(player) = self.replay.playback()

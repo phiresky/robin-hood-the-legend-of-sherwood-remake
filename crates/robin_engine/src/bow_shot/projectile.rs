@@ -1166,22 +1166,16 @@ fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> Wor
     let abx = b.x - a.x;
     let aby = b.y - a.y;
     let abz = b.z - a.z;
-    let ab_len_sq = abx * abx + aby * aby + abz * abz;
-    if ab_len_sq < 1e-6 {
-        return WorldVec3D {
-            x: f32::MAX,
-            y: f32::MAX,
-            z: f32::MAX,
-        };
-    }
+    let inv_norm = 1.0 / (abx * abx + aby * aby + abz * abz).sqrt();
+    let direction = WorldVec3D::new(abx * inv_norm, aby * inv_norm, abz * inv_norm);
     let apx = p.x - a.x;
     let apy = p.y - a.y;
     let apz = p.z - a.z;
-    let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
+    let t = apx * direction.x + apy * direction.y + apz * direction.z;
     WorldVec3D {
-        x: p.x - (a.x + t * abx),
-        y: p.y - (a.y + t * aby),
-        z: p.z - (a.z + t * abz),
+        x: apx - t * direction.x,
+        y: apy - t * direction.y,
+        z: apz - t * direction.z,
     }
 }
 
@@ -1267,13 +1261,13 @@ pub(crate) fn projectile_human_victim(
             continue;
         };
         if distance(old, anchor) <= range
-            && point_to_line_distance(anchor, old, new) <= HIT_DISTANCE
+            && point_to_line_distance(anchor, new, old) <= HIT_DISTANCE
         {
             victim = Some(id);
             continue;
         }
         if posture == Posture::LeaningOut && projectile.object.object_type == ObjectType::Arrow {
-            let delta = point_to_line_delta(anchor, old, new);
+            let delta = point_to_line_delta(anchor, new, old);
             if delta.x.abs().max(delta.y.abs()).max(delta.z.abs()) <= 100.0 {
                 let Some(eyes) = human.compute_eyes_point(None) else {
                     tracing::warn!(
@@ -1283,7 +1277,7 @@ pub(crate) fn projectile_human_victim(
                     continue;
                 };
                 if distance(new, eyes) <= range
-                    && point_to_line_distance(eyes, old, new) <= HIT_DISTANCE
+                    && point_to_line_distance(eyes, new, old) <= HIT_DISTANCE
                 {
                     victim = Some(id);
                 }
@@ -1325,13 +1319,9 @@ pub(crate) fn projectile_target_victim(
             tracing::warn!(?id, "projectile target is missing its center hotspot");
             continue;
         };
-        let hit = if range > 0.0 {
-            distance(new, center) <= range
-                && point_to_line_distance(center, old, new) <= HIT_DISTANCE
-        } else {
-            distance(new, center) <= 0.01
-        };
-        if hit {
+        if distance(new, center) <= range
+            && point_to_line_distance(center, new, old) <= HIT_DISTANCE
+        {
             return Some((id, command));
         }
     }

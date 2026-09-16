@@ -54,7 +54,6 @@ pub(crate) fn compact_replay_bytes() -> Vec<u8> {
     let replay = single_frame_replay(bitcode::encode(&robin_engine::campaign::Campaign::default()));
     robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
         .expect("fixture replay encodes")
-        .into_bytes()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

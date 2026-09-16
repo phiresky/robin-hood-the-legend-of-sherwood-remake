@@ -10,8 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 /// The API transport cap is the canonical compact codec's input cap. The API
-/// uses its allocation-free lexical preflight, but must never invoke base64,
-/// zstd, bitcode, or typed validation on hostile upload bytes.
+/// uses its allocation-free header preflight, but must never invoke zstd, bitcode, or typed validation on hostile upload bytes.
 pub const HARD_MAX_REPLAY_BYTES: u64 =
     robin_replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS.max_input_bytes as u64;
 pub const HARD_MAX_METADATA_BYTES: usize = 256 * 1024;

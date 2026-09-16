@@ -190,7 +190,9 @@ pub(crate) struct TraceSimConfig {
     pub(crate) highlander2: bool,
     pub(crate) golden_eye: bool,
     pub(crate) ignore_default_loose: bool,
-    pub(crate) bypass_fog_sprites_crash: bool,
+    // Retain the retired wire slot so existing binary traces remain readable.
+    #[serde(rename = "bypass_fog_sprites_crash")]
+    pub(crate) retired_fog_sprite_bypass: bool,
     pub(crate) amount_of_speaking: u16,
 }
 
@@ -229,7 +231,6 @@ impl TraceSimConfig {
             highlander2: self.highlander2,
             golden_eye: self.golden_eye,
             ignore_default_loose: self.ignore_default_loose,
-            bypass_fog_sprites_crash: self.bypass_fog_sprites_crash,
             amount_of_speaking: self.amount_of_speaking,
             synchronous_pathfinding,
             sherwood_trading: false,

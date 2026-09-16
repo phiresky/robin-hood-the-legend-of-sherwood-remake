@@ -16,12 +16,10 @@
 //!   `{"f":<n>,"i":{…}}` — written for every admitted simulation frame.
 //!   Streamed to disk incrementally so a crash
 //!   can't truncate the file to an invalid state.
-//! - **Compact sharing format** (`rhrec-{versionhash}-{base64}`): a
-//!   base64-encoded, zstd-compressed, bitcode-serialized snapshot of a
-//!   completed replay. Produced on demand (e.g. when the user wants to
-//!   paste a replay into a bug report) and accepted inline by
-//!   `--replay` / the JSON API. The encode/decode logic lives in
-//!   `robin_rs::replay_format`.
+//! - **Binary artifact** (`*.rhrec`): a versioned header followed by a
+//!   Zstd-compressed, bitcode-serialized snapshot of a completed replay.
+//!   Exported on demand and accepted by file loaders and binary HTTP/RPC
+//!   transports. The encode/decode logic lives in `robin_replay_format`.
 
 use crate::engine::SimulationFrameInput;
 use crate::player_command::{DialogResult, ModalKind};
@@ -154,7 +152,8 @@ pub struct ReplayHeader {
 /// Version 46 removes duplicated movement, shot, and ability execution trackers.
 /// Version 47 removes the unused entity-mutation counter marker from state hashes.
 /// Version 48 stores canonical sequence links and ordinary door-route orders.
-pub const REPLAY_SCHEMA_VERSION: u32 = 48;
+/// Version 49 removes the retired fog-sprite bypass from simulation configuration.
+pub const REPLAY_SCHEMA_VERSION: u32 = 49;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -448,7 +447,7 @@ pub struct ReplayData {
 }
 
 /// Flat serde-compatible snapshot of a [`ReplayData`], used as the
-/// payload for the compact `rhrec-{hash}-{base64}` sharing format.
+/// payload for the binary `.rhrec` artifact.
 /// Kept separate from `ReplayData` so the in-memory representation
 /// can evolve without breaking binary compatibility.
 #[derive(Clone, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]

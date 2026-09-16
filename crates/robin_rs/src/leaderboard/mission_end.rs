@@ -799,18 +799,15 @@ pub(crate) fn canonical_replay_artifact(
     bytes: &[u8],
     expected_mission_id: &str,
 ) -> Result<ReplayArtifactV1, MissionEndLeaderboardError> {
-    let text = std::str::from_utf8(bytes).map_err(|_| {
-        MissionEndLeaderboardError::ReplayExport("compact replay is not UTF-8".to_owned())
-    })?;
     let limits = robin_replay_format::ReplayAdmissionLimits {
         max_input_bytes: bytes.len(),
         ..Default::default()
     };
-    let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(text, &limits)
+    let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(bytes, &limits)
         .map_err(|error| MissionEndLeaderboardError::ReplayExport(error.to_string()))?;
     let canonical = robin_replay_format::encode_compact(&replay, &engine_hash)
         .map_err(|error| MissionEndLeaderboardError::ReplayExport(error.to_string()))?;
-    if canonical.as_bytes() != bytes {
+    if canonical.as_slice() != bytes {
         return Err(MissionEndLeaderboardError::ReplayExport(
             "replay bytes are not their canonical compact re-encoding".to_owned(),
         ));
@@ -936,7 +933,7 @@ impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
         match self.0.try_recv() {
             Ok(result) => Some(
                 result
-                    .map(|compact| Arc::<[u8]>::from(compact.into_bytes()))
+                    .map(|compact| Arc::<[u8]>::from(compact))
                     .map_err(|error| error.to_string()),
             ),
             Err(async_channel::TryRecvError::Empty) => None,
@@ -1498,7 +1495,7 @@ mod tests {
     #[test]
     fn canonical_artifact_preserves_taints_for_server_verification() {
         let compact = compact_replay_bytes();
-        let text = std::str::from_utf8(&compact).unwrap();
+        let text = &compact;
         let (engine_hash, mut replay) = robin_replay_format::decode_compact(text).unwrap();
         replay
             .try_edit_header(|header| {
@@ -1509,14 +1506,11 @@ mod tests {
             })
             .unwrap();
         let tainted = robin_replay_format::encode_compact(&replay, &engine_hash).unwrap();
-        let artifact = canonical_replay_artifact(tainted.as_bytes(), MISSION_ID).unwrap();
-        assert_eq!(
-            artifact.artifact.sha256,
-            Digest32::digest_bytes(tainted.as_bytes())
-        );
+        let artifact = canonical_replay_artifact(&tainted, MISSION_ID).unwrap();
+        assert_eq!(artifact.artifact.sha256, Digest32::digest_bytes(&tainted));
         assert!(replay.ranked_submission_verdict().is_err());
-        assert!(canonical_replay_artifact(tainted.as_bytes(), "Demo_Lin").is_err());
-        let mut padded = tainted.into_bytes();
+        assert!(canonical_replay_artifact(&tainted, "Demo_Lin").is_err());
+        let mut padded = tainted;
         padded.push(b' ');
         assert!(canonical_replay_artifact(&padded, MISSION_ID).is_err());
     }

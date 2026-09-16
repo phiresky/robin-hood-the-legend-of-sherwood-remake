@@ -4150,10 +4150,11 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         let assets = LevelAssets::new();
         let mut element =
             SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-        element.orders.push_back(Order::test_new(
+        element.orders.push_back(Order::new(
             OrderType::WalkingUpright,
             destination.x,
             destination.y,
+            engine.orders.allocate_order_id(),
         ));
         let SequenceElementData::Movement {
             destination: element_destination,
@@ -4289,7 +4290,34 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         // advancing on a newly-seen order. Prime that start tick, then use
         // the next production movement tick as the ordering observation.
         let assets = LevelAssets::new();
+        let seeker_order_before = engine
+            .orders
+            .sequence_manager
+            .get_element(seeker_sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap()
+            .order_id;
         engine.tick_actor_owner_envelopes(sim, &assets);
+        if seeker_before_target {
+            let seeker = engine.get_entity(seeker_id).unwrap();
+            let sprite = &seeker.element_data().sprite;
+            assert_eq!(sprite.last_action, OrderType::WalkingUpright);
+            assert_eq!(sprite.current_frame, 0);
+            assert_eq!(sprite.last_processed_order_id, seeker_order_before.get());
+            assert_ne!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(seeker_sequence, 0)
+                    .unwrap()
+                    .current_order()
+                    .unwrap()
+                    .order_id,
+                seeker_order_before,
+                "frozen seeking renews the order so resumed motion initializes again",
+            );
+        }
         engine.tick_actor_owner_envelopes(sim, &assets);
 
         let seeker_after_crossing_tolerance = engine
@@ -4308,7 +4336,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         // actor tick waits if the target is now in range and no follow-up exists.
         engine.tick_actor_owner_envelopes(sim, &assets);
 
-        Observation {
+        let observation = Observation {
             seeker_slot: seeker_id.index(),
             target_slot: target_id.index(),
             target_before_movement,
@@ -4335,7 +4363,57 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .get_element(seeker_sequence, 0)
                 .expect("seeker movement element remains inspectable")
                 .state,
+        };
+        engine.set_actors_frozen(true);
+        for _ in 0..2 {
+            let seeker = engine.get_entity(seeker_id).unwrap();
+            let sprite = seeker.sprite();
+            let sprite_before = (
+                sprite.current_row,
+                sprite.current_frame,
+                sprite.frame_count,
+                sprite.last_processed_order_id,
+            );
+            let wait_before = seeker.actor_data().unwrap().seek_refresh_wait;
+            let order_before = engine
+                .orders
+                .sequence_manager
+                .get_element(seeker_sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_id;
+            engine.tick_actor_owner_envelopes(sim, &assets);
+            let seeker = engine.get_entity(seeker_id).unwrap();
+            let sprite = seeker.sprite();
+            assert_eq!(
+                (
+                    sprite.current_row,
+                    sprite.current_frame,
+                    sprite.frame_count,
+                    sprite.last_processed_order_id
+                ),
+                sprite_before,
+                "global freezing suppresses only the sprite action",
+            );
+            assert_eq!(
+                seeker.actor_data().unwrap().seek_refresh_wait,
+                wait_before.wrapping_sub(1)
+            );
+            assert_ne!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(seeker_sequence, 0)
+                    .unwrap()
+                    .current_order()
+                    .unwrap()
+                    .order_id,
+                order_before,
+                "global freezing preserves seek order renewal"
+            );
         }
+        observation
     }
 
     assert_eq!(

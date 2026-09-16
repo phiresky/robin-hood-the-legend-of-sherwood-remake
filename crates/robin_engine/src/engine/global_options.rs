@@ -78,7 +78,6 @@ pub struct SimConfig {
     pub highlander2: bool,
     pub golden_eye: bool,
     pub ignore_default_loose: bool,
-    pub bypass_fog_sprites_crash: bool,
     /// Active player-profile speech density. This affects authoritative
     /// chorus suppression and deterministic speech timing.
     pub amount_of_speaking: u16,
@@ -143,7 +142,6 @@ pub enum RankedSimulationConfigField {
     Highlander2,
     GoldenEye,
     IgnoreDefaultLoose,
-    BypassFogSpritesCrash,
     AmountOfSpeaking,
     SynchronousPathfinding,
     SherwoodTrading,
@@ -174,7 +172,6 @@ impl RankedSimulationConfigField {
             Self::Highlander2 => "sim_config.highlander2",
             Self::GoldenEye => "sim_config.golden_eye",
             Self::IgnoreDefaultLoose => "sim_config.ignore_default_loose",
-            Self::BypassFogSpritesCrash => "sim_config.bypass_fog_sprites_crash",
             Self::AmountOfSpeaking => "sim_config.amount_of_speaking",
             Self::SynchronousPathfinding => "sim_config.synchronous_pathfinding",
             Self::SherwoodTrading => "sim_config.sherwood_trading",
@@ -353,7 +350,7 @@ macro_rules! profile_gameplay_projection {
                     $($field,)+
                     difficulty: _, amount_of_speaking: _,
                     script_enabled: _, highlander: _, highlander2: _, golden_eye: _,
-                    ignore_default_loose: _, bypass_fog_sprites_crash: _,
+                    ignore_default_loose: _,
                     synchronous_pathfinding: _,
                 } = *self;
                 $(gameplay.$field = $field;)+
@@ -411,7 +408,6 @@ impl SimConfig {
             highlander2: false,
             golden_eye: false,
             ignore_default_loose: false,
-            bypass_fog_sprites_crash: false,
             amount_of_speaking: 5,
             synchronous_pathfinding: false,
             sherwood_trading: true,
@@ -461,7 +457,6 @@ impl SimConfig {
             highlander2,
             golden_eye,
             ignore_default_loose,
-            bypass_fog_sprites_crash,
             amount_of_speaking,
             synchronous_pathfinding,
             sherwood_trading,
@@ -487,7 +482,6 @@ impl SimConfig {
             highlander2: expected_highlander2,
             golden_eye: expected_golden_eye,
             ignore_default_loose: expected_ignore_default_loose,
-            bypass_fog_sprites_crash: expected_bypass_fog_sprites_crash,
             amount_of_speaking: expected_amount_of_speaking,
             synchronous_pathfinding: expected_synchronous_pathfinding,
             sherwood_trading: expected_sherwood_trading,
@@ -527,8 +521,6 @@ impl SimConfig {
             (golden_eye != expected_golden_eye).then_some(RankedSimulationConfigField::GoldenEye),
             (ignore_default_loose != expected_ignore_default_loose)
                 .then_some(RankedSimulationConfigField::IgnoreDefaultLoose),
-            (bypass_fog_sprites_crash != expected_bypass_fog_sprites_crash)
-                .then_some(RankedSimulationConfigField::BypassFogSpritesCrash),
             (amount_of_speaking != expected_amount_of_speaking)
                 .then_some(RankedSimulationConfigField::AmountOfSpeaking),
             (synchronous_pathfinding != expected_synchronous_pathfinding)
@@ -568,7 +560,6 @@ impl SimConfig {
             highlander2: options.highlander2,
             golden_eye: options.golden_eye,
             ignore_default_loose: options.ignore_default_loose,
-            bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
             amount_of_speaking: 5,
             synchronous_pathfinding: false,
             sherwood_trading: true,
@@ -636,7 +627,6 @@ pub struct GlobalOptions {
     pub script_enabled: bool,
     pub ignore_default_loose: bool,
     pub set_reg: bool,
-    pub bypass_fog_sprites_crash: bool,
 }
 
 impl Default for GlobalOptions {
@@ -672,7 +662,6 @@ impl Default for GlobalOptions {
             script_enabled: true,
             ignore_default_loose: false,
             set_reg: false,
-            bypass_fog_sprites_crash: false,
         }
     }
 }

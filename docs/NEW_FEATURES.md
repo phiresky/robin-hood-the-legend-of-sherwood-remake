@@ -774,11 +774,16 @@ A list of which additional features we have added, which ones we might still wan
     restrictions are documented in [Upscalers](UPSCALERS.md).
 
 - **Deterministic replay and rollback checking**. Sessions can be recorded to
-  JSONL, replayed from disk or compact `rhrec-...` strings, and checked with
-  per-frame state hashes. Ranked ingestion applies the same post-decode frame,
-  metadata, campaign-byte, and per-frame work ceilings to raw JSONL and compact
-  containers; compact input additionally has independent base64, compressed,
-  decompressed, and zstd-window limits. The rollback checker periodically
+  JSONL locally and exported as binary `.rhrec` files: `RHREC` plus byte `1`,
+  a 12-byte lowercase hexadecimal build identity, then Zstd-compressed bitcode.
+  Export, ranked upload/storage/download, native loading, and browser worker/RPC
+  playback preserve binary bytes. The media type is `application/x-robin-rhrec`.
+  This is a clean break: old `rhrec-...` text artifacts are rejected. Only share
+  URLs wrap binary bytes in Base64url (`?replay=rhrec1-...`). Native `--replay`
+  takes a file/archive path; `GET /get-replay` returns binary, and native
+  `POST /load-replay?paused=false` accepts the binary body and replay media type.
+  Ranked ingestion accepts binary artifacts only and enforces independent input,
+  compressed, decompressed, Zstd-window, frame, metadata, campaign, and work limits. The rollback checker periodically
   replays recent frames from a snapshot and compares the reconstructed engine
   state against the live state to catch nondeterminism. Explicit playback
   requests are decoded before Engine construction and fail fatally if their

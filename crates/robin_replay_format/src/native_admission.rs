@@ -16,7 +16,7 @@ pub enum AdmissionError {
     WorkerProtocol(String),
 }
 
-fn decode_compact_for_local_playback(text: &str) -> Result<(), crate::FormatError> {
+fn decode_compact_for_local_playback(text: &[u8]) -> Result<(), crate::FormatError> {
     // The recorded source hash is provenance; the helper's own build identity
     // is still checked through the `engine` field of its reply.
     let (_, data) = crate::decode_compact_bounded(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
@@ -108,21 +108,16 @@ pub fn run_native_admission_worker() -> i32 {
                 limit
             ),
         },
-        Ok(_) => match std::str::from_utf8(&bytes) {
-            Err(error) => AdmissionWorkerReply::Rejected {
-                error: bounded_worker_error(format_args!("compact replay is not UTF-8: {error}")),
+        Ok(_) => match decode_compact_for_local_playback(&bytes) {
+            Ok(_) => AdmissionWorkerReply::Accepted {
+                sha256: hex::encode(sha2::Sha256::digest(&bytes)),
+                protocol: ADMISSION_PROTOCOL,
+                engine: crate::ENGINE_VERSION_HASH.into(),
+                spellforge_abi: robin_spellforge::spellforge_vm_abi().into(),
+                decoder: decoder_identity(),
             },
-            Ok(text) => match decode_compact_for_local_playback(text) {
-                Ok(_) => AdmissionWorkerReply::Accepted {
-                    sha256: hex::encode(sha2::Sha256::digest(&bytes)),
-                    protocol: ADMISSION_PROTOCOL,
-                    engine: crate::ENGINE_VERSION_HASH.into(),
-                    spellforge_abi: robin_spellforge::spellforge_vm_abi().into(),
-                    decoder: decoder_identity(),
-                },
-                Err(error) => AdmissionWorkerReply::Rejected {
-                    error: bounded_worker_error(error),
-                },
+            Err(error) => AdmissionWorkerReply::Rejected {
+                error: bounded_worker_error(error),
             },
         },
     };
@@ -132,7 +127,7 @@ pub fn run_native_admission_worker() -> i32 {
     }
 }
 
-pub fn validate_in_native_child(text: &str) -> Result<(), AdmissionError> {
+pub fn validate_in_native_child(text: &[u8]) -> Result<(), AdmissionError> {
     let executable = std::env::current_exe().map_err(|error| {
         AdmissionError::WorkerProtocol(format!("resolve current executable: {error}"))
     })?;
@@ -142,7 +137,7 @@ pub fn validate_in_native_child(text: &str) -> Result<(), AdmissionError> {
 /// Validate through the matching helper beside an explicitly owned launcher.
 /// This also supports frozen executable snapshots; all containment and reply
 /// checks are identical to the ordinary current-executable path.
-pub fn validate_next_to(text: &str, executable: &std::path::Path) -> Result<(), AdmissionError> {
+pub fn validate_next_to(text: &[u8], executable: &std::path::Path) -> Result<(), AdmissionError> {
     use std::process::{Command, Stdio};
     preflight_compact_transport(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
     let helper = helper_next_to(executable)?;
@@ -215,7 +210,7 @@ pub fn helper_next_to(executable: &std::path::Path) -> Result<std::path::PathBuf
     )))
 }
 
-fn verify_worker_reply(output: &[u8], text: &str) -> Result<(), AdmissionError> {
+fn verify_worker_reply(output: &[u8], text: &[u8]) -> Result<(), AdmissionError> {
     use sha2::Digest as _;
 
     let reply: AdmissionWorkerReply = serde_json::from_slice(output)
@@ -238,7 +233,7 @@ fn verify_worker_reply(output: &[u8], text: &str) -> Result<(), AdmissionError> 
                     "incompatible replay admission helper identity; rebuild or install the matching helper".into(),
                 ));
             }
-            let actual = hex::encode(sha2::Sha256::digest(text.as_bytes()));
+            let actual = hex::encode(sha2::Sha256::digest(text));
             if sha256 != actual {
                 return Err(AdmissionError::WorkerProtocol(
                     "worker accepted a different replay digest".into(),
@@ -251,7 +246,7 @@ fn verify_worker_reply(output: &[u8], text: &str) -> Result<(), AdmissionError> 
 
 fn exchange_with_worker(
     mut child: std::process::Child,
-    text: &str,
+    text: &[u8],
     wall_time: std::time::Duration,
 ) -> Result<Vec<u8>, AdmissionError> {
     use std::io::{Read as _, Write as _};
@@ -288,7 +283,7 @@ fn exchange_with_worker(
         };
         let writer = match std::thread::Builder::new()
             .name("replay-admission-input".into())
-            .spawn_scoped(scope, move || stdin.write_all(text.as_bytes()))
+            .spawn_scoped(scope, move || stdin.write_all(text))
         {
             Ok(writer) => writer,
             Err(error) => {
@@ -426,9 +421,9 @@ mod tests {
     #[test]
     fn worker_acceptance_is_bound_to_the_exact_input_bytes() {
         use sha2::Digest as _;
-        let text = "exact replay bytes 🦊";
+        let text = "exact replay bytes 🦊".as_bytes();
         let reply = serde_json::to_vec(&AdmissionWorkerReply::Accepted {
-            sha256: hex::encode(sha2::Sha256::digest(text.as_bytes())),
+            sha256: hex::encode(sha2::Sha256::digest(text)),
             protocol: ADMISSION_PROTOCOL,
             engine: crate::ENGINE_VERSION_HASH.into(),
             spellforge_abi: robin_spellforge::spellforge_vm_abi().into(),
@@ -438,7 +433,7 @@ mod tests {
         verify_worker_reply(&reply, text).unwrap();
         for changed in ["", "exact replay bytes", "exact replay bytes 🦊\n"] {
             assert!(matches!(
-                verify_worker_reply(&reply, changed),
+                verify_worker_reply(&reply, changed.as_bytes()),
                 Err(AdmissionError::WorkerProtocol(_))
             ));
         }
@@ -452,7 +447,7 @@ mod tests {
         })
         .unwrap();
         assert!(
-            matches!(verify_worker_reply(&reply, "input"), Err(AdmissionError::AdmissionRejected(error)) if error == message)
+            matches!(verify_worker_reply(&reply, b"input"), Err(AdmissionError::AdmissionRejected(error)) if error == message)
         );
     }
 
@@ -474,7 +469,7 @@ mod tests {
             let mut wrong = valid.clone();
             wrong[field] = replacement;
             assert!(matches!(
-                verify_worker_reply(&serde_json::to_vec(&wrong).unwrap(), "input"),
+                verify_worker_reply(&serde_json::to_vec(&wrong).unwrap(), b"input"),
                 Err(AdmissionError::WorkerProtocol(_))
             ));
         }
@@ -507,7 +502,7 @@ mod tests {
     fn closed_input_pipe_fails_without_releasing_admission() {
         let error = exchange_with_worker(
             shell_worker("exit 0"),
-            &"x".repeat(1024 * 1024),
+            &vec![b'x'; 1024 * 1024],
             std::time::Duration::from_secs(2),
         )
         .unwrap_err();
@@ -539,7 +534,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    verify_worker_reply(reply.as_bytes(), "input"),
+                    verify_worker_reply(reply.as_bytes(), b"input"),
                     Err(AdmissionError::WorkerProtocol(_))
                 ),
                 "{reply}"
@@ -556,11 +551,11 @@ mod tests {
             "decoder": decoder_identity(),
         });
         assert!(matches!(
-            verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), "input"),
+            verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), b"input"),
             Err(AdmissionError::WorkerProtocol(_))
         ));
         reply.as_object_mut().unwrap().remove("error");
-        verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), "input").unwrap();
+        verify_worker_reply(&serde_json::to_vec(&reply).unwrap(), b"input").unwrap();
     }
 
     #[cfg(unix)]
@@ -580,7 +575,7 @@ mod tests {
     fn worker_reply_is_drained_before_waiting_for_exit() {
         let output = exchange_with_worker(
             shell_worker("printf '%12288s' ''"),
-            "",
+            b"",
             std::time::Duration::from_secs(2),
         )
         .unwrap();
@@ -592,7 +587,7 @@ mod tests {
     fn oversized_worker_reply_is_bounded_without_a_pipe_deadlock() {
         let error = exchange_with_worker(
             shell_worker("printf '%32768s' ''"),
-            "",
+            b"",
             std::time::Duration::from_secs(2),
         )
         .unwrap_err();
@@ -610,7 +605,7 @@ mod tests {
     fn worker_timeout_reaps_process_and_joins_reply_reader() {
         let error = exchange_with_worker(
             shell_worker("while :; do :; done"),
-            "",
+            b"",
             std::time::Duration::from_millis(50),
         )
         .unwrap_err();
@@ -623,7 +618,7 @@ mod tests {
         ));
         let error = exchange_with_worker(
             shell_worker("exit 7"),
-            "",
+            b"",
             std::time::Duration::from_secs(2),
         )
         .unwrap_err();
@@ -643,7 +638,7 @@ mod tests {
         let started = std::time::Instant::now();
         let error = exchange_with_worker(
             shell_worker("while :; do :; done"),
-            &input,
+            input.as_bytes(),
             std::time::Duration::from_millis(50),
         )
         .unwrap_err();
@@ -663,7 +658,7 @@ mod tests {
         let input = "x".repeat(2 * 1024 * 1024);
         let output = exchange_with_worker(
             shell_worker("printf '%12288s' ''; cat >/dev/null; printf done"),
-            &input,
+            input.as_bytes(),
             std::time::Duration::from_secs(5),
         )
         .unwrap();

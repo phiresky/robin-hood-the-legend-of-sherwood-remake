@@ -1,5 +1,5 @@
 export type ReplayValidationWorker = Pick<Worker, 'addEventListener' | 'postMessage' | 'terminate'>;
-export type ReplayValidationRequest = { readonly compact: string; readonly jsUrl: string; readonly wasmUrl: string };
+export type ReplayValidationRequest = { readonly compact: Uint8Array; readonly jsUrl: string; readonly wasmUrl: string };
 
 /** The worker owns untrusted replay parsing; this adapter owns its lifetime and deadline. */
 export async function runReplayValidation(
@@ -44,7 +44,7 @@ export async function runReplayValidation(
 
 export type ReplayValidatorModule = {
     readonly default: (init: { module_or_path: Response }) => Promise<unknown>;
-    readonly validate_compact_replay?: (compact: string) => void;
+    readonly validate_compact_replay?: (compact: Uint8Array) => void;
 };
 
 /** Runs only inside the disposable worker; the live game never parses here. */

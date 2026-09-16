@@ -112,12 +112,11 @@ impl EngineInner {
     fn authorized_circular_group_destinations(
         &self,
         pc_ids: &[EntityId],
-        pc_positions: &[MapPoint],
         click: MapPoint,
         layer: u16,
         is_lift: bool,
         bypass_authorization: bool,
-    ) -> (Vec<Option<MapPoint>>, Vec<usize>) {
+    ) -> (Vec<MapPoint>, Vec<bool>) {
         let raw_offsets = circular_dispatch_offsets(pc_ids.len());
         let mut eligible = vec![false; pc_ids.len()];
         let mut candidates = Vec::with_capacity(pc_ids.len());
@@ -155,16 +154,7 @@ impl EngineInner {
                 candidates.insert(0, bbox.center());
             }
         }
-        let (assigned, dispatch_order) =
-            assign_circular_dispatch_candidates(pc_positions, &candidates, &eligible);
-        (
-            assigned
-                .into_iter()
-                .zip(eligible)
-                .map(|(destination, eligible)| eligible.then_some(destination))
-                .collect(),
-            dispatch_order,
-        )
+        (candidates, eligible)
     }
 
     /// Resolve a group click into per-PC quick-action movement records without
@@ -203,10 +193,31 @@ impl EngineInner {
                 &[],
             )
             .expect("nonempty group has a route-source position");
-        let formation = self.group_move_formation_slots(pc_ids, None, &plan);
+        let mut formation = self.group_move_formation_slots(pc_ids, None, &plan);
+        let mut circular_destinations = vec![None; pc_ids.len()];
+        if let Some((candidates, eligible)) = formation.circular_candidates.take() {
+            dispatch_circular_candidates(
+                &mut circular_destinations,
+                candidates,
+                &eligible,
+                |_, index| {
+                    self.expect_entity(pc_ids[index], "group-move actor")
+                        .element_data()
+                        .position_map()
+                },
+                |destinations, index, destination, contested| {
+                    destinations[index] = Some((destination, contested));
+                },
+            );
+        }
 
         pc_ids.iter().enumerate().map(|(index, &actor)| {
-            let Some(destination) = self.resolve_group_move_destination(&plan, &formation, index) else {
+            let resolved = if formation.circular_destinations_pre_authorized {
+                circular_destinations[index]
+            } else {
+                self.resolve_group_move_destination(&plan, &formation, index).map(|destination| (destination, false))
+            };
+            let Some((destination, contested)) = resolved else {
                 return PlannedRecordedGroupMoveOutcome::Unauthorized { actor };
             };
             // Recording retains the jump's underlying sector and the formation
@@ -216,6 +227,9 @@ impl EngineInner {
                     panic!("recorded jump group move for {actor:?} has no underlying goal sector")
                 });
                 recorded_qa_move_route(sector, sector_index, layer)
+            } else if contested && let Some(index) = plan.selected_sector_index {
+                let sector = &self.world.fast_grid.level.sectors[usize::from(index)];
+                recorded_qa_move_route(sector.sector_number, index, plan.effective_layer)
             } else {
                 recorded_qa_move_route(
                     plan.goal_sector.expect("recorded group move has no resolved goal sector"),
@@ -339,7 +353,8 @@ impl EngineInner {
         ) else {
             return;
         };
-        let formation = self.group_move_formation_slots(pc_ids, explicit_destinations, &plan);
+        let mut formation = self.group_move_formation_slots(pc_ids, explicit_destinations, &plan);
+        let circular_candidates = formation.circular_candidates.take();
         let ctx = GroupMoveRouteCtx {
             plan,
             formation,
@@ -353,27 +368,45 @@ impl EngineInner {
         // For each PC, decide between:
         //   1. Same-sector: simple MOVE
         //   2. Cross-sector (door/lift): gate-A* sequence
-        for &dispatch_index in &ctx.formation.dispatch_order {
-            let Some(mut pc) = self.group_move_pc_destination(assets, &ctx, dispatch_index) else {
-                continue;
-            };
-            if ctx.plan.is_jump_click
-                && self
-                    .group_move_pc_jump(sim, assets, &ctx, &mut pc)
-                    .is_break()
-            {
-                continue;
+        if let Some((candidates, eligible)) = circular_candidates {
+            // Speech only changes sound feedback, speech prohibitions, and
+            // the chorus timer. It cannot affect another slot's geometry;
+            // retain selection-order rejection before the first move runs.
+            for (index, &authorized) in eligible.iter().enumerate() {
+                if !authorized {
+                    self.hero_speaking(
+                        assets,
+                        pc_ids[index],
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    );
+                }
             }
-            if self
-                .group_move_pc_simple_route(sim, assets, &ctx, &pc)
-                .is_break()
-            {
-                continue;
+            dispatch_circular_candidates(
+                self,
+                candidates,
+                &eligible,
+                |engine, index| {
+                    engine
+                        .expect_entity(pc_ids[index], "group-move actor")
+                        .element_data()
+                        .position_map()
+                },
+                |engine, index, destination, contested| {
+                    let mut pc = engine.group_move_pc_route(&ctx, index, destination);
+                    if contested && let Some(index) = ctx.plan.selected_sector_index {
+                        let sector = &engine.world.fast_grid.level.sectors[usize::from(index)];
+                        pc.pc_goal_sector = Some(sector.sector_number);
+                        pc.pc_goal_sector_index = Some(index);
+                    }
+                    engine.dispatch_group_move_pc(sim, assets, &ctx, pc);
+                },
+            );
+        } else {
+            for dispatch_index in 0..pc_ids.len() {
+                if let Some(pc) = self.group_move_pc_destination(assets, &ctx, dispatch_index) {
+                    self.dispatch_group_move_pc(sim, assets, &ctx, pc);
+                }
             }
-            let Some(source) = self.group_move_pc_gate_source(assets, &ctx, &pc) else {
-                continue;
-            };
-            self.group_move_pc_gate_route(sim, assets, &ctx, &pc, source);
         }
 
         // At the tail of group-move, if the click happened during
@@ -393,20 +426,43 @@ impl EngineInner {
         }
     }
 
-    /// Route-source snapshot, unified sector hit-test and click
-    /// classification. `None` means no route-source positions were collected;
-    /// the group move then stops.
-    fn group_move_click_plan(
+    fn dispatch_group_move_pc(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        ctx: &GroupMoveRouteCtx<'_>,
+        mut pc: GroupMovePcRoute,
+    ) {
+        if ctx.plan.is_jump_click
+            && self
+                .group_move_pc_jump(sim, assets, ctx, &mut pc)
+                .is_break()
+        {
+            return;
+        }
+        if self
+            .group_move_pc_simple_route(sim, assets, ctx, &pc)
+            .is_break()
+        {
+            return;
+        }
+        if let Some(source) = self.group_move_pc_gate_source(assets, ctx, &pc) {
+            self.group_move_pc_gate_route(sim, assets, ctx, &pc, source);
+        }
+    }
+
+    /// Resolve the shared click using the first selected actor as its anchor.
+    fn group_move_click_plan<'a>(
         &self,
         assets: &LevelAssets,
-        pc_ids: &[EntityId],
+        pc_ids: &'a [EntityId],
         click_point: MapPoint,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         door_route_override: Option<bool>,
         recorded_gate_routes: &[(EntityId, Vec<(u32, bool)>)],
         recorded_failed_gate_routes: &[EntityId],
-    ) -> Option<GroupMoveClickPlan> {
+    ) -> Option<GroupMoveClickPlan<'a>> {
         // Preemption is handled downstream by `arbitrate_instruct`:
         // every same-sector PC gets a fresh `Command::Move` sequence
         // element launched via `launch_element` below, which reaches
@@ -429,40 +485,23 @@ impl EngineInner {
         // actor's still-visible near-side sector here would incorrectly
         // classify a return click as a same-sector Move and lose the reverse
         // gate traversal before the command is postponed.
-        let positions: Vec<(
-            EntityId,
-            MapPoint,
-            u16,
-            crate::position_interface::SectorHandle,
-        )> = pc_ids
-            .iter()
-            .map(|&pc_id| {
-                let e = self
-                    .get_entity(pc_id)
-                    .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"));
-                // The original game passes the actor's complete live sector reference
-                // from sector lookup into movement / movement-sequence construction
-                // for both formation paths. Restore
-                // omitted legacy arena identity at this exact snapshot
-                // boundary before same-sector classification or gate A*. A
-                // selected live door remains authoritative and is resolved
-                // first, while the actor may still display its old near-side
-                // position.
-                let (position, sector, layer) = group_move_route_source(
-                    self,
-                    pc_id,
-                    e,
-                    &self.script_domains.interactables.doors,
-                );
-                (pc_id, position, layer, sector)
-            })
-            .collect();
-        if positions.is_empty() {
-            return None;
-        }
-
-        let src_layer = positions[0].2;
-        let reference = positions[0].1;
+        let route_source = |pc_id| {
+            let e = self
+                .get_entity(pc_id)
+                .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"));
+            // The original game passes the actor's complete live sector reference
+            // from sector lookup into movement / movement-sequence construction
+            // for both formation paths. Restore
+            // omitted legacy arena identity at this exact snapshot
+            // boundary before same-sector classification or gate A*. A
+            // selected live door remains authoritative and is resolved
+            // first, while the actor may still display its old near-side
+            // position.
+            let (position, sector, layer) =
+                group_move_route_source(self, pc_id, e, &self.script_domains.interactables.doors);
+            (position, sector, layer)
+        };
+        let (reference, _, src_layer) = route_source(*pc_ids.first()?);
 
         // ── Unified sector hit-test ──
         //
@@ -506,9 +545,9 @@ impl EngineInner {
             &self.world.fast_grid.level,
         );
         let all_source_arenas_match_spatial = hit.sector_idx.is_some()
-            && positions
+            && pc_ids
                 .iter()
-                .all(|(_, _, _, source)| source.arena_index() == hit.sector_idx);
+                .all(|&actor| route_source(actor).1.arena_index() == hit.sector_idx);
         let retained_jump_falls_back_to_spatial = goal_override.is_some_and(|(goal, layer)| {
             retained_jump_goal_uses_underlying_sector(
                 &self.world.fast_grid.level,
@@ -549,9 +588,10 @@ impl EngineInner {
             )
         };
         Some(GroupMoveClickPlan {
-            positions,
+            actor_ids: pc_ids,
             goal_sector: route_goal_sector,
             route_goal_sector_index,
+            selected_sector_index: hit.sector_idx,
             effective_click,
             effective_layer,
             is_valid,
@@ -568,14 +608,13 @@ impl EngineInner {
 
     /// Formation slots around the click point: explicit destinations,
     /// mercenary formation, or authorized circular dispatch.
-    fn group_move_formation_slots(
+    fn group_move_formation_slots<'a>(
         &self,
         pc_ids: &[EntityId],
-        explicit_destinations: Option<&[MapPoint]>,
+        explicit_destinations: Option<&'a [MapPoint]>,
         plan: &GroupMoveClickPlan,
-    ) -> GroupMoveFormation {
+    ) -> GroupMoveFormation<'a> {
         let GroupMoveClickPlan {
-            ref positions,
             effective_click,
             effective_layer,
             is_lift_click,
@@ -588,9 +627,9 @@ impl EngineInner {
         // If the group is compact enough, use mercenary formation
         // (preserve relative positions).  Otherwise use circular
         // dispatch (arrange in a circle around click).
-        let pc_positions: Vec<MapPoint> = positions
+        let pc_positions: Vec<MapPoint> = pc_ids
             .iter()
-            .map(|(pc_id, _, _, _)| {
+            .map(|pc_id| {
                 self.get_entity(*pc_id)
                     .unwrap_or_else(|| panic!("selected group-move actor {pc_id:?} is missing"))
                     .element_data()
@@ -598,14 +637,9 @@ impl EngineInner {
             })
             .collect();
         let mut circular_destinations_pre_authorized = false;
-        let (mercenary_center, dests, dispatch_order) = if let Some(destinations) =
-            explicit_destinations
-        {
-            (
-                None,
-                destinations.iter().copied().map(Some).collect(),
-                (0..pc_ids.len()).collect::<Vec<_>>(),
-            )
+        let mut circular_candidates = None;
+        let (mercenary_center, dests) = if let Some(destinations) = explicit_destinations {
+            (None, destinations)
         } else {
             let n = pc_positions.len() as f32;
             let mut cx = pc_positions.iter().map(|p| p.x).sum::<f32>();
@@ -617,28 +651,23 @@ impl EngineInner {
             cx *= reciprocal;
             cy *= reciprocal;
             if uses_mercenary_group_formation(&pc_positions) {
-                (
-                    Some(MapPoint::new(cx, cy)),
-                    Vec::new(),
-                    (0..pc_ids.len()).collect(),
-                )
+                (Some(MapPoint::new(cx, cy)), &[][..])
             } else {
                 circular_destinations_pre_authorized = true;
-                let (destinations, dispatch_order) = self.authorized_circular_group_destinations(
+                circular_candidates = Some(self.authorized_circular_group_destinations(
                     pc_ids,
-                    &pc_positions,
                     effective_click,
                     effective_layer,
                     is_lift_click,
                     bypass_formation_authorization,
-                );
-                (None, destinations, dispatch_order)
+                ));
+                (None, &[][..])
             }
         };
         GroupMoveFormation {
             mercenary_center,
             dests,
-            dispatch_order,
+            circular_candidates,
             circular_destinations_pre_authorized,
         }
     }
@@ -652,7 +681,7 @@ impl EngineInner {
         dispatch_index: usize,
     ) -> Option<GroupMovePcRoute> {
         let plan = &ctx.plan;
-        let pc_id = plan.positions[dispatch_index].0;
+        let pc_id = plan.actor_ids[dispatch_index];
         let Some(dest) = self.resolve_group_move_destination(plan, &ctx.formation, dispatch_index)
         else {
             self.hero_speaking(
@@ -662,8 +691,26 @@ impl EngineInner {
             );
             return None;
         };
-        Some(GroupMovePcRoute {
-            dispatch_index,
+        Some(self.group_move_pc_route(ctx, dispatch_index, dest))
+    }
+
+    fn group_move_pc_route(
+        &self,
+        ctx: &GroupMoveRouteCtx<'_>,
+        dispatch_index: usize,
+        dest: MapPoint,
+    ) -> GroupMovePcRoute {
+        let plan = &ctx.plan;
+        let pc_id = plan.actor_ids[dispatch_index];
+        let entity = self.expect_entity(pc_id, "group-move actor");
+        let (position, sector, layer) = group_move_route_source(
+            self,
+            pc_id,
+            entity,
+            &self.script_domains.interactables.doors,
+        );
+        GroupMovePcRoute {
+            source: (pc_id, position, layer, sector),
             dest,
             owner_is_pc: self
                 .get_entity(pc_id)
@@ -672,7 +719,7 @@ impl EngineInner {
             pc_goal_sector: plan.goal_sector,
             pc_goal_sector_index: plan.route_goal_sector_index,
             pc_effective_layer: plan.effective_layer,
-        })
+        }
     }
 
     /// Resolve compact slots from the actor's live box at dispatch time.
@@ -684,9 +731,9 @@ impl EngineInner {
         dispatch_index: usize,
     ) -> Option<MapPoint> {
         let Some(center) = formation.mercenary_center else {
-            return formation.dests[dispatch_index];
+            return Some(formation.dests[dispatch_index]);
         };
-        let actor = plan.positions[dispatch_index].0;
+        let actor = plan.actor_ids[dispatch_index];
         let entity = self
             .get_entity(actor)
             .expect("selected group-move actor is missing");
@@ -723,7 +770,6 @@ impl EngineInner {
         let GroupMoveRouteCtx {
             plan:
                 GroupMoveClickPlan {
-                    ref positions,
                     effective_click,
                     is_lift_click,
                     is_door_click,
@@ -741,7 +787,7 @@ impl EngineInner {
             show_marker,
             ..
         } = *ctx;
-        let (pc_id, _, _, src_sector) = &positions[pc.dispatch_index];
+        let (pc_id, pc_pos, _, src_sector) = &pc.source;
         let dest = &pc.dest;
         // The only path that falls through to the write-back below assigns
         // both goal-sector locals first; every other path returns `Break`.
@@ -790,11 +836,7 @@ impl EngineInner {
             );
             return std::ops::ControlFlow::Break(());
         }
-        let pc_pos = positions
-            .iter()
-            .find(|(id, _, _, _)| *id == *pc_id)
-            .map(|(_, p, _, _)| *p)
-            .unwrap_or(*dest);
+        let pc_pos = *pc_pos;
         let source_line_idx = self
             .get_nearest_jumpable_jump_line(
                 *pc_id,
@@ -815,7 +857,6 @@ impl EngineInner {
                 .level
                 .jump_lines
                 .get(usize::from(source_line_idx))
-                .cloned()
             else {
                 panic!("line-jump source line {source_line_idx} is missing");
             };
@@ -890,7 +931,7 @@ impl EngineInner {
                 let approach_auth = self
                     .get_entity(approach_owner)
                     .map(|entity| entity.actor_auth_info());
-                let level = self.world.fast_grid.level.clone();
+                let level = &self.world.fast_grid.level;
                 self.scripts.mission.as_ref().and_then(|_| {
                     find_group_move_gate_path(
                         &self.script_domains.interactables.doors,
@@ -1003,7 +1044,6 @@ impl EngineInner {
         let GroupMoveRouteCtx {
             plan:
                 GroupMoveClickPlan {
-                    ref positions,
                     effective_click,
                     is_valid,
                     is_lift_click,
@@ -1023,7 +1063,7 @@ impl EngineInner {
             recorded_gate_routes,
             recorded_failed_gate_routes,
         } = *ctx;
-        let (pc_id, _, pc_src_layer, src_sector) = &positions[pc.dispatch_index];
+        let (pc_id, _, pc_src_layer, src_sector) = &pc.source;
         let GroupMovePcRoute {
             ref dest,
             owner_is_pc,
@@ -1163,7 +1203,6 @@ impl EngineInner {
         let GroupMoveRouteCtx {
             plan:
                 GroupMoveClickPlan {
-                    ref positions,
                     effective_click,
                     is_lift_click,
                     is_door_click,
@@ -1176,7 +1215,7 @@ impl EngineInner {
             run,
             ..
         } = *ctx;
-        let (pc_id, _, pc_src_layer, src_sector) = &positions[pc.dispatch_index];
+        let (pc_id, source_position, pc_src_layer, src_sector) = &pc.source;
         let GroupMovePcRoute {
             ref dest,
             pc_goal_sector,
@@ -1237,11 +1276,7 @@ impl EngineInner {
         }
 
         // Cross-sector: try gate A*
-        let pc_pos_raw = positions
-            .iter()
-            .find(|(id, _, _, _)| *id == *pc_id)
-            .map(|(_, p, _, _)| *p)
-            .unwrap_or(*dest);
+        let pc_pos_raw = *source_position;
 
         // Source adaptation: if the PC is currently straddling a
         // gate, use the gate's far-side point / sector as the path
@@ -1286,7 +1321,6 @@ impl EngineInner {
         let GroupMoveRouteCtx {
             plan:
                 GroupMoveClickPlan {
-                    ref positions,
                     is_door_click,
                     clicked_door_index,
                     ..
@@ -1297,7 +1331,7 @@ impl EngineInner {
             recorded_failed_gate_routes,
             ..
         } = *ctx;
-        let (pc_id, _, _, src_sector) = &positions[pc.dispatch_index];
+        let (pc_id, _, _, src_sector) = &pc.source;
         let GroupMovePcRoute {
             owner_is_pc,
             pc_goal_sector,
@@ -1326,8 +1360,8 @@ impl EngineInner {
         // PC authorisation for the gate A*.  Click-to-move never
         // sets `MoveFlags::MAP`, so `allow_leave_map = false` here.
         let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
-        let level = self.world.fast_grid.level.clone();
-        let door_goal_info = door_goal.and_then(|door_idx| {
+        let level = &self.world.fast_grid.level;
+        let mut door_goal_info = door_goal.and_then(|door_idx| {
             self.scripts.mission.as_ref().and_then(|_| {
                 let path = crate::gate::find_path_into_door_with_sector_index(
                     &self.script_domains.interactables.doors,
@@ -1416,7 +1450,9 @@ impl EngineInner {
         let path = if let Some(recorded) = recorded_route_result {
             recorded
         } else if door_goal_info.is_some() {
-            door_goal_info.as_ref().map(|(_, p, _, _, _)| p.clone())
+            door_goal_info
+                .as_mut()
+                .map(|(_, path, _, _, _)| std::mem::take(path))
         } else {
             let Some(goal_sector) = pc_goal_sector else {
                 // This is the same failed route-construction outcome as
@@ -1435,7 +1471,7 @@ impl EngineInner {
                 );
                 return;
             };
-            let level = self.world.fast_grid.level.clone();
+            let level = &self.world.fast_grid.level;
             self.scripts.mission.as_ref().and_then(|_| {
                 find_group_move_gate_path(
                     &self.script_domains.interactables.doors,
@@ -1570,21 +1606,16 @@ fn recorded_qa_move_route(
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-/// Click classification and route-source snapshot produced by
+/// Shared click classification produced by
 /// [`EngineInner::group_move_click_plan`] and consumed by the per-PC routing
 /// phases of [`EngineInner::perform_group_move_with_destinations`].
 /// Transient per-call state (no serde: `SectorHandle` carries no serde derive
 /// and this is never persisted).
-struct GroupMoveClickPlan {
-    positions: Vec<(
-        EntityId,
-        MapPoint,
-        u16,
-        crate::position_interface::SectorHandle,
-    )>,
+struct GroupMoveClickPlan<'a> {
+    actor_ids: &'a [EntityId],
     goal_sector: Option<crate::sector::SectorNumber>,
     route_goal_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    selected_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     effective_click: MapPoint,
     effective_layer: u16,
     is_valid: bool,
@@ -1603,10 +1634,10 @@ struct GroupMoveClickPlan {
 }
 
 /// Formation slots and dispatch order for one group move.
-struct GroupMoveFormation {
+struct GroupMoveFormation<'a> {
     mercenary_center: Option<MapPoint>,
-    dests: Vec<Option<MapPoint>>,
-    dispatch_order: Vec<usize>,
+    dests: &'a [MapPoint],
+    circular_candidates: Option<(Vec<MapPoint>, Vec<bool>)>,
     circular_destinations_pre_authorized: bool,
 }
 
@@ -1614,8 +1645,8 @@ struct GroupMoveFormation {
 /// [`EngineInner::perform_group_move_with_destinations`] read. No serde: it
 /// borrows the caller's recorded-route slices and is never persisted.
 struct GroupMoveRouteCtx<'a> {
-    plan: GroupMoveClickPlan,
-    formation: GroupMoveFormation,
+    plan: GroupMoveClickPlan<'a>,
+    formation: GroupMoveFormation<'a>,
     run: bool,
     show_marker: bool,
     recorded_gate_routes: &'a [(EntityId, Vec<(u32, bool)>)],
@@ -1625,7 +1656,12 @@ struct GroupMoveRouteCtx<'a> {
 /// One PC's resolved formation destination and route goal, flowing between
 /// the per-PC routing phases (the jump phase may replace the goal).
 struct GroupMovePcRoute {
-    dispatch_index: usize,
+    source: (
+        EntityId,
+        MapPoint,
+        u16,
+        crate::position_interface::SectorHandle,
+    ),
     dest: MapPoint,
     owner_is_pc: bool,
     pc_goal_sector: Option<crate::sector::SectorNumber>,
@@ -1714,6 +1750,171 @@ impl EngineInner {
 #[cfg(test)]
 mod shared_resolution_tests {
     use super::*;
+
+    #[test]
+    fn rejected_circular_slots_speak_in_selection_order_without_launching_moves() {
+        use crate::coordinates::MoveBox;
+        use crate::element::Posture;
+        use crate::engine::test_support::actors::TestActor;
+
+        let mut engine = EngineInner::new();
+        engine.control.sim_config.amount_of_speaking = 8;
+        engine.world.fast_grid_mut().size_map(16, 16);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        // Both circle slots straddle this wall. The click lies on the wall,
+        // so there is no authorized normal-side push toward the click.
+        engine.world.fast_grid_mut().add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(400.0, 300.0),
+                MapPoint::new(400.0, 500.0),
+                true,
+            ),
+            0,
+        );
+        let mut assets = LevelAssets::new();
+        std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .push(Default::default());
+        let actors: Vec<_> = [100.0, 300.0]
+            .into_iter()
+            .map(|x| {
+                let mut actor = TestActor::pc(Posture::Upright).build();
+                actor
+                    .element_data_mut()
+                    .set_position_map(MapPoint::new(x, 100.0));
+                actor
+                    .element_data_mut()
+                    .set_sector(crate::position_interface::SectorHandle::new(1));
+                actor
+                    .position_iface_mut()
+                    .set_move_box(MoveBox::from_coords(-2.0, -2.0, 2.0, 2.0));
+                actor
+                    .position_iface_mut()
+                    .set_map_position(MapPoint::new(x, 100.0));
+                engine.add_test_entity(actor)
+            })
+            .collect();
+        let click = MapPoint::new(400.0, 400.0);
+        let goal = Some((crate::sector::SectorNumber::new(1), 0));
+        let recorded = engine.plan_recorded_group_move(&assets, &actors, click, goal, None, None);
+        assert!(recorded.iter().all(|outcome| matches!(
+            outcome,
+            PlannedRecordedGroupMoveOutcome::Unauthorized { .. }
+        )));
+        assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+        engine.perform_group_move(
+            &crate::sim_rng::SimulationContext::with_seed(1),
+            &assets,
+            &actors,
+            click,
+            false,
+            false,
+            goal,
+            None,
+            None,
+            &[],
+            &[],
+        );
+        let speeches = &engine.feedback.sound_sim.pending_exclamations;
+        assert_eq!(
+            speeches.len(),
+            1,
+            "the first rejected actor suppresses later barks through the chorus timer"
+        );
+        assert_eq!(speeches[0].actor_id, actors[0].index());
+        assert_eq!(
+            speeches[0].exclamation_id,
+            crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn circular_equal_distance_claimants_keep_selection_order() {
+        let mut dispatched = Vec::new();
+        dispatch_circular_candidates(
+            &mut dispatched,
+            vec![MapPoint::new(0.0, 0.0), MapPoint::new(100.0, 0.0)],
+            &[true, true],
+            |_, index| MapPoint::new([-10.0, 10.0][index], 0.0),
+            |dispatched, index, destination, _| dispatched.push((index, destination.x)),
+        );
+        assert_eq!(dispatched, [(0, 0.0), (1, 100.0)]);
+    }
+
+    #[test]
+    fn circular_zero_distance_conflict_waits_for_another_candidate_to_dispatch() {
+        let mut state = ([0.0, 0.0, 9.0], Vec::new());
+        dispatch_circular_candidates(
+            &mut state,
+            [0.0, 10.0, 20.0].map(|x| MapPoint::new(x, 0.0)).to_vec(),
+            &[true; 3],
+            |(positions, _), index| MapPoint::new(positions[index], 0.0),
+            |(positions, dispatched), index, destination, _| {
+                dispatched.push((index, destination.x));
+                if index == 2 {
+                    positions[0] = -2.0;
+                }
+            },
+        );
+        assert_eq!(state.1, [(2, 10.0), (0, 0.0), (1, 20.0)]);
+    }
+
+    #[test]
+    fn circular_contested_removal_resumes_at_second_remaining_candidate() {
+        let mut dispatched = Vec::new();
+        dispatch_circular_candidates(
+            &mut dispatched,
+            [0.0, 10.0, 20.0, 30.0]
+                .map(|x| MapPoint::new(x, 0.0))
+                .to_vec(),
+            &[true; 4],
+            |_, index| MapPoint::new([-2.0, -1.0, 10.0, 30.0][index], 0.0),
+            |dispatched, index, destination, _| dispatched.push((index, destination.x)),
+        );
+        assert_eq!(dispatched, [(0, 0.0), (3, 30.0), (1, 10.0), (2, 20.0)]);
+    }
+
+    #[test]
+    fn circular_dispatch_rereads_positions_and_retains_unclaimed_slot_history() {
+        let mut state = (
+            [-2.0, -1.0, 10.0, 30.0].map(|x| MapPoint::new(x, 0.0)),
+            Vec::new(),
+        );
+        dispatch_circular_candidates(
+            &mut state,
+            [0.0, 10.0, 20.0, 30.0]
+                .map(|x| MapPoint::new(x, 0.0))
+                .to_vec(),
+            &[true; 4],
+            |(positions, _), index| positions[index],
+            |(positions, dispatched), index, destination, contested| {
+                dispatched.push((index, destination.x, contested));
+                if index == 0 {
+                    positions[1].x = 19.0;
+                    positions[2].x = 21.0;
+                }
+            },
+        );
+        assert_eq!(
+            state.1,
+            [
+                (0, 0.0, true),
+                (3, 30.0, false),
+                // The skipped slot retains actor 2's sole claim even after
+                // both remaining actors now prefer the slot at x = 20.
+                (2, 10.0, false),
+                (1, 20.0, true),
+            ]
+        );
+    }
 
     #[test]
     fn recorded_jump_slots_match_live_resolution_and_keep_circle_dispatch_order() {
@@ -1810,8 +2011,28 @@ mod shared_resolution_tests {
             )
             .unwrap();
         assert!(plan.is_jump_click);
-        let formation = engine.group_move_formation_slots(&actors, None, &plan);
-        assert_eq!(formation.dispatch_order, vec![1, 0]);
+        let mut formation = engine.group_move_formation_slots(&actors, None, &plan);
+        let (candidates, eligible) = formation.circular_candidates.take().unwrap();
+        let mut dispatched = Vec::new();
+        dispatch_circular_candidates(
+            &mut dispatched,
+            candidates,
+            &eligible,
+            |_, index| {
+                engine
+                    .expect_entity(actors[index], "formation actor")
+                    .element_data()
+                    .position_map()
+            },
+            |dispatched, index, destination, _| dispatched.push((index, destination)),
+        );
+        assert_eq!(
+            dispatched
+                .iter()
+                .map(|(index, _)| *index)
+                .collect::<Vec<_>>(),
+            vec![1, 0]
+        );
         let ctx = GroupMoveRouteCtx {
             plan,
             formation,
@@ -1832,9 +2053,12 @@ mod shared_resolution_tests {
             let PlannedRecordedGroupMoveOutcome::Resolved(recorded) = outcome else {
                 panic!("authorized circle slot must resolve");
             };
-            let live = engine
-                .group_move_pc_destination(&assets, &ctx, index)
-                .unwrap();
+            let destination = dispatched
+                .iter()
+                .find(|(actor, _)| *actor == index)
+                .unwrap()
+                .1;
+            let live = engine.group_move_pc_route(&ctx, index, destination);
             assert_eq!(recorded.actor, actors[index]);
             assert_eq!(recorded.destination.x.to_bits(), live.dest.x.to_bits());
             assert_eq!(recorded.destination.y.to_bits(), live.dest.y.to_bits());
@@ -1892,11 +2116,40 @@ mod shared_resolution_tests {
                 .unwrap();
             // Bypass authorization to isolate live slot sampling from geometry.
             plan.bypass_formation_authorization = true;
-            let formation = engine.group_move_formation_slots(&actors, None, &plan);
+            let mut formation = engine.group_move_formation_slots(&actors, None, &plan);
             assert_eq!(formation.mercenary_center.is_some(), compact);
-            let before = engine
-                .resolve_group_move_destination(&plan, &formation, 1)
-                .unwrap();
+            let captured_circle = formation.circular_candidates.take();
+            let resolve = |engine: &EngineInner| {
+                if let Some((candidates, eligible)) = &captured_circle {
+                    let positions: Vec<_> = actors
+                        .iter()
+                        .map(|&actor| {
+                            engine
+                                .expect_entity(actor, "formation actor")
+                                .element_data()
+                                .position_map()
+                        })
+                        .collect();
+                    let mut destination = None;
+                    dispatch_circular_candidates(
+                        &mut destination,
+                        candidates.clone(),
+                        eligible,
+                        |_, index| positions[index],
+                        |destination, index, point, _| {
+                            if index == 1 {
+                                *destination = Some(point);
+                            }
+                        },
+                    );
+                    destination.unwrap()
+                } else {
+                    engine
+                        .resolve_group_move_destination(&plan, &formation, 1)
+                        .unwrap()
+                }
+            };
+            let before = resolve(&engine);
             // A previous actor's synchronous move may alter the next actor's
             // live box before that actor is dispatched.
             engine
@@ -1909,16 +2162,13 @@ mod shared_resolution_tests {
                 .unwrap()
                 .position_iface_mut()
                 .set_map_position(MapPoint::new(100.0 + spacing, 100.0));
-            let after = engine
-                .resolve_group_move_destination(&plan, &formation, 1)
-                .unwrap();
+            let after = resolve(&engine);
             assert_eq!(after.y.to_bits(), before.y.to_bits());
             assert_eq!(after.x, before.x + if compact { 10.0 } else { 0.0 });
             if compact {
                 assert!(formation.dests.is_empty());
-                assert_eq!(formation.dispatch_order, vec![0, 1, 2]);
             } else {
-                assert_eq!(formation.dispatch_order.len(), 3);
+                assert_eq!(captured_circle.as_ref().unwrap().0.len(), 3);
             }
         }
     }

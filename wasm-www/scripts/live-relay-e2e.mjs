@@ -169,13 +169,12 @@ async function waitForHostFlags(expected, timeoutMilliseconds = 30_000) {
 
 async function hostReplay() {
     const response = await fetch(`${hostHttp}/get-replay`);
-    const body = await response.json();
     if (!response.ok) {
-        throw new Error(`host replay returned HTTP ${response.status}: ${JSON.stringify(body)}`);
+        throw new Error(`host replay returned HTTP ${response.status}: ${await response.text()}`);
     }
-    const replay = body.content;
-    if (typeof replay !== "string" || !replay.startsWith("rhrec-")) {
-        throw new Error(`host did not expose a canonical compact replay: ${JSON.stringify(body)}`);
+    const replay = Buffer.from(await response.arrayBuffer());
+    if (!replay.subarray(0, 6).equals(Buffer.from('RHREC\x01'))) {
+        throw new Error('host did not expose a canonical binary replay');
     }
     return replay;
 }

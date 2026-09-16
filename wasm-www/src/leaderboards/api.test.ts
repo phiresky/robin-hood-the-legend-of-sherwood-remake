@@ -196,7 +196,7 @@ test('standalone replay fetch accepts only the canonical CompactRhrec media type
             accepted = new Headers(init?.headers).get('accept');
             return new Response(new Uint8Array([1, 2, 3]), {
                 status: 200,
-                headers: { 'content-type': 'application/x-robin-rhrec+compact' },
+                headers: { 'content-type': 'application/x-robin-rhrec' },
             });
         }) as typeof fetch;
         assert.deepEqual(

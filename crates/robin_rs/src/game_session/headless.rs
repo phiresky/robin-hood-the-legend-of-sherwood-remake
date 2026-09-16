@@ -586,6 +586,24 @@ mod tests {
                     .exit,
                 None
             );
+            assert!(
+                mission
+                    .runtime
+                    .timeline
+                    .history()
+                    .buffer()
+                    .oldest_reachable_frame()
+                    .is_none()
+            );
+            assert!(
+                mission
+                    .runtime
+                    .timeline
+                    .history()
+                    .buffer()
+                    .frame_for(0)
+                    .is_none()
+            );
         }
         assert_eq!(
             mission

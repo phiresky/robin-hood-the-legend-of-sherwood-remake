@@ -177,12 +177,11 @@ def main():
                 screenshot = response.read()
             assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")
             (evidence / "live.png").write_bytes(screenshot)
-            exported = request("/get-replay")
-            (evidence / "export.json").write_text(json.dumps(exported))
-            content = exported["content"]
-            assert content.startswith("rhrec-")
+            with urllib.request.urlopen("http://127.0.0.1:7782/get-replay", timeout=60) as response:
+                content = response.read()
+            assert content.startswith(b"RHREC\x01")
             replay = evidence / "export.rhrec"
-            replay.write_text(content)
+            replay.write_bytes(content)
             summary["checks"]["canonical_compact_export"] = True
             stop(live)
             children.remove(live)

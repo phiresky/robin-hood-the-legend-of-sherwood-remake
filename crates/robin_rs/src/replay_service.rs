@@ -343,10 +343,10 @@ pub enum ExportError {
     Internal(String),
 }
 
-pub(crate) type ExportResult = async_channel::Receiver<Result<String, ExportError>>;
-type ExportCompletion = async_channel::Sender<Result<String, ExportError>>;
+pub(crate) type ExportResult = async_channel::Receiver<Result<Vec<u8>, ExportError>>;
+type ExportCompletion = async_channel::Sender<Result<Vec<u8>, ExportError>>;
 
-fn deliver_export(complete: ExportCompletion, result: Result<String, ExportError>) {
+fn deliver_export(complete: ExportCompletion, result: Result<Vec<u8>, ExportError>) {
     // Each private sender has exactly one delivery. A closed receiver simply
     // means that its UI or HTTP consumer no longer needs the frozen artifact.
     if let Err(async_channel::TrySendError::Full(_)) = complete.try_send(result) {
@@ -683,7 +683,7 @@ impl ReplaySnapshot {
         bytes
     }
 
-    pub(crate) fn compact_sync(&self) -> Result<String, ExportError> {
+    pub(crate) fn compact_sync(&self) -> Result<Vec<u8>, ExportError> {
         let data = self.parse_sync().map_err(|error| {
             if self.byte_length == 0 {
                 ExportError::Unavailable(error)
@@ -953,8 +953,7 @@ mod tests {
         let admitted = worker.try_recv().unwrap();
         deliver_export(admitted.complete, admitted.snapshot.compact_sync());
         let bytes = first.try_take().unwrap().unwrap();
-        let (_, replay) =
-            robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        let (_, replay) = robin_replay_format::decode_compact(&bytes).unwrap();
         assert_eq!(replay.header().mission_id, "first-export");
 
         // Reverse the consumer order to prove leaderboard cannot bypass HTTP's

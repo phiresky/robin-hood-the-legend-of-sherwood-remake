@@ -3,7 +3,7 @@
 // version, the 12-hex ROBIN_GIT_HASH prefix that also names `/wasm/<short>/`.
 
 export const RUN_QUERY_KEY = 'run';
-export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec+compact';
+export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec';
 const RUNTIME_BUILD_RE = /^[0-9a-f]{12}$/u;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 const MAX_RUN_JSON_BYTES = 2 * 1024 * 1024;
@@ -13,8 +13,8 @@ export type RunReplay = {
     readonly runId: string;
     readonly runtimeBuild: string;
     readonly edition: 'demo' | 'full';
-    /** Exact compact replay (`rhrec-<runtimeBuild>-...`). */
-    readonly content: string;
+    /** Exact binary replay artifact. */
+    readonly content: Uint8Array;
 };
 
 export function runFromQuery(params: URLSearchParams): string | null {
@@ -81,11 +81,11 @@ export async function fetchRunReplay(
     if (bytes.byteLength !== launch.byteLength || hex !== launch.sha256) {
         throw new Error(`run ${runId}: the replay does not match its published identity`);
     }
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    if (!content.startsWith(`rhrec-${launch.runtimeBuild}-`)) {
+    const header = new TextEncoder().encode(`RHREC\x01${launch.runtimeBuild}`);
+    if (bytes.length <= header.length || !header.every((byte, index) => bytes[index] === byte)) {
         throw new Error(`run ${runId}: the replay was not recorded by engine build ${launch.runtimeBuild}`);
     }
-    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content };
+    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes };
 }
 
 async function get(

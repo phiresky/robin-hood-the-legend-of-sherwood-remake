@@ -25,7 +25,6 @@ file_size_limit_bytes = 134217728
 max_input_bytes = 16777216
 max_compressed_bytes = 16777216
 max_decompressed_bytes = 67108864
-max_base64_payload_bytes = 16777216
 max_campaign_bytes = 67108864
 max_frames = 2000000
 max_version_bytes = 256

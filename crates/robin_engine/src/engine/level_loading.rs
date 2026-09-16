@@ -2109,11 +2109,6 @@ impl EngineInner {
     /// Return the sprite variant matching the current ambiance.
     pub fn default_variant(&self) -> crate::sprite_variant::SpriteVariant {
         use crate::sprite_variant::SpriteVariant;
-        // Force Day regardless of ambiance when the fog-sprites-crash
-        // workaround is enabled.
-        if self.control.sim_config.bypass_fog_sprites_crash {
-            return SpriteVariant::Day;
-        }
         match self.world.weather.ambiance {
             Ambiance::Fog => SpriteVariant::Fog,
             Ambiance::Night => SpriteVariant::Night,
@@ -2180,14 +2175,10 @@ impl EngineInner {
             return SpriteVariant::Day;
         }
 
-        let default = if self.control.sim_config.bypass_fog_sprites_crash {
-            SpriteVariant::Day
-        } else {
-            match ambiance {
-                Ambiance::Fog => SpriteVariant::Fog,
-                Ambiance::Night => SpriteVariant::Night,
-                _ => SpriteVariant::Day,
-            }
+        let default = match ambiance {
+            Ambiance::Fog => SpriteVariant::Fog,
+            Ambiance::Night => SpriteVariant::Night,
+            _ => SpriteVariant::Day,
         };
         if !matches!(default, SpriteVariant::Fog | SpriteVariant::Night) {
             return default;

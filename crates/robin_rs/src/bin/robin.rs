@@ -373,7 +373,7 @@ pub fn wasm_preload_shipping_file(
 /// isolated worker. This main-instance call only performs envelope preflight.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn wasm_mark_compact_replay_validated(compact: &str) -> Result<(), wasm_bindgen::JsValue> {
+pub fn wasm_mark_compact_replay_validated(compact: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     robin_rs::replay_format::mark_browser_worker_validated(compact)
         .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
 }

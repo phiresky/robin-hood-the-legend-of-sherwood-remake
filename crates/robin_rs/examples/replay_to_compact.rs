@@ -1,4 +1,4 @@
-//! Convert a JSONL replay into the compact URL-safe bitcode format.
+//! Convert a JSONL replay into the binary bitcode format.
 
 use std::path::PathBuf;
 
@@ -22,8 +22,7 @@ fn main() -> Result<()> {
         robin_rs::replay_format::ENGINE_VERSION_HASH,
     )
     .context("encode compact replay")?;
-    std::fs::write(&output, compact.as_bytes())
-        .with_context(|| format!("write {}", output.display()))?;
+    std::fs::write(&output, &compact).with_context(|| format!("write {}", output.display()))?;
     println!(
         "{} -> {} ({} bytes)",
         input.display(),

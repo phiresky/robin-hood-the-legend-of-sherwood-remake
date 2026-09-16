@@ -23,7 +23,7 @@ export type RobinWasmModule = {
     readonly wasm_set_multiplayer_join_ticket?: (code: string, redeemed: boolean) => void;
     readonly wasm_preload_asset?: (path: string, bytes: Uint8Array) => void;
     readonly wasm_preload_shipping_file?: (path: string, bytes: Uint8Array) => void;
-    readonly wasm_mark_compact_replay_validated?: (compact: string) => void;
+    readonly wasm_mark_compact_replay_validated?: (compact: Uint8Array) => void;
     readonly rh_rpc?: <T = unknown>(request: { method: string; params: unknown }) => Promise<T>;
 };
 

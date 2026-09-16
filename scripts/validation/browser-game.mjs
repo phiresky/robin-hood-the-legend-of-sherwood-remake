@@ -207,7 +207,7 @@ try {
             const timer=setTimeout(()=>{worker.terminate();reject(Error('replay worker timeout'));},20000);
             worker.onmessage=e=>{clearTimeout(timer);worker.terminate();resolve(e.data);};
             worker.onerror=e=>{clearTimeout(timer);worker.terminate();reject(Error(e.message));};
-            worker.postMessage({compact:${JSON.stringify(replay.content)},
+            worker.postMessage({compact:new Uint8Array(${JSON.stringify(replay)}),
                 jsUrl:${JSON.stringify(`${gameOrigin}/wasm/${short}/replay_admission.js`)},
                 wasmUrl:${JSON.stringify(`${gameOrigin}/wasm/${short}/replay_admission_bg.wasm`)}});
         })`);
@@ -318,10 +318,10 @@ try {
                     record('pause', await evaluate(`robinRpc('set-paused',{paused:true})`));
                     record('step', await evaluate(`robinRpc('step-forward',{n:5,auto_dismiss:true})`));
                 }
-                const replay = await evaluate(`robinRpc('get-replay')`);
-                writeFileSync(join(evidence, 'replay.json'), JSON.stringify(replay));
+                const replay = await evaluate(`robinRpc('get-replay').then(reply => Array.from(reply.data))`);
+                writeFileSync(join(evidence, 'replay.rhrec'), Buffer.from(replay));
                 record('replayExport', { type: typeof replay, length: JSON.stringify(replay).length });
-                if (typeof replay?.content === 'string' && existsSync(join(pkg, 'replay_admission.js'))) {
+                if (Array.isArray(replay) && existsSync(join(pkg, 'replay_admission.js'))) {
                     record('replayValidatorHash', digest(readFileSync(join(pkg, 'replay_admission_bg.wasm'))));
                     const workerFile = readdirSync('wasm-www/dist/assets').find(name => name.startsWith('replay_validation_worker-') && name.endsWith('.js'));
                     if (!workerFile) throw new Error('production replay validation worker not found');
@@ -330,7 +330,7 @@ try {
                         const timer=setTimeout(()=>{worker.terminate();reject(Error('replay worker timeout'));},30000);
                         worker.onmessage=e=>{clearTimeout(timer);worker.terminate();resolve(e.data);};
                         worker.onerror=e=>{clearTimeout(timer);worker.terminate();reject(Error(e.message));};
-                        worker.postMessage({compact:${JSON.stringify(replay.content)},
+                        worker.postMessage({compact:new Uint8Array(${JSON.stringify(replay)}),
                             jsUrl:${JSON.stringify(`${gameOrigin}/wasm/${short}/replay_admission.js`)},
                             wasmUrl:${JSON.stringify(`${gameOrigin}/wasm/${short}/replay_admission_bg.wasm`)}});
                     })`);
@@ -338,8 +338,8 @@ try {
                     if (reply.status !== 'accepted') throw new Error('recorded replay rejected by actual wasm admission worker');
                     record('replayLoad', await evaluate(`(async()=>{
                         const module=await import('/wasm/${short}/robin.js');
-                        module.wasm_mark_compact_replay_validated(${JSON.stringify(replay.content)});
-                        return await robinRpc('load-replay',{data:${JSON.stringify(replay.content)},paused:false});
+                        module.wasm_mark_compact_replay_validated(new Uint8Array(${JSON.stringify(replay)}));
+                        return await robinRpc('load-replay',{data:new Uint8Array(${JSON.stringify(replay)}),paused:false});
                     })()`));
                     // load-replay only stages the bytes. Activate the real pause
                     // menu's Restart row (Continue, Load, Save, Options, Restart).

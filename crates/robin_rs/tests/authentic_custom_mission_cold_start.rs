@@ -202,7 +202,7 @@ fn expected_package_hash(manifest: &CorpusManifest, row: &CorpusRow) -> &'static
 enum ColdRestartArtifact {
     Replay {
         row_name: String,
-        compact: String,
+        compact: Vec<u8>,
     },
     Save {
         row_name: String,
@@ -934,7 +934,7 @@ fn record_compact_replay(
     root: &Path,
     descriptor: &MissionAssetDescriptor,
     package: robin_engine::spellforge::SpellforgePackage,
-) -> String {
+) -> Vec<u8> {
     let jsonl_path = root.join("cold-custom-mission.rhrec.jsonl");
     let writer = File::create(&jsonl_path).expect("create custom replay JSONL");
     let recorder = ReplayRecorder::with_writer_and_spellforge_package(

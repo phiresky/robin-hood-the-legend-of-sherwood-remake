@@ -2218,47 +2218,6 @@ fn non_sprite_movement_motion(action: OrderType) -> Option<MotionState> {
     }
 }
 
-/// Compute per-character destination points using circular distribution.
-///
-/// The circular dispatch fallback when the group is too spread out for
-/// the mercenary formation.
-///
-/// Characters are arranged in a circle around `click_point`. Each
-/// unassigned character picks the nearest available slot; when multiple
-/// characters want the same slot, the one farthest from the click gets it
-/// (the "worst placed" heuristic). The loop repeats until all characters
-/// are assigned.
-#[cfg(test)]
-pub(crate) fn circular_dispatch_destinations(
-    pc_positions: &[MapPoint],
-    click_point: MapPoint,
-) -> Vec<MapPoint> {
-    let n = pc_positions.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    if n == 1 {
-        return vec![click_point];
-    }
-
-    let mut candidates = circular_dispatch_candidate_points(n, click_point);
-    // Original inserts every authorized candidate at the head of its list.
-    candidates.reverse();
-    assign_circular_dispatch_candidates(pc_positions, &candidates, &vec![true; n]).0
-}
-
-/// Generate Original's actor-indexed circular candidates before authorization.
-#[cfg(test)]
-pub(in crate::engine) fn circular_dispatch_candidate_points(
-    n: usize,
-    click_point: MapPoint,
-) -> Vec<MapPoint> {
-    circular_dispatch_offsets(n)
-        .into_iter()
-        .map(|offset| click_point + offset)
-        .collect()
-}
-
 pub(in crate::engine) fn circular_dispatch_offsets(n: usize) -> Vec<MapVec> {
     (0..n)
         .map(|i| {
@@ -2276,90 +2235,75 @@ pub(in crate::engine) fn circular_dispatch_offsets(n: usize) -> Vec<MapVec> {
         .collect()
 }
 
-/// Assign an already-authorized, prepend-ordered candidate list using
-/// Original's shared nearest-slot/worst-claimant loop.
-pub(in crate::engine) fn assign_circular_dispatch_candidates(
-    pc_positions: &[MapPoint],
-    candidates: &[MapPoint],
+/// Assign captured circle candidates while reading positions and dispatching
+/// each winner synchronously. Claims survive assignment rounds, and a
+/// contested-slot removal resumes traversal at the second remaining slot.
+pub(in crate::engine) fn dispatch_circular_candidates<S>(
+    state: &mut S,
+    candidates: Vec<MapPoint>,
     eligible: &[bool],
-) -> (Vec<MapPoint>, Vec<usize>) {
-    assert_eq!(pc_positions.len(), eligible.len());
-    let n = pc_positions.len();
-
-    let mut result = vec![MapPoint::new(0.0, 0.0); n];
+    position: impl Fn(&S, usize) -> MapPoint,
+    mut dispatch: impl FnMut(&mut S, usize, MapPoint, bool),
+) {
     let mut assigned: Vec<bool> = eligible.iter().map(|eligible| !eligible).collect();
-    let mut candidate_taken = vec![false; candidates.len()];
-    let mut dispatch_order = Vec::with_capacity(candidates.len());
-
-    // Iterative assignment with conflict resolution.
-    loop {
-        // Each unassigned character picks its nearest untaken candidate.
-        // Store (character_idx, sq_dist) per candidate.
-        let mut claims: Vec<Vec<(usize, f32)>> = vec![Vec::new(); candidates.len()];
-
-        for (ci, &pos) in pc_positions.iter().enumerate() {
-            if assigned[ci] {
+    let mut candidates: Vec<_> = candidates
+        .into_iter()
+        .map(|destination| (destination, Vec::<(usize, f32)>::new()))
+        .collect();
+    while !candidates.is_empty() {
+        for (actor, &already_assigned) in assigned.iter().enumerate() {
+            if already_assigned {
                 continue;
             }
-            let mut best_k = None;
+            let pos = position(state, actor);
+            let mut best_k = 0;
             let mut best_d = f32::INFINITY;
-            for (ki, &cand) in candidates.iter().enumerate() {
-                if candidate_taken[ki] {
-                    continue;
-                }
+            for (ki, &(cand, _)) in candidates.iter().enumerate() {
                 let dx = pos.x - cand.x;
                 let dy = pos.y - cand.y;
                 let d = f64::from(dx * dx + dy * dy).sqrt() as f32;
                 if d < best_d {
                     best_d = d;
-                    best_k = Some(ki);
+                    best_k = ki;
                 }
             }
-            if let Some(ki) = best_k {
-                claims[ki].push((ci, best_d));
+            candidates[best_k].1.push((actor, best_d));
+        }
+        let mut candidate_index = 0;
+        let mut made_progress = false;
+        while candidate_index < candidates.len() {
+            let (destination, claims) = &candidates[candidate_index];
+            let contested = claims.len() > 1;
+            let winner = if claims.len() == 1 {
+                Some(claims[0].0)
+            } else {
+                let mut worst = None;
+                let mut distance = 0.0;
+                for &(actor, claimed_distance) in claims {
+                    if !assigned[actor] && claimed_distance > distance {
+                        distance = claimed_distance;
+                        worst = Some(actor);
+                    }
+                }
+                worst
+            };
+            let Some(winner) = winner else {
+                candidate_index += 1;
+                continue;
+            };
+            assigned[winner] = true;
+            dispatch(state, winner, *destination, contested);
+            candidates.remove(candidate_index);
+            made_progress = true;
+            if contested {
+                candidate_index = 1;
             }
         }
-
-        let mut any_assigned = false;
-        for (ki, claimants) in claims.iter().enumerate() {
-            match claimants.len() {
-                0 => {}
-                1 => {
-                    let (ci, _) = claimants[0];
-                    result[ci] = candidates[ki];
-                    assigned[ci] = true;
-                    candidate_taken[ki] = true;
-                    dispatch_order.push(ci);
-                    any_assigned = true;
-                }
-                _ => {
-                    // Multiple characters want this candidate.
-                    // Give it to the "worst-placed" claimant — the one
-                    // whose distance to the contested slot is largest
-                    // (per-claimant distance to the slot, not distance
-                    // to the click point).
-                    let worst = claimants
-                        .iter()
-                        .max_by(|(_, da), (_, db)| {
-                            da.partial_cmp(db).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .unwrap()
-                        .0;
-                    result[worst] = candidates[ki];
-                    assigned[worst] = true;
-                    candidate_taken[ki] = true;
-                    dispatch_order.push(worst);
-                    any_assigned = true;
-                }
-            }
-        }
-
-        if !any_assigned || assigned.iter().all(|&a| a) {
-            break;
-        }
+        assert!(
+            made_progress,
+            "circular movement has no assignable candidate"
+        );
     }
-
-    (result, dispatch_order)
 }
 
 /// Build the portion of a line-jump click sequence that follows arrival at

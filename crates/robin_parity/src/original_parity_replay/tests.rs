@@ -1007,7 +1007,7 @@ fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeaderV68 
                 highlander2: false,
                 golden_eye: false,
                 ignore_default_loose: false,
-                bypass_fog_sprites_crash: false,
+                retired_fog_sprite_bypass: false,
                 amount_of_speaking: 0,
             },
             campaign: TraceCampaign {
@@ -3597,7 +3597,7 @@ fn recorded_sim_config_restores_every_authoritative_field() {
         highlander2: true,
         golden_eye: true,
         ignore_default_loose: true,
-        bypass_fog_sprites_crash: true,
+        retired_fog_sprite_bypass: true,
         amount_of_speaking: 2,
     }
     .to_sim_config(true);
@@ -3611,7 +3611,6 @@ fn recorded_sim_config_restores_every_authoritative_field() {
     assert!(config.highlander2);
     assert!(config.golden_eye);
     assert!(config.ignore_default_loose);
-    assert!(config.bypass_fog_sprites_crash);
     assert_eq!(config.amount_of_speaking, 2);
     assert!(config.synchronous_pathfinding);
     assert!(!config.diplomacy);

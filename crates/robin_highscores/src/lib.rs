@@ -3,8 +3,8 @@
 //! Public high-score API, durable admission queue, and replay storage.
 //!
 //! The HTTP process never decides that a run is valid. It admits signed replay
-//! bytes only after a bounded lexical compact-envelope check; it never
-//! base64/zstd/bitcode decodes them. A separate worker process leases jobs,
+//! bytes only after a bounded binary-header check; it never
+//! zstd/bitcode decodes them. A separate worker process leases jobs,
 //! resimulates each replay in a sandboxed verifier against raw game content,
 //! and publishes only verifier-derived results. There is no debug or loopback
 //! HTTP endpoint capable of promoting a submission.
