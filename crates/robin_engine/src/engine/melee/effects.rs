@@ -18,7 +18,6 @@ pub(super) struct LiftLowEntry {
     pub z: f32,
     pub layer: u16,
     pub sector: crate::position_interface::SectorHandle,
-    pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
 }
 
 /// Compute the non-charge flight vector used by a falling-pushed order.
@@ -335,7 +334,6 @@ impl EngineInner {
             z,
             layer,
             sector,
-            obstacle,
         })
     }
 

@@ -2056,13 +2056,13 @@ impl EngineInner {
         if inc_x == 0.0 && inc_y == 0.0 {
             return;
         }
-        // Read flyer position + sector.
-        let (flyer_pos_ground, flyer_sector) = {
+        // Capture the flight sweep origin before victim callbacks run.
+        let flyer_pos_ground = {
             let elem = self
                 .expect_entity(flyer_id, "domino effect flyer")
                 .element_data();
             let position = elem.position();
-            ((position.x, position.y), elem.sector())
+            (position.x, position.y)
         };
 
         // The flyer's `is_active_and_outside_building` test is
@@ -2104,7 +2104,12 @@ impl EngineInner {
 
             // Same-sector test (compared by index, including both
             // being None).
-            if elem.sector() != flyer_sector {
+            if elem.sector()
+                != self
+                    .expect_entity(flyer_id, "domino effect flyer")
+                    .element_data()
+                    .sector()
+            {
                 continue;
             }
 
@@ -2784,6 +2789,50 @@ mod tests {
         assert!(perform_flight_stops_before_position_update(0, 6, 7));
         assert!(!perform_flight_stops_before_position_update(1, 6, 7));
         assert!(!perform_flight_stops_before_position_update(0, 5, 7));
+    }
+
+    #[test]
+    fn globally_frozen_combat_execute_moves_without_advancing_the_sprite() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+        let victim = engine.add_test_entity(falling_pushed_soldier(false));
+        install_falling_pushed_order(&mut engine, victim);
+        let order_id = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, victim)
+            .unwrap()
+            .2
+            .order_id;
+        let entity = engine.get_entity_mut(victim).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.last_execute_order_id = Some(order_id);
+        actor.execute_order_initialising = false;
+        let sprite_before = (
+            entity.sprite().current_row,
+            entity.sprite().current_frame,
+            entity.sprite().frame_count,
+        );
+        engine.set_actors_frozen(true);
+
+        let motion = engine.tick_actor_animation_for(&sim, &assets, victim);
+
+        assert_eq!(motion, Some(crate::sprite::MotionState::InProgress));
+        let entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            entity.element_data().position(),
+            WorldPoint3D::new(15.0, 20.0, 0.0)
+        );
+        assert_eq!(
+            (
+                entity.sprite().current_row,
+                entity.sprite().current_frame,
+                entity.sprite().frame_count
+            ),
+            sprite_before
+        );
+        assert_eq!(entity.element_data().posture(), Posture::Flying);
     }
 
     #[test]
