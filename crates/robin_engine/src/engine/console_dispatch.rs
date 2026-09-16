@@ -923,9 +923,7 @@ impl EngineInner {
             // the unconscious-star titbit + lose-consciousness
             // stimulus.
             self.apply_concussion(sim, assets, id, 100, false);
-            if let Some(entity) = self.get_entity_mut(id) {
-                entity.set_posture(Posture::Lying);
-            }
+            self.set_entity_posture(id, Posture::Lying);
             self.launch_element(
                 sim,
                 assets,
@@ -1035,9 +1033,7 @@ impl EngineInner {
         // unconscious-star titbit, lose-consciousness stimulus)
         // fire — a direct `set_concussion` call would skip them.
         self.apply_concussion(sim, assets, id, 100, false);
-        if let Some(entity) = self.get_entity_mut(id) {
-            entity.set_posture(Posture::Lying);
-        }
+        self.set_entity_posture(id, Posture::Lying);
         self.launch_element(
             sim,
             assets,
@@ -1065,8 +1061,7 @@ impl EngineInner {
         }
         let id = selected_view_element.expect("NPC-selected implies id present");
         self.kill_npc_directly(sim, assets, id);
-        self.expect_entity_mut(id, "Hades selected NPC")
-            .set_posture(Posture::Dead);
+        self.set_entity_posture(id, Posture::Dead);
         self.launch_element(
             sim,
             assets,

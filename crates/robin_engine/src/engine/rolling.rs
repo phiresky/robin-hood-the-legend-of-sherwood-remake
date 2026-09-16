@@ -225,11 +225,7 @@ impl EngineInner {
             // posture assignment here. Posture assignment
             // does not alter the position interface's deviated flag, so preserve the
             // roll's anti-vibration latch for the following stand-up/turn.
-            self.world
-                .entities
-                .get_mut(owner)
-                .expect("Rolling owner disappeared during landing")
-                .set_posture(posture);
+            self.set_entity_posture(owner, posture);
         }
 
         if motion == MotionState::Start {

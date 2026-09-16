@@ -3036,9 +3036,7 @@ impl EngineInner {
                 .actor_data_mut()
                 .expect("RiderCharging soldier must have actor data");
             actor.action_state = ActionState::MovingFast;
-            entity
-                .element_data_mut()
-                .publish_order_posture(Posture::Upright);
+            self.publish_entity_order_posture(rider_id, Posture::Upright);
         }
 
         let back_length = (5.0 * f32::from(actual_frame)).min(50.0);
@@ -3656,29 +3654,27 @@ impl EngineInner {
             // IN_PROGRESS returned by globally frozen sprite motion still
             // changes a waiting actor to moving-fast.
             if frozen_order == OrderType::RunningUpright {
+                self.publish_entity_order_posture(owner, crate::element::Posture::Upright);
                 let entity = self
                     .world
                     .entities
                     .get_mut(owner)
                     .unwrap_or_else(|| panic!("globally frozen runner {owner:?} disappeared"));
                 entity
-                    .element_data_mut()
-                    .publish_order_posture(crate::element::Posture::Upright);
-                entity
                     .actor_data_mut()
                     .expect("globally frozen runner is not an actor")
                     .action_state = crate::element::ActionState::MovingFast;
             }
             if frozen_order == OrderType::WalkingWithShield {
-                let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
-                    panic!("globally frozen shield walker {owner:?} disappeared")
-                });
                 let (posture, action_state) = movement_execute_state_effect(
                     frozen_order,
                     crate::sprite::MotionState::InProgress,
                 )
                 .expect("WalkingWithShield must own an unconditional Execute state effect");
-                entity.set_posture(posture);
+                self.set_entity_posture(owner, posture);
+                let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
+                    panic!("globally frozen shield walker {owner:?} disappeared")
+                });
                 entity
                     .actor_data_mut()
                     .expect("globally frozen shield walker is not an actor")
