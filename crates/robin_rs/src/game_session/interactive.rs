@@ -112,6 +112,7 @@ impl MissionAudio {
         audio: &mut crate::host::HostAudio,
         viewport: &crate::host::ViewportState,
         assets: &robin_engine::engine::LevelAssets,
+        playing_back: bool,
     ) -> Option<robin_engine::engine::SoundBoundary> {
         if let Some(backend) = self.backend.as_mut() {
             return tick_audio(
@@ -122,6 +123,7 @@ impl MissionAudio {
                 &*self.sample_loader,
                 &mut self.sound_rng,
                 assets,
+                playing_back,
             );
         }
         None

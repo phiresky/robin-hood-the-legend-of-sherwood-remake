@@ -883,7 +883,13 @@ fn finish_interactive_audio(
     runtime
         .lifecycle_mut()
         .trace(FrameContractStage::AppEffects);
-    if let Some(boundary) = frontend.audio.tick(engine, audio, viewport, assets) {
+    if let Some(boundary) = frontend.audio.tick(
+        engine,
+        audio,
+        viewport,
+        assets,
+        runtime.replay().playback().is_some(),
+    ) {
         runtime.lifecycle_mut().queue_sound_boundary(boundary);
     }
     runtime.lifecycle_mut().trace(FrameContractStage::Audio);
