@@ -388,6 +388,16 @@ pub fn wasm_mark_compact_replay_validated(compact: &[u8]) -> Result<(), wasm_bin
         .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))
 }
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn wasm_install_replay_seek_sidecar(
+    compact: &[u8],
+    sidecar: &[u8],
+) -> Result<(), wasm_bindgen::JsValue> {
+    robin_rs::replay_seek::stage(compact, sidecar)
+        .map_err(|error| wasm_bindgen::JsValue::from_str(&error))
+}
+
 /// Worker-pool bring-up for `wasm-threads` builds. Requires cross-origin
 /// isolation (`SharedArrayBuffer`); without it the sprite decode paths stay
 /// on their serial fallback, which remains a supported configuration when a

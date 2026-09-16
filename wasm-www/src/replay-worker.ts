@@ -1,5 +1,5 @@
 export type ReplayValidationWorker = Pick<Worker, 'addEventListener' | 'postMessage' | 'terminate'>;
-export type ReplayValidationRequest = { readonly compact: Uint8Array; readonly jsUrl: string; readonly wasmUrl: string };
+export type ReplayValidationRequest = { readonly compact: Uint8Array; readonly jsUrl: string; readonly wasmUrl: string; readonly checkpoints?: Uint8Array };
 
 /** The worker owns untrusted replay parsing; this adapter owns its lifetime and deadline. */
 export async function runReplayValidation(
@@ -45,6 +45,7 @@ export async function runReplayValidation(
 export type ReplayValidatorModule = {
     readonly default: (init: { module_or_path: Response }) => Promise<unknown>;
     readonly validate_compact_replay?: (compact: Uint8Array) => void;
+    readonly validate_replay_seek_sidecar?: (compact: Uint8Array, sidecar: Uint8Array) => void;
 };
 
 /** Runs only inside the disposable worker; the live game never parses here. */
@@ -65,4 +66,8 @@ export async function validateReplayModule(
         throw new Error('selected wasm build has no isolated replay validator');
     }
     module.validate_compact_replay(request.compact);
+    if (request.checkpoints !== undefined) {
+        if (module.validate_replay_seek_sidecar === undefined) throw new Error('selected build has no seek sidecar validator');
+        module.validate_replay_seek_sidecar(request.compact, request.checkpoints);
+    }
 }

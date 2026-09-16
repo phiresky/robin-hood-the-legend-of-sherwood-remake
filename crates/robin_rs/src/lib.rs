@@ -287,6 +287,7 @@ pub mod renderer;
 pub mod replay_archive;
 pub mod replay_format;
 pub mod replay_recording;
+pub mod replay_seek;
 pub mod replay_service;
 pub mod rewind;
 pub mod rollback_checker;

@@ -216,6 +216,26 @@ fn exact_four_flag_contract_rejects_missing_duplicate_unknown_and_equals_forms()
 }
 
 #[test]
+fn rejected_replay_clears_optional_checkpoint_output() {
+    let replay = b"not a replay";
+    let fixture = Fixture::new(&job_for(replay, standard_medium()), replay);
+    let checkpoints = fixture.result.with_extension("rhseek");
+    std::fs::write(&checkpoints, b"old sidecar").unwrap();
+    let child = verifier_command()
+        .args(fixture.args())
+        .arg("--checkpoints")
+        .arg(&checkpoints)
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "{}",
+        String::from_utf8_lossy(&child.stderr)
+    );
+    assert!(std::fs::read(checkpoints).unwrap().is_empty());
+}
+
+#[test]
 fn undecodable_jobs_exit_nonzero_and_leave_the_result_empty() {
     let replay = b"replay";
     let oversized = vec![b' '; robin_run_protocol::MAX_VERIFIER_JOB_BYTES_V2 + 1];
@@ -360,12 +380,25 @@ fn real_won_replay_verifies_against_raw_content() {
         Ok("any") => BoardSimulationPolicyV1::AnyConfig,
         _ => standard_medium(),
     };
-    let fixture = Fixture::new(&job_for(&replay, policy), &replay);
+    let mut job: VerifierJobV2 = serde_json::from_slice(&job_for(&replay, policy)).unwrap();
+    if let Ok(mission) = std::env::var("ROBIN_VERIFIER_E2E_MISSION") {
+        job.mission_id = mission;
+    }
+    if let Ok(locale) = std::env::var("ROBIN_VERIFIER_E2E_LOCALE") {
+        job.resource_locale_root = locale;
+    }
+    if std::env::var("ROBIN_VERIFIER_E2E_EDITION").as_deref() == Ok("full") {
+        job.edition = OfficialContentEditionV1::Full;
+    }
+    let fixture = Fixture::new(&job.canonical_bytes().unwrap(), &replay);
+    let checkpoints = fixture.result.with_extension("rhseek");
+    std::fs::write(&checkpoints, b"stale sidecar").unwrap();
     let args = [
         ("--job", fixture.job.clone()),
         ("--replay", fixture.replay.clone()),
         ("--content-root", content),
         ("--result", fixture.result.clone()),
+        ("--checkpoints", checkpoints.clone()),
     ]
     .into_iter()
     .flat_map(|(flag, path)| [OsString::from(flag), path.into_os_string()]);
@@ -381,5 +414,17 @@ fn real_won_replay_verifies_against_raw_content() {
         matches!(output.status, VerificationStatusV2::Verified(_)),
         "unexpected status: {:?}",
         output.status
+    );
+    let (_, data) = robin_replay_format::decode_compact(&replay).unwrap();
+    let sidecar = robin_replay_format::seek::ReplaySeekSidecar::decode(
+        &std::fs::read(checkpoints).unwrap(),
+        *Digest32::digest_bytes(&replay).as_bytes(),
+        &data,
+    )
+    .unwrap();
+    sidecar.validate_engines().unwrap();
+    assert_eq!(
+        sidecar.checkpoints.len(),
+        data.frame_count().div_ceil(250) as usize
     );
 }

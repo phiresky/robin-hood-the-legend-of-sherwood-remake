@@ -1328,6 +1328,27 @@ impl TimelineRuntime {
         Ok(())
     }
 
+    pub(super) fn restore_replay_checkpoint(
+        &mut self,
+        target: u32,
+        manager: &mut EngineManager,
+        host: &mut Host,
+        game: &mut Game,
+        assets: &LevelAssets,
+        modals: &mut super::session_policy::SessionModalScheduler,
+    ) -> Result<bool, MissionError> {
+        self.replay.prepare_seek_cache(host, game, manager)?;
+        let Some(timeline) = self
+            .replay
+            .restore_seek_checkpoint(target, manager, host, game, assets, modals)?
+        else {
+            return Ok(false);
+        };
+        self.reset_reconstruction_history(timeline, &manager.engine);
+        self.lifecycle.note_state_restored();
+        Ok(true)
+    }
+
     /// Manual ticks have their own recorder transaction without restarting the
     /// enclosing driver's clock or phase. The caller must first finalize the
     /// ordinary host frame, including its post-refresh contributions.

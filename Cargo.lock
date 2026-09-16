@@ -6213,6 +6213,7 @@ name = "robin_replay_admission_wasm"
 version = "0.0.0"
 dependencies = [
  "robin_replay_format",
+ "sha2 0.11.0",
  "wasm-bindgen",
 ]
 

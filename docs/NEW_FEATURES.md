@@ -875,6 +875,15 @@ A list of which additional features we have added, which ones we might still wan
   Local keyboard and HTTP pause changes are rejected in multiplayer so one peer
   cannot stop only its own timeline.
 
+- **Fast verified-replay seeking**. The validator produces an optional zstd-19
+  checkpoint sidecar without modifying the signed replay. Browser playback
+  downloads and validates it in the isolated admission worker, then recompresses
+  individual checkpoints into the same bitcode + zstd memory cache used by local
+  seeks. Checkpoints are keyed by replay ordinal every 250 records, so save/load
+  branches remain distinct. The sidecar includes saved-state dependencies and a
+  sparse modal-effect journal; missing or incompatible artifacts fall back to
+  normal replay. The sidecar is served only for publicly accessible runs.
+
 - **Host-authoritative multiplayer session transitions.** Load, Restart,
   QuickLoad, and Sherwood campaign launch use a prepare/ready/commit barrier.
   The host encodes authoritative save or campaign state once, every connected

@@ -11,6 +11,31 @@ class WorkerFake extends EventTarget {
 }
 const request = { compact: new Uint8Array([0, 255, 128]), jsUrl: 'validator.js', wasmUrl: 'validator.wasm' };
 
+test('sidecars require their validator and propagate validation failures', async () => {
+    const checkpoints = new Uint8Array([1, 2, 3]);
+    for (const mode of ['accepted', 'missing', 'invalid']) {
+        const calls: string[] = [];
+        const pending = validateReplayModule({ ...request, checkpoints }, {
+            importModule: async () => ({
+                default: async () => {},
+                validate_compact_replay: () => { calls.push('replay'); },
+                ...(mode === 'missing' ? {} : {
+                    validate_replay_seek_sidecar: (compact: Uint8Array, sidecar: Uint8Array) => {
+                        assert.equal(compact, request.compact);
+                        assert.equal(sidecar, checkpoints);
+                        calls.push('sidecar');
+                        if (mode === 'invalid') throw new Error('checkpoint mismatch');
+                    },
+                }),
+            }),
+            fetchModule: async () => new Response(null),
+        });
+        if (mode === 'accepted') await pending;
+        else await assert.rejects(pending, /no seek sidecar validator|checkpoint mismatch/u);
+        assert.deepEqual(calls, mode === 'missing' ? ['replay'] : ['replay', 'sidecar']);
+    }
+});
+
 test('replay worker accepts only the exact reply and terminates after success or rejection', async () => {
     for (const reply of [{ status: 'accepted' }, { status: 'accepted', extra: true }, { status: 'rejected', error: 'bad replay' }, null, {}]) {
         const worker = new WorkerFake();

@@ -85,10 +85,22 @@ enum StateHashPolicy {
 /// Execute the uploaded canonical replay after independently proving its
 /// deterministic checkpoint coverage and command admission.
 pub fn resimulate_canonical_ranked_replay(
+    engine: Engine,
+    assets: &LevelAssets,
+    replay: &ReplayData,
+    execution: &RankedExecutionContext,
+) -> Result<RankedResimulation, RankedResimulationError> {
+    resimulate_canonical_ranked_replay_observed(engine, assets, replay, execution, |_, _, _| {})
+}
+
+/// Observe pre-record state and post-transaction output without changing the
+/// verified execution path. Collected artifacts are publishable only on success.
+pub fn resimulate_canonical_ranked_replay_observed(
     mut engine: Engine,
     assets: &LevelAssets,
     replay: &ReplayData,
     execution: &RankedExecutionContext,
+    mut observe: impl FnMut(u32, &Engine, Option<&crate::engine::SimulationFrameOutput>),
 ) -> Result<RankedResimulation, RankedResimulationError> {
     let (resimulation, _) = resimulate_ranked_replay_inner(
         &mut engine,
@@ -96,6 +108,7 @@ pub fn resimulate_canonical_ranked_replay(
         replay,
         execution,
         StateHashPolicy::Validate,
+        &mut observe,
     )?;
     Ok(resimulation)
 }
@@ -119,6 +132,7 @@ pub fn regenerate_canonical_ranked_replay(
         &normalized,
         execution,
         StateHashPolicy::Regenerate,
+        &mut |_, _, _| {},
     )?;
     normalized
         .replace_state_hashes(hashes)
@@ -135,6 +149,7 @@ fn resimulate_ranked_replay_inner(
     replay: &ReplayData,
     execution: &RankedExecutionContext,
     hash_policy: StateHashPolicy,
+    observe: &mut impl FnMut(u32, &Engine, Option<&crate::engine::SimulationFrameOutput>),
 ) -> Result<(RankedResimulation, std::collections::BTreeMap<u32, u64>), RankedResimulationError> {
     execution
         .validate_config(engine.sim_config())
@@ -174,6 +189,7 @@ fn resimulate_ranked_replay_inner(
     let mut saves = std::collections::BTreeMap::new();
     let mut display = crate::engine::HostDisplayState::default();
     for frame in 0..replay_frames {
+        observe(frame, engine, None);
         if let Some(marker) = replay.save_marker_for_frame(frame) {
             let actual = state_hash(engine);
             if actual != marker.state_hash {
@@ -272,6 +288,7 @@ fn resimulate_ranked_replay_inner(
                 frame,
                 message: error.to_string(),
             })?;
+        observe(frame, engine, Some(&output));
         if output.hourglass_ran {
             active_simulation_ticks = active_simulation_ticks.checked_add(1).ok_or_else(|| {
                 RankedResimulationError::Admission {

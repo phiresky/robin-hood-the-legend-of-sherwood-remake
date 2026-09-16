@@ -96,7 +96,7 @@ pub(super) struct SessionModalScheduler {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ModalCheckpoint {
+pub(super) struct ModalCheckpoint {
     active: Option<ModalBatchState<ModalKind>>,
     pending: Vec<ModalKind>,
     leave_prompt: bool,
@@ -206,6 +206,24 @@ impl TerminalAdapter {
 }
 
 impl SessionModalScheduler {
+    pub(super) fn capture_seek(&self, effects: &crate::host::HostEffectBatches) -> ModalCheckpoint {
+        ModalCheckpoint {
+            active: self.active.clone(),
+            pending: effects.pending_modal_kinds(),
+            leave_prompt: effects.has_signal(crate::host::HostSignal::MissionStatePopup),
+        }
+    }
+
+    pub(super) fn restore_seek(
+        &mut self,
+        ordinal: u32,
+        state: ModalCheckpoint,
+        effects: &mut crate::host::HostEffectBatches,
+    ) {
+        self.checkpoints.insert(ordinal, state);
+        self.last_observed_ordinal = Some(self.last_observed_ordinal.unwrap_or(0).max(ordinal));
+        self.restore(ordinal, effects);
+    }
     /// Sparse pre-record state: unchanged host records share the preceding
     /// checkpoint. Retain future entries during rewind so forward replay can
     /// revisit the same dense ordinal, including stationary transactions.

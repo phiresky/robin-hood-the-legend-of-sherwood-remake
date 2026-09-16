@@ -83,12 +83,14 @@ export async function validateReplayInWorker(
     jsUrl: string,
     wasmUrl: string,
     signal?: AbortSignal,
+    checkpoints?: Uint8Array,
 ): Promise<void> {
     const worker = new Worker(new URL('./replay_validation_worker.ts', import.meta.url), {
         type: 'module',
         name: 'robin-replay-admission',
     });
-    await runReplayValidation(worker, { compact: content, jsUrl, wasmUrl }, signal === undefined ? {} : { signal });
+    await runReplayValidation(worker, { compact: content, jsUrl, wasmUrl,
+        ...(checkpoints === undefined ? {} : { checkpoints }) }, signal === undefined ? {} : { signal });
 }
 
 export function installShareButton(button: HTMLButtonElement, rpc: RobinRpc): void {

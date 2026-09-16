@@ -1,6 +1,8 @@
 //! Replay attempt ownership. Live writers and playback snapshots never escape
 //! through mutable getters: lifecycle transitions retire all related state.
 
+mod seek;
+
 use super::{
     BootstrapSaveBoundary, MissionFrame, RecorderFrameState, ReplayFrameOrdinal, TimelineFrame,
 };
@@ -105,6 +107,7 @@ pub(in crate::game_session) struct ReplayLifecycle {
         CompressedGameRuntimeSnapshot,
         super::super::session_policy::SessionModalScheduler,
     )>,
+    seek_cache: seek::ReplaySeekCache,
 }
 
 impl ReplayLifecycle {
@@ -126,6 +129,7 @@ impl ReplayLifecycle {
             pinned_saves: BTreeMap::new(),
             control,
             initial_state: None,
+            seek_cache: Default::default(),
         }
     }
 
@@ -558,6 +562,7 @@ impl ReplayLifecycle {
         manager: &mut robin_engine::engine_manager::EngineManager,
         assets: &robin_engine::engine::LevelAssets,
     ) -> Result<Option<TimelineFrame>, MissionError> {
+        self.prepare_seek_cache(host, game, manager)?;
         let ordinal = self.ordinal;
         let Some(player) = self.player.as_ref().filter(|player| !player.is_finished()) else {
             return Ok(None);
@@ -568,19 +573,6 @@ impl ReplayLifecycle {
                 player.current_frame(),
                 ordinal.number()
             )));
-        }
-        if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
-            let mut modals = super::super::session_policy::SessionModalScheduler::default();
-            modals.checkpoint(0, &host.effects);
-            self.initial_state = Some((
-                robin_engine::engine::CompressedEngineSnapshot::capture(&manager.engine).map_err(
-                    |error| MissionError::replay(format!("compress replay start: {error}")),
-                )?,
-                CompressedGameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(
-                    |error| MissionError::replay(format!("capture replay start: {error:#}")),
-                )?,
-                modals,
-            ));
         }
         super::apply_replay_timeline_events_with_hash_policy(
             player,
@@ -593,6 +585,40 @@ impl ReplayLifecycle {
             assets,
             !self.recompute_marker_hashes,
         )
+    }
+
+    pub(super) fn prepare_seek_cache(
+        &mut self,
+        host: &crate::host::Host,
+        game: &crate::game::Game,
+        manager: &robin_engine::engine_manager::EngineManager,
+    ) -> Result<(), MissionError> {
+        let ordinal = self.ordinal;
+        let Some(player) = self.player.as_ref() else {
+            return Ok(());
+        };
+        if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
+            let mut modals = super::super::session_policy::SessionModalScheduler::default();
+            modals.checkpoint(0, &host.effects);
+            self.initial_state = Some((
+                robin_engine::engine::CompressedEngineSnapshot::capture(&manager.engine).map_err(
+                    |error| MissionError::replay(format!("compress replay start: {error}")),
+                )?,
+                CompressedGameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(
+                    |error| MissionError::replay(format!("capture replay start: {error:#}")),
+                )?,
+                modals,
+            ));
+            if let Some(sidecar) = crate::replay_seek::take(player.data()) {
+                match seek::ReplaySeekCache::import(sidecar, player.data(), host, game) {
+                    Ok(cache) => self.seek_cache = cache,
+                    Err(error) => {
+                        tracing::warn!(%error, "replay seek sidecar rejected; using local checkpoints")
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn restore_initial(

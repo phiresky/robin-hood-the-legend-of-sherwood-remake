@@ -393,6 +393,7 @@ async function main(): Promise<void> {
         ? replayFromQuery(pageParams)
         : { content: runReplay.content, paused: true };
     let preparedReplay: PreparedReplay | null = null;
+    let validatedCheckpoints: Uint8Array | undefined;
     logOk(crossOriginIsolated
         ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
         : '[not cross-origin isolated: sprite decode stays single-threaded]');
@@ -412,6 +413,17 @@ async function main(): Promise<void> {
                 async (content, admissionSignal) => {
                     performance.mark('robin-replay-admission-start');
                     await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal);
+                    if (runReplay?.checkpoints !== undefined) {
+                        try {
+                            await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal, runReplay.checkpoints);
+                            validatedCheckpoints = runReplay.checkpoints;
+                        } catch (error) {
+                            admissionSignal?.throwIfAborted();
+                            console.warn('Replay checkpoints rejected; using local seeking:', error);
+                        } finally {
+                            delete runReplay.checkpoints;
+                        }
+                    }
                     admissionSignal.throwIfAborted();
                     performance.mark('robin-replay-admission-accepted');
                 }, signal,
@@ -473,6 +485,11 @@ async function main(): Promise<void> {
                     throw new Error('selected wasm build cannot accept an isolated replay proof');
                 }
                 wasm.wasm_mark_compact_replay_validated(content);
+                if (validatedCheckpoints !== undefined && wasm.wasm_install_replay_seek_sidecar !== undefined) {
+                    try { wasm.wasm_install_replay_seek_sidecar(content, validatedCheckpoints); }
+                    catch (error) { console.warn('Cannot import replay checkpoints; using local seeking:', error); }
+                }
+                validatedCheckpoints = undefined;
             }, preparedReplay, buildBase);
             bootAbort.signal.throwIfAborted();
             if (replayLoaded) {

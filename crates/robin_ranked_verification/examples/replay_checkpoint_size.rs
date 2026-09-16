@@ -1,10 +1,11 @@
 //! Estimate engine-only seek checkpoint storage using a real verified replay.
-//! Usage: replay_checkpoint_size RAW_DATADIR LOCALE REPLAY.jsonl
-//! The experimental bundle is a size probe, not a supported replay format.
+//! Usage: replay_checkpoint_size RAW_DATADIR LOCALE REPLAY.jsonl [OUTPUT.rhseek]
+//! Experimental bundle sizes are reported for comparison; the optional output
+//! writes the production sidecar and its corresponding compact replay.
 
 use robin_engine::engine::{Engine, HostDisplayState};
 use robin_engine::game_operation::GameCode;
-use robin_engine::ranked_resim::{RankedExecutionContext, resimulate_canonical_ranked_replay};
+use robin_engine::ranked_resim::RankedExecutionContext;
 use robin_engine::replay::{ReplayData, ReplayFile, state_hash};
 use robin_ranked_verification::ranked_verifier::{
     confined_official_files, load_official_profiles, prepare_ranked_replay_mission,
@@ -33,7 +34,10 @@ fn main() {
 
 fn run() {
     let args: Vec<_> = std::env::args().collect();
-    assert_eq!(args.len(), 4, "expected RAW_DATADIR LOCALE REPLAY.jsonl");
+    assert!(
+        (4..=5).contains(&args.len()),
+        "expected RAW_DATADIR LOCALE REPLAY.jsonl [OUTPUT.rhseek]"
+    );
     let replay = ReplayData::from_file(&args[3]).expect("read replay");
     let header = replay.header();
     let policy = robin_engine::ranked_rules::ranked_policy_for_board(
@@ -57,9 +61,38 @@ fn run() {
     let (approved, assets) = prepared.into_engine_and_assets();
     let (mut engine, _, _, _) = approved.into_parts();
     let execution = RankedExecutionContext::new(policy);
+    let compact =
+        robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
+            .unwrap();
+    use sha2::{Digest, Sha256};
+    let mut sidecar =
+        robin_replay_format::seek::ReplaySeekSidecar::new(Sha256::digest(&compact).into(), &replay);
     eprintln!("Verifying {} frames", replay.frame_count());
-    resimulate_canonical_ranked_replay(engine.clone(), &assets, &replay, &execution)
-        .expect("canonical verification must pass before measuring");
+    robin_engine::ranked_resim::resimulate_canonical_ranked_replay_observed(
+        engine.clone(),
+        &assets,
+        &replay,
+        &execution,
+        |ordinal, engine, output| sidecar.observe(&replay, ordinal, engine, output),
+    )
+    .expect("canonical verification must pass before measuring");
+    if let Some(path) = args.get(4) {
+        use std::io::Write;
+        let encoded = sidecar.encode().unwrap();
+        sidecar.validate_engines().unwrap();
+        for (path, bytes) in [
+            (std::path::PathBuf::from(path), encoded),
+            (Path::new(path).with_extension("rhrec"), compact),
+        ] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap()
+                .write_all(&bytes)
+                .unwrap();
+        }
+    }
 
     let mut checkpoints = Vec::new();
     let mut saves = BTreeMap::new();

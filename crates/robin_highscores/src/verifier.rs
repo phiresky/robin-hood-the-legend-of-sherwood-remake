@@ -8,7 +8,7 @@
 //! The verifier CLI contract inside the sandbox is fixed:
 //! `/run/robin-verifier --job /run/robin-input/job.json
 //! --replay /run/robin-input/replay.rhrec --content-root /run/robin-content
-//! --result /run/robin-result.json`.
+//! --result /run/robin-result.json --checkpoints /run/robin-result.rhseek`.
 
 use robin_run_protocol::{Digest32, Validate as _, VerifierOutputV2};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,13 @@ pub const SANDBOX_JOB: &str = "/run/robin-input/job.json";
 pub const SANDBOX_REPLAY: &str = "/run/robin-input/replay.rhrec";
 pub const SANDBOX_CONTENT_ROOT: &str = "/run/robin-content";
 pub const SANDBOX_RESULT: &str = "/run/robin-result.json";
+pub const SANDBOX_CHECKPOINTS: &str = "/run/robin-result.rhseek";
+
+#[derive(Debug)]
+pub struct VerifierArtifacts {
+    pub result: Vec<u8>,
+    pub checkpoints: Vec<u8>,
+}
 
 /// Direct-launcher policy embedded in `worker.toml`. Every field is operator
 /// authority and unknown fields are rejected.
@@ -136,7 +143,7 @@ impl VerifierLauncherConfig {
         replay: tokio::fs::File,
         replay_bytes: u64,
         content_root: &Path,
-    ) -> Result<Vec<u8>, ProcessError> {
+    ) -> Result<VerifierArtifacts, ProcessError> {
         validate_content_root(content_root)?;
         let staging = stage_inputs(job_bytes, replay, replay_bytes).await?;
         let paths = SandboxPaths {
@@ -149,10 +156,41 @@ impl VerifierLauncherConfig {
         let launcher = self.clone();
         let result = staging.result;
         let result_identity = validate_output_file(&result, 0)?;
+        let checkpoints = staging.checkpoints;
+        let checkpoints_identity = validate_output_file(&checkpoints, 0)?;
         let result = crate::physical_work::spawn_blocking(move || {
             launch(&launcher, &paths)?;
             validate_output_identity(&result, result_identity, MAX_RESULT_BYTES)?;
-            read_result(result)
+            if checkpoints.metadata()?.len() == 0 {
+                let identity = validate_output_file(&checkpoints, 0)?;
+                if identity.device != checkpoints_identity.device
+                    || identity.inode != checkpoints_identity.inode
+                {
+                    return Err(ProcessError::InvalidResult(
+                        "seek output inode changed".into(),
+                    ));
+                }
+            } else {
+                validate_output_identity(
+                    &checkpoints,
+                    checkpoints_identity,
+                    robin_replay_format::seek::MAX_BYTES as u64,
+                )?;
+            }
+            use std::io::Read as _;
+            let mut checkpoint_bytes = Vec::new();
+            checkpoints
+                .take(robin_replay_format::seek::MAX_BYTES as u64 + 1)
+                .read_to_end(&mut checkpoint_bytes)?;
+            if checkpoint_bytes.len() > robin_replay_format::seek::MAX_BYTES {
+                return Err(ProcessError::InvalidResult(
+                    "seek sidecar exceeds limit".into(),
+                ));
+            }
+            Ok(VerifierArtifacts {
+                result: read_result(result)?,
+                checkpoints: checkpoint_bytes,
+            })
         })
         .await
         .map_err(|_| ProcessError::Exit("direct sandbox launcher task failed".to_owned()))??;
@@ -188,6 +226,7 @@ pub fn decode_output(
 struct StagedInputs {
     directory: tempfile::TempDir,
     result: File,
+    checkpoints: File,
 }
 
 async fn stage_inputs(
@@ -239,7 +278,12 @@ async fn stage_inputs(
             .await?;
     }
     let result = create("result.json", 0o600)?;
-    Ok(StagedInputs { directory, result })
+    let checkpoints = create("result.rhseek", 0o600)?;
+    Ok(StagedInputs {
+        directory,
+        result,
+        checkpoints,
+    })
 }
 
 fn validate_content_root(path: &Path) -> Result<(), ProcessError> {
@@ -303,6 +347,7 @@ pub fn prlimit_arguments(config: &VerifierLauncherConfig) -> Vec<OsString> {
 
 /// The complete bubblewrap argument vector, ending with the verifier CLI.
 pub fn bwrap_arguments(paths: &SandboxPaths) -> Vec<OsString> {
+    let checkpoints = paths.result.with_extension("rhseek");
     let size = PRIVATE_TMPFS_BYTES.to_string();
     let mut arguments: Vec<OsString> = Vec::new();
     let mut push = |values: &[&str]| arguments.extend(values.iter().map(OsString::from));
@@ -373,6 +418,7 @@ pub fn bwrap_arguments(paths: &SandboxPaths) -> Vec<OsString> {
         ("--ro-bind", &paths.replay, SANDBOX_REPLAY),
         ("--ro-bind", &paths.content_root, SANDBOX_CONTENT_ROOT),
         ("--bind", &paths.result, SANDBOX_RESULT),
+        ("--bind", &checkpoints, SANDBOX_CHECKPOINTS),
     ] {
         arguments.push(flag.into());
         arguments.push(source.as_os_str().to_owned());
@@ -394,6 +440,8 @@ pub fn bwrap_arguments(paths: &SandboxPaths) -> Vec<OsString> {
             SANDBOX_CONTENT_ROOT,
             "--result",
             SANDBOX_RESULT,
+            "--checkpoints",
+            SANDBOX_CHECKPOINTS,
         ]
         .into_iter()
         .map(OsString::from),
@@ -610,8 +658,8 @@ mod tests {
                 .iter()
                 .filter(|argument| argument.as_os_str() == "--bind")
                 .count(),
-            1,
-            "only the result file may be a writable host-backed mount"
+            2,
+            "only result and checkpoint files may be writable host-backed mounts"
         );
         assert!(arguments.windows(3).any(|window| {
             window[0] == "--ro-bind"
@@ -634,6 +682,8 @@ mod tests {
                 SANDBOX_CONTENT_ROOT,
                 "--result",
                 SANDBOX_RESULT,
+                "--checkpoints",
+                SANDBOX_CHECKPOINTS,
             ]
             .map(OsString::from)
         );
@@ -651,6 +701,7 @@ mod tests {
         std::fs::write(&paths.job, b"job").unwrap();
         std::fs::write(&paths.replay, b"replay").unwrap();
         std::fs::write(&paths.result, b"").unwrap();
+        std::fs::write(paths.result.with_extension("rhseek"), b"").unwrap();
         std::fs::copy("/bin/sh", &paths.verifier_program).unwrap();
         let mut arguments = bwrap_arguments(&paths);
         let remount = arguments

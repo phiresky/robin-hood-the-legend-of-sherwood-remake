@@ -7,6 +7,9 @@ pub struct ReplayPlayer {
 }
 
 impl ReplayPlayer {
+    pub fn data(&self) -> &ReplayData {
+        &self.data
+    }
     pub fn new(data: ReplayData) -> Self {
         Self {
             data,
