@@ -3571,6 +3571,7 @@ impl EngineInner {
             victim.is_soldier() && self.is_hostile_to_player_camp(victim.camp());
         if bump_lacklandist_score && damage_element.is_some() && !projectile_death {
             self.add_campaign_value(
+                assets,
                 crate::campaign::CampaignValue::Score,
                 SCORE_SOLDIER_KILLED_DURING_FIGHT,
             );

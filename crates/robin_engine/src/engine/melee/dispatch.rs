@@ -1262,7 +1262,7 @@ impl EngineInner {
                         .is_some_and(|victim| get_life_points(victim) <= 0)
                     {
                         let shooter = origin.expect("arrow damage element has no shooter");
-                        self.award_bow_kill_xp(shooter);
+                        self.award_bow_kill_xp(assets, shooter);
                     }
                     if let Some(projectile_id) = projectile {
                         let direction = match self.get_entity(projectile_id) {

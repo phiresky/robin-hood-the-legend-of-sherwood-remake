@@ -426,6 +426,7 @@ impl NativeContext<'_, '_> {
                         crate::sound::Jingle::CashWon,
                     ));
                 }
+                self.update_purse_actions();
             }
             crate::campaign::CampaignValue::Score => {
                 self.mission_stat
@@ -455,6 +456,21 @@ impl NativeContext<'_, '_> {
         if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
             self.yield_sound_command(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
         }
+        if name == crate::campaign::CampaignValue::Ransom {
+            self.update_purse_actions();
+        }
+    }
+
+    fn update_purse_actions(&mut self) {
+        self.campaign
+            .as_ref()
+            .expect("purse update requires an active campaign")
+            .update_purse_actions(
+                self.entities,
+                self.pc_registry
+                    .expect("purse update requires the live PC registry"),
+                &self.bindings.profile_manager,
+            );
     }
 
     fn zone_index(&self, loc: i32) -> Option<usize> {

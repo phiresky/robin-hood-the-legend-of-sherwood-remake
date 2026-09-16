@@ -767,7 +767,7 @@ impl EngineInner {
         // loss and fully-recovered purses wash out.
         let face_value =
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
-        self.add_campaign_value(crate::campaign::CampaignValue::Ransom, -face_value);
+        self.add_campaign_value(assets, crate::campaign::CampaignValue::Ransom, -face_value);
     }
 
     pub(super) fn apply_ability_throw_wasp_nest_done(
@@ -876,6 +876,7 @@ impl EngineInner {
             self.launch_element(sim, assets, receive);
         }
         self.add_campaign_value(
+            assets,
             crate::campaign::CampaignValue::Ransom,
             -crate::engine::BEGGAR_SALARY,
         );

@@ -1587,6 +1587,7 @@ impl EngineInner {
         );
         if capacity_increased {
             self.add_campaign_value(
+                assets,
                 crate::campaign::CampaignValue::Score,
                 crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
             );

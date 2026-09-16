@@ -236,7 +236,8 @@ fn with_campaign_context<R>(
         &mut fast_grid,
         &mut globals,
     )
-    .with_campaign(campaign, mission_stat);
+    .with_campaign(campaign, mission_stat)
+    .with_pc_registry(&[]);
     let mut state = ScriptState::default();
     let mut script_domains = crate::engine::ScriptDomains::default();
     let mut context =
@@ -252,6 +253,7 @@ fn with_bound_campaign_context<R>(
     f: impl FnOnce(&mut NativeContext<'_, '_>) -> R,
 ) -> R {
     let sim = crate::sim_rng::test_context();
+    let pc_registry: Vec<_> = host.entities.pcs().map(|(id, _)| id.into()).collect();
     let mut capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
@@ -259,7 +261,8 @@ fn with_bound_campaign_context<R>(
         &mut host.fast_grid,
         &mut host.globals,
     )
-    .with_campaign(campaign, mission_stat);
+    .with_campaign(campaign, mission_stat)
+    .with_pc_registry(&pc_registry);
     let mut context = NativeContext::with_bindings(
         &mut host.state,
         &mut host.script_domains,
@@ -3636,6 +3639,55 @@ fn direct_owner_set_campaign_value_ransom_jingle_only_when_growing() {
 }
 
 #[test]
+fn script_ransom_mutation_changes_purse_slot_before_native_returns() {
+    use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
+
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(CharacterProfile {
+        actions: [Action::NoAction, Action::Purse, Action::Bow],
+        ..Default::default()
+    });
+    let bindings = AttachedScriptBindings {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..Default::default()
+    };
+    let mut host = NativeTestHost::new();
+    let mut pc = native_test_pc(vec![false; 3], vec![false; 3]);
+    let data = pc.pc_data_mut().unwrap();
+    data.campaign_description_index = Some(0);
+    data.current_action = Action::Purse;
+    data.saved_action = Action::Purse;
+    host.entities.push(Some(pc));
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.characters.push(crate::campaign::PcDescription {
+        character_profile_idx: Some(CharacterProfileIdx(0)),
+        status: crate::pc_status::PcStatus {
+            num_purses: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut stats = crate::mission_stat::MissionStat::default();
+    with_bound_campaign_context(&mut host, &bindings, &mut campaign, &mut stats, |context| {
+        let actor = ScriptHandleCodec::actor_handle_from_index(0);
+        context.set_campaign_value(crate::campaign::CampaignValue::Ransom, 0, 0);
+        let pc = context.get_entity(actor).unwrap().pc_data().unwrap();
+        assert!(pc.disabled_actions[1]);
+        assert_eq!(pc.current_action, Action::NoAction);
+        assert_eq!(pc.saved_action, Action::NoAction);
+        context.add_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 0);
+        assert!(
+            !context
+                .get_entity(actor)
+                .unwrap()
+                .pc_data()
+                .unwrap()
+                .disabled_actions[1]
+        );
+    });
+}
+
+#[test]
 fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
     let mut campaign = crate::campaign::Campaign::default();
     let mut mission_stat = crate::mission_stat::MissionStat::default();
@@ -3659,7 +3711,8 @@ fn ransom_natives_round_trip_through_borrowed_campaign_owner() {
         &mut globals,
     )
     .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame)
-    .with_campaign(&mut campaign, &mut mission_stat);
+    .with_campaign(&mut campaign, &mut mission_stat)
+    .with_pc_registry(&[]);
     let mut context = NativeContext::with_bindings(
         &mut state,
         &mut script_domains,

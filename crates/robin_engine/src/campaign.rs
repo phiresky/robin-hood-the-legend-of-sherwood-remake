@@ -1260,6 +1260,51 @@ impl Campaign {
         self.values[name]
     }
 
+    /// Refresh live purse slots at the currency mutation boundary. Inventory
+    /// mutations separately enable or disable the action when ammo changes.
+    pub(crate) fn update_purse_actions(
+        &self,
+        entities: &mut crate::entities::Entities,
+        pc_ids: &[crate::element::EntityId],
+        profiles: &crate::profiles::ProfileManager,
+    ) {
+        use crate::profiles::Action;
+
+        let funded = self.get_value(CampaignValue::Ransom)
+            >= crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
+        for &id in pc_ids {
+            let pc = entities
+                .get_mut(id)
+                .and_then(crate::element::Entity::pc_data_mut)
+                .expect("purse update requires a live registered PC");
+            let profile = profiles
+                .get_character(pc.profile_index)
+                .expect("purse update requires the PC character profile");
+            let Some(slot) = crate::inventory::find_action_slot(profile, Action::Purse) else {
+                continue;
+            };
+            let index = pc
+                .campaign_description_index
+                .expect("purse update requires the PC campaign description")
+                as usize;
+            let description = self
+                .characters
+                .get(index)
+                .expect("purse update requires a valid campaign description");
+            assert_eq!(description.character_profile_idx, Some(pc.profile_index));
+            let disabled = !funded || description.status.get_ammo(Action::Purse) == 0;
+            if disabled {
+                if pc.current_action == Action::Purse {
+                    pc.current_action = Action::NoAction;
+                }
+                if pc.saved_action == Action::Purse {
+                    pc.saved_action = Action::NoAction;
+                }
+            }
+            pc.disabled_actions[slot] = disabled;
+        }
+    }
+
     pub fn set_value(&mut self, name: CampaignValue, val: i32) {
         self.values[name] = val;
     }

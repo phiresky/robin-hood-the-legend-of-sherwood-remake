@@ -439,6 +439,7 @@ impl EngineInner {
             }) {
                 const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
                 self.add_campaign_value(
+                    assets,
                     crate::campaign::CampaignValue::Score,
                     SCORE_SOLDIER_KILLED_DURING_FIGHT,
                 );

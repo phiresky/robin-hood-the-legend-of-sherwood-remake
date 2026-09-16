@@ -534,7 +534,6 @@ impl EngineInner {
             }
         }
 
-        self.tick_refresh_purse_disable(assets);
     }
 
     /// Apply the parry hold countdown at the owning actor's legacy Execute

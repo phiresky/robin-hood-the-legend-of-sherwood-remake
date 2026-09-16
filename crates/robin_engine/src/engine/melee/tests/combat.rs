@@ -178,7 +178,7 @@ fn kill_experience_uses_exact_campaign_description_not_profile_number() {
     // The original-game player actor updates the character description reached through its
     // description/status reference. Profile number 1 living in campaign slot
     // 0 is valid and occurs in archived interactive replays.
-    engine.award_bow_kill_xp(attacker);
+    engine.award_bow_kill_xp(&LevelAssets::default(), attacker);
     engine.award_sword_kill_xp(&LevelAssets::default(), attacker, victim);
 
     let status = &engine.mission_domain.campaign.characters[0]
