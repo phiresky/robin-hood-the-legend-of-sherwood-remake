@@ -205,6 +205,7 @@ impl EngineInner {
                 entity.element_data_mut().sprite.last_motion_state = Some(effective_motion);
             }
             entity.element_data_mut().update_grid_cell();
+            entity.sprite_mut().compute_display_depth();
         }
 
         // The original game commits the landing posture before the actor update pops

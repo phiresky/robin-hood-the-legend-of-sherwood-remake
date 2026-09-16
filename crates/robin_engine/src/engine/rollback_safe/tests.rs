@@ -1002,10 +1002,6 @@ fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
             format!("{:?}", engine.minimap_dot_info(pc, &assets))
         );
         assert_eq!(
-            view.compute_display_order().depths,
-            engine.compute_display_order().depths
-        );
-        assert_eq!(
             serde_json::to_value(view.campaign()).unwrap(),
             serde_json::to_value(engine.campaign()).unwrap()
         );

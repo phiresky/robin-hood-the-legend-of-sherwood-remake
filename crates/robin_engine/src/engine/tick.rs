@@ -1801,6 +1801,7 @@ impl EngineInner {
                         fx.element
                             .set_position_map(fx.element.position_map() + motion.movement);
                     }
+                    fx.element.sprite.compute_display_depth();
                     fx.fx.animation_speed = movement_animation_speed;
                 }
 
@@ -2460,6 +2461,7 @@ impl EngineInner {
         };
         let helper_frame = helper.sprite().current_frame;
         let helper_frame_count = helper.sprite().frame_count;
+        let helper_depth = helper.sprite().display_depth;
         let carried = self
             .get_entity_mut(carried_id)
             .expect("shoulder rider disappeared before synchronization");
@@ -2471,8 +2473,7 @@ impl EngineInner {
             carried_sprite_direction,
         );
         sprite.synchronize_anim(helper_frame, helper_frame_count);
-        sprite.display_order_ref = Some(helper_id);
-        sprite.behind_display_order_ref = false;
+        sprite.compute_display_depth_relative_to(helper_depth, false);
 
         if motion == MotionState::Done {
             carried.set_posture(Posture::Upright);

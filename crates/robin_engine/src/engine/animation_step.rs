@@ -1522,6 +1522,10 @@ impl EngineInner {
                         .human_data()
                         .and_then(|human| human.carrier)
                         .expect("waiting rider has no carrier");
+                    let depth = self
+                        .expect_entity(carrier, "waiting rider carrier")
+                        .sprite()
+                        .display_depth;
                     let sprite = &mut self
                         .world
                         .entities
@@ -1529,8 +1533,7 @@ impl EngineInner {
                         .expect("waiting rider disappeared")
                         .element_data_mut()
                         .sprite;
-                    sprite.display_order_ref = Some(carrier);
-                    sprite.behind_display_order_ref = false;
+                    sprite.compute_display_depth_relative_to(depth, false);
                 }
                 _ => {}
             }

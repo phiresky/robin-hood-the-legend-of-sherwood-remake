@@ -50,9 +50,7 @@ use super::{
 // Serialized bytes which are intentionally not simulation state in Rust, and
 // so are decoded but never adopted:
 // - sprite already-decompressed flag (a host-side sprite asset cache)
-// - sprite display order and its display-order placeholder (Original
-//   recomputes display order during normal render refreshes; the dummy is an
-//   uninitialized legacy compatibility slot)
+// - sprite display-order placeholder (an uninitialized compatibility slot)
 // - sprite bounding box (recomputed by position refreshes)
 // - AI log info/frame (Linux v48 serializes only the debug line type)
 // - enemy AI duplicate pre-personal seek directions and first
@@ -172,6 +170,7 @@ impl LegacyElementBaseAdoption {
 
 #[derive(Clone, Debug)]
 struct ConvertedSprite {
+    display_depth: f32,
     current_row: u16,
     current_frame: u16,
     frame_count: u16,
@@ -467,6 +466,7 @@ fn apply_element_base(element: &mut crate::element::ElementData, converted: Conv
         sprite.use_alternate_profile = converted.sprite.alternate_profile;
     }
     sprite.masked = converted.sprite.masked;
+    sprite.display_depth = converted.sprite.display_depth;
     sprite.behind_display_order_ref = converted.sprite.behind_display_order_reference;
     sprite.display_order_ref = converted.sprite.display_order_reference;
     sprite.action_done_frame = converted.sprite.action_done_frame;
@@ -553,6 +553,7 @@ fn convert_sprite(
         })
         .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
     Ok(ConvertedSprite {
+        display_depth: saved.display_order,
         current_row: saved.current_row,
         current_frame: saved.current_frame,
         frame_count: saved.frame_count,
@@ -3056,6 +3057,7 @@ mod tests {
             blipped: false,
             unreachable: false,
             sprite: ConvertedSprite {
+                display_depth: 123.001,
                 current_row: 230,
                 current_frame: 7,
                 frame_count: 0,
@@ -3077,6 +3079,8 @@ mod tests {
         };
 
         apply_element_base(&mut element, converted);
+        assert_eq!(element.sprite.display_depth, 123.001);
+        assert_ne!(element.sprite.display_depth, element.position().y);
 
         assert!(!element.sprite.use_alternate_profile);
         assert_eq!(

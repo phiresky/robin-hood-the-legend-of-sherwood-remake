@@ -1214,6 +1214,9 @@ impl EngineInner {
             projection_point,
             "jump landing",
         );
+        self.expect_entity_mut(entity_id, "jump landing depth")
+            .sprite_mut()
+            .compute_display_depth();
     }
 }
 
@@ -1409,6 +1412,7 @@ pub(crate) fn perform_jump_ground_motion(
             }
         }
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     // The jump-up flight stops TELEPORT_JUMPING_UP below the platform
@@ -1424,6 +1428,7 @@ pub(crate) fn perform_jump_ground_motion(
         lifted.z += TELEPORT_JUMPING_UP;
         pi.set_position(lifted);
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     state
@@ -1587,6 +1592,24 @@ fn advance_airborne_flight(entity: &mut crate::element::Entity) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn airborne_jump_retains_takeoff_depth_until_landing_publication() {
+        use crate::engine::test_support::actors::TestActor;
+        let mut entity = TestActor::pc(Posture::Flying)
+            .map_position(MapPoint::new(10.0, 20.0))
+            .build();
+        entity.sprite_mut().display_depth = 17.001;
+        entity.actor_data_mut().unwrap().wait_time = 2;
+        entity
+            .position_iface_mut()
+            .set_projectile_increment(crate::coordinates::WorldVec3D::new(1.0, 4.0, 2.0));
+        let before = entity.element_data().position();
+        advance_airborne_flight(&mut entity);
+        assert_eq!(entity.element_data().position().y, before.y + 4.0);
+        assert_eq!(entity.sprite().display_depth, 17.001);
+        assert_eq!(entity.actor_data().unwrap().wait_time, 1);
+    }
 
     #[test]
     fn long_jump_reserves_full_order_chain_before_advancing() {

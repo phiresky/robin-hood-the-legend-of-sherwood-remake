@@ -255,6 +255,7 @@ impl ElementData {
                 (map.x - center.x).floor(),
                 (map.y - center.y).floor(),
             ));
+        self.sprite.compute_display_depth();
     }
 
     /// Queue a map-space position change for the next actor update.
@@ -290,6 +291,7 @@ impl ElementData {
             self.position_delayed = false;
         }
         self.update_grid_cell();
+        self.sprite.compute_display_depth();
         Some((old_position, self.position_map(), layer))
     }
 

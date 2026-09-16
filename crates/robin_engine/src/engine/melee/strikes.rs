@@ -1875,6 +1875,7 @@ impl EngineInner {
             ),
         );
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     /// Human flight callbacks follow the sprite position and posture updates.
@@ -2921,6 +2922,7 @@ mod tests {
                     .sprite;
                 sprite.display_order_ref = display_reference;
                 sprite.behind_display_order_ref = behind;
+                sprite.display_depth = -77.0;
                 for motion in [
                     MotionState::Start,
                     MotionState::InProgress,
@@ -2930,6 +2932,11 @@ mod tests {
                     let sprite = engine.get_entity(victim).unwrap().sprite();
                     assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
                     assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
+                    assert_eq!(
+                        sprite.display_depth,
+                        sprite.position_iface.get_position().y,
+                        "{motion:?}"
+                    );
                 }
             }
         }

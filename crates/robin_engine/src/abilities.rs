@@ -1607,6 +1607,7 @@ pub(crate) fn sync_corpse_animation_for_carrier(
     };
     let frame = carrier.sprite().current_frame;
     let frame_count = carrier.sprite().frame_count;
+    let depth = carrier.sprite().display_depth;
     let target = entities
         .get_mut(target_id)
         .expect("carried body disappeared");
@@ -1615,8 +1616,7 @@ pub(crate) fn sync_corpse_animation_for_carrier(
     let sprite = &mut target.element_data_mut().sprite;
     sprite.force_sprite_row(animation, direction);
     sprite.synchronize_anim(frame, frame_count);
-    sprite.display_order_ref = Some(carrier_id);
-    sprite.behind_display_order_ref = false;
+    sprite.compute_display_depth_relative_to(depth, false);
 }
 
 /// The climber's action drives the frozen helper, including the terminal frame.
@@ -1647,13 +1647,13 @@ pub(crate) fn sync_shoulder_climb_animation(
     let sprite = &mut helper.element_data_mut().sprite;
     sprite.force_sprite_row(animation, direction);
     sprite.synchronize_anim(frame, frame_count);
+    let depth = sprite.display_depth;
     let sprite = &mut entities
         .get_mut(climber_id)
         .expect("shoulder climber disappeared")
         .element_data_mut()
         .sprite;
-    sprite.display_order_ref = Some(helper_id);
-    sprite.behind_display_order_ref = false;
+    sprite.compute_display_depth_relative_to(depth, false);
 }
 
 /// Walking moves the body on its own surface and resets its carried animation.
@@ -1670,6 +1670,7 @@ pub(crate) fn sync_walking_corpse_for_carrier(
         .expect("walking corpse carrier must be a PC");
     let target_id = pc.carried.expect("walking corpse carrier has no body");
     let position = carrier.element_data().position_map();
+    let depth = carrier.sprite().display_depth;
     let direction = carrier.element_data().direction().wrapping_sub(4) & 15;
     let little_john = uses_little_john_carry(profiles, pc.profile_index);
     let target = entities
@@ -1686,8 +1687,9 @@ pub(crate) fn sync_walking_corpse_for_carrier(
         },
         direction as u16,
     );
-    element.sprite.display_order_ref = Some(carrier_id);
-    element.sprite.behind_display_order_ref = false;
+    element
+        .sprite
+        .compute_display_depth_relative_to(depth, false);
 }
 
 /// Walking advances the frozen rider's own action after moving the carrier.
@@ -1704,6 +1706,7 @@ pub(crate) fn step_shoulder_rider(
         .and_then(|pc| pc.carried)
         .expect("walking shoulder carrier has no rider");
     let position = carrier.element_data().position_map();
+    let depth = carrier.sprite().display_depth;
     let direction = (carrier.element_data().direction() + 8) & 15;
     let rider = entities
         .get_mut(target_id)
@@ -1719,8 +1722,9 @@ pub(crate) fn step_shoulder_rider(
         crate::sprite::FrameProgression::Default,
         false,
     );
-    element.sprite.display_order_ref = Some(carrier_id);
-    element.sprite.behind_display_order_ref = false;
+    element
+        .sprite
+        .compute_display_depth_relative_to(depth, false);
 }
 
 #[cfg(test)]
@@ -3753,7 +3757,11 @@ mod tests {
             ),
             surface
         );
-        assert_eq!(rider_element.sprite.display_order_ref, Some(carrier));
+        assert_eq!(
+            rider_element.sprite.display_depth,
+            entities.get(carrier).unwrap().sprite().display_depth + 0.001
+        );
+        assert_eq!(rider_element.sprite.display_order_ref, None);
     }
 
     #[test]

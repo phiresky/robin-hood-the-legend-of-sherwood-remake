@@ -786,6 +786,7 @@ fn refresh_motion_forecast(sprite: &mut crate::sprite::Sprite, speed: f32) {
     }
 
     let wait = sprite.wait_time(sprite.current_row, sprite.current_frame);
+    sprite.compute_display_depth();
     sprite
         .position_iface
         .update_forecasted_movement(speed, wait + 1);
@@ -3015,6 +3016,7 @@ impl EngineInner {
                         .position_iface
                         .update_forecasted_movement(distance, wait + 1);
                     elem.update_grid_cell();
+                    elem.sprite.compute_display_depth();
                 }
             }
             elem.sprite.last_motion_state = Some(state);
@@ -4344,6 +4346,7 @@ impl EngineInner {
                     x: goal.x,
                     y: goal.y,
                 });
+            entity.sprite_mut().compute_display_depth();
         }
         let eid = entity_id;
 

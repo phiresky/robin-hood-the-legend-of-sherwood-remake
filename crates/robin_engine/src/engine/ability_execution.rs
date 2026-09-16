@@ -113,6 +113,7 @@ impl EngineInner {
             elem.set_sector(carrier_sector);
             if in_building {
                 elem.set_position_map(drop_pos);
+                elem.sprite.compute_display_depth();
             } else {
                 elem.set_position_map_delayed(drop_pos);
                 if let Some(position) = preserved_outdoor_position {
@@ -141,9 +142,6 @@ impl EngineInner {
                 actor.execution_frozen = false;
                 actor.action_state = crate::element::ActionState::Waiting;
             }
-            let sprite = &mut target.element_data_mut().sprite;
-            sprite.display_order_ref = None;
-            sprite.behind_display_order_ref = false;
         }
         // Dropping a corpse updates the carried human's states
         // while an outdoor delayed map-position update is still only queued.
@@ -438,11 +436,6 @@ impl EngineInner {
                     .set_direction_instantly(preserved_dir);
                 // Snap to landing slot.
                 climber.element_data_mut().set_position_map(landing_pos);
-                // The climber is no longer carried so its
-                // draw order detaches from the helper.
-                let sprite = &mut climber.element_data_mut().sprite;
-                sprite.display_order_ref = None;
-                sprite.behind_display_order_ref = false;
             }
         }
 
@@ -1207,8 +1200,7 @@ impl EngineInner {
             victim
                 .element_data_mut()
                 .set_position_map(authorized_position);
-            victim.element_data_mut().sprite.display_order_ref = None;
-            victim.element_data_mut().sprite.behind_display_order_ref = false;
+            victim.sprite_mut().compute_display_depth();
         }
         self.actor_freeze_execution(sim, assets, target_id);
         let victim = self

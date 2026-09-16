@@ -1311,6 +1311,7 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         element.set_material(crate::element::GameMaterial::Stone);
         element.sprite.display_order_ref = None;
         element.sprite.behind_display_order_ref = true;
+        element.sprite.display_depth = -77.0;
         engine
             .world
             .entities
@@ -1345,6 +1346,14 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         assert_eq!(entity.position_iface().get_material(), expected_material);
         assert_eq!(entity.sprite().display_order_ref, None);
         assert!(entity.sprite().behind_display_order_ref);
+        assert_eq!(
+            entity.sprite().display_depth,
+            if spawn_elevation_probe.is_some() {
+                -77.0
+            } else {
+                entity.element_data().position().y
+            }
+        );
         if spawn_elevation_probe.is_some() {
             assert_eq!(entity.position_iface().get_position().z, 10.0);
             assert_eq!(entity.position_iface().map_position().y, 2000.0);

@@ -1349,6 +1349,7 @@ impl NativeContext<'_, '_> {
                 ed.set_sector(Some(sector));
             }
             ed.update_grid_cell();
+            ed.sprite.compute_display_depth();
         }
     }
 

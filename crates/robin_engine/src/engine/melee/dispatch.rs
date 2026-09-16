@@ -1296,6 +1296,11 @@ impl EngineInner {
                 );
             }
             Command::ReceiveNet => {
+                if self.expect_entity(victim_id, "net recipient").posture()
+                    != crate::element::Posture::StuckUnderNet
+                {
+                    self.compute_net_victim_depth(origin.expect("net damage origin"), victim_id);
+                }
                 self.apply_net(sim, assets, victim_id);
             }
             _ => {

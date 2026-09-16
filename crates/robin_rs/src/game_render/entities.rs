@@ -152,10 +152,14 @@ pub(crate) fn render_entities_gpu(
         // they render back-to-front with the entity list (projectile /
         // dust / stars sit between actors at the correct depth instead
         // of piled on top at the end).
-        if entity.is_human()
-            && let Some(entity_depth) = host.frontend.presentation.draw_order.depth(entity_id)
-        {
-            titbit_renderer.render_up_to(host, engine, assets, renderer, entity_depth);
+        if entity.is_human() {
+            titbit_renderer.render_up_to(
+                host,
+                engine,
+                assets,
+                renderer,
+                entity.sprite().display_depth,
+            );
         }
 
         let elem = entity.element_data();
