@@ -4,6 +4,8 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches with paint opportunities targeting 25 updates per second. Progress remains visible, and a new timeline target redirects an in-progress seek.
+
 - **In-game leaderboard registration.** Every submission checks the uploader's
   server profile first: Previous Plays, mission-end buttons, retries, and
   automatic uploads share one registration gate on native and browser builds.

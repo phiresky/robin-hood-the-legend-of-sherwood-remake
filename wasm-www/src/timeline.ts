@@ -1,4 +1,5 @@
 import type { RobinRpc } from './replay.js';
+import { seekReplay } from './replay-seek.ts';
 
 const FPS = 25;
 const POLL_INTERVAL_MS = 500;
@@ -66,18 +67,29 @@ export function installTimeline(container: HTMLElement, rpc: RobinRpc): () => vo
     async function drainSeeks(): Promise<void> {
         if (seeking) return;
         seeking = true;
+        container.setAttribute('aria-busy', 'true');
         try {
             while (!disposed && pendingSeek !== undefined) {
                 const frame = pendingSeek;
                 pendingSeek = undefined;
+                const seekRevision = revision;
                 try {
-                    await rpc('go-to-frame', { frame, auto_dismiss: true });
+                    await seekReplay(rpc, frame, {
+                        cancelled: () => disposed || revision !== seekRevision,
+                        progress: position => {
+                            playPause.dataset.paused = 'true';
+                            playPause.textContent = 'Play';
+                            current.textContent = formatTime(position);
+                            if (!scrubbing) scrub.value = String(position);
+                        },
+                    });
                 } catch (e) {
                     if (!disposed) console.warn('timeline: go-to-frame failed:', e);
                 }
             }
         } finally {
             seeking = false;
+            container.removeAttribute('aria-busy');
         }
     }
 

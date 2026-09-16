@@ -118,24 +118,26 @@ test('timeline has one pending poll and ignores replies and events after disposa
 
 test('timeline coalesces seeks and discards a pre-interaction state reply', async t => {
     const timeline = pendingTimeline(t);
-    timeline.seek(10);
-    timeline.seek(20);
-    timeline.seek(30);
-    assert.deepEqual(timeline.calls.map(call => call.method), ['state', 'go-to-frame']);
-    assert.deepEqual(timeline.calls[1]!.params, { frame: 10, auto_dismiss: true });
+    timeline.seek(2);
+    timeline.seek(4);
+    timeline.seek(6);
+    assert.deepEqual(timeline.calls.map(call => call.method), ['state', 'state']);
     timeline.calls[0]!.resolve({ replay: { frame: 0, total: 100, paused: false } });
     await settle();
-    assert.equal(timeline.scrub.value, '30');
+    assert.equal(timeline.scrub.value, '6');
     timeline.tick();
     assert.equal(timeline.calls.length, 2);
-    timeline.calls[1]!.resolve(null);
+    timeline.calls[1]!.resolve({ replay: { frame: 0 } });
     await settle();
-    assert.deepEqual(timeline.calls[2]!.params, { frame: 30, auto_dismiss: true });
-    timeline.calls[2]!.resolve(null);
+    assert.equal(timeline.calls[2]!.method, 'state');
+    timeline.calls[2]!.resolve({ replay: { frame: 0 } });
+    await settle();
+    assert.deepEqual(timeline.calls[3]!.params, { frame: 6, auto_dismiss: true });
+    timeline.calls[3]!.resolve(null);
     await settle();
     timeline.tick();
-    assert.equal(timeline.calls[3]!.method, 'state');
-    timeline.calls[3]!.resolve({ replay: { frame: 30, total: 100, paused: true } });
+    assert.equal(timeline.calls[4]!.method, 'state');
+    timeline.calls[4]!.resolve({ replay: { frame: 6, total: 100, paused: true } });
     await settle();
     assert.equal(timeline.container.style.display, 'flex');
 });
@@ -163,5 +165,22 @@ test('failed seeks release the queue and still send its latest target', async t 
     timeline.calls[1]!.reject('seek failed');
     await settle();
     assert.equal(warnings.length, 1);
-    assert.deepEqual(timeline.calls[2]!.params, { frame: 30, auto_dismiss: true });
+    assert.equal(timeline.calls[2]!.method, 'state');
+    timeline.calls[2]!.resolve({ replay: { frame: 25 } });
+    await settle();
+    assert.deepEqual(timeline.calls[3]!.params, { frame: 30, auto_dismiss: true });
+});
+
+test('play/pause interrupts a pending seek before another batch is sent', async t => {
+    const timeline = pendingTimeline(t);
+    timeline.calls[0]!.resolve({ replay: { frame: 0, total: 100, paused: true } });
+    await settle();
+    timeline.seek(90);
+    timeline.container.querySelector('button')!.click();
+    assert.equal(timeline.calls[2]!.method, 'set-paused');
+    timeline.calls[1]!.resolve({ replay: { frame: 0 } });
+    timeline.calls[2]!.resolve(null);
+    await settle();
+    assert.equal(timeline.calls.length, 3);
+    assert.equal(timeline.container.hasAttribute('aria-busy'), false);
 });
