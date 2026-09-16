@@ -595,6 +595,12 @@ fn seek_replay_step(
             .expect("active replay")
             .current_frame();
         if checkpoint_only {
+            crate::blit_to_map::restore_background_patches(
+                &manager.engine,
+                assets,
+                &mut host.frontend,
+                &mut host.effects,
+            );
             return Ok(());
         }
         if target > current {
@@ -624,6 +630,12 @@ fn seek_replay_step(
                 "replay seek did not reach requested position",
             ));
         }
+        crate::blit_to_map::restore_background_patches(
+            &manager.engine,
+            assets,
+            &mut host.frontend,
+            &mut host.effects,
+        );
         Ok(())
     })();
     match result {

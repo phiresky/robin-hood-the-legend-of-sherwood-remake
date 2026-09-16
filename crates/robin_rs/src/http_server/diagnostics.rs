@@ -119,6 +119,8 @@ pub(crate) fn snapshot_host_debug(
     serde_json::json!({
         "frame": engine.frame_counter(),
         "selected_action": selected_action,
+        "background_decals": frontend.resources.background_decals,
+        "background_patch_blits": engine.background_patch_blits(assets),
         "selection": engine.hero_selection(local_seat),
         "selected_pc": selected_pc_state,
         "valid_trajectory": preview.is_valid(),

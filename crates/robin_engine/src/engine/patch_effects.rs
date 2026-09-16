@@ -19,6 +19,41 @@ fn initialize_patch_animation(
 }
 
 impl EngineInner {
+    /// Rebuild persistent patch visuals after adopting a different timeline.
+    /// A reverse transition has already removed its applied background.
+    pub fn background_patch_blits(&self, assets: &LevelAssets) -> Vec<super::PendingBgBlit> {
+        self.script_domains
+            .interactables
+            .patches
+            .iter()
+            .enumerate()
+            .filter(|(_, patch)| {
+                patch.applied && !patch.in_transition && patch.integrate_in_background
+            })
+            .filter_map(|(index, _)| {
+                let handle = assets
+                    .entities
+                    .patch_animation_entities
+                    .get(index)
+                    .copied()
+                    .flatten()?;
+                let Some(entity_id) = self.entity_id_for_actor_handle(handle) else {
+                    tracing::warn!(
+                        index,
+                        handle,
+                        "cannot reconstruct patch background: missing FX entity"
+                    );
+                    return None;
+                };
+                Some(super::PendingBgBlit {
+                    entity_id,
+                    restore_only: false,
+                    decal: self.snapshot_patch_transition_decal(entity_id),
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn apply_patch(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -836,6 +871,37 @@ mod tests {
         assert_eq!(decal.bank_id, 22);
         assert_eq!(decal.dst_x, 98);
         assert_eq!(decal.dst_y, 198);
+        let mut assets = LevelAssets::default();
+        assets.entities.patch_animation_entities = std::sync::Arc::new(vec![Some(
+            crate::natives::ScriptHandleCodec::actor_handle_from_index(0),
+        )]);
+        engine
+            .script_domains
+            .interactables
+            .patches
+            .push(crate::patch::Patch {
+                integrate_in_background: true,
+                ..Default::default()
+            });
+        let initial = engine.clone();
+        let index = crate::patch::PatchIndex::new(0).unwrap();
+        engine.apply_patch(&crate::sim_rng::test_context(), &assets, index);
+        let applied = engine.clone();
+        let blits = applied.background_patch_blits(&assets);
+        assert_eq!(blits.len(), 1);
+        assert_eq!(blits[0].entity_id, entity_id);
+        assert_eq!(blits[0].decal.as_ref().unwrap().bank_id, 22);
+        assert!(
+            initial.background_patch_blits(&assets).is_empty(),
+            "backward adoption removes the patch"
+        );
+        engine.script_domains.interactables.patches[0].in_transition = true;
+        assert!(
+            engine.background_patch_blits(&assets).is_empty(),
+            "reverse transition has restored the base map"
+        );
+        engine.reset_patch(&crate::sim_rng::test_context(), &assets, index);
+        assert!(engine.background_patch_blits(&assets).is_empty());
     }
 
     #[test]
