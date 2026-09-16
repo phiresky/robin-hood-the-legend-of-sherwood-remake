@@ -71,6 +71,7 @@ if (window.top !== window.self) {
 
 async function renderCurrentRoute(): Promise<void> {
     await routeController.run(async signal => {
+        document.title = 'Robin Hood — Leaderboards';
         renderLoading();
         const route = routeFromUrl(window.location.href);
         const api = new HighscoreApi(apiBaseFromBrowser());
@@ -461,6 +462,8 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     const ownerBridge = await bridgeForKeys(run.uploader === null ? [] : [run.uploader.publicKey]);
     signal.throwIfAborted();
     const labels = runLabels(metadata, run.boardId, run.missionId);
+    const title = `${labels.missionLabel} - run by ${run.uploader?.username ?? 'Anonymous'}`;
+    document.title = title;
     const mainPanel = element('section', { className: 'panel detail-section' });
     mainPanel.append(
         element('span', { className: 'badge verified', text: '✓ Verified run' }),
@@ -494,7 +497,7 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
         : renderDeletionForm(api, ownerBridge, { kind: 'run', run_id: run.runId }, signal));
     replace(
         app,
-        pageHeading(`${labels.missionLabel} — verified run`, 'Watch the replay and explore the result.'),
+        pageHeading(title, 'Watch the replay and explore the result.'),
         element('section', { className: 'panel replay-section' }, [renderReplayActions(api, run)]),
         element('div', { className: 'detail-grid' }, [mainPanel, record]),
     );
