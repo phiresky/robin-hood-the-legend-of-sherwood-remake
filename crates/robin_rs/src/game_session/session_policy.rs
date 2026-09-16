@@ -102,6 +102,14 @@ pub(super) struct ModalCheckpoint {
     leave_prompt: bool,
 }
 
+impl ModalCheckpoint {
+    /// Interactive widgets own active dialogs outside the seek scheduler.
+    /// Restore a settled boundary so the normal widget path can resume intact.
+    pub(super) fn is_settled(&self) -> bool {
+        self.active.is_none() && self.pending.is_empty() && !self.leave_prompt
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum ModalDecisionSource {
     Recorded,

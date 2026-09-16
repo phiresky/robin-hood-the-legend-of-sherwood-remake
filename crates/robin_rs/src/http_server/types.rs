@@ -115,6 +115,7 @@ pub enum HttpPayload {
     /// or dense recording-ordinal seek during replay.
     GoToFrame {
         target: u32,
+        checkpoint_only: bool,
         modal_policy: StepModalPolicy,
     },
     /// `POST /set-paused` / `robin.call("set-paused", {paused})` —
@@ -205,9 +206,11 @@ impl HttpPayload {
             }
             Self::GoToFrame {
                 target,
+                checkpoint_only,
                 modal_policy,
             } => RoutedRequest::Deferred(DeferredRequest::Step(StepKind::GoToFrame {
                 target,
+                checkpoint_only,
                 modal_policy,
             })),
             Self::SetPaused { paused } => {
@@ -363,6 +366,7 @@ pub enum StepKind {
     /// seek during replay, so reloads and stationary records remain addressable.
     GoToFrame {
         target: u32,
+        checkpoint_only: bool,
         modal_policy: StepModalPolicy,
     },
     /// Toggle the single-player mission loop's manual pause flag. Queued with

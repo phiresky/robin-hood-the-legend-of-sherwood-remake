@@ -31,7 +31,8 @@ import {
 } from './replay.js';
 import { installTimeline } from './timeline.js';
 import { createRpcClient } from './rpc-client.js';
-import { fetchRunReplay, parseHostedReplayContent, runFromQuery, runPlaybackBuild, type RunReplay } from './run-replay.js';
+import { fetchRunReplay, fetchRunCheckpoints, parseHostedReplayContent, runFromQuery, runPlaybackBuild, type RunReplay } from './run-replay.js';
+import { loadReplayCheckpoints } from './replay-checkpoints.js';
 
 declare global {
     // Optional test/dev override for loading binaries from a local checkout.
@@ -399,7 +400,6 @@ async function main(): Promise<void> {
         ? replayFromQuery(pageParams)
         : { content: runReplay.content, paused: true };
     let preparedReplay: PreparedReplay | null = null;
-    let validatedCheckpoints: Uint8Array | undefined;
     logOk(crossOriginIsolated
         ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
         : '[not cross-origin isolated: sprite decode stays single-threaded]');
@@ -419,17 +419,6 @@ async function main(): Promise<void> {
                 async (content, admissionSignal) => {
                     performance.mark('robin-replay-admission-start');
                     await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal);
-                    if (runReplay?.checkpoints !== undefined) {
-                        try {
-                            await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal, runReplay.checkpoints);
-                            validatedCheckpoints = runReplay.checkpoints;
-                        } catch (error) {
-                            admissionSignal?.throwIfAborted();
-                            console.warn('Replay checkpoints rejected; using local seeking:', error);
-                        } finally {
-                            delete runReplay.checkpoints;
-                        }
-                    }
                     admissionSignal.throwIfAborted();
                     performance.mark('robin-replay-admission-accepted');
                 }, signal,
@@ -491,14 +480,22 @@ async function main(): Promise<void> {
                     throw new Error('selected wasm build cannot accept an isolated replay proof');
                 }
                 wasm.wasm_mark_compact_replay_validated(content);
-                if (validatedCheckpoints !== undefined && wasm.wasm_install_replay_seek_sidecar !== undefined) {
-                    try { wasm.wasm_install_replay_seek_sidecar(content, validatedCheckpoints); }
-                    catch (error) { console.warn('Cannot import replay checkpoints; using local seeking:', error); }
-                }
-                validatedCheckpoints = undefined;
             }, preparedReplay, buildBase);
             bootAbort.signal.throwIfAborted();
             if (replayLoaded) {
+                if (runReplay !== null && wasm.wasm_install_replay_seek_sidecar !== undefined) {
+                    const install = wasm.wasm_install_replay_seek_sidecar;
+                    void loadReplayCheckpoints(rpc, bootAbort.signal, {
+                        download: () => fetchRunCheckpoints(runReplay.runId, RUN_API_BASE, fetch, bootAbort.signal),
+                        validate: bytes => validateReplayInWorker(runReplay.content, `${buildBase}/replay_admission.js`, `${buildBase}/replay_admission_bg.wasm`, bootAbort.signal, bytes),
+                        install: bytes => {
+                            install(runReplay.content, bytes);
+                            logOk('[replay seek checkpoints ready]');
+                        },
+                    }).catch(error => {
+                        if (!bootAbort.signal.aborted) console.warn('Replay checkpoints unavailable; using local seeking:', error);
+                    });
+                }
                 performance.mark('robin-replay-queue-accepted');
                 logOk('[replay queued from URL]');
                 if (replayTimeline !== null && !new URL(location.href).searchParams.has('notimeline')) {

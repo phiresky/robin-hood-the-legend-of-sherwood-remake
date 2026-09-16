@@ -59,6 +59,7 @@ pub(crate) fn snapshot_state(engine: &Engine, replay: Option<ReplayStatus>) -> s
             "frame": s.frame,
             "total": s.total,
             "paused": s.paused,
+            "checkpoint_seek": true,
         })
     });
     serde_json::json!({
@@ -732,7 +733,7 @@ mod tests {
                 })
             ),
             serde_json::json!({"frame": 42, "map": engine.mission_map_name(),
-                "replay": {"frame": 3, "total": 9, "paused": true}})
+                "replay": {"frame": 3, "total": 9, "paused": true, "checkpoint_seek": true}})
         );
         assert_eq!(
             snapshot_script(&engine),

@@ -733,6 +733,7 @@ mod dispatch_tests {
             (
                 HttpPayload::GoToFrame {
                     target: 20,
+                    checkpoint_only: false,
                     modal_policy: StepModalPolicy::default(),
                 },
                 InputTaintKind::HttpSimulationStep,

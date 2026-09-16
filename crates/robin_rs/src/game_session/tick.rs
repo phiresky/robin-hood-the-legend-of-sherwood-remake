@@ -417,11 +417,16 @@ pub(super) fn drain_steps(
                     Err(e) => step.respond_err(e),
                 }
             }
-            crate::http_server::StepKind::GoToFrame { target, .. } => {
+            crate::http_server::StepKind::GoToFrame {
+                target,
+                checkpoint_only,
+                ..
+            } => {
                 if timeline.replay().playback().is_some() {
                     seek_replay_step(
                         step,
                         target,
+                        checkpoint_only,
                         StepWorld {
                             manager: &mut *manager,
                             host: &mut *host,
@@ -434,6 +439,12 @@ pub(super) fn drain_steps(
                         session_modals.as_deref_mut(),
                         accepted_dismissals,
                     );
+                    continue;
+                }
+                if checkpoint_only {
+                    step.respond_err(RpcError::invalid_request(
+                        "checkpoint-only seeking requires a replay",
+                    ));
                     continue;
                 }
                 let from = timeline.frame_number();
@@ -531,6 +542,7 @@ pub(super) fn drain_steps(
 fn seek_replay_step(
     step: crate::http_server::PendingStep,
     target: u32,
+    checkpoint_only: bool,
     world: StepWorld<'_>,
     timeline: &mut super::runtime::TimelineRuntime,
     modal_policy: &mut Option<crate::http_server::StepModalPolicy>,
@@ -557,13 +569,16 @@ fn seek_replay_step(
         return;
     }
     let result = (|| -> Result<(), RpcError> {
-        let restored = if let Some(scheduler) = session_modals.as_deref_mut() {
-            timeline
-                .restore_replay_checkpoint(target, manager, host, game, assets, scheduler)
-                .map_err(|error| RpcError::internal(error.to_string()))?
-        } else {
-            false
-        };
+        let restored = timeline
+            .restore_replay_checkpoint(
+                target,
+                manager,
+                host,
+                game,
+                assets,
+                session_modals.as_deref_mut(),
+            )
+            .map_err(|error| RpcError::internal(error.to_string()))?;
         if target < from && !restored {
             timeline
                 .rewind_replay_to_start(manager, host, game, assets)
@@ -578,6 +593,9 @@ fn seek_replay_step(
             .playback()
             .expect("active replay")
             .current_frame();
+        if checkpoint_only {
+            return Ok(());
+        }
         if target > current {
             let (_, dismissed) = run_forward_ticks_with_session_modals(
                 StepWorld {
@@ -611,7 +629,7 @@ fn seek_replay_step(
         Ok(()) => step.respond_ok(serde_json::json!({
             "direction": "go-to-frame",
             "from_frame": from,
-            "frame": target,
+            "frame": timeline.replay().playback().expect("active replay").current_frame(),
             "timeline_frame": timeline.frame_number(),
             "modals_dismissed": accepted_dismissals.len(),
             "modal_dismissals": accepted_dismissals,

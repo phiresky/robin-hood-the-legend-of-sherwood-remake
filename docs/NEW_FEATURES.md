@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Background replay checkpoints.** Leaderboard viewers download and validate seek
+  checkpoints after the mission starts. Interactive seeks restore a settled
+  checkpoint first, then render progress while simulating the remaining records;
+  a sidecar arriving during a seek becomes usable without restarting playback.
+
 A list of which additional features we have added, which ones we might still want to add, and which old ones we will NOT add.
 
 ## Done

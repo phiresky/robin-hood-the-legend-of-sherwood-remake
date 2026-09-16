@@ -19,11 +19,24 @@ export async function seekReplay(
         window.setTimeout(resolve, delay);
     }));
     const requestedStateAt = now();
-    const state = await rpc<{ replay: { frame: number } | null }>('state');
+    const state = await rpc<{ replay: { frame: number; checkpoint_seek?: boolean } | null }>('state');
     const schedulingMs = Math.min(PRESENT_INTERVAL_MS, now() - requestedStateAt);
     if (options.cancelled()) return;
     if (state.replay === null) throw new Error('Replay is no longer active');
     let frame = state.replay.frame;
+    let lastProbe = -Infinity;
+    const checkpointSeek = state.replay.checkpoint_seek === true;
+    const restoreCheckpoint = async () => {
+        const result = await rpc<{ frame: number }>('go-to-frame', { frame: target, auto_dismiss: true, checkpoint_only: true });
+        if (!Number.isSafeInteger(result.frame) || result.frame < 0 || result.frame > target) throw new Error('Invalid replay checkpoint position');
+        frame = result.frame;
+        lastProbe = now();
+        if (!options.cancelled()) options.progress(frame);
+    };
+    if (checkpointSeek) {
+        await restoreCheckpoint();
+        if (options.cancelled()) return;
+    }
     // Backward seeks otherwise replay the entire prefix in one blocking call.
     if (target < frame) {
         await rpc('go-to-frame', { frame: 0, auto_dismiss: true });
@@ -34,6 +47,11 @@ export async function seekReplay(
     }
     let batch = 8;
     while (frame < target && !options.cancelled()) {
+        // A background download may finish while a long seek is underway.
+        if (checkpointSeek && now() - lastProbe >= 250) {
+            await restoreCheckpoint();
+            if (options.cancelled() || frame === target) break;
+        }
         const next = Math.min(target, frame + batch);
         const started = now();
         await rpc('go-to-frame', { frame: next, auto_dismiss: true });

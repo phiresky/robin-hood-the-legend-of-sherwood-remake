@@ -108,6 +108,10 @@ pub(in crate::game_session) struct ReplayLifecycle {
         super::super::session_policy::SessionModalScheduler,
     )>,
     seek_cache: seek::ReplaySeekCache,
+    seek_start: Option<(
+        crate::save_file::ReplayPresentationSnapshot,
+        robin_engine::engine::HostEffects,
+    )>,
 }
 
 impl ReplayLifecycle {
@@ -130,6 +134,7 @@ impl ReplayLifecycle {
             control,
             initial_state: None,
             seek_cache: Default::default(),
+            seek_start: None,
         }
     }
 
@@ -598,6 +603,10 @@ impl ReplayLifecycle {
             return Ok(());
         };
         if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
+            self.seek_start = Some((
+                crate::save_file::ReplayPresentationSnapshot::capture(host, game),
+                (*host.effects).clone(),
+            ));
             let mut modals = super::super::session_policy::SessionModalScheduler::default();
             modals.checkpoint(0, &host.effects);
             self.initial_state = Some((
@@ -609,9 +618,20 @@ impl ReplayLifecycle {
                 )?,
                 modals,
             ));
+        }
+        if let Some((presentation, effects)) = &self.seek_start {
             if let Some(sidecar) = crate::replay_seek::take(player.data()) {
-                match seek::ReplaySeekCache::import(sidecar, player.data(), host, game) {
-                    Ok(cache) => self.seek_cache = cache,
+                let count = sidecar.checkpoints.len();
+                match seek::ReplaySeekCache::import_from_start(
+                    sidecar,
+                    player.data(),
+                    presentation.clone(),
+                    effects.clone(),
+                ) {
+                    Ok(cache) => {
+                        self.seek_cache = cache;
+                        tracing::info!(checkpoints = count, "imported replay seek sidecar");
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "replay seek sidecar rejected; using local checkpoints")
                     }

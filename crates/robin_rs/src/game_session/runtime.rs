@@ -1335,7 +1335,7 @@ impl TimelineRuntime {
         host: &mut Host,
         game: &mut Game,
         assets: &LevelAssets,
-        modals: &mut super::session_policy::SessionModalScheduler,
+        modals: Option<&mut super::session_policy::SessionModalScheduler>,
     ) -> Result<bool, MissionError> {
         self.replay.prepare_seek_cache(host, game, manager)?;
         let Some(timeline) = self

@@ -67,6 +67,8 @@ struct ConsoleBody {
 #[derive(Serialize, Deserialize)]
 struct GoToBody {
     frame: u32,
+    #[serde(default)]
+    checkpoint_only: bool,
     #[serde(flatten)]
     modal_policy: StepModalPolicy,
 }
@@ -196,6 +198,7 @@ fn decode(kind: RequestKind, params: Parameters<'_>) -> Result<HttpPayload, RpcE
             let body: GoToBody = params.decode()?;
             HttpPayload::GoToFrame {
                 target: body.frame,
+                checkpoint_only: body.checkpoint_only,
                 modal_policy: body.modal_policy,
             }
         }
@@ -257,8 +260,9 @@ mod tests {
             }
             HttpPayload::GoToFrame {
                 target,
+                checkpoint_only,
                 modal_policy,
-            } => serde_json::json!([target, modal_policy]),
+            } => serde_json::json!([target, checkpoint_only, modal_policy]),
             HttpPayload::SetPaused { paused } => serde_json::json!(paused),
             HttpPayload::LoadReplay { data, paused } => serde_json::json!([data, paused]),
             _ => panic!("add field comparison for the new decoder fixture"),

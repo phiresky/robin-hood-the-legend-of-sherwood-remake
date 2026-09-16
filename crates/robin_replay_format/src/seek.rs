@@ -182,7 +182,10 @@ impl ReplaySeekSidecar {
         }
         let sidecar: Self = bitcode::decode(&raw).map_err(|e| e.to_string())?;
         if sidecar.replay_sha256 != replay_sha256
-            || sidecar.engine_version != crate::ENGINE_VERSION_HASH
+            || !(sidecar.engine_version == crate::ENGINE_VERSION_HASH
+                // The schema-52 viewer patch changes only host-side seeking.
+                || (robin_engine::replay::REPLAY_SCHEMA_VERSION == 52
+                    && sidecar.engine_version == "e7557179eb05"))
             || sidecar.replay_schema != replay.header().version
             || sidecar.frames != replay.frame_count()
         {

@@ -37,20 +37,34 @@ fn decode(snapshot: &SeekSnapshot) -> Result<Engine, String> {
 }
 
 impl ReplaySeekCache {
+    #[cfg(test)]
     pub(super) fn import(
         sidecar: ReplaySeekSidecar,
         replay: &ReplayData,
         host: &Host,
         game: &Game,
     ) -> Result<Self, String> {
+        Self::import_from_start(
+            sidecar,
+            replay,
+            ReplayPresentationSnapshot::capture(host, game),
+            (*host.effects).clone(),
+        )
+    }
+
+    pub(super) fn import_from_start(
+        sidecar: ReplaySeekSidecar,
+        replay: &ReplayData,
+        mut presentation: ReplayPresentationSnapshot,
+        initial_effects: robin_engine::engine::HostEffects,
+    ) -> Result<Self, String> {
         let mut cache = Self::default();
         let mut checkpoints = sidecar.checkpoints.into_iter().peekable();
         let mut saves = sidecar.saves.into_iter().peekable();
         let mut events = sidecar.effects.into_iter().peekable();
         let mut effects = HostEffectBatches::default();
-        effects.append((*host.effects).clone());
+        effects.append(initial_effects);
         let mut modals = SessionModalScheduler::default();
-        let mut presentation = ReplayPresentationSnapshot::capture(host, game);
         let mut saved_presentation = BTreeMap::new();
         for ordinal in 0..replay.frame_count() {
             if checkpoints.peek().is_some_and(|s| s.ordinal == ordinal) {
@@ -171,9 +185,14 @@ impl ReplayLifecycle {
         host: &mut Host,
         game: &mut Game,
         assets: &LevelAssets,
-        modals: &mut SessionModalScheduler,
+        modals: Option<&mut SessionModalScheduler>,
     ) -> Result<Option<TimelineFrame>, MissionError> {
-        let Some((&ordinal, checkpoint)) = self.seek_cache.checkpoints.range(..=target).next_back()
+        let Some((&ordinal, checkpoint)) = self
+            .seek_cache
+            .checkpoints
+            .range(..=target)
+            .rev()
+            .find(|(_, checkpoint)| modals.is_some() || checkpoint.modals.is_settled())
         else {
             return Ok(None);
         };
@@ -190,7 +209,13 @@ impl ReplayLifecycle {
             .restore(assets)
             .map_err(MissionError::replay)?;
         checkpoint.presentation.restore(&engine, host, game);
-        modals.restore_seek(ordinal, checkpoint.modals.clone(), &mut host.effects);
+        let mut interactive_modals = SessionModalScheduler::default();
+        modals.unwrap_or(&mut interactive_modals).restore_seek(
+            ordinal,
+            checkpoint.modals.clone(),
+            &mut host.effects,
+        );
+        tracing::info!(target, ordinal, "restored replay seek checkpoint");
         manager.engine = engine;
         self.ordinal = ReplayFrameOrdinal::from_wire(ordinal);
         self.player.as_mut().unwrap().seek_ordinal(self.ordinal);
@@ -344,7 +369,15 @@ mod tests {
         lifecycle.seek_cache = cache;
         let mut manager = EngineManager::new(initial);
         let mut modals = SessionModalScheduler::default();
-        for target in [501, 250, 0, 500] {
+        for (target, headless) in [
+            (501, true),
+            (250, true),
+            (0, true),
+            (500, true),
+            (250, false),
+            (0, false),
+            (501, false),
+        ] {
             let timeline = lifecycle
                 .restore_seek_checkpoint(
                     target,
@@ -352,7 +385,7 @@ mod tests {
                     &mut host,
                     &mut game,
                     &assets,
-                    &mut modals,
+                    headless.then_some(&mut modals),
                 )
                 .unwrap()
                 .unwrap();

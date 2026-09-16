@@ -22,7 +22,6 @@ export type RunReplay = {
     readonly edition: 'demo' | 'full';
     /** Exact binary replay artifact. */
     readonly content: Uint8Array;
-    checkpoints?: Uint8Array;
     legacyViewer?: true;
 };
 
@@ -95,17 +94,12 @@ export async function fetchRunReplay(
     if (bytes.length <= header.length || !header.every((byte, index) => bytes[index] === byte)) {
         throw new Error(`run ${runId}: the replay was not recorded by engine build ${launch.runtimeBuild}`);
     }
-    let checkpoints: Uint8Array | undefined;
     if (legacy) return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes, legacyViewer: true };
-    try {
-        const sidecar = await get(fetchImpl, `${runUrl}/checkpoints`, 'application/x-robin-rhseek', 64 * 1024 * 1024, signal, true);
-        if (sidecar.length !== 0) checkpoints = sidecar;
-    } catch (error) {
-        signal.throwIfAborted();
-        console.warn('Replay checkpoints unavailable; using local seeking:', error);
-    }
-    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes,
-        ...(checkpoints === undefined ? {} : { checkpoints }) };
+    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes };
+}
+
+export async function fetchRunCheckpoints(runId: string, apiBase: string, fetchImpl: typeof fetch, signal: AbortSignal): Promise<Uint8Array> {
+    return get(fetchImpl, `${apiBase.replace(/\/+$/u, '')}/runs/${encodeURIComponent(runId)}/checkpoints`, 'application/x-robin-rhseek', 64 * 1024 * 1024, signal, true);
 }
 
 async function get(

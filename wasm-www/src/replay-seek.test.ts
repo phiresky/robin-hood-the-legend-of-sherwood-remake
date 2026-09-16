@@ -3,6 +3,37 @@ import test from 'node:test';
 import { seekReplay } from './replay-seek.ts';
 import type { RobinRpc } from './replay.ts';
 
+test('both seek directions restore a checkpoint before simulating the remainder', async () => {
+    for (const initial of [0, 4400]) {
+        let frame = initial, simulated = 0;
+        const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
+            if (method === 'state') return { replay: { frame, checkpoint_seek: true } } as T;
+            const request = params as { frame: number; checkpoint_only?: boolean };
+            if (request.checkpoint_only) { assert.equal(request.frame, 4010); frame = 4000; }
+            else { simulated += request.frame - frame; frame = request.frame; }
+            return { frame } as T;
+        };
+        await seekReplay(rpc, 4010, { cancelled: () => false, progress: () => {}, now: () => 0, present: async () => {} });
+        assert.equal(frame, 4010);
+        assert.equal(simulated, 10);
+    }
+});
+
+test('sidecar arriving during a seek is used without restarting', async () => {
+    let frame = 0, time = 0, probes = 0, simulated = 0;
+    const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === 'state') return { replay: { frame, checkpoint_seek: true } } as T;
+        const request = params as { frame: number; checkpoint_only?: boolean };
+        if (request.checkpoint_only) { if (++probes === 2) frame = 4000; }
+        else { simulated += request.frame - frame; frame = request.frame; time += 40; }
+        return { frame } as T;
+    };
+    await seekReplay(rpc, 4010, { cancelled: () => false, progress: () => {}, now: () => time, present: async () => { time += 40; } });
+    assert.equal(frame, 4010);
+    assert.equal(probes, 2);
+    assert(simulated < 250);
+});
+
 test('long seeks yield between adaptive batches and stop exactly at their target', async () => {
     let frame = 0, time = 0, paints = 0;
     const targets: number[] = [];

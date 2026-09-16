@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { fetchRunReplay, parseHostedReplayContent, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
+import { fetchRunReplay, fetchRunCheckpoints, parseHostedReplayContent, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
 
 const build = '0123456789ab';
 const replay = new TextEncoder().encode(`RHREC\x01${build}\x28\xb5\x2f\xfd`);
@@ -60,7 +60,7 @@ test('a run launches its recorded engine build with the exact published replay',
     const { fetchImpl, urls } = api(runDocument());
     const result = await fetchRunReplay('run-1', 'https://robinhood.example/api/v1/', fetchImpl, new AbortController().signal);
     assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, edition: 'demo', content: replay });
-    assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay', 'https://robinhood.example/api/v1/runs/run-1/checkpoints']);
+    assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay']);
 });
 
 test('run playback refuses unavailable, mismatched and tampered runs', async () => {
@@ -95,7 +95,7 @@ test('run downloads an optional checkpoint sidecar without changing the replay',
         : base(url, init)) as typeof fetch;
     const result = await fetchRunReplay('run-1', '/api/v1', fetchImpl, new AbortController().signal);
     assert.deepEqual(result.content, replay);
-    assert.deepEqual(result.checkpoints, sidecar);
+    assert.deepEqual(await fetchRunCheckpoints('run-1', '/api/v1', fetchImpl, new AbortController().signal), sidecar);
 });
 
 
