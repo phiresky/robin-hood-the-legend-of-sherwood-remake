@@ -640,7 +640,6 @@ pub(super) fn transition_crenel_climb_up_mask_position(
         return None;
     }
     let actor = entity.actor_data()?;
-    let door_pass = actor.active_door_pass.as_ref()?;
     if actor.installed_order?.order_type != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
     {
         return None;
@@ -648,7 +647,8 @@ pub(super) fn transition_crenel_climb_up_mask_position(
     if !engine.has_mission_geometry() {
         return None;
     }
-    let door = engine.doors().get(usize::from(door_pass.door_index))?;
+    let door_index = entity.position_iface().get_door()?;
+    let door = engine.doors().get(usize::from(door_index))?;
     let point_mid = door.point_mid;
     let point_out = door.point_out;
 
