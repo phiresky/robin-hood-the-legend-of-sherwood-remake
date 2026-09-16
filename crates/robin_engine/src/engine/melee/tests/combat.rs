@@ -759,7 +759,6 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
         .get_entity(attacker)
         .and_then(Entity::enemy_ai)
         .expect("AI-controlled hero must retain its Enemy AI");
-    assert!(ai.pending_special_strike);
     assert!(
         engine
             .orders
@@ -775,27 +774,6 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
             .current_outline,
         crate::element::OutlineColorName::Default,
         "attacking another AI-controlled hero must not use the player-warning hulk delay"
-    );
-}
-
-#[test]
-fn entering_attacking_swordfight_without_reconsideration_does_not_propose() {
-    let mut engine = make_engine();
-    let (attacker, _) = make_enemy_strike_pair(&mut engine);
-    let assets = assets_with_sword_profile(7, 30);
-    engine.control.rng = SimulationRng::with_original_replay(Vec::new());
-
-    engine.with_simulation_context(|engine, sim| {
-        engine.tick_enemy_sword_attacks(sim, &assets);
-    });
-
-    assert_eq!(engine.control.rng.original_replay_cursor(), Some(0));
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .has_live_element_for_actor_matching(attacker, Command::is_swordstrike),
-        "entering AttackingSwordfight alone must not propose a strike"
     );
 }
 
@@ -916,7 +894,6 @@ fn strike_proposal_changes_substate_only_when_accepted() {
         rejected_ai.base.current_substate,
         crate::ai::Substate::AttackingSwordfight
     );
-    assert!(!rejected_ai.pending_special_strike);
 
     // A successful proposal changes Original to SpecialStrike before the
     // same following statement tests the substate, suppressing the bark.
@@ -931,7 +908,6 @@ fn strike_proposal_changes_substate_only_when_accepted() {
         .get_entity(accepted_attacker)
         .and_then(Entity::enemy_ai)
         .unwrap();
-    assert!(accepted_ai.pending_special_strike);
     assert_eq!(
         accepted_ai.base.current_substate,
         crate::ai::Substate::AttackingSwordfightSpecialStrike

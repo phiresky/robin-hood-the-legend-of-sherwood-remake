@@ -497,24 +497,75 @@ fn postponed_non_entry_strike_translates_after_antagonist_dies() {
 }
 
 #[test]
-fn special_strike_cancellation_closes_its_set_state_callback_boundary() {
-    let mut engine = make_engine();
-    let (attacker, _) = make_enemy_strike_pair(&mut engine);
-    let assets = assets_with_sword_profile(7, 30);
-    engine.with_simulation_context(|engine, sim| {
-        engine.begin_ai_special_strike(sim, &assets, attacker);
-        engine.tick_enemy_sword_attacks(sim, &assets);
-    });
+fn special_strike_terminal_callbacks_finish_inline_without_reconciliation() {
+    use crate::ai::Substate;
+    use crate::sequence::{CascadeFlags, SequenceElement, SequenceState};
 
-    let ai = engine
-        .get_entity(attacker)
-        .and_then(Entity::enemy_ai)
-        .unwrap();
-    assert!(!ai.pending_special_strike);
-    assert_eq!(
-        ai.base.current_substate,
-        crate::ai::Substate::AttackingSwordfight
-    );
+    for command in [
+        Command::SwordstrikeThrustA,
+        Command::SwordstrikeThrustB,
+        Command::SwordstrikeThrustC,
+        Command::SwordstrikeThrustD,
+        Command::SwordstrikeThrustE,
+        Command::SwordstrikeThrustF,
+        Command::SwordstrikeThrustG,
+        Command::SwordstrikeThrustH,
+        Command::SwordstrikeThrustI,
+        Command::SwordstrikeTired,
+        Command::SwordstrikeDown,
+    ] {
+        for terminal in [
+            SequenceState::Terminated,
+            SequenceState::Interrupted,
+            SequenceState::Impossible,
+        ] {
+            let mut engine = make_engine();
+            let (attacker, _) = make_enemy_strike_pair(&mut engine);
+            let assets = assets_with_sword_profile(7, 30);
+            engine.control.frame_counter = 40;
+            engine.with_simulation_context(|engine, sim| {
+                engine.begin_ai_special_strike(sim, &assets, attacker);
+                let sequence = engine
+                    .orders
+                    .sequence_manager
+                    .insert_element(SequenceElement::new(1, command, Some(attacker)));
+                engine
+                    .orders
+                    .sequence_manager
+                    .start_sequence_level(sequence);
+                engine.set_sequence_element_state(
+                    sim,
+                    &assets,
+                    &mut Vec::new(),
+                    sequence,
+                    0,
+                    terminal,
+                    CascadeFlags::empty(),
+                    "special_strike_terminal_test",
+                );
+            });
+
+            let ai = engine
+                .get_entity(attacker)
+                .and_then(Entity::enemy_ai)
+                .unwrap();
+            if terminal == SequenceState::Impossible {
+                assert_eq!(
+                    ai.base.current_substate,
+                    Substate::AttackingSwordfightSpecialStrike,
+                    "{command:?}: impossibility must not synthesize a completion"
+                );
+            } else {
+                assert_eq!(
+                    ai.base.current_substate,
+                    Substate::AttackingSwordfight,
+                    "{command:?}: {terminal:?} must finish before the transition returns"
+                );
+                assert_eq!(ai.base.when_does_timer_ring, 60);
+                assert!(ai.base.timer_is_running);
+            }
+        }
+    }
 }
 
 #[test]
@@ -529,10 +580,6 @@ fn event_authorized_parade_reconsideration_reaches_strike_proposal() {
         soldier.npc.ai_brain.base_mut().unwrap().current_substate =
             crate::ai::Substate::AttackingSwordfightParade;
         soldier.human.tiredness = TIREDNESS_WEAK_THRESHOLD;
-        let crate::element::AiBrain::Enemy(ai) = &mut soldier.npc.ai_brain else {
-            unreachable!()
-        };
-        ai.next_sword_strike_frame = u32::MAX;
         soldier.element.sprite.scripts =
             std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
                 action_done: 0,
@@ -651,7 +698,6 @@ fn reactive_counterstrike_uses_difficulty_modified_soldier_fighting_ability() {
         .get_entity(victim)
         .and_then(Entity::enemy_ai)
         .unwrap();
-    assert!(ai.pending_special_strike);
     assert_eq!(
         ai.base.current_substate,
         crate::ai::Substate::AttackingSwordfightSpecialStrike

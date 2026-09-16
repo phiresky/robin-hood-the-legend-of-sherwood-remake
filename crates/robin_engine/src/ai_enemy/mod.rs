@@ -74,16 +74,6 @@ pub struct EnemyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,
 
-    /// True while this soldier has a pending/in-flight special-strike
-    /// sequence (prep wait + strike animation). Mirrors the observable
-    /// `Substate::AttackingSwordfightSpecialStrike` while also giving
-    /// cancellation reconciliation a direct sequence-lifecycle latch. Set by
-    /// the live special-strike entry; cleared by per-tick reconciliation in
-    /// `engine/melee.rs::tick_enemy_sword_attacks` when the sequence
-    /// manager no longer has an active sword-strike element for this
-    /// actor (covers both natural completion and interruption).
-    pub pending_special_strike: bool,
-
     // -- Private fields --
     #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub missed_pc: Option<AiEntityHandle>,
@@ -243,13 +233,6 @@ pub struct EnemyAi {
     /// charge-from-reactiontime branch in enemy approach reconsideration.
     /// Pulled from the weapon profile at level load.
     pub sword_is_charge_weapon: bool,
-    /// Universal-frame counter when this soldier is next allowed to
-    /// throw a sword strike.  Lets the engine sword-combat tick
-    /// space attacks 1+ second apart instead of dealing damage every
-    /// frame.  Collapsed into a single per-soldier cooldown rather
-    /// than per-strike-sequence-element budgets.
-    pub next_sword_strike_frame: u32,
-
     pub company_number: u16,
     #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub left_combat_neighbour: Option<AiEntityHandle>,

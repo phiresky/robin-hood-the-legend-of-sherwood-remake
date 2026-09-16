@@ -189,8 +189,8 @@ impl EngineInner {
             frame,
             owner,
             format_args!(
-                "phase={phase} pending_special={} state={:?} substate={:?}",
-                ai.pending_special_strike, ai.base.current_state, ai.base.current_substate,
+                "phase={phase} state={:?} substate={:?}",
+                ai.base.current_state, ai.base.current_substate,
             ),
         );
     }
@@ -534,7 +534,6 @@ impl EngineInner {
             }
         }
 
-        self.tick_enemy_sword_attacks(sim, assets);
         self.tick_refresh_purse_disable(assets);
     }
 
@@ -2232,35 +2231,6 @@ impl EngineInner {
         }
     }
 
-    /// Reconcile the lifetime of already launched special-strike sequences.
-    pub(super) fn tick_enemy_sword_attacks(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        let mut flagged: Vec<EntityId> = Vec::new();
-        for npc_id in self.world.entities.ai_owner_ids() {
-            if self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::enemy_ai)
-                .is_some_and(|ai| ai.pending_special_strike)
-            {
-                flagged.push(npc_id);
-            }
-        }
-        for npc_id in flagged {
-            let has_active = self
-                .orders
-                .sequence_manager
-                .has_live_element_for_actor_matching(npc_id, |cmd| {
-                    cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
-                });
-            self.reconcile_ai_special_strike(sim, assets, npc_id, has_active);
-        }
-    }
-
     /// Propose and launch one strike at the current swordfight decision statement.
     pub(in crate::engine) fn execute_ai_sword_strike_proposal(
         &mut self,
@@ -2536,12 +2506,8 @@ impl EngineInner {
             );
         }
 
-        // Flag the pending special strike and cancel movement so the
-        // EnemyAi owner stands still during the delay.
-        // `begin_special_strike` sets the lifecycle latch and enters the
-        // observable legacy special-strike substate; the
-        // immediate stop-all side effect stays engine-side so it
-        // runs before the new strike sequence is queued.
+        // Enter the special-strike substate before stopping movement and launching
+        // the preparation sequence: completion callbacks can run during either call.
         self.begin_ai_special_strike(sim, assets, owner);
         self.stop_ai_owner(sim, assets, owner);
         if special_debug {

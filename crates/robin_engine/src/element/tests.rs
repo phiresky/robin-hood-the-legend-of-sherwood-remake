@@ -1562,7 +1562,6 @@ fn golden_ai_actor_fixture(ai_brain: AiBrain, seed: u16) -> AiActorData {
 fn golden_entities_fixture() -> crate::entities::Entities {
     // Exercise persistent runtime values and immutable behavior identity.
     let enemy = EnemyAi {
-        pending_special_strike: true,
         pc_gone_away_in_this_direction: 3,
         thirsty: true,
         previous_state: crate::ai::StoredEnumWord::new(crate::ai::AiState::Default),

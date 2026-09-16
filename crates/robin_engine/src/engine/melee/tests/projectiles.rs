@@ -95,15 +95,6 @@ fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
             .sequence_manager
             .has_live_element_for_actor_matching(attacker, Command::is_swordstrike)
     );
-
-    engine.with_simulation_context(|engine, sim| {
-        engine.tick_enemy_sword_attacks(sim, &assets);
-    });
-    assert_eq!(
-        engine.control.rng.original_replay_cursor(),
-        Some(cursor_after_first),
-        "the lifecycle tick must not repeat a rejected decision"
-    );
 }
 
 #[test]

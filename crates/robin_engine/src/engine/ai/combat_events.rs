@@ -287,20 +287,15 @@ impl EngineInner {
                 );
             }
             (AttackingSwordfight, EventTimer | EventDone | EventReachPoint) => {
-                if !self.combat_event_ai(owner).pending_special_strike {
-                    self.combat_event_ai_mut(owner)
-                        .base
-                        .set_emoticon(EmoticonType::None);
+                self.combat_event_ai_mut(owner)
+                    .base
+                    .set_emoticon(EmoticonType::None);
 
-                    self.execute_reconsider_swordfight(sim, assets, owner, false);
-                    self.combat_insult_after_reconsider(sim, assets, owner);
-                }
+                self.execute_reconsider_swordfight(sim, assets, owner, false);
+                self.combat_insult_after_reconsider(sim, assets, owner);
             }
             (AttackingSwordfightSpecialStrike, EventDone | EventTimer) => {
-                self.combat_event_ai_mut(owner).pending_special_strike = false;
                 self.combat_event_state(sim, assets, owner, AttackingSwordfight, 20);
-                let frame = self.control.frame_counter;
-                self.combat_event_ai_mut(owner).next_sword_strike_frame = frame + 20;
             }
             (AttackingSwordfightParade, EventTimer) => {
                 if self
