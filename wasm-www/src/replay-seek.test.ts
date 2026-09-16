@@ -55,6 +55,27 @@ test('long seeks yield between adaptive batches and stop exactly at their target
     assert(targets.every((value, i) => value - (targets[i - 1] ?? 0) <= 15));
 });
 
+test('slow presentation does not shrink fast simulation into tiny batches', async () => {
+    let frame = 0, time = 0;
+    const batches: number[] = [];
+    const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === 'state') return { replay: { frame } } as T;
+        const next = (params as { frame: number }).frame;
+        const work = (next - frame) * 0.6;
+        batches.push(next - frame);
+        time += 150 + work;
+        frame = next;
+        return { work_ms: work } as T;
+    };
+    await seekReplay(rpc, 249, {
+        cancelled: () => false, progress: () => {}, now: () => time,
+        present: async delay => { time += delay; },
+    });
+    assert.equal(frame, 249);
+    assert(batches.length <= 8, `used ${batches.length} batches for a checkpoint remainder`);
+    assert(batches.every(size => size <= 50), 'simulation stays within the 30 ms budget');
+});
+
 test('backward seeks rewind to zero, then replay the prefix in visible batches', async () => {
     let frame = 100, cancelled = false;
     const targets: number[] = [];

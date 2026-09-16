@@ -549,6 +549,7 @@ fn seek_replay_step(
     mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
     mut accepted_dismissals: Vec<crate::http_server::HttpModalDismissal>,
 ) {
+    let work_started = web_time::Instant::now();
     let StepWorld {
         manager,
         host,
@@ -631,6 +632,7 @@ fn seek_replay_step(
             "from_frame": from,
             "frame": timeline.replay().playback().expect("active replay").current_frame(),
             "timeline_frame": timeline.frame_number(),
+            "work_ms": work_started.elapsed().as_secs_f64() * 1000.0,
             "modals_dismissed": accepted_dismissals.len(),
             "modal_dismissals": accepted_dismissals,
         })),

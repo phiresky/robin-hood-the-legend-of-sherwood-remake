@@ -54,10 +54,13 @@ export async function seekReplay(
         }
         const next = Math.min(target, frame + batch);
         const started = now();
-        await rpc('go-to-frame', { frame: next, auto_dismiss: true });
+        const result = await rpc<{ work_ms?: number }>('go-to-frame', { frame: next, auto_dismiss: true });
         const elapsed = Math.max(now() - started, 1);
         // Grow cautiously; shrink immediately if a batch exceeds the budget.
-        const workMs = Math.max(1, elapsed - Math.min(schedulingMs, elapsed / 2));
+        // Rendering and RPC scheduling are paid once per batch, not per tick.
+        // Including them here would shrink batches when presentation is slow.
+        const workMs = Math.max(1, typeof result.work_ms === 'number' && Number.isFinite(result.work_ms) && result.work_ms >= 0
+            ? result.work_ms : elapsed - Math.min(schedulingMs, elapsed / 2));
         batch = Math.max(8, Math.min(batch * 2, Math.floor((next - frame) * SIMULATION_BUDGET_MS / workMs)));
         frame = next;
         if (options.cancelled()) return;
