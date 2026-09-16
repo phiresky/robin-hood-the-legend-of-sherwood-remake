@@ -41,22 +41,18 @@ pub(crate) struct LegacyPathAdoptionPlan {
     failed: Vec<FailedPathRequest>,
     pending: PendingPathRequestQueue,
     pathfinder_states: Vec<Vec<u32>>,
-    line_updates: Vec<(usize, bool)>,
-    sector_updates: Vec<(usize, bool)>,
 }
 
 impl LegacyPathAdoptionPlan {
-    pub(crate) fn apply(self, engine: &mut EngineInner) {
+    pub(crate) fn apply(self, engine: &mut EngineInner, assets: &LevelAssets) {
         engine
             .orders
             .install_legacy_path_schedule(self.pending, self.failed);
-        engine.world.pathfinder.states = self.pathfinder_states;
-        for (index, active) in self.line_updates {
-            engine.world.fast_grid_mut().line_active[index] = active;
-        }
-        for (index, active) in self.sector_updates {
-            engine.world.fast_grid_mut().sector_active[index] = active;
-        }
+        engine.world.pathfinder.restore_states(
+            assets.navigation.pathfinder_graph.as_ref(),
+            std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+            self.pathfinder_states,
+        );
     }
 }
 
@@ -119,15 +115,12 @@ pub(crate) fn preflight_v48_paths(
         converted_pending.push(request);
     }
 
-    let (pathfinder_states, line_updates, sector_updates) =
-        preflight_graph_states(engine, assets, &pathfinder.layer_area_states)?;
+    let pathfinder_states = preflight_graph_states(engine, assets, &pathfinder.layer_area_states)?;
 
     Ok(LegacyPathAdoptionPlan {
         failed: converted_failed,
         pending: PendingPathRequestQueue::restore_v48_waiting(converted_pending),
         pathfinder_states,
-        line_updates,
-        sector_updates,
     })
 }
 
@@ -381,7 +374,7 @@ fn preflight_graph_states(
     engine: &EngineInner,
     assets: &LevelAssets,
     saved: &[Vec<u32>],
-) -> Result<(Vec<Vec<u32>>, Vec<(usize, bool)>, Vec<(usize, bool)>), LegacyAdoptError> {
+) -> Result<Vec<Vec<u32>>, LegacyAdoptError> {
     let graph = assets.navigation.pathfinder_graph.as_ref();
     if saved.len() != graph.states.len() || saved.len() != engine.world.pathfinder.states.len() {
         return Err(AdoptErrorKind::PathStateShape {
@@ -415,8 +408,6 @@ fn preflight_graph_states(
         .into());
     }
 
-    let mut line_updates = Vec::new();
-    let mut sector_updates = Vec::new();
     for (layer, states) in saved.iter().enumerate() {
         let move_areas = &graph.static_data.move_layers[layer];
         if move_areas.len() != states.len() {
@@ -428,9 +419,8 @@ fn preflight_graph_states(
             }
             .into());
         }
-        for (area, state) in move_areas.iter().zip(states) {
+        for area in move_areas {
             for obstacle in &area.motion_obstacles {
-                let active = (obstacle.state_id & *state) == obstacle.state_id;
                 let sector = obstacle.grid_sector_index.ok_or_else(|| {
                     MOTION_OBSTACLE.error(AdoptErrorKind::Missing {
                         what: "fast-grid sector binding",
@@ -447,7 +437,6 @@ fn preflight_graph_states(
                         sector_count,
                     ));
                 }
-                sector_updates.push((index, active));
                 for &line in &obstacle.grid_line_indices {
                     let index = usize::from(line);
                     if index >= engine.world.fast_grid.line_active.len() {
@@ -458,13 +447,12 @@ fn preflight_graph_states(
                             engine.world.fast_grid.line_active.len(),
                         ));
                     }
-                    line_updates.push((index, active));
                 }
             }
         }
     }
 
-    Ok((saved.to_vec(), line_updates, sector_updates))
+    Ok(saved.to_vec())
 }
 
 #[cfg(test)]
@@ -559,11 +547,9 @@ mod tests {
         let mut assets = LevelAssets::new();
         assets.navigation.pathfinder_graph = std::sync::Arc::new(graph);
 
-        let (states, line_updates, sector_updates) =
+        let states =
             preflight_graph_states(&engine, &assets, &[vec![1]]).expect("valid graph state");
         assert_eq!(states, vec![vec![1]]);
-        assert_eq!(line_updates, vec![(0, true), (1, false)]);
-        assert_eq!(sector_updates, vec![(0, true), (1, false)]);
         assert_eq!(engine.world.pathfinder.states, vec![vec![0x5555_5555]]);
         assert_eq!(engine.world.fast_grid.line_active, vec![false, true, false]);
         assert_eq!(
@@ -574,16 +560,18 @@ mod tests {
         // Full legacy adoption applies the independently preflighted grid plan
         // before this path plan. Preserve its unrelated patch/door flags and
         // overwrite only the motion-obstacle slots represented above.
+        engine.world.pathfinder.initialize_from_graph(
+            assets.navigation.pathfinder_graph.as_ref(),
+            std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+        );
         engine.world.fast_grid_mut().line_active = vec![false, false, true];
         engine.world.fast_grid_mut().sector_active = vec![false, false, true];
         LegacyPathAdoptionPlan {
             failed: Vec::new(),
             pending: PendingPathRequestQueue::default(),
             pathfinder_states: states,
-            line_updates,
-            sector_updates,
         }
-        .apply(&mut engine);
+        .apply(&mut engine, &assets);
         assert_eq!(engine.world.fast_grid.line_active, vec![true, false, true]);
         assert_eq!(
             engine.world.fast_grid.sector_active,

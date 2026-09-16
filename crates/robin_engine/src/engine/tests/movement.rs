@@ -1446,7 +1446,10 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
             .half_diagonals
             .push(crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0));
     }
-    engine.world.pathfinder.states = vec![vec![0x5555_5555]];
+    engine.world.pathfinder.initialize_from_graph(
+        assets.navigation.pathfinder_graph.as_ref(),
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+    );
 
     let launch_waiting_move = |engine: &mut EngineInner, owner| {
         let mut movement = SequenceElement::new_movement(

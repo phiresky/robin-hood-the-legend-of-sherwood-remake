@@ -290,7 +290,7 @@ impl LegacyKnownAdoptionPlan {
         let trajectory = self.hiking_tail.apply_engine(engine);
         self.tail_runtime.apply(engine);
         self.vm_arena.apply(engine);
-        self.paths.apply(engine);
+        self.paths.apply(engine, assets);
         let host = self.simple.apply(engine);
         self.tail_basic.apply(engine);
         let post_load = self.post_load.apply(engine, assets);

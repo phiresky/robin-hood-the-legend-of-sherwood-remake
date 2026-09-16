@@ -1153,11 +1153,7 @@ fn interrupted_lateral_sweep_uses_the_replacement_strike() {
         final_angle: -std::f32::consts::PI,
     };
 
-    crate::engine::order_arbitration::stop_owner_active_mechanics(
-        &mut engine.world,
-        &mut engine.orders,
-        attacker,
-    );
+    crate::engine::order_arbitration::stop_owner_active_mechanics(&mut engine.orders, attacker);
     let retained_after_interrupt = &engine
         .get_entity(attacker)
         .unwrap()
@@ -1271,11 +1267,7 @@ fn interrupted_push_victims_survive_replacement_lateral_start() {
         .sword_sweep
         .victims = vec![victim];
 
-    crate::engine::order_arbitration::stop_owner_active_mechanics(
-        &mut engine.world,
-        &mut engine.orders,
-        attacker,
-    );
+    crate::engine::order_arbitration::stop_owner_active_mechanics(&mut engine.orders, attacker);
 
     let assets =
         assets_with_nonstraight_profile(SwordStrike::D, crate::profiles::WeaponThrustKind::Lateral);

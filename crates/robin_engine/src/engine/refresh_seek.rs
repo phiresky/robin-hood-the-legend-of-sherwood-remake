@@ -429,11 +429,7 @@ impl crate::engine::EngineInner {
             );
             entity.position_iface_mut().set_map_goal(MapPoint::ZERO);
         }
-        crate::engine::order_arbitration::stop_owner_active_mechanics(
-            &mut self.world,
-            &mut self.orders,
-            owner,
-        );
+        crate::engine::order_arbitration::stop_owner_active_mechanics(&mut self.orders, owner);
     }
 
     /// Resolve the destination/tolerance/speed tuple for an entity-target
