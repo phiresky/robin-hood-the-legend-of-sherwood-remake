@@ -52,17 +52,16 @@ impl EngineInner {
     ) -> bool {
         let entity = self.expect_entity(owner, "default boredom owner");
         let ai = entity.ai_controller().expect("boredom requires AI");
-        let bored_animation = entity
-            .actor_data()
-            .expect("boredom requires actor")
-            .installed_order
-            .is_some_and(|order| {
-                order.resolve(&self.orders.sequence_manager).order_type
-                    == crate::order::OrderType::WaitingUprightBoredRandom
-            });
         if entity.enemy_ai().is_none()
             || ai.current_substate != Substate::DefaultOnPost
-            || bored_animation
+            || entity
+                .actor_data()
+                .expect("boredom requires actor")
+                .installed_order
+                .is_some_and(|order| {
+                    order.resolve(&self.orders.sequence_manager).order_type
+                        == crate::order::OrderType::WaitingUprightBoredRandom
+                })
             || ai.likes_to_sit_around
             || ai.special_action
         {
@@ -644,6 +643,36 @@ mod movement_tests {
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.enter_ai_think_frame(owner);
         (engine, assets, owner)
+    }
+
+    #[test]
+    fn boredom_outside_on_post_does_not_read_a_retired_order() {
+        let (mut engine, assets, owner) = fixture(OrderType::WaitingUpright);
+        let installed = engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order
+            .unwrap();
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders
+            .clear();
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap()
+            .current_substate = Substate::DefaultGotoPost;
+
+        assert!(!engine.default_bored_live(&crate::sim_rng::test_context(), &assets, owner));
     }
 
     fn registered_turn(engine: &EngineInner, owner: EntityId, command: Command) -> u32 {
