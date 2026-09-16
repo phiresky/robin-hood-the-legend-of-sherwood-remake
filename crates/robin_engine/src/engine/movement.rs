@@ -92,7 +92,8 @@ fn has_deferred_post_door_route_continuation(
 
     manager
         .deferred_elements_to_go()
-        .into_iter()
+        .iter()
+        .copied()
         .any(|(route_id, move_idx)| {
             let Some(sequence) = manager.get_sequence(route_id) else {
                 return false;

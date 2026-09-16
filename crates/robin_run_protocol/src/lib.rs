@@ -87,11 +87,11 @@ pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 7;
 /// Exact replay schema whose compact bitcode bytes are simultaneously the
 /// submitted, verifier-resimulated, retained, and publicly downloadable
 /// artifact. Older schemas are rejected rather than normalized.
-pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 50;
+pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 51;
 
 /// Exact multiplayer wire protocol of the verifier and current clients. A
 /// replay recorded under another network protocol is not rankable.
-pub const CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1: u32 = 58;
+pub const CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1: u32 = 59;
 
 #[cfg(test)]
 mod tests {

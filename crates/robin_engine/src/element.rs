@@ -575,92 +575,6 @@ pub struct ActiveLiftClimb {
     pub upwards: bool,
 }
 
-/// Active push-flight state.
-///
-/// When a push/circle/charge strike lands, the victim is launched along a
-/// flight vector over several animation frames instead of teleporting
-/// instantly.  Each frame the position is advanced by `increment`; on the
-/// final frame the entity snaps to `goal`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub enum FlightGeometry {
-    /// Movement is expressed in projected map coordinates; the current
-    /// ground plane remains authoritative for elevation.
-    #[default]
-    GroundPlane,
-    /// Takeoff preparation resolved a complete world-space endpoint, including
-    /// its projection obstacle and elevation.
-    World3d,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct ActiveFlight {
-    pub geometry: FlightGeometry,
-    /// Per-frame position increment (total displacement / frames). For
-    /// [`FlightGeometry::World3d`], Y is the cached world-space Y increment;
-    /// the projected map-space increment is `increment_y - increment_z`.
-    pub increment_x: f32,
-    pub increment_y: f32,
-    /// Goal position to snap to on completion.
-    pub goal_x: f32,
-    pub goal_y: f32,
-    /// Frames remaining in the flight.
-    pub frames_remaining: u16,
-    /// Original hitter that launched this flight, when the flight was
-    /// triggered by a hit/push strike. Each frame the flyer applies a
-    /// domino-effect sweep to nearby upright actors and propagates a
-    /// `ReceiveHitDamage` element citing this antagonist.
-    ///
-    /// `None` for non-combat flights (rolling, ladder/wall fall) where
-    /// the domino-effect sweep is not invoked.
-    pub antagonist: Option<EntityId>,
-
-    /// Per-frame z (elevation) increment.  Non-zero only when the goal
-    /// sits on a sloped projection-area obstacle (currently only set by
-    /// push flights — `apply_push_effect`); other flight setup sites
-    /// (rolling, ladder-wall fall, hit fall) leave this at 0.
-    pub increment_z: f32,
-    /// Goal elevation to snap to on completion.  Computed from the
-    /// projection-area obstacle's top plane at the chosen flight goal.
-    pub goal_z: f32,
-    /// Goal layer to write back to the actor on landing.
-    pub goal_layer: u16,
-    /// Goal sector to write back to the actor on landing.
-    pub goal_sector: Option<crate::position_interface::SectorHandle>,
-    /// Projection-area obstacle the actor is flying onto, if any.  The
-    /// actor is considered to be on the goal obstacle for the duration
-    /// of the flight; we apply the obstacle on landing alongside the
-    /// goal layer/sector.  Mid-flight queries that need the plane
-    /// should use the explicit `increment_z` field.
-    pub obstacle: Option<crate::position_interface::ObstacleHandle>,
-    /// Ladder/wall fall marker.  These flights use the constant-speed
-    /// kinematics of the original ladder fall (fixed 3D step length 10,
-    /// duration `0.1 * distance` ticks): the flight tick mirrors the
-    /// remaining tick count into `actor.wait_time`, and landing applies
-    /// the fall's concussion, lying posture, and order retirement
-    /// instead of the generic combat-fall completion.
-    pub ladder_fall: bool,
-}
-
 /// Exact representation of the original game's installed actor order.
 ///
 /// Sequence-manager selection is deliberately not sufficient: an element can
@@ -752,14 +666,6 @@ pub struct ActorData {
     /// rather than the opponent.
     pub shield_face_point: Option<MapPoint>,
 
-    // -- Push flight state --
-    /// Active push-flight.  When `Some`, the entity is being pushed through
-    /// the air by a push/circle/charge strike.  Each frame the position
-    /// advances by the stored increment.
-    /// Large optional action states are boxed so inactive actors and smaller
-    /// entity variants do not reserve their payload in every entity slot.
-    pub active_flight: Option<Box<ActiveFlight>>,
-
     // -- Lift climb state --
     /// If the actor currently owns a ladder-lift reservation, which sector
     /// and which direction. Set at WAIT_FREE_LIFT entry (wall routes do not
@@ -823,7 +729,6 @@ impl Default for ActorData {
             script_class: String::new(),
             pending_roll: None,
             shield_face_point: None,
-            active_flight: None,
             active_lift: None,
             last_executed_rider_charge_order_id: None,
             shield_obstacle: None,

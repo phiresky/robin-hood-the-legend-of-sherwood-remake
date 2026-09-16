@@ -3059,16 +3059,6 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let (position, layer, sector) = {
-            let entity = self
-                .world
-                .entities
-                .get(entity_id)
-                .unwrap_or_else(|| panic!("landed actor {entity_id} is missing"));
-            let data = entity.element_data();
-            (data.position_map(), data.layer(), data.sector())
-        };
-
         for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
             if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                 continue;
@@ -3084,9 +3074,16 @@ impl EngineInner {
             let owning_motion_sector = self.script_domains.zones.scripts[zone_idx]
                 .owning_motion_sector
                 .get();
-            let is_inside = grid_sector.layer == layer
-                && sector.map(i16::from) == Some(owning_motion_sector)
-                && grid_sector.contains_point(position);
+            // Earlier zone callbacks can relocate the actor synchronously.
+            let data = self
+                .world
+                .entities
+                .get(entity_id)
+                .unwrap_or_else(|| panic!("landed actor {entity_id} is missing"))
+                .element_data();
+            let is_inside = grid_sector.layer == data.layer()
+                && data.sector().map(i16::from) == Some(owning_motion_sector)
+                && grid_sector.contains_point(data.position_map());
             if was_inside != is_inside {
                 self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, is_inside);
             }

@@ -207,8 +207,7 @@ impl EngineInner {
         Ok(())
     }
 
-    /// Apply the deterministic half of the original game's lock-user /
-    /// MSG_UNLOCK_USER handling. Selection and current actions are part of
+    /// Apply lock-user selection and action dispatch. Selection and current actions are part of
     /// simulation state; only physical input cleanup remains a host effect.
     pub(super) fn apply_script_user_lock(
         &mut self,
@@ -223,19 +222,22 @@ impl EngineInner {
                     .pending_side_effects
                     .invalidate_trajectory_preview = true;
                 self.players.selection_before_user_lock = self.players.seats[0].selection.clone();
-                for pc_id in self.players.seats[0].selection.clone() {
-                    self.unselect_action(sim, assets, pc_id);
-                    let pc = self
-                        .get_entity_mut(pc_id)
-                        .and_then(|entity| entity.pc_data_mut())
-                        .expect("selected LockUser entity is not a PC");
-                    pc.current_action = crate::profiles::Action::NoAction;
+                if let Some(pc_id) = self.players.seats[0].selection.first().copied() {
+                    self.set_pc_action_from_message(
+                        sim,
+                        assets,
+                        0,
+                        pc_id,
+                        crate::profiles::Action::NoAction,
+                    );
                 }
                 self.unselect_all_pcs(0);
             }
             Command::UnlockUser => {
                 self.players.user_locked = false;
-                for pc_id in self.players.selection_before_user_lock.clone() {
+                let selected_count = self.players.selection_before_user_lock.len();
+                for index in 0..selected_count {
+                    let pc_id = self.players.selection_before_user_lock[index];
                     self.select_pc(sim, assets, 0, pc_id, true, false);
                 }
                 self.feedback.pending_side_effects.pending_reset_input = true;
@@ -400,5 +402,62 @@ impl EngineInner {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_lock_during_recording_clears_action_without_unequipping_live_bow() {
+        use crate::element::{ActionState, ActorPc, ElementData, Entity, Posture};
+        use crate::profiles::Action;
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
+            element: ElementData::from_initial_posture(Posture::Upright),
+            actor: crate::element::ActorData {
+                action_state: ActionState::AimingWithBow,
+                ..Default::default()
+            },
+            human: Default::default(),
+            pc: crate::element::PcData {
+                current_action: Action::Bow,
+                ..Default::default()
+            },
+        }));
+        engine.players.seats[0].selection.push(owner);
+        engine.players.seats[0].selected_action = Action::Bow;
+        engine
+            .players
+            .macro_store
+            .get_or_insert(owner)
+            .begin_recording(0);
+        engine.players.qa_recording_for.push(owner);
+
+        engine.apply_script_user_lock(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            Command::LockUser,
+        );
+
+        assert!(engine.players.user_locked);
+        assert_eq!(engine.players.selection_before_user_lock, [owner]);
+        assert!(engine.players.seats[0].selection.is_empty());
+        assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
+        let pc = engine.get_entity(owner).unwrap();
+        assert_eq!(pc.pc_data().unwrap().current_action, Action::NoAction);
+        assert_eq!(
+            pc.actor_data().unwrap().action_state,
+            ActionState::AimingWithBow
+        );
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .queued_element_exists(owner, Command::UnequipBow)
+        );
+        assert!(engine.feedback.pending_side_effects.cancel_multi_selection);
     }
 }

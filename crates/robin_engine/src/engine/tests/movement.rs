@@ -1446,7 +1446,10 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
             .half_diagonals
             .push(crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0));
     }
-    engine.world.pathfinder.states = vec![vec![0x5555_5555]];
+    engine.world.pathfinder.initialize_from_graph(
+        assets.navigation.pathfinder_graph.as_ref(),
+        std::sync::Arc::make_mut(&mut engine.world.fast_grid),
+    );
 
     let launch_waiting_move = |engine: &mut EngineInner, owner| {
         let mut movement = SequenceElement::new_movement(
@@ -2335,6 +2338,29 @@ fn add_charge_victim(engine: &mut EngineInner, position: MapPoint) -> EntityId {
     engine.add_test_entity(victim)
 }
 
+fn bind_charge_victim_fall(engine: &mut EngineInner, victim: EntityId) {
+    let action = crate::order::OrderType::FallingBackUpright;
+    let script = crate::sprite_script::SpriteScript {
+        action_id: action as u16,
+        action_done: 1,
+        frame_ids: vec![1, 2],
+        delays: vec![3, 1],
+        distances: vec![0, 0],
+        offsets: vec![SpriteFrameOffset::ZERO; 2],
+        sound_ids: vec![0, 0],
+        ..Default::default()
+    };
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    conversion[action as usize] = 0;
+    let entity = engine.get_entity_mut(victim).unwrap();
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    sprite.position_iface = entity.position_iface().clone();
+    entity.element_data_mut().sprite = sprite;
+}
+
 fn install_charge_victim_motion(
     engine: &mut EngineInner,
     victim_id: EntityId,
@@ -2832,6 +2858,7 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
         vec![3, 1],
     );
     let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
+    bind_charge_victim_fall(&mut engine, victim);
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
 
@@ -3002,6 +3029,7 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
     // damage translation, its FallingHit Execute must sample the rider's
     // post-hit direction before the rider takes another charge Turn step.
     let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
+    bind_charge_victim_fall(&mut engine, victim);
     let (rider, _, _) = install_rider_charge_fixture(
         &mut engine,
         &mut assets,

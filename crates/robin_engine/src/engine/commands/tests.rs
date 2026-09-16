@@ -13,7 +13,7 @@ use crate::element::{
 use crate::engine::MissionScript;
 use crate::engine::ScrollStatus;
 use crate::engine::{HostDisplayState, InputState};
-use crate::macro_store::{QaReplayCommand, QuickActionStep};
+use crate::macro_store::QaReplayCommand;
 use crate::player_command::{CompositeSwordTechnique, GestureQuality};
 use crate::profiles::{Action, CharacterProfile, ProfileManager};
 use crate::sequence::{
@@ -22,6 +22,45 @@ use crate::sequence::{
 use crate::sprite::Sprite;
 use crate::sprite_script::SpriteScript;
 use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
+
+fn record_manual_command(
+    engine: &mut EngineInner,
+    assets: &LevelAssets,
+    pc: EntityId,
+    command: PlayerCommand,
+) {
+    let sim = crate::sim_rng::test_context();
+    let mut display = HostDisplayState::default();
+    let mut input = InputState::default();
+    engine.apply_command(
+        &sim,
+        &mut display,
+        &mut input,
+        assets,
+        &PlayerCommand::StartRecordingMacro {
+            pc: Some(pc),
+            slot: 0,
+        },
+    );
+    engine.apply_command(&sim, &mut display, &mut input, assets, &command);
+}
+
+fn assert_retained_interaction(
+    slot: &crate::macro_store::QuickActionSlot,
+    command: Command,
+    target: EntityId,
+) {
+    let (action, _) = slot.sequences().expect("retained action sequence");
+    assert!(action.elements.iter().any(|element| {
+        if element.command == command
+            && matches!(element.data, SequenceElementData::Interaction { antagonist: Some(id) } if id == target) {
+            return true;
+        }
+        matches!(&element.data, SequenceElementData::Movement { post_seek_sequence: Some(post), .. }
+            if post.elements.iter().any(|element| element.command == command
+                && matches!(element.data, SequenceElementData::Interaction { antagonist: Some(id) } if id == target)))
+    }), "retained action must preserve the interaction and its target");
+}
 
 #[test]
 fn campaign_mutations_are_host_authoritative() {
@@ -466,14 +505,10 @@ fn self_ability_domain_records_once_before_stopping_without_live_launch() {
         .unwrap()
         .slot(0)
         .unwrap();
-    assert_eq!(slot.steps.len(), 1);
-    assert_eq!(slot.steps[0].action, Action::Whistle);
-    assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::SelfAbility {
-            command: Command::WhistleCmd
-        }
-    );
+    let (action, seek) = slot.sequences().expect("retained whistle sequence");
+    assert!(seek.is_none());
+    assert_eq!(action.len(), 1);
+    assert_eq!(action.get(0).unwrap().command, Command::WhistleCmd);
 }
 
 #[test]
@@ -539,17 +574,25 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
         .get(actor)
         .expect("recorded shield QA state");
     let slot = state.slot(0).expect("recorded shield QA slot");
-    assert_eq!(slot.steps.len(), 1);
-    assert_eq!(slot.steps[0].action, Action::Shield);
-    assert_eq!(slot.steps[0].position, danger_point.to_map());
-    assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::ShieldRaise {
-            protected_pc,
-            danger_point,
-            danger_point_layer: 7,
-        }
-    );
+    let (action, seek) = slot.sequences().expect("retained shield sequence");
+    assert!(seek.is_none());
+    let SequenceElementData::Movement {
+        post_seek_sequence: Some(post),
+        ..
+    } = &action.get(0).unwrap().data
+    else {
+        panic!("retained shield action starts with seek");
+    };
+    let raise = post.get(0).expect("retained shield raise");
+    assert_eq!(raise.command, Command::RaiseShield);
+    assert!(matches!(raise.get_property(Field::ShieldDangerPoint),
+        Some(FieldValue::Point3D { x, y, z }) if *x == danger_point.x && *y == danger_point.y && *z == danger_point.z));
+    assert!(matches!(raise.get_property(Field::ShieldProtected),
+        Some(FieldValue::Element(id)) if *id == protected_pc));
+    assert!(matches!(
+        raise.get_property(Field::ShieldDangerPointLayer),
+        Some(FieldValue::Integer(7))
+    ));
     let titbit = engine
         .feedback
         .titbit_manager
@@ -852,13 +895,9 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
         .macro_store
         .get(pc_id)
         .expect("replacement manual QA");
-    assert_eq!(replacement.slot(0).expect("slot zero").steps.len(), 1);
-    assert!(matches!(
-        replacement.slot(0).expect("slot zero").steps[0].replay,
-        QaReplayCommand::SelfAbility {
-            command: Command::EnterListen
-        }
-    ));
+    let (action, seek) = replacement.slot(0).expect("slot zero").sequences().unwrap();
+    assert!(seek.is_none());
+    assert_eq!(action.get(0).unwrap().command, Command::EnterListen);
     assert_ne!(replacement.get_slot_titbit(0), Some(original_titbit));
     assert!(
         engine
@@ -1407,24 +1446,13 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
 fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Whistle, 1)]);
     engine.players.seats[0].selection.push(pc_id);
-    let manual_step = QuickActionStep {
-        action: Action::Bow,
-        position: MapPoint::new(123.0, 456.0),
-        replay: QaReplayCommand::Move {
-            destination: MapPoint::new(123.0, 456.0),
-            running: false,
-            route: crate::macro_store::RecordedQaMoveRoute {
-                goal_sector: crate::sector::SectorNumber::new(1),
-                goal_sector_index: crate::fast_find_grid::SectorIndex::new(0)
-                    .expect("valid test sector index"),
-                goal_layer: 0,
-            },
-        },
-    };
+    let mut manual_sequence = Sequence::new();
+    manual_sequence.append_element(SequenceElement::new(1, Command::WhistleCmd, Some(pc_id)));
     let manual = engine.players.macro_store.get_or_insert(pc_id);
     manual.begin_recording(0);
-    manual.append_if_recording(manual_step.clone());
+    manual.retain_sequence(manual_sequence, None);
     manual.stop_recording();
+    let manual_slot = manual.slot(0).unwrap().clone();
     let queued = PlayerCommand::QueueQuickAction {
         action: Action::Whistle,
         command: PlayerCommand::LaunchSelfAbility {
@@ -1482,9 +1510,8 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
             .macro_store
             .get(pc_id)
             .and_then(|state| state.slot(0))
-            .expect("manual slot")
-            .steps,
-        vec![manual_step.clone()]
+            .expect("manual slot"),
+        &manual_slot
     );
     assert!(
         engine
@@ -1536,9 +1563,8 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
             .macro_store
             .get(pc_id)
             .and_then(|state| state.slot(0))
-            .expect("manual slot after automatic replay")
-            .steps,
-        vec![manual_step]
+            .expect("manual slot after automatic replay"),
+        &manual_slot
     );
     assert!(engine.players.auto_queue_active.contains(&pc_id));
     assert!(
@@ -2127,20 +2153,20 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
         .element
         .set_position_map(crate::coordinates::MapPoint::new(target_x, 100.0));
     corpse.element.set_sector(sector);
+    corpse.human.unconscious = true;
     let corpse_id = engine.add_test_entity(Entity::Pc(corpse));
 
-    let state = engine.players.macro_store.get_or_insert(pc_id);
-    state.begin_recording(0);
-    state.append_if_recording(QuickActionStep {
-        action: Action::NoAction,
-        position: crate::coordinates::MapPoint::new(target_x, 100.0),
-        replay: QaReplayCommand::Interaction {
+    record_manual_command(
+        &mut engine,
+        &assets,
+        pc_id,
+        PlayerCommand::LaunchInteraction {
+            actor: pc_id,
             target: corpse_id,
             command: Command::TakeCorpse,
-            double_click: false,
+            running: false,
         },
-    });
-    state.stop_recording();
+    );
 
     (engine, assets, pc_id, corpse_id)
 }
@@ -2253,7 +2279,7 @@ fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
 }
 
 fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
-    let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+    let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
     {
         let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
         pc.element_data_mut()
@@ -2261,21 +2287,13 @@ fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
         pc.element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
     }
-    bind_single_action_point(
-        &mut engine,
-        pc_id,
-        crate::order::OrderType::DroppingAle,
-        crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
-        crate::coordinates::SpriteAnchor::new(0.0, 0.0),
-    );
-
     let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
-    let state = engine.players.macro_store.get_or_insert(pc_id);
-    state.begin_recording(0);
-    state.append_if_recording(QuickActionStep {
-        action: Action::Ale,
-        position: target_pos,
-        replay: QaReplayCommand::DropAle {
+    record_manual_command(
+        &mut engine,
+        &assets,
+        pc_id,
+        PlayerCommand::DropAleAt {
+            actor: pc_id,
             target_pos,
             running: false,
             already_authorized: false,
@@ -2283,8 +2301,7 @@ fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
             goal_sector_index_override: None,
             recorded_gate_path: None,
         },
-    });
-    state.stop_recording();
+    );
 
     (engine, assets, pc_id)
 }
@@ -2350,6 +2367,7 @@ fn setup_drop_ale_sector_identity_scene() -> (
     use crate::sector::{SectorNumber, SectorType};
 
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+    engine.mission_domain.campaign.characters[0].status.num_ales = 1;
     bind_single_action_point(
         &mut engine,
         pc_id,
@@ -2725,33 +2743,37 @@ fn recording_live_drop_ale_resolves_same_and_cross_sector_goals_before_storage()
             0,
             "{label}"
         );
-        let step = &engine
+        let (action, _) = engine
             .players
             .macro_store
             .get(pc_id)
             .and_then(|state| state.slot(0))
             .unwrap_or_else(|| panic!("{label} DropAle recording occupies slot zero"))
-            .steps[0];
-        let QaReplayCommand::DropAle {
-            target_pos,
-            already_authorized,
-            goal_override,
-            goal_sector_index_override,
-            recorded_gate_path,
+            .sequences()
+            .expect("retained DropAle route");
+        let seek = action
+            .elements
+            .iter()
+            .find(|element| element.command == Command::Seek)
+            .unwrap();
+        let SequenceElementData::Movement {
+            destination,
+            sector,
+            layer,
             ..
-        } = &step.replay
+        } = &seek.data
         else {
-            panic!("{label} recording stored a non-DropAle step")
+            panic!("{label} recording stored no movement")
         };
-        assert_eq!(*target_pos, target, "{label}");
-        assert!(*already_authorized, "{label}");
+        assert_eq!(*destination, target, "{label}");
         assert_eq!(
-            *goal_override,
-            Some((crate::sector::SectorNumber::new(0), 0)),
+            sector.unwrap().number(),
+            crate::sector::SectorNumber::new(0),
             "{label}"
         );
+        assert_eq!(*layer, 0, "{label}");
         assert_eq!(
-            *goal_sector_index_override,
+            sector.and_then(|sector| sector.arena_index()),
             Some(if expected_goal {
                 goal_index
             } else {
@@ -2759,8 +2781,8 @@ fn recording_live_drop_ale_resolves_same_and_cross_sector_goals_before_storage()
             }),
             "{label}"
         );
-        let recorded_goal_index = *goal_sector_index_override;
-        assert_eq!(*recorded_gate_path, None, "{label}");
+        let recorded_goal_index = sector.and_then(|sector| sector.arena_index());
+        assert_eq!(seek.recorded_gate_path, None, "{label}");
 
         engine.apply_command(
             &sim,
@@ -2839,11 +2861,16 @@ fn recording_drop_ale_keeps_click_titbit_distinct_from_authorized_seek_center() 
         .get(pc_id)
         .and_then(|state| state.slot(0))
         .expect("DropAle recording occupies slot zero");
-    assert_eq!(slot.steps[0].position, click);
-    let QaReplayCommand::DropAle { target_pos, .. } = &slot.steps[0].replay else {
-        panic!("recorded step must be DropAle")
+    let (action, _) = slot.sequences().expect("retained DropAle sequence");
+    let seek = action
+        .elements
+        .iter()
+        .find(|element| element.command == Command::Seek)
+        .unwrap();
+    let SequenceElementData::Movement { destination, .. } = &seek.data else {
+        panic!("retained DropAle must seek")
     };
-    assert_eq!(*target_pos, expected_seek_center);
+    assert_eq!(*destination, expected_seek_center);
     let titbit = engine
         .feedback
         .titbit_manager
@@ -2915,7 +2942,7 @@ fn recording_drop_ale_rejects_original_forbidden_target_sectors_without_stopping
                 .macro_store
                 .get(pc_id)
                 .and_then(|state| state.slot(0))
-                .is_none_or(|slot| slot.steps.is_empty()),
+                .is_none_or(|slot| slot.is_empty()),
             "{label}"
         );
         assert_eq!(
@@ -2984,18 +3011,28 @@ fn recording_resolved_drop_ale_is_not_launched_live_and_replays_exact_route() {
         .get(pc_id)
         .and_then(|state| state.slot(0))
         .expect("DropAle recording occupies slot zero");
-    assert_eq!(slot.steps.len(), 1);
+    let (action, _) = slot.sequences().expect("retained DropAle sequence");
+    let seek = action
+        .elements
+        .iter()
+        .find(|element| element.command == Command::Seek)
+        .unwrap();
+    let SequenceElementData::Movement {
+        destination,
+        action: movement_action,
+        sector,
+        ..
+    } = &seek.data
+    else {
+        unreachable!()
+    };
+    assert_eq!(*destination, authorized);
+    assert_eq!(*movement_action, crate::order::OrderType::RunningUpright);
     assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::DropAle {
-            target_pos: authorized,
-            running: true,
-            already_authorized: true,
-            goal_override: goal,
-            goal_sector_index_override: Some(goal_index),
-            recorded_gate_path: Some(route.clone()),
-        }
+        sector.and_then(|sector| sector.arena_index()),
+        Some(goal_index)
     );
+    assert_eq!(seek.recorded_gate_path, Some(route.clone()));
 
     engine.apply_command(
         &sim,
@@ -3410,16 +3447,7 @@ fn recording_strangle_stores_macro_without_launching_live_interaction() {
         .get(pc_id)
         .expect("recording PC has macro state");
     let slot = state.slot(0).expect("Strangle was stored in slot zero");
-    assert_eq!(slot.steps.len(), 1);
-    assert_eq!(slot.steps[0].action, Action::Strangle);
-    assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::Interaction {
-            target: target_id,
-            command: Command::StrangleCmd,
-            double_click: false,
-        }
-    );
+    assert_retained_interaction(slot, Command::StrangleCmd, target_id);
     assert!(state.get_slot_titbit(0).is_some());
     assert_single_recorded_titbit(
         &engine,
@@ -3484,14 +3512,7 @@ fn recording_running_strangle_marks_replacement_titbit_as_running() {
         .get(pc_id)
         .expect("recording PC has macro state");
     let slot = state.slot(0).expect("running Strangle occupies slot zero");
-    assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::Interaction {
-            target: target_id,
-            command: Command::StrangleCmd,
-            double_click: true,
-        }
-    );
+    assert_retained_interaction(slot, Command::StrangleCmd, target_id);
     let titbit_id = state
         .get_slot_titbit(0)
         .expect("running Strangle records a replacement titbit");
@@ -3728,22 +3749,21 @@ fn recording_ground_target_allocates_one_original_faithful_titbit() {
 
     assert!(!engine.is_recording_macro());
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-    let step = &engine
+    let (action, _) = engine
         .players
         .macro_store
         .get(pc_id)
         .and_then(|state| state.slot(0))
         .expect("ground target was stored in slot zero")
-        .steps[0];
-    assert_eq!(
-        step.replay,
-        QaReplayCommand::GroundTarget {
-            target_pos: target,
-            command: Command::ThrowWaspNest,
-            target_field: Field::WaspNestTarget,
-            titbit_layer: 9,
-        }
-    );
+        .sequences()
+        .expect("retained ground action");
+    let throw = action
+        .elements
+        .iter()
+        .find(|element| element.command == Command::ThrowWaspNest)
+        .unwrap();
+    assert!(matches!(throw.get_property(Field::WaspNestTarget),
+        Some(FieldValue::Point3D { x, y, z }) if *x == target.x && *y == target.y && *z == target.z));
     assert_single_recorded_titbit(
         &engine,
         pc_id,
@@ -4566,10 +4586,10 @@ fn assert_scroll_read_composite<P: robin_util::state_hash::StateHash>(
 }
 
 #[test]
-fn scroll_read_recording_stores_semantic_step_and_does_not_launch_live_sequence() {
+fn scroll_read_recording_retains_sequence_without_launching_it() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let (mut engine, assets, pc_id, npc_id, _scroll_id) = setup_scroll_read_scene();
+    let (mut engine, assets, pc_id, npc_id, scroll_id) = setup_scroll_read_scene();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
 
@@ -4603,14 +4623,8 @@ fn scroll_read_recording_stores_semantic_step_and_does_not_launch_live_sequence(
         .get(pc_id)
         .expect("pc macro state");
     let slot = state.slot(0).expect("slot 0");
-    assert_eq!(slot.steps.len(), 1);
-    assert_eq!(
-        slot.steps[0].replay,
-        QaReplayCommand::ScrollRead {
-            target: npc_id,
-            running: false,
-        }
-    );
+    let (action, _) = slot.sequences().expect("retained scroll reading sequence");
+    assert_scroll_read_composite(action, pc_id, npc_id, scroll_id);
     assert_single_recorded_titbit(
         &engine,
         pc_id,
@@ -4630,17 +4644,16 @@ fn scroll_read_macro_replay_rebuilds_live_sequence_shape() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
 
-    let state = engine.players.macro_store.get_or_insert(pc_id);
-    state.begin_recording(0);
-    state.append_if_recording(QuickActionStep {
-        action: Action::Search,
-        position: crate::coordinates::MapPoint::new(110.0, 100.0),
-        replay: QaReplayCommand::ScrollRead {
+    record_manual_command(
+        &mut engine,
+        &assets,
+        pc_id,
+        PlayerCommand::LaunchScrollRead {
+            actor: pc_id,
             target: npc_id,
             running: false,
         },
-    });
-    state.stop_recording();
+    );
 
     engine.apply_command(
         sim,
@@ -5339,19 +5352,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
         .get(pc_id)
         .expect("target interaction was recorded");
     let recorded = state.slot(0).expect("slot zero exists");
-    assert_eq!(recorded.steps.len(), 1);
-    assert_eq!(
-        recorded.steps[0].replay,
-        QaReplayCommand::TargetInteraction {
-            target: target_id,
-            command: Command::HitTarget,
-            destination: recorded_destination,
-            sector,
-            layer: 4,
-            action: crate::order::OrderType::WalkingCrouched,
-            turn_point: recorded_turn_point,
-        }
-    );
+    assert_retained_interaction(recorded, Command::HitTarget, target_id);
 
     // Playback clones the recorded sequence. Moving the target after
     // recording must not rewrite the coordinate seek or turn geometry.
@@ -5405,7 +5406,8 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     let post_seek = post_seek_sequence
         .as_ref()
         .expect("recorded seek retains Turn and interaction");
-    assert_eq!(post_seek.len(), 2);
+    assert_eq!(post_seek.len(), 3);
+    assert_eq!(post_seek.get(2).unwrap().command, Command::CrouchDown);
     let turn = post_seek.get(0).expect("Turn follows seek");
     assert_eq!(turn.command, Command::Turn);
     assert_eq!(turn.command_level, 1);
@@ -6580,15 +6582,14 @@ fn record_interaction_quick_action(
     let target_layer = target_entity.element_data().layer();
     let state = engine.players.macro_store.get_or_insert(pc);
     state.begin_recording(0);
-    state.append_if_recording(QuickActionStep {
-        action: Action::NoAction,
-        position: target_position,
-        replay: QaReplayCommand::Interaction {
-            target,
-            command,
-            double_click: false,
-        },
-    });
+    let mut action = Sequence::new();
+    action.append_element(SequenceElement::new_interaction(
+        1,
+        command,
+        Some(pc),
+        Some(target),
+    ));
+    state.retain_sequence(action, None);
     state.stop_recording();
     let titbit = engine.feedback.titbit_manager.add_titbit(
         WorldPoint3D::new(target_position.x, target_position.y, 0.0),
@@ -6651,16 +6652,34 @@ fn assert_invalid_quick_action_fizzles_without_consuming(
 }
 
 fn quick_action_slot_is_valid(engine: &EngineInner, assets: &LevelAssets, pc: EntityId) -> bool {
-    let Some(steps) = engine
+    let Some((action, seek)) = engine
         .players
         .macro_store
         .get(pc)
         .and_then(|state| state.slot(0))
-        .map(|slot| slot.steps.as_slice())
+        .and_then(|slot| slot.sequences())
     else {
         return false;
     };
-    engine.check_quick_action_steps_validity(assets, pc, steps)
+    let swordfighting = engine
+        .get_entity(pc)
+        .and_then(Entity::human_data)
+        .is_some_and(|human| !human.opponents.is_empty());
+    super::quick_actions::quick_action_sequence_is_valid(
+        engine,
+        assets,
+        action,
+        swordfighting,
+        false,
+    ) && seek.is_none_or(|seek| {
+        super::quick_actions::quick_action_sequence_is_valid(
+            engine,
+            assets,
+            seek,
+            swordfighting,
+            true,
+        )
+    })
 }
 
 fn configure_valid_bow_quick_action(
@@ -6822,7 +6841,7 @@ fn retained_quick_action_validates_borrowed_continuations_with_human_rules() {
     *post_seek_sequence = Some(continuation.into_post_seek());
     action.elements.push(seek);
     assert!(
-        super::quick_actions::legacy_quick_action_sequence_is_valid(
+        super::quick_actions::quick_action_sequence_is_valid(
             &engine, &assets, &action, true, false,
         ),
         "a nested shield command is not subject to the outer swordfight restriction"
@@ -6854,13 +6873,13 @@ fn retained_quick_action_validates_borrowed_continuations_with_human_rules() {
     };
     *post_seek_sequence = Some(continuation.into_post_seek());
     assert!(
-        !super::quick_actions::legacy_quick_action_sequence_is_valid(
+        !super::quick_actions::quick_action_sequence_is_valid(
             &engine, &assets, &action, false, false,
         ),
         "nested human validation includes non-PC owners and rejects their inactive targets"
     );
     assert!(
-        super::quick_actions::legacy_quick_action_sequence_is_valid(
+        super::quick_actions::quick_action_sequence_is_valid(
             &engine, &assets, &action, false, true,
         ),
         "the separately retained seek sequence does not inspect nested continuations"
@@ -6868,7 +6887,7 @@ fn retained_quick_action_validates_borrowed_continuations_with_human_rules() {
 
     action.elements[0].owner = Some(soldier);
     assert!(
-        super::quick_actions::legacy_quick_action_sequence_is_valid(
+        super::quick_actions::quick_action_sequence_is_valid(
             &engine, &assets, &action, false, false,
         ),
         "a non-PC outer owner bypasses the PC quick-action continuation gate"
@@ -6908,18 +6927,18 @@ fn retained_quick_action_empty_fizzle_resets_count_only_after_validation() {
             crate::macro_store::QuickActionSlot::retained(
                 Some(Sequence::default()),
                 seek,
-                crate::macro_store::LegacyQuickito::default(),
+                crate::macro_store::Quickito::default(),
                 None,
             ),
             7,
         );
         assert_eq!(
-            engine.replay_legacy_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+            engine.replay_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
             Some(false)
         );
         let state = engine.players.macro_store.get(pc).unwrap();
         assert_eq!(state.special_count(0), if valid { 0 } else { 7 });
-        assert!(state.slot(0).unwrap().legacy_sequences().is_some());
+        assert!(state.slot(0).unwrap().sequences().is_some());
     }
 }
 
@@ -6945,13 +6964,13 @@ fn retained_quick_action_without_seek_clears_previous_continuation() {
         crate::macro_store::QuickActionSlot::retained(
             Some(action),
             None,
-            crate::macro_store::LegacyQuickito::default(),
+            crate::macro_store::Quickito::default(),
             None,
         ),
         0,
     );
     assert_eq!(
-        engine.replay_legacy_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+        engine.replay_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
         Some(true)
     );
     assert!(

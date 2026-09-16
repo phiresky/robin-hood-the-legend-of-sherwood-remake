@@ -101,8 +101,37 @@ fn arm_group_move_recording(engine: &mut EngineInner, pcs: &[crate::element::Ent
     engine.players.qa_recording_for = pcs.to_vec();
 }
 
-/// Seed a PC's macro slot with a recorded "move to (x,y)" step and a
-/// wired titbit.  Used by the playback/abort/tetris tests below.
+fn retained_test_move(
+    pc: crate::element::EntityId,
+    destination: crate::coordinates::MapPoint,
+    route: crate::macro_store::RecordedQaMoveRoute,
+) -> crate::sequence::SequenceElement {
+    let mut movement = crate::sequence::SequenceElement::new_movement(
+        1,
+        crate::element::Command::Seek,
+        Some(pc),
+        crate::order::OrderType::WalkingUpright,
+    );
+    let crate::sequence::SequenceElementData::Movement {
+        destination: goal,
+        sector,
+        layer,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *goal = destination;
+    *sector = Some(
+        crate::position_interface::SectorHandle::new(u16::from(route.goal_sector))
+            .expect("valid sector")
+            .with_arena_index(route.goal_sector_index),
+    );
+    *layer = route.goal_layer;
+    movement
+}
+
+/// Seed a retained movement sequence and its titbit for playback tests.
 fn seed_macro_slot(
     engine: &mut EngineInner,
     pc: crate::element::EntityId,
@@ -110,7 +139,6 @@ fn seed_macro_slot(
     steps: Vec<(f32, f32)>,
 ) -> crate::titbit::TitbitId {
     use crate::coordinates::WorldPoint3D;
-    use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let route = recorded_test_route(engine);
@@ -135,18 +163,12 @@ fn seed_macro_slot(
 
     let state = engine.players.macro_store.get_or_insert(pc);
     state.begin_recording(slot);
+    let mut sequence = crate::sequence::Sequence::new();
     for (x, y) in steps {
         let pos = crate::coordinates::MapPoint::new(x, y);
-        state.append_if_recording(QuickActionStep {
-            action: crate::profiles::Action::NoAction,
-            position: pos,
-            replay: QaReplayCommand::Move {
-                destination: pos,
-                running: false,
-                route,
-            },
-        });
+        sequence.append_element(retained_test_move(pc, pos, route));
     }
+    state.retain_sequence(sequence, None);
     state.stop_recording();
     let titbit = titbit_id.expect("titbit allocation succeeds");
     state.set_slot_titbit(slot as usize, titbit);
@@ -161,9 +183,8 @@ fn seed_invalid_interaction_macro_slot(
     pc: crate::element::EntityId,
     slot: u8,
 ) -> crate::titbit::TitbitId {
-    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{Command, EntityId};
-    use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let pc_handle = ElementHandle(pc.index());
@@ -183,15 +204,14 @@ fn seed_invalid_interaction_macro_slot(
     let missing_target = EntityId::Pc(crate::entity_id::PcId(u32::MAX));
     let state = engine.players.macro_store.get_or_insert(pc);
     state.begin_recording(slot);
-    state.append_if_recording(QuickActionStep {
-        action: crate::profiles::Action::NoAction,
-        position: MapPoint::new(20.0, 20.0),
-        replay: QaReplayCommand::Interaction {
-            target: missing_target,
-            command: Command::Take,
-            double_click: false,
-        },
-    });
+    let mut action = crate::sequence::Sequence::new();
+    action.append_element(crate::sequence::SequenceElement::new_interaction(
+        1,
+        Command::Take,
+        Some(pc),
+        Some(missing_target),
+    ));
+    state.retain_sequence(action, None);
     state.stop_recording();
     let titbit = titbit_id.expect("titbit allocation succeeds");
     state.set_slot_titbit(slot as usize, titbit);
@@ -244,7 +264,6 @@ fn stop_recording_macro_restores_occupied_slot_before_refreshing_portrait() {
 #[test]
 fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
     use crate::coordinates::MapPoint;
-    use crate::macro_store::{QaReplayCommand, QuickActionStep};
 
     let mut engine = EngineInner::new();
     let empty_pc = add_test_pc(&mut engine);
@@ -261,15 +280,9 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
     let state = engine.players.macro_store.get_mut(recorded_pc).unwrap();
     state.begin_recording(slot);
     let destination = MapPoint::new(30.0, 40.0);
-    state.append_if_recording(QuickActionStep {
-        action: crate::profiles::Action::NoAction,
-        position: destination,
-        replay: QaReplayCommand::Move {
-            destination,
-            running: false,
-            route,
-        },
-    });
+    let mut action = crate::sequence::Sequence::new();
+    action.append_element(retained_test_move(recorded_pc, destination, route));
+    state.retain_sequence(action, None);
     state.set_slot_titbit(slot as usize, titbit);
     engine.players.qa_recording_slot = slot;
     engine.players.qa_recording_for = vec![empty_pc, recorded_pc];
@@ -320,7 +333,6 @@ fn stop_recording_macro_refreshes_empty_and_recorded_portraits() {
 #[test]
 fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek() {
     use crate::element::Command;
-    use crate::macro_store::QaReplayCommand;
     use crate::player_command::PlayerCommand;
     use crate::sequence::SequenceElementData;
 
@@ -364,27 +376,36 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
     );
 
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
-    let step = engine
+    let (action, continuation) = engine
         .players
         .macro_store
         .get(pc)
         .and_then(|state| state.slot(0))
-        .and_then(|slot| slot.steps.first())
-        .cloned()
-        .expect("one recorded group-move step");
-    let QaReplayCommand::Move {
+        .and_then(|slot| slot.sequences())
+        .expect("retained group-move sequence");
+    assert_eq!(action.len(), 1);
+    assert_eq!(
+        continuation.unwrap().get(0).unwrap().command,
+        Command::SpeakHeroReachDestination
+    );
+    let SequenceElementData::Movement {
         destination,
-        running,
-        route,
-    } = step.replay
+        action: movement_action,
+        sector,
+        layer,
+        ..
+    } = action.get(0).unwrap().data
     else {
         panic!("group move did not retain its resolved route")
     };
     assert_eq!(destination, MapPoint::new(504.0, 500.0));
-    assert!(running);
-    assert_eq!(route.goal_sector, crate::sector::SectorNumber::new(1));
-    assert_eq!(route.goal_sector_index, exact_sector);
-    assert_eq!(route.goal_layer, 0);
+    assert_eq!(movement_action, crate::order::OrderType::RunningUpright);
+    assert_eq!(
+        sector.unwrap().number(),
+        crate::sector::SectorNumber::new(1)
+    );
+    assert_eq!(sector.unwrap().arena_index(), Some(exact_sector));
+    assert_eq!(layer, 0);
 
     engine.apply_command(
         &sim,
@@ -407,7 +428,6 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
         destination,
         sector,
         layer,
-        post_seek_sequence,
         ..
     } = &sequence.elements[0].data
     else {
@@ -419,7 +439,11 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
         Some(exact_sector)
     );
     assert_eq!(*layer, 0);
-    let post_seek = post_seek_sequence.as_ref().expect("arrival continuation");
+    let post_seek = engine
+        .get_entity(pc)
+        .and_then(Entity::actor_data)
+        .and_then(|actor| actor.post_seek_sequence.as_ref())
+        .expect("arrival continuation retained by the actor");
     assert_eq!(
         post_seek.elements[0].command,
         Command::SpeakHeroReachDestination
@@ -428,7 +452,6 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
 
 #[test]
 fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_launching() {
-    use crate::macro_store::QaReplayCommand;
     use crate::player_command::PlayerCommand;
 
     let sim = crate::sim_rng::test_context();
@@ -474,25 +497,28 @@ fn recorded_multi_pc_group_move_keeps_actor_order_and_individual_slots_without_l
         (pc_a, MapPoint::new(500.0, 477.0)),
         (pc_b, MapPoint::new(500.0, 523.0)),
     ] {
-        let steps = &engine
+        let (action, continuation) = engine
             .players
             .macro_store
             .get(pc)
             .and_then(|state| state.slot(0))
             .expect("recorded slot")
-            .steps;
-        assert_eq!(steps.len(), 1);
-        let QaReplayCommand::Move {
+            .sequences()
+            .expect("retained movement");
+        assert_eq!(action.len(), 1);
+        assert!(continuation.is_some());
+        let crate::sequence::SequenceElementData::Movement {
             destination,
-            running,
-            route,
-        } = steps[0].replay
+            action: movement_action,
+            sector,
+            ..
+        } = action.get(0).unwrap().data
         else {
             panic!("per-PC group move did not retain its resolved route")
         };
         assert_eq!(destination, expected);
-        assert!(!running);
-        assert_eq!(route.goal_sector_index, exact_sector);
+        assert_eq!(movement_action, crate::order::OrderType::WalkingUpright);
+        assert_eq!(sector.unwrap().arena_index(), Some(exact_sector));
     }
     assert!(
         !engine.is_recording_macro(),
@@ -795,7 +821,9 @@ fn group_move_recording_suppresses_only_armed_actor_and_launches_live_sibling() 
             .get(recording_pc)
             .and_then(|state| state.slot(0))
             .expect("recorded slot")
-            .steps
+            .sequences()
+            .unwrap()
+            .0
             .len(),
         1
     );

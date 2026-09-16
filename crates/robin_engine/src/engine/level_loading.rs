@@ -2449,7 +2449,6 @@ impl EngineInner {
             .expect("fast-grid sector count exceeds u32");
         for (layer_idx, layer_areas) in motion_data.layers.iter().enumerate() {
             let mut move_areas = Vec::new();
-            let mut alt_move_areas = Vec::new();
 
             for area in layer_areas {
                 // The area's own motion sector precedes its obstacles.
@@ -2640,17 +2639,11 @@ impl EngineInner {
                     polygon: polygon_pts,
                     motion_obstacles: obstacles,
                 });
-                alt_move_areas.push(crate::pathfinder::MotionArea {
-                    skeleton: Vec::new(),
-                    polygon: Vec::new(),
-                    motion_obstacles: Vec::new(),
-                });
             }
 
             let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
             let static_data = graph.static_mut();
             static_data.move_layers.push(move_areas);
-            static_data.alternative_move_layers.push(alt_move_areas);
         }
     }
 

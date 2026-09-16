@@ -388,151 +388,6 @@ fn is_circle_sweep(kind: WeaponThrustKind) -> bool {
     )
 }
 
-fn is_falling_flight_order(order_type: crate::order::OrderType) -> bool {
-    use crate::order::OrderType;
-
-    matches!(
-        order_type,
-        OrderType::FallingHitUpright
-            | OrderType::FallingHitWithBow
-            | OrderType::FallingHitWithSword
-            | OrderType::FallingHitCrouched
-            | OrderType::FallingHitHarderUpright
-            | OrderType::FallingHitHarderWithBow
-            | OrderType::FallingHitHarderWithSword
-            | OrderType::FallingHitHarderCrouched
-            | OrderType::FallingPushedUpright
-            | OrderType::FallingPushedWithBow
-            | OrderType::FallingPushedWithSword
-            | OrderType::FallingPushedCrouched
-    )
-}
-
-fn loaded_combat_flight_steps(
-    position: crate::coordinates::WorldPoint3D,
-    goal: crate::coordinates::WorldPoint3D,
-    increment: crate::coordinates::WorldVec3D,
-) -> u16 {
-    let components = [
-        (goal.x - position.x, increment.x),
-        (goal.y - position.y, increment.y),
-        (goal.z - position.z, increment.z),
-    ];
-    let Some((distance, step)) = components
-        .into_iter()
-        .filter(|(_, step)| *step != 0.0)
-        .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
-    else {
-        return 0;
-    };
-    let remaining = distance / step;
-    assert!(
-        remaining.is_finite() && remaining >= -0.5,
-        "loaded combat flight has invalid remaining distance {remaining}"
-    );
-    let remaining = remaining.round().max(1.0);
-    assert!(
-        remaining <= f32::from(u16::MAX),
-        "loaded combat flight has {remaining} remaining steps"
-    );
-    remaining as u16
-}
-
-impl EngineInner {
-    /// Rebuild the Rust-only execution surrogate for a combat flight which
-    /// was already in progress when an Original v48 save was written.
-    ///
-    /// Sprite takeoff preparation stores the goal and increment in the
-    /// serialized position interface; flight handling consumes those
-    /// fields directly after a load. Rust additionally uses `ActorData::active_flight`, which
-    /// is not itself an original-game field and therefore must be derived after
-    /// both entities and their live sequence orders have been adopted.
-    pub(crate) fn restore_loaded_combat_flights(&mut self) -> usize {
-        let candidates = self
-            .world
-            .entities
-            .actors()
-            .filter_map(|(id, entity)| {
-                let id = EntityId::from(id);
-                let actor = entity.actor_data()?;
-                if actor.active_flight.is_some()
-                    || entity.element_data().posture() != Posture::Flying
-                {
-                    return None;
-                }
-                let (_, _, order) = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, id)?;
-                is_falling_flight_order(order.order_type).then_some((id, order.antagonist))
-            })
-            .collect::<Vec<_>>();
-
-        for (id, antagonist) in &candidates {
-            let antagonist = antagonist
-                .unwrap_or_else(|| panic!("loaded combat flight for {id:?} has no antagonist"));
-            let entity = self
-                .world
-                .entities
-                .get_mut(*id)
-                .expect("loaded combat-flight actor disappeared");
-            let position = entity.position_iface().v48_serialized_state();
-            let goal_layer = position
-                .layer_goal
-                .unwrap_or_else(|| panic!("loaded combat flight for {id:?} has no goal layer"));
-            let goal_sector = position
-                .sector_goal
-                .unwrap_or_else(|| panic!("loaded combat flight for {id:?} has no goal sector"));
-            entity
-                .actor_data_mut()
-                .expect("loaded combat-flight entity lost actor data")
-                .active_flight = Some(Box::new(crate::element::ActiveFlight {
-                geometry: crate::element::FlightGeometry::World3d,
-                increment_x: position.increment.x,
-                increment_y: position.increment.y,
-                goal_x: position.goal.x,
-                goal_y: position.goal.y - position.goal.z,
-                frames_remaining: loaded_combat_flight_steps(
-                    position.position,
-                    position.goal,
-                    position.increment,
-                ),
-                antagonist: Some(antagonist),
-                increment_z: position.increment.z,
-                goal_z: position.goal.z,
-                goal_layer: goal_layer.get(),
-                goal_sector: Some(goal_sector),
-                obstacle: position.obstacle,
-                ladder_fall: false,
-            }));
-        }
-
-        candidates.len()
-    }
-}
-
-fn set_flight_position(
-    entity: &mut Entity,
-    geometry: crate::element::FlightGeometry,
-    map: crate::coordinates::MapPoint,
-    world_z: f32,
-) {
-    match geometry {
-        crate::element::FlightGeometry::GroundPlane => {
-            entity.element_data_mut().set_position_map(map);
-        }
-        crate::element::FlightGeometry::World3d => {
-            entity
-                .position_iface_mut()
-                .set_position(crate::coordinates::WorldPoint3D {
-                    x: map.x,
-                    y: map.y + world_z,
-                    z: world_z,
-                });
-        }
-    }
-}
-
 impl EngineInner {
     fn begin_selected_melee_motion(
         &mut self,
@@ -679,14 +534,6 @@ impl EngineInner {
             }
         }
 
-        // In-flight displacement now runs at each actor's Execute slot. Keep
-        // only terminal landing reconciliation here: existing synchronous
-        // completion callbacks can refresh the position latch before this
-        // legacy Rust cleanup boundary.
-        // TODO(original-parity): move this terminal-only cleanup into the
-        // owner slot once those callbacks preserve flight processing's final
-        // movement-step delta themselves.
-        self.tick_push_flight_terminal_landings(sim, assets);
         self.tick_enemy_sword_attacks(sim, assets);
         self.tick_pc_combat_anim_speech(sim, assets);
         self.tick_refresh_purse_disable(assets);
@@ -1928,582 +1775,258 @@ impl EngineInner {
 
     // ─── Push flight tick ─────────────────────────────────────────
 
-    /// Per-frame push flight advancement.
-    ///
-    /// For each entity with an `active_flight`, advance position by
-    /// the stored increment.  On the final frame, snap to the goal
-    /// position.
-    ///
-    /// Combat-driven flights also propagate the "Bud-Spencer-style"
-    /// domino effect: after the position update, sweep nearby upright
-    /// actors in the flight direction and queue a `ReceiveHitDamage`
-    /// element citing the original hitter — fired per frame at the
-    /// tail of hit-induced or pushed falling.
-    #[cfg(test)]
-    pub(super) fn tick_push_flights(
+    /// Apply sprite-owned flight movement before the human's state callbacks.
+    pub(in crate::engine) fn perform_combat_flight_position(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.tick_push_flights_at_owner(sim, assets, None, false, false);
+        owner: EntityId,
+        motion: crate::sprite::MotionState,
+    ) -> crate::sprite::MotionState {
+        use crate::sprite::MotionState;
+        let entity = self
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("flight owner disappeared");
+        let before = crate::movement_diagnostics::parity_movement_capture_active()
+            .then(|| entity.position_iface().v48_serialized_state());
+        let sprite = entity.sprite();
+        if perform_flight_stops_before_position_update(
+            sprite.frame_count,
+            sprite.current_frame,
+            sprite.num_frames_for_row(sprite.current_row),
+        ) {
+            entity
+                .position_iface_mut()
+                .set_projectile_increment(crate::coordinates::WorldVec3D::ZERO);
+        }
+        entity.position_iface_mut().set_increment_3d_computed(true);
+        let increment = entity.position_iface().get_increment();
+        let position = entity.element_data().position();
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(
+                position.x + increment.x,
+                position.y + increment.y,
+                position.z + increment.z,
+            ));
+        Self::publish_flight_position(entity);
+        // Recomputing the transient depth key does not change the retained
+        // display-order reference or its behind/front flag.
+        let raw_post = entity.element_data().position();
+        let raw_map = entity.element_data().position_map();
+        match motion {
+            MotionState::Start => entity.position_iface_mut().set_anti_collision_on(false),
+            MotionState::Terminated => {
+                let pi = entity.position_iface_mut();
+                let goal = pi.world_goal();
+                let layer = pi.layer_goal();
+                let (sector, sector_index) = pi.get_goal_sector_topology();
+                pi.set_anti_collision_on(true);
+                entity.element_data_mut().set_layer(layer.get());
+                entity
+                    .element_data_mut()
+                    .set_sector_topology(sector, sector_index);
+                entity.element_data_mut().set_position(goal);
+                entity
+                    .position_iface_mut()
+                    .set_projectile_increment(crate::coordinates::WorldVec3D::ZERO);
+                Self::publish_flight_position(entity);
+            }
+            _ => {}
+        }
+        if let Some(before) = before {
+            let installed = entity.actor_data().and_then(|actor| actor.installed_order);
+            crate::movement_diagnostics::record_parity_flight_step(
+                crate::movement_diagnostics::ParityFlightStep {
+                    entity: owner,
+                    phase: "execute".into(),
+                    geometry: "World3d".into(),
+                    order_id: installed.map(|order| order.order_id.get()),
+                    order_type: installed.map(|order| format!("{:?}", order.order_type)),
+                    entry_position: before.position.into(),
+                    entry_position_map: before.map.into(),
+                    old_position: before.old_position.into(),
+                    old_position_map: before.old_map.into(),
+                    goal: before.goal.into(),
+                    cached_increment: before.increment.into(),
+                    applied_increment: increment.into(),
+                    raw_post_position: raw_post.into(),
+                    raw_post_position_map: raw_map.into(),
+                    motion_state: format!("{motion:?}"),
+                    post_position: entity.element_data().position().into(),
+                    post_position_map: entity.element_data().position_map().into(),
+                    snapped_to_goal: motion == MotionState::Terminated,
+                },
+            );
+        }
+        motion
     }
 
-    /// Advance flight work at one actor's live creation slot. Original
-    /// Hit-induced or pushed falling performs flight
-    /// inline, so a later NPC's detection pass observes the resulting
-    /// position while an earlier NPC cannot. The optional owner also keeps
-    /// the broad helper available to focused tests without restoring the
-    /// production-wide post-detection batch.
-    pub(in crate::engine) fn tick_push_flight_for_owner(
+    fn publish_flight_position(entity: &mut Entity) {
+        let map = entity.element_data().position_map();
+        let center = entity.sprite().center;
+        entity.position_iface_mut().finish_flight_position_update(
+            crate::coordinates::MapPoint::new(
+                (map.x - center.x).floor(),
+                (map.y - center.y).floor(),
+            ),
+        );
+        entity.element_data_mut().update_grid_cell();
+    }
+
+    /// Human flight callbacks follow the sprite position and posture updates.
+    pub(in crate::engine) fn finish_combat_flight(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) -> Option<crate::sprite::MotionState> {
-        if self.actors_frozen()
-            || self
-                .get_entity(owner)
-                .and_then(Entity::actor_data)
-                .is_some_and(|actor| actor.execution_frozen)
-        {
-            return None;
-        }
-        // Flight processing owns its terminal goal snap before execution returns.
-        // The generic animation arm has already published the landing posture
-        // by this point, so process a retained zero-frame combat flight here
-        // rather than postponing its exact goal position until the later
-        // gameplay-systems reconciliation pass.
-        self.tick_push_flights_at_owner(sim, assets, Some(owner), false, false)
-            .then_some(crate::sprite::MotionState::Terminated)
-    }
-
-    fn tick_push_flight_terminal_landings(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        motion: crate::sprite::MotionState,
     ) {
-        self.tick_push_flights_at_owner(sim, assets, None, true, false);
+        let antagonist = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&self.world.entities, owner)
+            .expect("flight owner has no selected order")
+            .2
+            .antagonist;
+        if motion == crate::sprite::MotionState::Terminated {
+            self.update_script_sectors_after_flight(sim, assets, owner);
+        }
+        if let Some(antagonist) = antagonist {
+            let increment = self
+                .world
+                .entities
+                .get(owner)
+                .expect("flight owner disappeared")
+                .position_iface()
+                .get_increment();
+            self.apply_domino_effect(sim, assets, owner, antagonist, increment.x, increment.y);
+        }
     }
 
-    fn tick_push_flights_at_owner(
+    /// A ladder fall uses its selected destination and the actor's shared timer.
+    pub(in crate::engine) fn execute_ladder_fall_position(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        selected_owner: Option<EntityId>,
-        terminal_only: bool,
-        skip_terminal: bool,
-    ) -> bool {
-        // Domino sweeps fire after positions have advanced, so collect
-        // (flyer, hitter, post-advance increment) here and dispatch in a
-        // second pass — `apply_domino_effect` reads many entities and
-        // launches sequence elements, which would conflict with the
-        // single-entity mutable borrow below.
-        let mut domino_sweeps: Vec<(EntityId, EntityId, f32, f32)> = Vec::new();
-        // Landing-resolution side effects deferred to after the loop so
-        // we can call `set_obstacle_and_material` (which needs `&mut
-        // self`) without conflicting with the per-entity mutable borrow.
-        // Apply the goal obstacle / layer / sector at flight
-        // termination.
-        let mut landings: Vec<(EntityId, Option<crate::sight_obstacle::SightObstacleIndex>)> =
-            Vec::new();
-        let mut refresh_script_sectors = false;
-        // Ladder/wall falls that reached their tick countdown this
-        // frame; the post-loop pass applies the landing concussion,
-        // lying posture, and fall-order retirement.
-        let mut ladder_arrivals: Vec<EntityId> = Vec::new();
-
-        // Select eligible flights before borrowing actors mutably so owner
-        // updates and terminal reconciliation touch only their candidates.
-        let eligible = |entity: &Entity| {
-            entity
-                .actor_data()
-                .and_then(|actor| actor.active_flight.as_deref().copied())
-                .is_some_and(|flight| {
-                    (!terminal_only || flight.frames_remaining == 0)
-                        && (!skip_terminal || flight.frames_remaining != 0)
-                })
-        };
-        let flight_ids: Vec<EntityId> = match selected_owner {
-            Some(owner) => std::iter::once(owner)
-                .filter(|owner| {
-                    matches!(
-                        owner,
-                        EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_)
-                    ) && self.world.entities.get(*owner).is_some_and(eligible)
-                })
-                .collect(),
-            None => self
-                .world
-                .entities
-                .actors()
-                .filter(|(_, entity)| eligible(entity))
-                .map(|(id, _)| id.into())
-                .collect(),
-        };
-        for entity_id in flight_ids {
-            let entity = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("selected flight actor disappeared before flight execution");
-            // Read flight state without holding a mutable borrow.
-            let flight_info = entity
-                .actor_data()
-                .and_then(|a| a.active_flight.as_deref().copied());
-
-            let mut flight = match flight_info {
-                Some(f) => f,
-                None => continue,
-            };
-            if (terminal_only && flight.frames_remaining != 0)
-                || (skip_terminal && flight.frames_remaining == 0)
-            {
-                continue;
-            }
-
-            // Ladder/wall falls only progress while the FallingLadderWall
-            // order is live — the original drives this flight from that
-            // order's Execute arm.  Before the order starts, hold the
-            // flight; if the order retired early (its sprite ran out
-            // before the countdown), the increment is never applied
-            // again, so drop the flight and leave the actor in place.
-            if flight.ladder_fall {
-                let fall_order_live = entity
-                    .actor_data()
-                    .and_then(|actor| actor.selected_sequence_element)
-                    .and_then(|selected| {
-                        self.orders
-                            .sequence_manager
-                            .get_element(selected.sequence_id, selected.element_index)
-                    })
-                    .and_then(|element| element.current_order())
-                    .is_some_and(|order| {
-                        order.order_type == crate::order::OrderType::FallingLadderWall
-                    });
-                if !fall_order_live {
-                    if entity.element_data().posture() == Posture::Flying {
-                        entity.actor_data_mut().unwrap().active_flight = None;
-                    }
-                    continue;
-                }
-            }
-
-            // Takeoff is initialized during pushed or hit-induced falling,
-            // after damage translation. Rust stores the
-            // computed flight eagerly, so hold it until the queued falling
-            // order is live and its Execute has changed posture to Flying.
-            // Sprite flight updates position even when
-            // Action processing reports start, so that first execution owns the
-            // first displacement too.
-            let falling_order_live = entity
-                .actor_data()
-                .and_then(|actor| actor.selected_sequence_element)
-                .and_then(|selected| {
-                    self.orders
-                        .sequence_manager
-                        .get_element(selected.sequence_id, selected.element_index)
-                })
-                .and_then(|element| element.current_order())
-                .is_some_and(|order| is_falling_flight_order(order.order_type));
-            let waiting_for_fall_start = flight.frames_remaining != 0
-                && flight.antagonist.is_some()
-                && !flight.ladder_fall
-                && (!falling_order_live || entity.element_data().posture() != Posture::Flying);
-            if waiting_for_fall_start {
-                continue;
-            }
-
-            // A combat flight whose countdown reached zero on the preceding
-            // DONE call remains attached until the falling animation later
-            // reports TERMINATED. The terminal-landings reconciliation runs
-            // every frame, but the original game does not advance flight a second
-            // time in this gap: its nonzero raw increment therefore remains
-            // cached even though no further displacement occurs. Wait for
-            // the posture transition before emulating the terminal call.
-            if terminal_only
-                && flight.frames_remaining == 0
-                && flight.antagonist.is_some()
-                && entity.element_data().posture() == Posture::Flying
-            {
-                continue;
-            }
-
-            let flight_capture_before =
-                crate::movement_diagnostics::parity_movement_capture_active().then(|| {
-                    let position = entity.position_iface().v48_serialized_state();
-                    (
-                        position.position,
-                        position.map,
-                        position.old_position,
-                        position.old_map,
-                        crate::coordinates::WorldPoint3D::new(
-                            flight.goal_x,
-                            flight.goal_y + flight.goal_z,
-                            flight.goal_z,
-                        ),
-                        crate::coordinates::WorldVec3D::new(
-                            flight.increment_x,
-                            flight.increment_y,
-                            flight.increment_z,
-                        ),
-                        entity.actor_data().and_then(|actor| actor.installed_order),
-                    )
-                });
-            let mut raw_post = None;
-            let mut snapped_to_goal = false;
-
-            // Sprite flight clears its increment after the action
-            // reaches the final sprite frame, before the domino effect and
-            // position updates. The flight countdown is only our surrogate for
-            // that sprite-owned lifetime, so retire it at the same boundary.
-            let sprite = entity.sprite();
-            if flight.antagonist.is_some()
-                && !flight.ladder_fall
-                && perform_flight_stops_before_position_update(
-                    sprite.frame_count,
-                    sprite.current_frame,
-                    sprite.num_frames_for_row(sprite.current_row),
-                )
-            {
-                flight.frames_remaining = 0;
-                flight.increment_x = 0.0;
-                flight.increment_y = 0.0;
-                flight.increment_z = 0.0;
-                *entity
-                    .actor_data_mut()
-                    .unwrap()
-                    .active_flight
-                    .as_deref_mut()
-                    .expect("selected flight disappeared") = flight;
-            }
-
-            // Takeoff preparation writes these values into the position interface,
-            // not only into the sprite's flight bookkeeping. Flight processing
-            // then marks the 3-D increment computed on every call before it
-            // updates position. ActiveFlight is Rust's execution surrogate,
-            // so keep the serialized interface cache in lockstep as well.
-            entity.position_iface_mut().set_flight_goal_and_increment(
-                crate::coordinates::WorldPoint3D::new(
-                    flight.goal_x,
-                    flight.goal_y + flight.goal_z,
-                    flight.goal_z,
-                ),
-                crate::coordinates::WorldVec3D::new(
-                    flight.increment_x,
-                    flight.increment_y,
-                    flight.increment_z,
-                ),
-                flight.goal_sector,
-                flight.goal_sector.and_then(|sector| sector.arena_index()),
-            );
-
-            // Capture the domino-sweep request *before* clearing the
-            // flight on the final frame.  An exact zero increment
-            // skips frames where the sprite isn't actually moving.
-            // The domino effect reads the increment's X/Y: the literal world
-            // flight vector, not the projected map-space delta (whose Y also
-            // contains elevation). Flat flights make the two spaces coincide,
-            // while elevated flights do not.
-            let is_moving = flight.increment_x != 0.0 || flight.increment_y != 0.0;
-            if is_moving && let Some(hitter) = flight.antagonist {
-                domino_sweeps.push((
-                    entity_id.into(),
-                    hitter,
-                    flight.increment_x,
-                    flight.increment_y,
-                ));
-            }
-
-            if flight.frames_remaining == 0 {
-                // Combat falls retain their flight state at the geometric
-                // goal until the sprite reports TERMINATED. The animation
-                // handler changes posture first; only then does Original
-                // apply the goal obstacle/layer/sector and refresh script
-                // sectors.
-                if flight.antagonist.is_some() && entity.element_data().posture() != Posture::Flying
-                {
-                    set_flight_position(
-                        entity,
-                        flight.geometry,
-                        crate::coordinates::MapPoint::new(flight.goal_x, flight.goal_y),
-                        flight.goal_z,
-                    );
-                    entity.element_data_mut().set_layer(flight.goal_layer);
-                    // Original-game flight handling assigns the exact sector reference
-                    // retained in the goal sector. ActiveFlight carries that
-                    // pointer identity in its SectorHandle; a number-only
-                    // write would make the next falling-hit projection lookup
-                    // ambiguous (notably for public sector 0).
-                    entity.element_data_mut().set_sector_topology(
-                        flight.goal_sector,
-                        flight.goal_sector.and_then(|sector| sector.arena_index()),
-                    );
-                    landings.push((entity_id.into(), flight.obstacle));
-                    refresh_script_sectors = true;
-                    entity.actor_data_mut().unwrap().active_flight = None;
-                    snapped_to_goal = true;
-                }
-            } else if flight.frames_remaining == 1 {
-                // Flight processing still adds its stored increment on the DONE
-                // frame. It snaps to the exact goal position only when the
-                // sprite later reports TERMINATED.
-                if flight.antagonist.is_some() {
-                    if matches!(flight.geometry, crate::element::FlightGeometry::World3d) {
-                        let pos3 = entity.position_iface().get_position();
-                        entity.position_iface_mut().set_position(
-                            crate::coordinates::WorldPoint3D {
-                                x: pos3.x + flight.increment_x,
-                                y: pos3.y + flight.increment_y,
-                                z: pos3.z + flight.increment_z,
-                            },
-                        );
-                    } else {
-                        let mut map = entity.element_data().position_map();
-                        map.x += flight.increment_x;
-                        map.y += flight.increment_y;
-                        let z = entity.position_iface().get_elevation() + flight.increment_z;
-                        set_flight_position(entity, flight.geometry, map, z);
-                    }
-                } else {
-                    // Non-combat translations have no wrapper termination
-                    // event, so their final flight tick owns the exact snap.
-                    set_flight_position(
-                        entity,
-                        flight.geometry,
-                        crate::coordinates::MapPoint::new(flight.goal_x, flight.goal_y),
-                        flight.goal_z,
-                    );
-                    snapped_to_goal = true;
-                }
-                if flight_capture_before.is_some() {
-                    raw_post = Some((
-                        entity.position_iface().get_position(),
-                        entity.element_data().position_map(),
-                    ));
-                }
-                if flight.antagonist.is_some() {
-                    let active = entity
-                        .actor_data_mut()
-                        .unwrap()
-                        .active_flight
-                        .as_mut()
-                        .unwrap();
-                    active.frames_remaining = 0;
-                    active.increment_x = 0.0;
-                    active.increment_y = 0.0;
-                    active.increment_z = 0.0;
-                } else {
-                    entity.element_data_mut().set_layer(flight.goal_layer);
-                    // Match the original game's assignment of the goal sector
-                    // assignment for non-combat translations as well.
-                    entity.element_data_mut().set_sector_topology(
-                        flight.goal_sector,
-                        flight.goal_sector.and_then(|sector| sector.arena_index()),
-                    );
-                    landings.push((entity_id.into(), flight.obstacle));
-                    if flight.ladder_fall {
-                        // Settle the landing like the original's
-                        // position recompute + fresh-move snapshot on
-                        // arrival: old position tracks the snapped
-                        // position, so the landing frame reports no
-                        // residual movement.
-                        entity.position_iface_mut().new_move();
-                    }
-                    let actor = entity.actor_data_mut().unwrap();
-                    actor.active_flight = None;
-                    if flight.ladder_fall {
-                        // Landing exhausts the shared timer while preserving
-                        // the retained seek target and continuation.
-                        actor.wait_time = 0;
-                        ladder_arrivals.push(entity_id.into());
-                    }
-                }
-            } else {
-                // Advance by increment.  The per-frame increment in
-                // 3D is `(goal - position) / frames_of_flight`, so
-                // the z advance is linear from start_z to goal_z.
-                if matches!(flight.geometry, crate::element::FlightGeometry::World3d) {
-                    // Takeoff preparation stores and accumulates one complete 3D
-                    // increment. Re-derive map position after the addition;
-                    // separately accumulating map Y and Z rounds differently.
-                    let pos3 = entity.position_iface().get_position();
-                    entity
-                        .position_iface_mut()
-                        .set_position(crate::coordinates::WorldPoint3D {
-                            x: pos3.x + flight.increment_x,
-                            y: pos3.y + flight.increment_y,
-                            z: pos3.z + flight.increment_z,
-                        });
-                } else {
-                    let mut m = entity.element_data().position_map();
-                    m.x += flight.increment_x;
-                    m.y += flight.increment_y;
-                    let z = entity.position_iface().get_elevation() + flight.increment_z;
-                    set_flight_position(entity, flight.geometry, m, z);
-                }
-                let actor = entity.actor_data_mut().unwrap();
-                let active = actor.active_flight.as_mut().unwrap();
-                active.frames_remaining -= 1;
-                let remaining = active.frames_remaining;
-                if flight.ladder_fall {
-                    // Mirror the original's per-tick fall countdown,
-                    // which lives in the actor's wait-time counter.
-                    actor.wait_time = u32::from(remaining);
-                }
-                if flight_capture_before.is_some() {
-                    raw_post = Some((
-                        entity.position_iface().get_position(),
-                        entity.element_data().position_map(),
-                    ));
-                }
-            }
-
-            // The original game recomputes all position projections after every position update,
-            // including a zero-increment and terminal flight call. Rebuild
-            // the sprite projection from the owning sprite centre before
-            // publishing the complete lazy-computation mask.
-            let map = entity.element_data().position_map();
-            let center = entity.sprite().center;
-            entity.position_iface_mut().finish_flight_position_update(
-                crate::coordinates::MapPoint::new(
-                    (map.x - center.x).floor(),
-                    (map.y - center.y).floor(),
-                ),
-            );
-
-            if let Some((
-                entry_position,
-                entry_position_map,
-                old_position,
-                old_position_map,
-                goal,
-                cached_increment,
-                installed_order,
-            )) = flight_capture_before
-            {
-                let (raw_post_position, raw_post_position_map) =
-                    raw_post.unwrap_or((entry_position, entry_position_map));
-                let post_position = entity.position_iface().get_position();
-                let post_position_map = entity.element_data().position_map();
-                let frames_remaining_after = entity
-                    .actor_data()
-                    .and_then(|actor| actor.active_flight.as_deref().copied())
-                    .map(|active| active.frames_remaining);
-                crate::movement_diagnostics::record_parity_flight_step(
-                    crate::movement_diagnostics::ParityFlightStep {
-                        entity: entity_id.into(),
-                        phase: if selected_owner.is_some() {
-                            "owner".to_owned()
-                        } else {
-                            "terminal_cleanup".to_owned()
-                        },
-                        geometry: format!("{:?}", flight.geometry),
-                        order_id: installed_order.map(|order| order.order_id.get()),
-                        order_type: installed_order.map(|order| format!("{:?}", order.order_type)),
-                        frames_remaining_before: flight.frames_remaining,
-                        frames_remaining_after,
-                        entry_position: entry_position.into(),
-                        entry_position_map: entry_position_map.into(),
-                        old_position: old_position.into(),
-                        old_position_map: old_position_map.into(),
-                        goal: goal.into(),
-                        cached_increment: cached_increment.into(),
-                        applied_increment: if flight.frames_remaining == 0 {
-                            crate::coordinates::WorldVec3D::ZERO.into()
-                        } else {
-                            cached_increment.into()
-                        },
-                        raw_post_position: raw_post_position.into(),
-                        raw_post_position_map: raw_post_position_map.into(),
-                        motion_state: if snapped_to_goal {
-                            "Terminated".to_owned()
-                        } else {
-                            "InProgress".to_owned()
-                        },
-                        post_position: post_position.into(),
-                        post_position_map: post_position_map.into(),
-                        snapped_to_goal,
-                    },
+        owner: EntityId,
+        motion: crate::sprite::MotionState,
+    ) -> crate::sprite::MotionState {
+        use crate::sprite::MotionState;
+        let entity = self
+            .world
+            .entities
+            .get_mut(owner)
+            .expect("ladder fall owner disappeared");
+        let actor = entity
+            .actor_data_mut()
+            .expect("ladder fall owner is not an actor");
+        if actor.wait_time != 0 {
+            actor.wait_time -= 1;
+            if actor.wait_time == 0 {
+                let destination = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(&self.world.entities, owner)
+                    .expect("ladder fall has no selected order")
+                    .2
+                    .destination_3d;
+                let target = crate::coordinates::WorldPoint3D::new(
+                    destination[0],
+                    destination[1],
+                    destination[2],
                 );
-            }
-        }
-
-        // Landing-resolution second pass: apply a goal obstacle that was not
-        // already installed. Original-game takeoff readiness updates the obstacle (not
-        // obstacle/material assignment) before the flight and terminal flight processing
-        // does not refresh the footstep material. Preserve both that material
-        // and the authored 3D goal when the obstacle is already current.
-        // Reinstalling the same plane would also reproject Z from rounded
-        // map-space Y and can move a sloped landing by several ULPs (seed-2M
-        // Savegame_023/replay-003).
-        for &(flyer_id, obstacle) in &landings {
-            let current_obstacle = self
-                .get_entity(flyer_id)
-                .and_then(|entity| entity.element_data().obstacle_index());
-            if current_obstacle != obstacle {
-                self.set_obstacle_and_material(assets, flyer_id, obstacle);
-            }
-        }
-
-        // The original game updates script sectors after flight on the terminal
-        // motion event, before the domino effect. This is an explicit
-        // polygon reconciliation for the landed actor because flight motion
-        // does not traverse ordinary LINE_SCRIPT boundaries.
-        if refresh_script_sectors {
-            for (flyer_id, _) in &landings {
-                self.update_script_sectors_after_flight(sim, assets, *flyer_id);
-            }
-        }
-
-        // Ladder/wall fall landings apply concussion and lying posture before
-        // returning the terminal motion to the actor update.
-        let ladder_arrived = !ladder_arrivals.is_empty();
-        for victim_id in ladder_arrivals {
-            let (concussion, life_points) = {
+                let sector = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .expect("ladder fall owner disappeared")
+                    .element_data()
+                    .sector()
+                    .expect("ladder fall has no lift sector");
+                let low = self
+                    .find_lift_low_entry(assets, u16::from(sector))
+                    .expect("ladder fall lift has no low exit");
+                self.world
+                    .entities
+                    .get_mut(owner)
+                    .expect("ladder fall owner disappeared")
+                    .position_iface_mut()
+                    .set_projectile_increment(crate::coordinates::WorldVec3D::ZERO);
                 let entity = self
-                    .get_entity(victim_id)
-                    .expect("ladder-fall arrival entity vanished before landing effects");
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("ladder fall owner disappeared");
+                entity.element_data_mut().set_layer(low.layer);
+                entity
+                    .element_data_mut()
+                    .set_sector_topology(Some(low.sector), low.sector.arena_index());
+                let obstacle =
+                    self.get_projection_area_index(assets, low.sector, low.layer, target.to_map());
+                self.set_obstacle_and_material(assets, owner, obstacle);
+                let entity = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("ladder fall owner disappeared");
+                entity.element_data_mut().set_position(target);
+                Self::publish_flight_position(entity);
+                entity.position_iface_mut().new_move();
+                let entity = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .expect("ladder fall owner disappeared");
                 let concussion = entity
                     .human_data()
-                    .map(|h| h.concussion_of_the_brain)
-                    .unwrap_or(0);
-                let life_points = match entity {
-                    Entity::Pc(pc) => pc.pc.life_points,
-                    Entity::Soldier(soldier) => soldier.npc.life_points,
-                    Entity::Civilian(civilian) => civilian.npc.life_points,
-                    _ => 0,
-                };
-                (concussion, life_points)
-            };
-            let new_value = crate::combat::compute_concussion_effect(concussion, 71, life_points);
-            self.apply_concussion(sim, assets, victim_id, new_value, false);
-
-            if let Some(entity) = self.get_entity_mut(victim_id) {
-                let posture = if entity.is_dead() {
+                    .expect("ladder fall owner is not human")
+                    .concussion_of_the_brain;
+                let life_points = get_life_points(entity);
+                let new_value =
+                    crate::combat::compute_concussion_effect(concussion, 71, life_points);
+                self.apply_concussion(sim, assets, owner, new_value, false);
+                let entity = self
+                    .world
+                    .entities
+                    .get_mut(owner)
+                    .expect("ladder fall owner disappeared");
+                entity.set_posture(if entity.is_dead() {
                     Posture::DeadBack
                 } else {
                     Posture::Lying
-                };
-                entity.set_posture(posture);
-                if let Some(actor) = entity.actor_data_mut() {
-                    actor.action_state = ActionState::Waiting;
-                }
+                });
+                entity
+                    .actor_data_mut()
+                    .expect("ladder fall owner is not an actor")
+                    .action_state = ActionState::Waiting;
+                return MotionState::Terminated;
             }
+            let entity = self
+                .world
+                .entities
+                .get_mut(owner)
+                .expect("ladder fall owner disappeared");
+            let increment = entity.position_iface().get_increment();
+            let position = entity.element_data().position();
+            entity
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(
+                    position.x + increment.x,
+                    position.y + increment.y,
+                    position.z + increment.z,
+                ));
+            Self::publish_flight_position(entity);
         }
-
-        for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
-            self.apply_domino_effect(sim, assets, flyer_id, hitter_id, inc_x, inc_y);
+        if motion == MotionState::Terminated {
+            self.update_script_sectors_after_flight(sim, assets, owner);
         }
-
-        ladder_arrived
+        motion
     }
 
     /// Bud-Spencer-style domino punch propagation.
     ///
-    /// Called once per flight frame from
-    /// [`Self::tick_push_flights`] for every actor whose
-    /// `active_flight.antagonist` is `Some` and whose per-frame
-    /// increment is non-zero.
+    /// Called by the selected falling order after its position and state callbacks.
     ///
     /// Sweeps every NPC and PC and queues a `RECEIVE_HIT_DAMAGE`
     /// sequence element (citing `hitter_id` as the origin, not the
@@ -2530,13 +2053,16 @@ impl EngineInner {
         inc_x: f32,
         inc_y: f32,
     ) {
-        // Read flyer position + sector.
-        let (flyer_pos_ground, flyer_sector) = {
+        if inc_x == 0.0 && inc_y == 0.0 {
+            return;
+        }
+        // Capture the flight sweep origin before victim callbacks run.
+        let flyer_pos_ground = {
             let elem = self
                 .expect_entity(flyer_id, "domino effect flyer")
                 .element_data();
             let position = elem.position();
-            ((position.x, position.y), elem.sector())
+            (position.x, position.y)
         };
 
         // The flyer's `is_active_and_outside_building` test is
@@ -2556,7 +2082,6 @@ impl EngineInner {
             .npc_ids()
             .chain(self.world.pc_ids.iter().copied())
             .collect();
-        let mut victims: Vec<EntityId> = Vec::new();
         for candidate_id in candidate_ids {
             let candidate = match self.get_entity(candidate_id) {
                 Some(e) => e,
@@ -2579,7 +2104,12 @@ impl EngineInner {
 
             // Same-sector test (compared by index, including both
             // being None).
-            if elem.sector() != flyer_sector {
+            if elem.sector()
+                != self
+                    .expect_entity(flyer_id, "domino effect flyer")
+                    .element_data()
+                    .sector()
+            {
                 continue;
             }
 
@@ -2608,18 +2138,11 @@ impl EngineInner {
             }
             // Dot product > 0: candidate sits in front of the flyer
             // along its motion vector.
-            if inc_x * dx + inc_y * dy <= 0.0 {
+            if !(inc_x * dx + inc_y * dy > 0.0) {
                 continue;
             }
 
-            victims.push(candidate_id);
-        }
-
-        // Launch one ReceiveHitDamage element per victim, citing the
-        // original hitter as origin.  Damage stays 0; the
-        // DOMINO_DAMAGE value lands in concussion; `is_harder_hit`
-        // stays false (HIT, not HIT_HARD).
-        for victim_id in victims {
+            let victim_id = candidate_id;
             let elem = crate::sequence::SequenceElement::new_damage(
                 1,
                 Command::ReceiveHitDamage,
@@ -3246,44 +2769,19 @@ mod tests {
     use crate::sequence::SequenceElement;
 
     #[test]
-    fn flight_checks_preserve_idle_actors_and_nonterminal_flights() {
+    fn flight_start_disables_collision_and_advances_serialized_increment() {
         let mut engine = EngineInner::new();
-        let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::default();
-        let idle = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
-            Posture::Upright,
-        ));
-        let mut flying = falling_pushed_soldier(false);
-        flying
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap()
-            .frames_remaining = 8;
-        let flying = engine.add_test_entity(flying);
-        let actor_state = |engine: &EngineInner, owner| {
-            let entity = engine.get_entity(owner).unwrap();
-            let actor = entity.actor_data().unwrap();
-            (
-                entity.element_data().position(),
-                entity.element_data().position_map(),
-                entity.element_data().posture(),
-                actor.action_state,
-                actor.wait_time,
-                bitcode::encode(&actor.active_flight),
-            )
-        };
-        let before = [actor_state(&engine, idle), actor_state(&engine, flying)];
-
-        assert_eq!(engine.tick_push_flight_for_owner(&sim, &assets, idle), None);
-        engine.tick_push_flight_terminal_landings(&sim, &assets);
-
+        let victim = engine.add_test_entity(falling_pushed_soldier(false));
+        install_falling_pushed_order(&mut engine, victim);
+        let motion =
+            engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Start);
+        assert_eq!(motion, crate::sprite::MotionState::Start);
+        let entity = engine.get_entity(victim).unwrap();
         assert_eq!(
-            [actor_state(&engine, idle), actor_state(&engine, flying)],
-            before,
-            "neither the idle owner nor a nonterminal flight was eligible for mutation",
+            entity.element_data().position_map(),
+            MapPoint::new(15.0, 20.0)
         );
+        assert!(!entity.position_iface().is_anti_collision_on());
     }
 
     #[test]
@@ -3291,6 +2789,50 @@ mod tests {
         assert!(perform_flight_stops_before_position_update(0, 6, 7));
         assert!(!perform_flight_stops_before_position_update(1, 6, 7));
         assert!(!perform_flight_stops_before_position_update(0, 5, 7));
+    }
+
+    #[test]
+    fn globally_frozen_combat_execute_moves_without_advancing_the_sprite() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::default();
+        let mut engine = EngineInner::new();
+        let victim = engine.add_test_entity(falling_pushed_soldier(false));
+        install_falling_pushed_order(&mut engine, victim);
+        let order_id = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(&engine.world.entities, victim)
+            .unwrap()
+            .2
+            .order_id;
+        let entity = engine.get_entity_mut(victim).unwrap();
+        let actor = entity.actor_data_mut().unwrap();
+        actor.last_execute_order_id = Some(order_id);
+        actor.execute_order_initialising = false;
+        let sprite_before = (
+            entity.sprite().current_row,
+            entity.sprite().current_frame,
+            entity.sprite().frame_count,
+        );
+        engine.set_actors_frozen(true);
+
+        let motion = engine.tick_actor_animation_for(&sim, &assets, victim);
+
+        assert_eq!(motion, Some(crate::sprite::MotionState::InProgress));
+        let entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            entity.element_data().position(),
+            WorldPoint3D::new(15.0, 20.0, 0.0)
+        );
+        assert_eq!(
+            (
+                entity.sprite().current_row,
+                entity.sprite().current_frame,
+                entity.sprite().frame_count
+            ),
+            sprite_before
+        );
+        assert_eq!(entity.element_data().posture(), Posture::Flying);
     }
 
     #[test]
@@ -3310,54 +2852,41 @@ mod tests {
     }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Flying);
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        };
-        // Flight processing reads the live falling animation's frame count on
-        // every combat-flight tick. Production actors are sprite-hydrated;
-        // keep this synthetic actor subject to that same invariant.
+        let mut element = ElementData::from_initial_posture(Posture::Flying);
+        element.kind = ElementKind::ActorSoldier;
+        element.active = true;
         element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
             frame_ids: vec![0, 1],
             ..Default::default()
         }]);
-        element.set_position(WorldPoint3D {
-            x: 10.0,
-            y: 20.0,
-            z: 0.0,
-        });
+        element.set_position(WorldPoint3D::new(10.0, 20.0, 0.0));
         element.set_position_map(MapPoint::new(10.0, 20.0));
         element.set_layer(1);
         element.set_sector(SectorHandle::new(2));
-
-        let actor = ActorData {
-            action_state: ActionState::WaitingSword,
-            active_flight: Some(Box::new(crate::element::ActiveFlight {
-                increment_x: 5.0,
-                goal_x: 15.0,
-                goal_y: 20.0,
-                frames_remaining: 1,
-                antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
-                goal_layer: 3,
-                goal_sector: SectorHandle::new(4),
-                ..Default::default()
-            })),
-            ..Default::default()
-        };
-
+        element
+            .sprite
+            .position_iface
+            .set_layer_goal(crate::position_interface::Layer::new(3).unwrap());
+        element.sprite.position_iface.set_flight_goal_and_increment(
+            WorldPoint3D::new(15.0, 20.0, 0.0),
+            WorldVec3D::new(5.0, 0.0, 0.0),
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
+        );
         Entity::Soldier(ActorSoldier {
             element,
-            actor,
+            actor: ActorData {
+                action_state: ActionState::WaitingSword,
+                ..Default::default()
+            },
             human: HumanData::default(),
             npc: NpcData {
                 life_points: if dead { 0 } else { 50 },
-                ..NpcData::default()
+                ..Default::default()
             },
             soldier: SoldierData {
                 cached_camp: Camp::Lacklandists,
-                ..SoldierData::default()
+                ..Default::default()
             },
         })
     }
@@ -3393,93 +2922,81 @@ mod tests {
     }
 
     #[test]
-    fn loaded_in_progress_falling_push_restores_serialized_flight() {
+    fn flight_position_updates_preserve_retained_display_order_relationship() {
+        use crate::sprite::MotionState;
+        for behind in [false, true] {
+            let mut engine = EngineInner::new();
+            let reference = engine.add_test_entity(falling_pushed_soldier(false));
+            for display_reference in [None, Some(reference)] {
+                let victim = engine.add_test_entity(falling_pushed_soldier(false));
+                let sprite = &mut engine
+                    .get_entity_mut(victim)
+                    .unwrap()
+                    .element_data_mut()
+                    .sprite;
+                sprite.display_order_ref = display_reference;
+                sprite.behind_display_order_ref = behind;
+                for motion in [
+                    MotionState::Start,
+                    MotionState::InProgress,
+                    MotionState::Terminated,
+                ] {
+                    engine.perform_combat_flight_position(victim, motion);
+                    let sprite = engine.get_entity(victim).unwrap().sprite();
+                    assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
+                    assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn in_progress_falling_push_consumes_serialized_position_without_reconstruction() {
         let mut engine = EngineInner::new();
-        let attacker = engine.add_test_entity(falling_pushed_soldier(false));
         let victim = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, victim);
-
-        let (sequence, element, _) = engine
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&engine.world.entities, victim)
-            .expect("falling order");
-        engine
-            .orders
-            .sequence_manager
-            .get_element_mut(sequence, element)
-            .expect("damage element")
-            .orders
-            .front_mut()
-            .expect("falling order")
-            .antagonist = Some(attacker);
-
-        let entity = engine.get_entity_mut(victim).expect("victim");
-        entity.actor_data_mut().unwrap().active_flight = None;
-        entity.set_posture(Posture::Flying);
-        let position = entity.position_iface_mut();
-        position.set_position(WorldPoint3D::new(10.0, 20.0, 0.0));
-        position.set_layer_goal(crate::position_interface::Layer::new(3).unwrap());
-        let goal_sector = SectorHandle::new(4);
+        let position = engine.get_entity_mut(victim).unwrap().position_iface_mut();
         position.set_flight_goal_and_increment(
             WorldPoint3D::new(4.0, 14.0, 0.0),
             WorldVec3D::new(-2.0, -2.0, 0.0),
-            goal_sector,
-            goal_sector.and_then(SectorHandle::arena_index),
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
         );
-
-        assert_eq!(engine.restore_loaded_combat_flights(), 1);
-        let flight = engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_flight
-            .as_deref()
-            .copied()
-            .expect("restored flight");
-        assert_eq!(flight.increment_x, -2.0);
-        assert_eq!(flight.increment_y, -2.0);
-        assert_eq!(flight.goal_x, 4.0);
-        assert_eq!(flight.goal_y, 14.0);
-        assert_eq!(flight.frames_remaining, 3);
-        assert_eq!(flight.antagonist, Some(attacker));
-        assert_eq!(flight.goal_layer, 3);
-        assert_eq!(flight.goal_sector, goal_sector);
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+        assert_eq!(
+            engine.get_entity(victim).unwrap().element_data().position(),
+            WorldPoint3D::new(8.0, 18.0, 0.0)
+        );
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Terminated);
+        let entity = engine.get_entity(victim).unwrap();
+        assert_eq!(
+            entity.element_data().position(),
+            WorldPoint3D::new(4.0, 14.0, 0.0)
+        );
+        assert_eq!(entity.element_data().layer(), 3);
+        assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
     }
 
     fn falling_ladder_pc(life_points: i16) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Flying);
-            initial_element.kind = ElementKind::ActorPc;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position(WorldPoint3D {
-            x: 10.0,
-            y: 20.0,
-            z: 0.0,
-        });
+        let mut element = ElementData::from_initial_posture(Posture::Flying);
+        element.kind = ElementKind::ActorPc;
+        element.active = true;
+        element.set_position(WorldPoint3D::new(10.0, 20.0, 0.0));
         element.set_position_map(MapPoint::new(10.0, 20.0));
         element.set_layer(1);
         element.set_sector(SectorHandle::new(2));
-
+        element.sprite.position_iface.set_flight_goal_and_increment(
+            WorldPoint3D::new(15.0, 20.0, 0.0),
+            WorldVec3D::new(5.0, 0.0, 0.0),
+            None,
+            None,
+        );
         let mut actor = ActorData {
             action_state: ActionState::Moving,
-            active_flight: Some(Box::new(crate::element::ActiveFlight {
-                increment_x: 5.0,
-                goal_x: 15.0,
-                goal_y: 20.0,
-                frames_remaining: 1,
-                ladder_fall: true,
-                goal_layer: 3,
-                goal_sector: SectorHandle::new(4),
-                ..Default::default()
-            })),
+            wait_time: 1,
             ..Default::default()
         };
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
-
         Entity::Pc(ActorPc {
             element,
             actor,
@@ -3493,6 +3010,66 @@ mod tests {
     }
 
     fn install_falling_ladder_order(engine: &mut EngineInner, victim: EntityId) {
+        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+            "flight.scs",
+        ));
+        let door_index = engine.script_domains.interactables.doors.len();
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .push(crate::gate::Door {
+                point_out: MapPoint::new(15.0, 20.0),
+                layer_out: 3,
+                sector_out: crate::sector::SectorNumber::new(4),
+                sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
+                ..Default::default()
+            });
+        let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+        let sector_number = crate::sector::SectorNumber::new(2);
+        level
+            .sector_number_map
+            .insert(sector_number, level.sectors.len());
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::LIFT,
+            layer: 1,
+            sector_number,
+            door_index: None,
+            lift_type: Some(crate::sector::LiftType::Ladder),
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: Some(door_index as u32),
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        let low_number = crate::sector::SectorNumber::new(4);
+        level
+            .sector_number_map
+            .insert(low_number, level.sectors.len());
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::MOTION,
+            layer: 3,
+            sector_number: low_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
         let assets = LevelAssets::new();
         let damage =
             SequenceElement::new_damage(1, Command::ReceiveSwordDamage, Some(victim), None, 20, 0);
@@ -3502,6 +3079,15 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence, 0)
+            .unwrap()
+            .orders
+            .front_mut()
+            .unwrap()
+            .destination_3d = [15.0, 20.0, 0.0];
         engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -3549,7 +3135,12 @@ mod tests {
         }
         install_falling_ladder_order(&mut engine, victim);
 
-        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+        engine.execute_ladder_fall_position(
+            &sim,
+            &assets,
+            victim,
+            crate::sprite::MotionState::InProgress,
+        );
 
         let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
         assert_eq!(actor.wait_time, 0);
@@ -3558,44 +3149,31 @@ mod tests {
     }
 
     #[test]
-    fn perform_flight_publishes_ready_for_takeoff_position_cache() {
-        let sim = crate::sim_rng::test_context();
+    fn perform_flight_preserves_ready_for_takeoff_position_cache() {
         let mut engine = EngineInner::new();
         let mut victim = falling_pushed_soldier(false);
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
-        victim.actor_data_mut().unwrap().active_flight =
-            Some(Box::new(crate::element::ActiveFlight {
-                geometry: crate::element::FlightGeometry::World3d,
-                increment_x: 1.25,
-                increment_y: 0.75,
-                increment_z: 0.5,
-                goal_x: 30.0,
-                goal_y: 40.0,
-                goal_z: 5.0,
-                frames_remaining: 8,
-                antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
-                goal_layer: 3,
-                goal_sector: SectorHandle::new(4)
-                    .map(|sector| sector.with_arena_index(goal_sector_index)),
-                ..Default::default()
-            }));
+        victim.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D::new(30.0, 45.0, 5.0),
+            WorldVec3D::new(1.25, 0.75, 0.5),
+            SectorHandle::new(4).map(|sector| sector.with_arena_index(goal_sector_index)),
+            Some(goal_sector_index),
+        );
         let victim_id = engine.add_test_entity(victim);
         install_falling_pushed_order(&mut engine, victim_id);
-
-        engine.tick_push_flights(&sim, &LevelAssets::default());
-
-        let victim = engine.get_entity(victim_id).unwrap();
-        let state = victim.position_iface().v48_serialized_state();
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
+        let state = engine
+            .get_entity(victim_id)
+            .unwrap()
+            .position_iface()
+            .v48_serialized_state();
         assert_eq!(state.computed_position.bits(), 7);
         assert_eq!(
             state.computed_increment,
             crate::position_interface::IncrementComputed::INCREMENT
         );
         assert_eq!(state.goal, WorldPoint3D::new(30.0, 45.0, 5.0));
-        assert_eq!(
-            state.increment,
-            crate::coordinates::WorldVec3D::new(1.25, 0.75, 0.5)
-        );
+        assert_eq!(state.increment, WorldVec3D::new(1.25, 0.75, 0.5));
         assert_eq!(state.sector_goal, SectorHandle::new(4));
         assert_eq!(state.sector_goal_index, Some(goal_sector_index));
         assert_eq!(state.position, WorldPoint3D::new(11.25, 20.75, 0.5));
@@ -3605,25 +3183,21 @@ mod tests {
 
     #[test]
     fn fatal_push_goal_preserves_flying_pose_until_animation_terminates() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(falling_pushed_soldier(true));
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
         engine
             .get_entity_mut(victim_id)
             .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap()
-            .goal_sector =
-            SectorHandle::new(4).map(|sector| sector.with_arena_index(goal_sector_index));
+            .position_iface_mut()
+            .set_flight_goal_and_increment(
+                WorldPoint3D::new(15.0, 20.0, 0.0),
+                WorldVec3D::new(5.0, 0.0, 0.0),
+                SectorHandle::new(4).map(|sector| sector.with_arena_index(goal_sector_index)),
+                Some(goal_sector_index),
+            );
         install_falling_pushed_order(&mut engine, victim_id);
-
-        engine.tick_push_flights(sim, &LevelAssets::default());
-
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
@@ -3637,109 +3211,68 @@ mod tests {
         assert_eq!(victim.element_data().layer(), 1);
         assert_eq!(victim.element_data().sector(), SectorHandle::new(2));
         assert_eq!(
-            victim
-                .actor_data()
-                .unwrap()
-                .active_flight
-                .as_deref()
-                .copied()
-                .unwrap()
-                .frames_remaining,
-            0
-        );
-        assert_eq!(
             victim.position_iface().v48_serialized_state().increment,
-            crate::coordinates::WorldVec3D::new(5.0, 0.0, 0.0),
-            "DONE flight processing retains its raw flight increment"
+            WorldVec3D::new(5.0, 0.0, 0.0)
         );
-
-        engine.tick_push_flight_terminal_landings(sim, &LevelAssets::default());
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .position_iface()
-                .v48_serialized_state()
-                .increment,
-            crate::coordinates::WorldVec3D::new(5.0, 0.0, 0.0),
-            "terminal reconciliation must not synthesize a flight update while the actor is still flying"
-        );
-
-        // The animation completion pass owns this transition. Its posture
-        // change lets the following flight-processing tail apply landing
-        // metadata and clear the retained flight.
-        engine
-            .get_entity_mut(victim_id)
-            .unwrap()
-            .set_posture(Posture::DeadBack);
-        engine.tick_push_flights(sim, &LevelAssets::default());
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
         let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(
+            victim.element_data().position_map(),
+            MapPoint::new(15.0, 20.0)
+        );
         assert_eq!(victim.element_data().layer(), 3);
-        assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
         assert_eq!(
             victim
                 .element_data()
                 .sector()
-                .and_then(|sector| sector.arena_index()),
-            Some(goal_sector_index),
-            "flight landing must retain the exact sector pointer carried by its goal"
+                .and_then(SectorHandle::arena_index),
+            Some(goal_sector_index)
         );
-        assert!(victim.actor_data().unwrap().active_flight.is_none());
         assert_eq!(
             victim.position_iface().v48_serialized_state().increment,
-            crate::coordinates::WorldVec3D::ZERO,
-            "actual terminated flight processing clears the increment"
+            WorldVec3D::ZERO
         );
     }
 
     #[test]
-    fn completed_combat_flight_snaps_after_its_falling_order_retires() {
-        let sim = crate::sim_rng::test_context();
+    fn terminated_combat_flight_snaps_before_its_falling_order_retires() {
         let near_goal = MapPoint::new(1142.2267, 1230.4998);
         let exact_goal = MapPoint::new(1142.2262, 1230.5006);
         let mut entity = falling_pushed_soldier(false);
-        entity.set_posture(Posture::Lying);
         entity
             .element_data_mut()
             .set_material(crate::element::GameMaterial::Grass);
         entity.element_data_mut().set_position_map(near_goal);
         entity.position_iface_mut().new_move();
-        let flight = entity
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap();
-        flight.frames_remaining = 0;
-        flight.increment_x = 0.0;
-        flight.increment_y = 0.0;
-        flight.goal_x = exact_goal.x;
-        flight.goal_y = exact_goal.y;
-        flight.goal_z = 0.0;
-
+        entity.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D::new(exact_goal.x, exact_goal.y, 0.0),
+            WorldVec3D::ZERO,
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
+        );
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(entity);
-
-        // The actor update has already retired the falling order and changed
-        // posture. The later terminal flight reconciliation must not
-        // mistake this completed flight for one that has yet to start.
-        engine.tick_push_flight_terminal_landings(&sim, &LevelAssets::default());
-
+        install_falling_pushed_order(&mut engine, victim_id);
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
         assert_eq!(
             victim.element_data().material(),
-            crate::element::GameMaterial::Grass,
-            "terminal flight processing preserves the material held through flight"
+            crate::element::GameMaterial::Grass
         );
-        assert!(victim.actor_data().unwrap().active_flight.is_none());
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(&engine.world.entities, victim_id)
+                .is_some()
+        );
     }
 
     #[test]
     fn completed_combat_flight_preserves_authored_z_and_material_on_an_installed_slope() {
-        let sim = crate::sim_rng::test_context();
         let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(1);
         obstacle.top_plane_points = [
             [0.0, 0.0, 1_711.937_4],
@@ -3749,14 +3282,6 @@ mod tests {
         obstacle.material = 3;
         let plane =
             crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points);
-        let assets = LevelAssets {
-            environment: crate::engine::LevelEnvironmentAssets {
-                static_sight_obstacles: std::sync::Arc::new(vec![obstacle]),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
         // Adding world Z to map Y and subtracting it again rounds the map
         // coordinate. Reinstalling the already-current plane at landing would
         // consequently derive a different elevation from that rounded map Y.
@@ -3783,25 +3308,17 @@ mod tests {
             goal_map.y + goal_z,
             goal_z,
         ));
-        let flight = entity
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap();
-        flight.geometry = crate::element::FlightGeometry::World3d;
-        flight.frames_remaining = 0;
-        flight.increment_x = 0.0;
-        flight.increment_y = 0.0;
-        flight.increment_z = 0.0;
-        flight.goal_x = goal_map.x;
-        flight.goal_y = goal_map.y;
-        flight.goal_z = goal_z;
-        flight.obstacle = crate::position_interface::ObstacleHandle::new(0);
+        entity.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D::new(goal_map.x, goal_map.y + goal_z, goal_z),
+            WorldVec3D::ZERO,
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
+        );
 
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(entity);
-        engine.tick_push_flight_terminal_landings(&sim, &assets);
+        install_falling_pushed_order(&mut engine, victim_id);
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
 
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(
@@ -3821,49 +3338,35 @@ mod tests {
 
     #[test]
     fn completed_combat_flight_snaps_at_its_owner_boundary() {
-        let sim = crate::sim_rng::test_context();
         let near_x = 696.702_45_f32;
         let exact_x = f32::from_bits(near_x.to_bits() + 1);
         let near_goal = MapPoint::new(near_x, 2_077.693_8);
         let exact_goal = MapPoint::new(exact_x, 2_077.694_6);
         let mut entity = falling_pushed_soldier(false);
-        entity.set_posture(Posture::Lying);
         entity.element_data_mut().set_position_map(near_goal);
         entity.position_iface_mut().new_move();
-        let flight = entity
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap();
-        flight.frames_remaining = 0;
-        flight.increment_x = 0.0;
-        flight.increment_y = 0.0;
-        flight.goal_x = exact_goal.x;
-        flight.goal_y = exact_goal.y;
-        flight.goal_z = 0.0;
-
+        entity.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D::new(exact_goal.x, exact_goal.y, 0.0),
+            WorldVec3D::ZERO,
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
+        );
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(entity);
-
+        install_falling_pushed_order(&mut engine, victim_id);
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_push_flight_for_owner(&sim, &LevelAssets::default(), victim_id);
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
         let flights =
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
             crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
-
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
-        assert!(victim.actor_data().unwrap().active_flight.is_none());
         assert_eq!(flights.len(), 1);
         let flight = &flights[0];
         assert_eq!(flight.entity, victim_id);
-        assert_eq!(flight.phase, "owner");
-        assert_eq!(flight.frames_remaining_before, 0);
-        assert_eq!(flight.frames_remaining_after, None);
         assert_eq!(flight.raw_post_position_map.x.bits, near_x.to_bits());
         assert_eq!(flight.post_position_map.x.bits, exact_x.to_bits());
         assert_eq!(flight.goal.x.bits, exact_x.to_bits());
@@ -3872,8 +3375,6 @@ mod tests {
 
     #[test]
     fn owner_scoped_push_flight_advances_only_the_selected_creation_slot() {
-        let sim = crate::sim_rng::test_context();
-        let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
         let earlier = engine.add_test_entity(falling_pushed_soldier(false));
         let later = engine.add_test_entity(falling_pushed_soldier(false));
@@ -3881,7 +3382,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, later);
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_push_flight_for_owner(&sim, &assets, earlier);
+        engine.perform_combat_flight_position(earlier, crate::sprite::MotionState::InProgress);
 
         assert_eq!(
             engine
@@ -3901,7 +3402,7 @@ mod tests {
             "a later actor must retain its pre-update position"
         );
 
-        engine.tick_push_flight_for_owner(&sim, &assets, later);
+        engine.perform_combat_flight_position(later, crate::sprite::MotionState::InProgress);
         assert_eq!(
             engine
                 .get_entity(later)
@@ -3930,10 +3431,6 @@ mod tests {
 
     #[test]
     fn ladder_arrival_returns_terminated_from_owner_execute_tail() {
-        use crate::element::Command;
-        use crate::order::OrderType;
-        use crate::sequence::SequenceElement;
-
         let sim = crate::sim_rng::test_context();
         let mut profiles = crate::profiles::ProfileManager::new();
         profiles
@@ -3942,79 +3439,57 @@ mod tests {
         profiles.hth_weapons.push(Default::default());
         let assets = LevelAssets {
             profile_manager: std::sync::Arc::new(profiles),
-            ..LevelAssets::default()
+            ..Default::default()
         };
         let mut entity = falling_pushed_soldier(false);
         let Entity::Soldier(soldier) = &mut entity else {
             unreachable!()
         };
-        let enemy_ai = crate::ai_enemy::EnemyAi {
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
             hth_weapon_id: 1,
             ..Default::default()
-        };
-        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
+        }));
         entity
             .position_iface_mut()
             .set_layer_goal(crate::position_interface::Layer::ZERO);
         let actor = entity.actor_data_mut().unwrap();
-        let flight = actor.active_flight.as_mut().unwrap();
-        flight.antagonist = None;
-        flight.ladder_fall = true;
+        actor.wait_time = 1;
         actor.continuation.motion_state = crate::sprite::MotionState::Start;
-
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(entity);
-        let damage =
-            SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
-        let sequence = engine.orders.sequence_manager.insert_element(damage);
-        engine
-            .orders
-            .sequence_manager
-            .start_sequence_level(sequence);
-        let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
-        engine.select_sequence_element(victim, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
+        install_falling_ladder_order(&mut engine, victim);
+        let installed = engine
+            .get_entity(victim)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order;
+        let motion = engine.execute_ladder_fall_position(
+            &sim,
             &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
+            victim,
+            crate::sprite::MotionState::InProgress,
         );
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: OrderType::FallingLadderWall,
-        });
-
-        let motion = engine.tick_push_flight_for_owner(&sim, &assets, victim);
-
-        assert_eq!(motion, Some(crate::sprite::MotionState::Terminated));
-        let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
+        assert_eq!(motion, crate::sprite::MotionState::Terminated);
+        let entity = engine.get_entity(victim).unwrap();
+        let actor = entity.actor_data().unwrap();
         assert_eq!(
             actor.continuation.motion_state,
-            crate::sprite::MotionState::Start,
-            "the flight arm returns motion for the actor update to publish"
+            crate::sprite::MotionState::Start
         );
         assert_eq!(
             actor.installed_order.map(|order| order.order_id),
-            Some(order_id)
+            installed.map(|order| order.order_id)
         );
-        let entity = engine.get_entity(victim).unwrap();
         assert_eq!(entity.element_data().layer(), 3);
         assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
         assert_eq!(
             entity.npc_data().unwrap().eye_status,
-            crate::element::EyeStatus::DieOrGetUnconscious,
-            "the ladder landing's synchronous lose-consciousness Think must close its eye write"
+            crate::element::EyeStatus::DieOrGetUnconscious
         );
         assert_eq!(
             entity.position_iface().layer_goal(),
-            crate::position_interface::Layer::ZERO,
-            "ladder landing changes the actual layer without retroactively publishing a goal"
+            crate::position_interface::Layer::ZERO
         );
     }
 
@@ -4070,7 +3545,12 @@ mod tests {
             .opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
-        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+        engine.execute_ladder_fall_position(
+            &sim,
+            &assets,
+            victim,
+            crate::sprite::MotionState::InProgress,
+        );
 
         for fighter in [victim, opponent] {
             assert!(
@@ -4129,7 +3609,12 @@ mod tests {
             .opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
-        engine.tick_push_flight_for_owner(&sim, &assets, victim);
+        engine.execute_ladder_fall_position(
+            &sim,
+            &assets,
+            victim,
+            crate::sprite::MotionState::InProgress,
+        );
 
         assert!(
             !engine
@@ -4160,68 +3645,54 @@ mod tests {
     }
 
     #[test]
-    fn combat_flight_done_applies_increment_before_terminal_snap() {
-        let sim = crate::sim_rng::test_context();
+    fn combat_flight_in_progress_can_overshoot_goal_before_animation_terminates() {
         let mut entity = falling_pushed_soldier(false);
-        entity
-            .actor_data_mut()
-            .unwrap()
-            .active_flight
-            .as_mut()
-            .unwrap()
-            .goal_x = 14.0;
+        entity.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D::new(14.0, 20.0, 0.0),
+            WorldVec3D::new(5.0, 0.0, 0.0),
+            SectorHandle::new(4),
+            SectorHandle::new(4).and_then(SectorHandle::arena_index),
+        );
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
-
-        engine.tick_push_flights(&sim, &LevelAssets::default());
-
-        let victim = engine.get_entity(victim_id).unwrap();
+        let motion = engine
+            .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
+        assert_eq!(motion, crate::sprite::MotionState::InProgress);
         assert_eq!(
-            victim.element_data().position_map(),
+            engine
+                .get_entity(victim_id)
+                .unwrap()
+                .element_data()
+                .position_map(),
             MapPoint::new(15.0, 20.0)
         );
+        engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
         assert_eq!(
-            victim
-                .actor_data()
+            engine
+                .get_entity(victim_id)
                 .unwrap()
-                .active_flight
-                .as_deref()
-                .copied()
-                .unwrap()
-                .frames_remaining,
-            0
+                .element_data()
+                .position_map(),
+            MapPoint::new(14.0, 20.0)
         );
     }
 
     #[test]
     fn knockout_push_goal_preserves_flying_pose_until_animation_terminates() {
-        let sim_context = crate::sim_rng::test_context();
-        let sim = &sim_context;
         let mut entity = falling_pushed_soldier(false);
         entity.human_data_mut().unwrap().unconscious = true;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
-
-        engine.tick_push_flights(sim, &LevelAssets::default());
-
+        let motion = engine
+            .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
+        assert_eq!(motion, crate::sprite::MotionState::InProgress);
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword
-        );
-        assert_eq!(
-            victim
-                .actor_data()
-                .unwrap()
-                .active_flight
-                .as_deref()
-                .copied()
-                .unwrap()
-                .frames_remaining,
-            0
         );
     }
 

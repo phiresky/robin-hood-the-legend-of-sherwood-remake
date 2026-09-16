@@ -1522,31 +1522,19 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     callback_look.priority = SequencePriority::Normal;
     let callback_look_seq = engine.launch_element(&test_context(), &assets, callback_look);
 
-    let pending_snapshot = engine
-        .orders
-        .sequence_manager
-        .pending_elements_for_owner(owner);
+    engine.stop_pending_elements(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &resolver,
+    );
 
-    // Model a card from the pending scan registering another command
-    // after the scan captured its stable membership.
+    // A later registration belongs to the next pending scan.
     let mut pending_card_look = make_simple_element(1, Command::LookRight, Some(owner));
     pending_card_look.priority = SequencePriority::Normal;
     let pending_card_look_seq = engine.launch_element(&test_context(), &assets, pending_card_look);
-    for root in pending_snapshot {
-        engine.stop_pending_roots(
-            &sim,
-            &assets,
-            &mut Vec::new(),
-            owner,
-            [root],
-            SequencePriority::Preference,
-            &resolver,
-        );
-    }
-    engine
-        .orders
-        .sequence_manager
-        .compact_terminal_elements_to_go();
     assert_eq!(
         engine
             .orders
@@ -1558,9 +1546,7 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
         "pending-work cancellation must see work registered by the selected element's synchronous callback"
     );
 
-    // Snapshot the list size before stopping elements that have not launched.
-    // Work registered by a captured entry's card belongs to the next
-    // manager update, not this scan.
+    // Work registered after the pending scan is retained.
     assert_eq!(
         engine
             .orders
@@ -1831,7 +1817,7 @@ fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
 }
 
 #[test]
-fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
+fn stop_pending_elements_do_not_scan_unrelated_retained_sequences() {
     let (mut engine, mut assets, fixture_owner_0) = live_sequence_fixture();
     let sim = test_context();
     let fixture_owner_1 = engine.add_test_entity(
@@ -1860,21 +1846,14 @@ fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
         roots.push(engine.launch_element(&test_context(), &assets, element));
     }
 
-    for &sequence in &roots {
-        engine.stop_pending_roots(
-            &sim,
-            &assets,
-            &mut Vec::new(),
-            owner,
-            [(sequence, 0)],
-            SequencePriority::Preference,
-            &|_, element| element.priority,
-        );
-    }
-    engine
-        .orders
-        .sequence_manager
-        .compact_terminal_elements_to_go();
+    engine.stop_pending_elements(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        owner,
+        SequencePriority::Preference,
+        &|_, element| element.priority,
+    );
 
     for sequence in roots {
         assert_eq!(
@@ -1887,6 +1866,119 @@ fn stop_pending_roots_do_not_scan_unrelated_retained_sequences() {
             SequenceState::Interrupted
         );
     }
+}
+
+#[test]
+fn pending_stop_removes_each_owner_entry_before_the_next_callback() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let other = engine.add_test_entity(
+        crate::engine::test_support::actors::TestActor::pc(crate::element::Posture::Upright)
+            .build(),
+    );
+    let sim = test_context();
+    let mut roots = Vec::new();
+    for actor in [owner, other, owner] {
+        let mut element = SequenceElement::new(1, Command::Generic, Some(actor));
+        element.priority = SequencePriority::Normal;
+        roots.push(engine.launch_element(&sim, &assets, element));
+    }
+    let [first, unrelated, last] = roots.try_into().unwrap();
+    engine.element_interrupted(
+        &sim,
+        &assets,
+        &mut Vec::new(),
+        unrelated,
+        0,
+        CascadeFlags::NEXT_LEVEL,
+    );
+    let observed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let callback_observed = observed.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.seq_id == last {
+                assert!(
+                    !engine
+                        .orders
+                        .sequence_manager
+                        .elements_to_go
+                        .contains(&(first, 0))
+                );
+                assert!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .elements_to_go
+                        .contains(&(unrelated, 0))
+                );
+                callback_observed.set(true);
+            }
+        },
+        || {
+            engine.stop_pending_elements(
+                &sim,
+                &assets,
+                &mut Vec::new(),
+                owner,
+                SequencePriority::Preference,
+                &|_, element| element.priority,
+            )
+        },
+    );
+    assert!(observed.get());
+    assert_eq!(
+        engine.orders.sequence_manager.elements_to_go,
+        [(unrelated, 0)]
+    );
+}
+
+#[test]
+fn pending_stop_leaves_work_registered_inside_a_callback_for_the_next_scan() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let assets = std::sync::Arc::new(assets);
+    let sim = test_context();
+    let mut element = SequenceElement::new(1, Command::Generic, Some(owner));
+    element.priority = SequencePriority::Normal;
+    let root = engine.launch_element(&sim, &assets, element);
+    let appended = std::rc::Rc::new(std::cell::Cell::new(None));
+    let callback_appended = appended.clone();
+    let callback_assets = assets.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            if card.seq_id == root {
+                let mut next = SequenceElement::new(1, Command::Generic, Some(owner));
+                next.priority = SequencePriority::Normal;
+                callback_appended.set(Some(engine.launch_element(
+                    &test_context(),
+                    &callback_assets,
+                    next,
+                )));
+            }
+        },
+        || {
+            engine.stop_pending_elements(
+                &sim,
+                &assets,
+                &mut Vec::new(),
+                owner,
+                SequencePriority::Preference,
+                &|_, element| element.priority,
+            )
+        },
+    );
+    let appended = appended.get().expect("pending Stop callback did not run");
+    assert_eq!(
+        engine.orders.sequence_manager.elements_to_go,
+        [(appended, 0)]
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(appended, 0)
+            .unwrap()
+            .state,
+        SequenceState::Todo,
+    );
 }
 
 #[test]

@@ -276,6 +276,10 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
 #[test]
 fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
     let mut engine = make_engine();
+    let mut assets = LevelAssets::default();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "melee_test.scs",
     ));
@@ -324,7 +328,12 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
         id
     };
 
-    engine.translate_ladder_wall_fall(&LevelAssets::default(), victim, (sequence, 0));
+    engine.translate_ladder_wall_fall(
+        &crate::sim_rng::test_context(),
+        &assets,
+        victim,
+        (sequence, 0),
+    );
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(
@@ -332,18 +341,16 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
         0,
         "translation must not publish the destination layer before arrival"
     );
-    let flight = victim_entity
-        .actor_data()
+    let fall = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
         .unwrap()
-        .active_flight
-        .as_ref()
-        .expect("a non-trivial ladder fall installs a flight");
-    assert_eq!(flight.goal_layer, 3);
-    assert_eq!(
-        flight.goal_sector,
-        crate::position_interface::SectorHandle::new(7)
-    );
-    assert!(flight.ladder_fall);
+        .orders
+        .iter()
+        .find(|order| order.order_type == OrderType::FallingLadderWall)
+        .unwrap();
+    assert_eq!(fall.destination_3d, [30.0, 0.0, 0.0]);
 }
 
 #[test]
@@ -1153,11 +1160,7 @@ fn interrupted_lateral_sweep_uses_the_replacement_strike() {
         final_angle: -std::f32::consts::PI,
     };
 
-    crate::engine::order_arbitration::stop_owner_active_mechanics(
-        &mut engine.world,
-        &mut engine.orders,
-        attacker,
-    );
+    crate::engine::order_arbitration::stop_owner_active_mechanics(&mut engine.orders, attacker);
     let retained_after_interrupt = &engine
         .get_entity(attacker)
         .unwrap()
@@ -1271,11 +1274,7 @@ fn interrupted_push_victims_survive_replacement_lateral_start() {
         .sword_sweep
         .victims = vec![victim];
 
-    crate::engine::order_arbitration::stop_owner_active_mechanics(
-        &mut engine.world,
-        &mut engine.orders,
-        attacker,
-    );
+    crate::engine::order_arbitration::stop_owner_active_mechanics(&mut engine.orders, attacker);
 
     let assets =
         assets_with_nonstraight_profile(SwordStrike::D, crate::profiles::WeaponThrustKind::Lateral);
@@ -2581,13 +2580,11 @@ fn parried_true_circle_still_queues_push_fall() {
         0,
     );
     assert!(
-        engine
+        !engine
             .get_entity(victim)
             .unwrap()
-            .actor_data()
-            .unwrap()
-            .active_flight
-            .is_none(),
+            .position_iface()
+            .is_increment_3d_computed(),
         "push-damage translation must not prepare takeoff eagerly"
     );
 
@@ -2599,7 +2596,7 @@ fn parried_true_circle_still_queues_push_fall() {
             .map(|(_, _, order)| order.order_type),
         Some(OrderType::ParryingSword)
     );
-    engine.tick_push_flights(&sim, &assets);
+    engine.tick_actor_animation_for(&sim, &assets, victim);
     assert_eq!(
         engine
             .get_entity(victim)
@@ -2675,33 +2672,33 @@ fn parried_true_circle_still_queues_push_fall() {
         material_before_takeoff,
         "takeoff preparation installs only the goal obstacle/plane, not its material"
     );
-    let rejected_flight = engine
+    let rejected_increment = engine
         .get_entity(victim)
         .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_flight
-        .as_deref()
-        .copied()
-        .expect("takeoff preparation must retain a fully rejected flight");
-    assert_eq!(rejected_flight.increment_x, 0.0);
-    assert_eq!(rejected_flight.increment_y, 0.0);
-    assert_eq!(rejected_flight.increment_z, 0.0);
+        .position_iface()
+        .get_increment();
+    assert_eq!(
+        rejected_increment,
+        crate::coordinates::WorldVec3D::default()
+    );
     let accepted_increment = 1.0;
     engine
         .get_entity_mut(victim)
         .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_flight = Some(Box::new(ActiveFlight {
-        increment_x: accepted_increment,
-        goal_x: victim_position_before.x + 8.0,
-        goal_y: victim_position_before.y,
-        frames_remaining: 8,
-        antagonist: Some(attacker),
-        ..Default::default()
-    }));
-    engine.tick_push_flights(&sim, &assets);
+        .position_iface_mut()
+        .set_flight_goal_and_increment(
+            wp(victim_position_before.x + 8.0, victim_position_before.y),
+            crate::coordinates::WorldVec3D {
+                x: accepted_increment,
+                y: 0.0,
+                z: 0.0,
+            },
+            None,
+            None,
+        );
+    let motion =
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(&sim, &assets, victim, motion);
     let victim_after_fall_start = engine.get_entity(victim).unwrap();
     assert_eq!(
         victim_after_fall_start.element_data().posture(),
@@ -2716,15 +2713,8 @@ fn parried_true_circle_still_queues_push_fall() {
         "flight processing applies its first increment on the starting execution"
     );
     assert_eq!(
-        victim_after_fall_start
-            .actor_data()
-            .unwrap()
-            .active_flight
-            .as_deref()
-            .copied()
-            .unwrap()
-            .frames_remaining,
-        7
+        victim_after_fall_start.position_iface().get_increment().x,
+        accepted_increment
     );
 
     engine
@@ -2733,7 +2723,9 @@ fn parried_true_circle_still_queues_push_fall() {
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = false;
-    engine.tick_push_flights(&sim, &assets);
+    let motion =
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(&sim, &assets, victim, motion);
     assert_eq!(
         engine
             .get_entity(victim)
@@ -2889,12 +2881,8 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
     let flight = engine
         .get_entity(victim)
         .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_flight
-        .as_deref()
-        .copied()
-        .expect("elevated landing plane must author a flight");
+        .position_iface()
+        .get_increment();
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -2915,7 +2903,9 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         "obstacle assignment must preserve takeoff preparation's cached starting 3D point"
     );
 
-    engine.tick_push_flights(&sim, &assets);
+    let motion =
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(&sim, &assets, victim, motion);
     let position = engine
         .get_entity(victim)
         .unwrap()
@@ -2923,12 +2913,12 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         .get_position();
     assert_eq!(
         position.z.to_bits(),
-        flight.increment_z.to_bits(),
+        flight.z.to_bits(),
         "the first flight tick advances from takeoff Z, not the landing plane"
     );
     assert_eq!(
         position.y.to_bits(),
-        (100.0_f32 + flight.increment_y).to_bits(),
+        (100.0_f32 + flight.y).to_bits(),
         "flight processing accumulates the authored world-space Y increment before re-projecting map Y"
     );
 }
@@ -3239,18 +3229,28 @@ fn elevated_domino_uses_world_ground_xy_not_projected_map_y() {
         });
 
     give_flight(&mut engine, flyer, hitter, 0.0, -1.0, 5);
-    let flight = engine
+    engine
         .get_entity_mut(flyer)
         .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .active_flight
-        .as_mut()
-        .expect("test flight remains active");
-    flight.geometry = crate::element::FlightGeometry::World3d;
-    flight.increment_z = 1.0;
+        .position_iface_mut()
+        .set_flight_goal_and_increment(
+            WorldPoint3D {
+                x: 0.0,
+                y: 95.0,
+                z: 15.0,
+            },
+            crate::coordinates::WorldVec3D {
+                x: 0.0,
+                y: -1.0,
+                z: 1.0,
+            },
+            None,
+            None,
+        );
 
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     let flyer_element = engine.get_entity(flyer).unwrap().element_data();
     let victim_element = engine.get_entity(victim).unwrap().element_data();
@@ -3277,7 +3277,9 @@ fn domino_skips_actors_behind_flight_direction() {
     let behind = engine.add_test_entity(make_soldier(wp(5.0, 100.0), None));
 
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, behind, hitter),
@@ -3297,7 +3299,9 @@ fn domino_respects_distance_radius() {
     let far = engine.add_test_entity(make_soldier(wp(26.0, 100.0), None));
 
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, far, hitter),
@@ -3318,7 +3322,9 @@ fn domino_skips_non_upright_actors() {
     let lying = engine.add_test_entity(lying_entity);
 
     give_flight(&mut engine, flyer, hitter, 1.0, 0.0, 5);
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     assert_eq!(
         count_domino_hits_for(&engine, lying, hitter),
@@ -3336,27 +3342,25 @@ fn no_domino_when_flight_has_no_antagonist() {
     let flyer = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let candidate = engine.add_test_entity(make_soldier(wp(16.0, 100.0), None));
 
-    // No antagonist — mirrors the rolling / ladder-wall fall path.
-    let flyer_pos = engine
-        .get_entity(flyer)
+    give_flight(&mut engine, flyer, _hitter, 1.0, 0.0, 5);
+    let (sequence, index) = engine
+        .world
+        .entities
+        .current_element_for_actor(flyer)
+        .unwrap();
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, index)
         .unwrap()
-        .element_data()
-        .position_map();
-    if let Some(entity) = engine.world.entities.get_mut(flyer)
-        && let Some(actor) = entity.actor_data_mut()
-    {
-        actor.active_flight = Some(Box::new(ActiveFlight {
-            increment_x: 1.0,
-            increment_y: 0.0,
-            goal_x: flyer_pos.x + 5.0,
-            goal_y: flyer_pos.y,
-            frames_remaining: 5,
-            antagonist: None,
-            ..Default::default()
-        }));
-    }
+        .orders
+        .front_mut()
+        .unwrap()
+        .antagonist = None;
 
-    engine.tick_push_flights(sim, &LevelAssets::default());
+    let motion =
+        engine.perform_combat_flight_position(flyer, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(sim, &LevelAssets::default(), flyer, motion);
 
     let any_hit = engine
         .orders

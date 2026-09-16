@@ -1439,6 +1439,15 @@ impl EngineInner {
                 }
             }
         };
+        let motion = motion.map(|state| {
+            if uses_perform_flight(anim_type) {
+                self.perform_combat_flight_position(entity_id, state)
+            } else if anim_type == OrderType::FallingLadderWall {
+                self.execute_ladder_fall_position(sim, assets, entity_id, state)
+            } else {
+                state
+            }
+        });
         if let Some(speech_id) = special_speech_id.filter(|id| *id == SPEECH_ID_HELBARDMAN) {
             self.execute_special_remark_at_sprite_point(sim, assets, entity_id, speech_id);
         }
@@ -1730,6 +1739,17 @@ impl EngineInner {
             apply_falling_completion_side_effect(entity, anim_type, motion_state);
             apply_dying_start_side_effect(entity, anim_type, motion_state);
             apply_being_dead_start_side_effect(entity, anim_type, motion_state);
+            if uses_perform_flight(anim_type) {
+                self.finish_combat_flight(sim, assets, entity_id, motion_state);
+                finish_flight_action_state(
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .expect("flight owner disappeared"),
+                    anim_type,
+                    motion_state,
+                );
+            }
             apply_combat_injury_side_effect(self, sim, assets, anim_type, motion_state, entity_id);
             if motion_state == MotionState::Done {
                 let strike = match anim_type {

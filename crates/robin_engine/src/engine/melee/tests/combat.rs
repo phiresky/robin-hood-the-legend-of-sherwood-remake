@@ -368,7 +368,7 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(victim_entity.element_data().direction(), 5);
     assert_eq!(victim_entity.position_iface().layer_goal().get(), 0);
-    assert!(victim_entity.actor_data().unwrap().active_flight.is_none());
+    assert!(!victim_entity.position_iface().is_increment_3d_computed());
 
     engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
 
@@ -2898,12 +2898,8 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     let flight = engine
         .get_entity(victim)
         .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_flight
-        .as_deref()
-        .copied()
-        .expect("elevated landing plane must author a hit flight");
+        .position_iface()
+        .get_increment();
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -2924,16 +2920,18 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         "hit-induced falling must retain takeoff preparation's cached starting 3D point"
     );
 
-    engine.tick_push_flights(&sim, &assets);
+    let motion =
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(&sim, &assets, victim, motion);
     let position = engine
         .get_entity(victim)
         .unwrap()
         .position_iface()
         .get_position();
-    assert_eq!(position.z.to_bits(), flight.increment_z.to_bits());
+    assert_eq!(position.z.to_bits(), flight.z.to_bits());
     assert_eq!(
         position.y.to_bits(),
-        (100.0_f32 + flight.increment_y).to_bits(),
+        (100.0_f32 + flight.y).to_bits(),
         "FallingHit accumulates the authored world-space Y increment"
     );
 }
@@ -4121,14 +4119,19 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     let (enter_sequence, enter_index) = engine
         .orders
         .sequence_manager
-        .pending_elements_for_owner(attacker)
-        .into_iter()
+        .deferred_elements_to_go()
+        .iter()
+        .copied()
         .find(|(sequence, index)| {
             engine
                 .orders
                 .sequence_manager
                 .get_element(*sequence, *index)
-                .is_some_and(|element| element.command == Command::EnterSwordfight)
+                .is_some_and(|element| {
+                    element.owner == Some(attacker)
+                        && element.state != crate::sequence::SequenceState::Interrupted
+                        && element.command == Command::EnterSwordfight
+                })
         })
         .expect("the reciprocal ENTER_SWORDFIGHT must be attacker-owned");
     let enter = engine

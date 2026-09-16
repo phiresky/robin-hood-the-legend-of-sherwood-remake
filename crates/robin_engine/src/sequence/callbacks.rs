@@ -369,7 +369,6 @@ impl crate::engine::EngineInner {
         if interrupted_movement {
             if element.command == Command::MoveWaiting {
                 let owner = element.owner.expect("waiting movement has no owner");
-                self.world.pathfinder.cancel_requests_for(owner);
                 self.orders.pending_path_requests.cancel_for_owner(owner);
                 self.orders
                     .failed_path_requests

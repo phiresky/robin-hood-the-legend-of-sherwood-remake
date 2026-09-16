@@ -3,6 +3,148 @@ use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
+fn flight_sector_scan_uses_position_changed_by_preceding_zone_callback() {
+    use crate::coordinates::{MapBBox, MapPoint, WorldPoint3D};
+    use crate::engine::test_support::{actors::TestActor, asm::*};
+    use crate::natives::{ComputedScriptLocation, NativeFn, ScriptHandleCodec};
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let owner = engine.add_test_entity(
+        TestActor::soldier(crate::element::Posture::Lying)
+            .at(WorldPoint3D::new(100.0, 100.0, 0.0))
+            .build(),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.world.fast_grid_mut().size_map(8, 8);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .element_data_mut()
+        .set_sector_topology(crate::position_interface::SectorHandle::new(0), None);
+    let mut indices = Vec::new();
+    for (zone, x) in [100.0, 200.0].into_iter().enumerate() {
+        let points = vec![
+            MapPoint::new(x - 10.0, 90.0),
+            MapPoint::new(x + 10.0, 90.0),
+            MapPoint::new(x + 10.0, 110.0),
+            MapPoint::new(x - 10.0, 110.0),
+        ];
+        let mut bounding_box = MapBBox::new();
+        for &point in &points {
+            bounding_box.expand_point(point);
+        }
+        let index = engine.world.fast_grid_mut().add_sector(
+            crate::fast_find_grid::GridSector {
+                points,
+                bounding_box,
+                sector_type: crate::sector::SectorType::SCRIPT,
+                layer: 0,
+                sector_number: crate::sector::SectorNumber::new(0),
+                door_index: None,
+                lift_type: None,
+                lift_direction: 0,
+                force_crouched: false,
+                building_index: None,
+                low_exit_point: None,
+                high_exit_point: None,
+                lowest_door_index: None,
+                jump_line_indices: vec![],
+                gate_indices: vec![],
+                underlying_sector: None,
+            },
+            0,
+        );
+        indices.push(index);
+        engine
+            .script_domains
+            .zones
+            .scripts
+            .push(crate::sector::ScriptSectorData {
+                sector_index: crate::fast_find_grid::SectorIndex::new(index),
+                owning_motion_sector: crate::sector::SectorNumber::new(0),
+                script_associated: zone == 0,
+                script_class_name: (zone == 0).then(|| "Relocate".into()),
+                ..Default::default()
+            });
+    }
+    assets.scripts.zone_grid_indices = std::sync::Arc::new(indices);
+    let function = |name: &str, address, parameters| crate::scb::Function {
+        name: name.into(),
+        address,
+        num_parameters: parameters,
+        size_of_return_value: 0,
+        size_of_parameters: parameters * 4,
+        size_of_volatile: 0,
+        size_of_temporary: 8,
+    };
+    let destination = ScriptHandleCodec::location_handle_from_index(assets.scripts.location_count);
+    engine.scripts.install_mission(
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![
+                empty_startup_class("flight_zones.scs".into()),
+                ClassEntry {
+                    source_file: "flight_zones.scs".into(),
+                    class_name: "Relocate".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![function("Initialize", 0, 0), function("EnterZone", 2, 1)],
+                    quads: vec![
+                        q_begin_function(0, 8),
+                        q_return(),
+                        q_begin_function(0, 8),
+                        q_aff1_get_param(0xc000, 0),
+                        q_aff0_iconstant(0xc004, destination),
+                        q_native_param(0xc000),
+                        q_native_param(0xc004),
+                        q_native_call(NativeFn::SetActorLocation as u32),
+                        q_return(),
+                    ],
+                },
+            ],
+        })
+        .unwrap(),
+    );
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .state
+        .computed_locations
+        .push(Some(ComputedScriptLocation {
+            position: (200.0, 100.0),
+            layer: None,
+            sector: None,
+            sector_handle: None,
+            active: true,
+        }));
+    engine.attach_script_bindings(&assets);
+    engine.initialize_zone_scripts(&sim, &assets);
+
+    engine.update_script_sectors_after_flight(&sim, &assets, owner);
+
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .element_data()
+            .position_map(),
+        MapPoint::new(200.0, 100.0)
+    );
+    assert!(
+        engine.script_domains.zones.scripts[0].is_inside(owner),
+        "already visited zones are not rescanned"
+    );
+    assert!(
+        engine.script_domains.zones.scripts[1].is_inside(owner),
+        "later zones see the synchronous relocation"
+    );
+}
+
+#[test]
 fn unlock_ai_filter_preserves_enclosing_scroll_context() {
     use crate::engine::test_support::actors::TestActor;
     use crate::engine::test_support::asm::*;

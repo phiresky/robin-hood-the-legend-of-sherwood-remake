@@ -374,6 +374,33 @@ impl LegacyFastFindGridAdoptionPlan {
         }
 
         let mut runtime_grid = (*engine.world.fast_grid).clone();
+        // Validate bindings before constructing the detached mutable partition;
+        // initialization and patch transitions write these slots directly.
+        for layer in &assets.navigation.pathfinder_graph.static_data.move_layers {
+            for area in layer {
+                for obstacle in &area.motion_obstacles {
+                    let index = obstacle
+                        .grid_sector_index
+                        .ok_or_else(|| {
+                            AdoptSite::new("initialized path graph motion obstacle").error(
+                                AdoptErrorKind::Missing {
+                                    what: "fast-grid sector binding",
+                                },
+                            )
+                        })?
+                        .get() as usize;
+                    if index >= runtime_grid.sector_active.len() {
+                        return Err(missing_runtime_index("pathfinder obstacle sector", index));
+                    }
+                    for &index in &obstacle.grid_line_indices {
+                        let index = usize::from(index);
+                        if index >= runtime_grid.line_active.len() {
+                            return Err(missing_runtime_index("pathfinder obstacle line", index));
+                        }
+                    }
+                }
+            }
+        }
         let mut pathfinder = crate::pathfinder::PathFinder::new();
         pathfinder.initialize_from_graph(
             assets.navigation.pathfinder_graph.as_ref(),
@@ -451,33 +478,13 @@ impl LegacyFastFindGridAdoptionPlan {
                         format!("layer {layer}, area {area} is outside pathfinder state topology"),
                     ));
                 }
-                let mut appeared = Vec::new();
-                let mut line_toggles = Vec::new();
-                let mut sector_toggles = Vec::new();
                 pathfinder.toggle_obstacle_state(
                     assets.navigation.pathfinder_graph.as_ref(),
+                    &mut runtime_grid,
                     layer,
                     usize::from(area),
                     changing_obstacle,
-                    &mut appeared,
-                    &mut line_toggles,
-                    &mut sector_toggles,
                 );
-                for (line_index, active) in line_toggles {
-                    let index = usize::from(line_index);
-                    if index >= runtime_grid.line_active.len() {
-                        return Err(missing_runtime_index("pathfinder obstacle line", index));
-                    }
-                    runtime_grid.line_active[index] = active;
-                }
-                for (sector_index, active) in sector_toggles {
-                    let index = usize::try_from(sector_index.get())
-                        .expect("u32 sector index does not fit usize");
-                    if index >= runtime_grid.sector_active.len() {
-                        return Err(missing_runtime_index("pathfinder obstacle sector", index));
-                    }
-                    runtime_grid.sector_active[index] = active;
-                }
             }
         }
 

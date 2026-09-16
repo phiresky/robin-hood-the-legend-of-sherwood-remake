@@ -2,7 +2,7 @@
 //!
 //! Cross-system callback orchestration stays on `EngineInner`; mechanics
 //! cleanup and order-state updates borrow only their world/order domains.
-use super::state::{OrderRuntime, WorldState};
+use super::state::OrderRuntime;
 use super::*;
 
 impl EngineInner {
@@ -239,7 +239,7 @@ impl EngineInner {
                                 ) && order.done
                             })
                     });
-                stop_owner_active_mechanics(&mut self.world, &mut self.orders, owner);
+                stop_owner_active_mechanics(&mut self.orders, owner);
                 if preserve_nonterminating_lift_wait
                     && let Some(order) = self
                         .orders
@@ -275,7 +275,7 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
-                stop_owner_active_mechanics(&mut self.world, &mut self.orders, owner);
+                stop_owner_active_mechanics(&mut self.orders, owner);
                 // Select before interruption so nested callbacks arbitrate against
                 // the incoming instruction. Returning never restores selection.
                 self.select_sequence_element(owner, Some((new_seq, new_idx)));
@@ -778,7 +778,6 @@ impl EngineInner {
                     "MoveWaiting element {waiter_seq:?}[{waiter_idx}] has no actor owner while being postponed"
                 )
             });
-                self.world.pathfinder.cancel_requests_for(owner);
                 self.orders.pending_path_requests.cancel_for_owner(owner);
                 self.orders
                     .failed_path_requests
@@ -803,12 +802,7 @@ impl EngineInner {
 }
 /// Cancel pending and failed path requests before interrupting or postponing
 /// the actor's selected element.
-pub(super) fn stop_owner_active_mechanics(
-    world: &mut WorldState,
-    orders: &mut OrderRuntime,
-    owner: EntityId,
-) {
-    world.pathfinder.cancel_requests_for(owner);
+pub(super) fn stop_owner_active_mechanics(orders: &mut OrderRuntime, owner: EntityId) {
     orders.pending_path_requests.cancel_for_owner(owner);
     // Path-request cancellation fires from both
     // interrupted *and* postponed state changes, and

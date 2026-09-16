@@ -492,7 +492,7 @@ fn convert_pc(
             crate::macro_store::QuickActionSlot::retained(
                 sequence,
                 seek,
-                crate::macro_store::LegacyQuickito {
+                crate::macro_store::Quickito {
                     kind: quickito,
                     interactor,
                     button: action.metadata.button,

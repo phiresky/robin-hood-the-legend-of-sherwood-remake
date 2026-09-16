@@ -712,34 +712,11 @@ impl HudDrawCtx<'_> {
                 .engine_display
                 .macro_titbit_blink_hidden(pc_id, slot_idx_usz);
             if has_macro && !blink_hidden {
-                // Per-step titbit overlay: draw the `RHID_QUICKACTION_TITBITS`
-                // sub-frame for the slot's most recent step, resolved via
-                // `action_to_qa_frame(step.action)`.  Driven directly off
-                // the recorded step's `Action` rather than the transient
-                // titbit manager entry — so the overlay survives a titbit
-                // expiring or a ground-target step that never produced an
-                // `add_titbit` entry (walk/run).
-                //
-                // When the last step is an action with no dedicated
-                // dedicated quick-action icon (e.g. Jump or Search) we fall back
-                // to the slot's titbit phase if one is still live, so
-                // interact-only flows (`LaunchInteraction`) keep their
-                // player/NPC interaction fallback from `commands.rs`.
                 let macro_state =
                     macro_state.expect("has_macro implies the PC's macro record exists");
-                let frame_from_last_step = macro_state
-                    .slot(slot_idx as usize)
-                    .and_then(|s| s.steps.last())
-                    .and_then(|step| robin_engine::macro_store::action_to_qa_frame(step.action));
-                let phase_from_slot_titbit = || {
-                    macro_state
-                        .get_slot_titbit(slot_idx as usize)
-                        .and_then(|id| engine.titbit_manager().get_phase(id))
-                };
-                // The titbit phase is target/command-specific (Take,
-                // BowOk, lever, pay, ...), while the recorded Action is
-                // only a broad fallback for expired legacy titbits.
-                let frame = phase_from_slot_titbit().or(frame_from_last_step);
+                let frame = macro_state
+                    .get_slot_titbit(slot_idx as usize)
+                    .and_then(|id| engine.titbit_manager().get_phase(id));
                 // The per-slot `run` flag carries through into the
                 // shifting-titbit renderer, which then draws a second
                 // copy of the sprite offset by `(3, 0)`.  The flag is

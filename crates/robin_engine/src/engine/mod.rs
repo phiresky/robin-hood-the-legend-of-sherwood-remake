@@ -1672,7 +1672,8 @@ impl EngineInner {
         let selected = self.world.entities.current_element_for_actor(owner);
         let deferred = manager
             .deferred_elements_to_go()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|(seq_id, elem_idx)| {
                 manager
                     .get_element(*seq_id, *elem_idx)
@@ -2051,11 +2052,7 @@ impl EngineInner {
             // failed-path retry entry leak past the freeze, and the
             // 100-frame retry queue can fire `element_impossible` /
             // hero-speech on an actor that has been frozen / killed.
-            crate::engine::order_arbitration::stop_owner_active_mechanics(
-                &mut self.world,
-                &mut self.orders,
-                owner,
-            );
+            crate::engine::order_arbitration::stop_owner_active_mechanics(&mut self.orders, owner);
             self.element_interrupted(
                 sim,
                 assets,

@@ -16,7 +16,6 @@
 use crate::host::HostFrontend;
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
-use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::engine::PresentationView;
 use robin_engine::player_command::PlayerId;
@@ -1210,8 +1209,7 @@ pub fn draw_pc_info_overlay(
 
 /// Render the per-PC macro dotted chains.
 ///
-/// For every PC with at least one non-empty macro slot, walks the
-/// recorded steps and calls
+/// For every PC with retained macro titbits, walks their current positions and calls
 /// `DrawManager::draw_dotted_line(… DISTANCE_DOT, 1, 0x0000 …)` for each
 /// segment starting at the PC's map position.  The dot phase is a
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
@@ -1222,53 +1220,54 @@ pub fn render_macro_dotted_chains(
 ) {
     use robin_engine::macro_store::DISTANCE_DOT;
 
-    // Snapshot PC positions before composing each recorded chain. Drawing
-    // uses only the frontend draw manager and never writes simulation state.
-    let mut per_pc: Vec<(
-        robin_engine::element::EntityId,
-        engine_coordinates::MapPoint,
-    )> = Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
-        if let Some(ent) = engine.get_entity(pc_id) {
-            let pos = ent.element_data().position_map();
-            per_pc.push((pc_id, pos));
-        }
-    }
-
-    // The dotted-phase is chained across every segment draw within a
-    // frame; since the engine-owned phase is advanced once per tick
-    // (`TitbitManager::prepare_refresh`), the renderer reads the current
-    // phase and chains locally across segments.  Not writing back
-    // preserves the mutation-free invariant — next frame's tick will
-    // re-advance the canonical phase.
-    let mut phase = engine.titbit_dotted_start();
-    for (pc_id, pc_pos) in per_pc {
+        let Some(pc) = engine.get_entity(pc_id) else {
+            continue;
+        };
         let Some(state) = engine.portrait_macro(pc_id) else {
             continue;
         };
-        if state.slots().iter().all(|s| s.is_empty()) {
-            continue;
-        }
-
-        // Gather every QA-memory titbit into a single list and walk it
-        // once with `from` carrying forward across slots — the polyline
-        // is `PC → slot0 → slot1 → slot2`, not three separate fans from
-        // the PC.
-        let mut from = pc_pos;
-        for slot in state.slots() {
-            for step in &slot.steps {
-                let to = step.position;
-                draw_manager.draw_dotted_line(
-                    renderer,
-                    from,
-                    to,
-                    &mut phase,
-                    DISTANCE_DOT,
-                    1.0,
-                    0x0000,
-                );
-                from = to;
+        let mut phase = engine.titbit_dotted_start();
+        let mut from = pc.element_data().position_map();
+        for slot_index in 0..state.slots().len() {
+            let Some(id) = state.get_slot_titbit(slot_index) else {
+                continue;
+            };
+            let Some(titbit) = engine
+                .titbit_manager()
+                .titbits()
+                .iter()
+                .find(|titbit| titbit.id == id)
+            else {
+                continue;
+            };
+            if titbit.phase == robin_engine::titbit::QuickAction::PlusQuick as u16 {
+                continue;
             }
+            let to = match titbit.element_supplier {
+                Some(supplier) => {
+                    let entity = engine
+                        .entity_id_for_index(supplier.0)
+                        .and_then(|id| engine.get_entity(id))
+                        .expect("macro titbit supplier must exist");
+                    if matches!(entity, robin_engine::element::Entity::Target(_)) {
+                        entity.element_data().position().to_map()
+                    } else {
+                        entity.element_data().position_map()
+                    }
+                }
+                None => titbit.position.to_map(),
+            };
+            draw_manager.draw_dotted_line(
+                renderer,
+                from,
+                to,
+                &mut phase,
+                DISTANCE_DOT,
+                1.0,
+                0x0000,
+            );
+            from = to;
         }
     }
 }

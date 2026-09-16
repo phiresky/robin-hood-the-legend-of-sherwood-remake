@@ -1233,6 +1233,10 @@ impl PositionInterface {
 
     // Goal
     #[inline]
+    pub(crate) fn world_goal(&self) -> WorldPoint3D {
+        self.goal
+    }
+
     pub fn map_goal(&self) -> MapPoint {
         self.goal_map
     }
