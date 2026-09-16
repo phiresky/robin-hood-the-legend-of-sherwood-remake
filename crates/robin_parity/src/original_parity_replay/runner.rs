@@ -984,7 +984,6 @@ pub(super) fn run_replay(
                     panic!("admit original frame {}: {error}", frame.frame_before)
                 })
                 .events
-                .into_side_effects()
         }));
         if profile_timing {
             simulation_time += simulation_started.elapsed();

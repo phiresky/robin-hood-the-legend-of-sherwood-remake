@@ -451,19 +451,8 @@ fn paused_post_boundary_trade_delivers_its_receipt_in_the_same_transaction() {
         .expect("admit paused modal trade");
 
     assert!(!output.hourglass_ran);
-    assert!(
-        output
-            .events
-            .side_effects()
-            .host_effects
-            .trade_receipts
-            .is_empty()
-    );
-    let receipts = &output
-        .post_boundary_events
-        .side_effects()
-        .host_effects
-        .trade_receipts;
+    assert!(output.events.host_effects.trade_receipts.is_empty());
+    let receipts = &output.post_boundary_events.host_effects.trade_receipts;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].request_id, 77);
     assert!(matches!(
@@ -1101,12 +1090,11 @@ fn frame_api_matches_legacy_command_then_hourglass_boundary() {
     assert_eq!(output.state_hash, legacy_hash);
     assert_eq!(crate::replay::state_hash(&framed), legacy_hash);
     assert_eq!(
-        serde_json::to_value(output.events.side_effects()).expect("serialize frame events"),
+        serde_json::to_value(&output.events).expect("serialize frame events"),
         serde_json::to_value(&legacy_events).expect("serialize legacy side effects"),
     );
     assert_eq!(
-        output.events.side_effects().pending_minimap_position,
-        legacy_events.pending_minimap_position,
+        output.events.pending_minimap_position, legacy_events.pending_minimap_position,
         "this host-local effect is serde-skipped and must be compared explicitly"
     );
     assert!(framed.is_men_to_blazon_conversion_mode());

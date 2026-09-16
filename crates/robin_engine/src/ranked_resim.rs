@@ -300,7 +300,7 @@ fn resimulate_ranked_replay_inner(
         let post = output
             .post_initialize_events
             .as_ref()
-            .map(|events| events.game_code())
+            .map(|events| events.code)
             .unwrap_or(GameCode::LevelInProgress);
         let outcome = match (main, post) {
             (GameCode::LevelInProgress, post) => post,

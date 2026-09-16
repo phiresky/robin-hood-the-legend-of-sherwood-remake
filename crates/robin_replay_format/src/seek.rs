@@ -87,9 +87,9 @@ impl ReplaySeekSidecar {
                 .chain(std::iter::once(&output.post_boundary_events))
                 .chain(output.post_initialize_events.iter())
             {
-                effects.append(event.side_effects().host_effects.clone());
-                if event.side_effects().set_draw_hidden.is_some() {
-                    draw_hidden = event.side_effects().set_draw_hidden;
+                effects.append(event.host_effects.clone());
+                if event.set_draw_hidden.is_some() {
+                    draw_hidden = event.set_draw_hidden;
                 }
             }
             effects.background_blits.clear();

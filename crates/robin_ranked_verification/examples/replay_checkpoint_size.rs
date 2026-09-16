@@ -142,7 +142,7 @@ fn run() {
                 || output
                     .post_initialize_events
                     .as_ref()
-                    .is_some_and(|events| events.game_code() != GameCode::LevelInProgress);
+                    .is_some_and(|events| events.code != GameCode::LevelInProgress);
         }
     }
     let file = ReplayFile::from(&replay);

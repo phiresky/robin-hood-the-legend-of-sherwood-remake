@@ -37,7 +37,7 @@ use super::commands::SelectionCommandBatchMode;
 use super::{
     ConsoleResponse, DevState, EngineError, EngineInner, ExternalAction, ExternalActionResult,
     ExternalFacts, FrameAdvanceError, FrameConsoleResponse, LevelAssets, LevelLoadStaging,
-    RecordedDropAleRoute, SideEffects, SimEvents, SimulationCommandPhase, SimulationFrameInput,
+    RecordedDropAleRoute, SideEffects, SimulationCommandPhase, SimulationFrameInput,
     SimulationFrameOutput, SimulationRng, SoundBoundaryPolicy,
 };
 #[cfg(test)]
@@ -1329,11 +1329,11 @@ impl Engine {
                 frame_before: frame_counter,
                 frame_after: frame_counter,
                 hourglass_ran: frame.run_hourglass,
-                events: SimEvents::from(SideEffects {
+                events: SideEffects {
                     code: crate::game_operation::GameCode::LevelInterrupted,
                     ..Default::default()
-                }),
-                post_boundary_events: SimEvents::default(),
+                },
+                post_boundary_events: SideEffects::default(),
                 post_initialize_events: None,
                 external_action_results: Vec::new(),
                 state_hash,
@@ -1426,12 +1426,11 @@ impl Engine {
         // already drained its effects. Drain their effects explicitly before
         // the optional PostInitialize stage so acknowledgements are observable
         // on this transaction even on paused/no-hourglass frames.
-        let post_boundary_events = SimEvents::from(self.inner.feedback.drain_side_effects());
+        let post_boundary_events = self.inner.feedback.drain_side_effects();
 
         let post_initialize_events = run_post_initialize
             .then(|| self.inner.perform_frame_post_initialize(assets))
-            .flatten()
-            .map(SimEvents::from);
+            .flatten();
         if let Some(execution) = execution {
             execution.validate_config(self.inner.control.sim_config)?;
         }
@@ -1447,7 +1446,7 @@ impl Engine {
             frame_before,
             frame_after,
             hourglass_ran: run_hourglass,
-            events: SimEvents::from(side_effects),
+            events: side_effects,
             post_boundary_events,
             post_initialize_events,
             external_action_results,
