@@ -22,8 +22,9 @@ use crate::player_command::PlayerInput;
 /// Dense recent rollback snapshots retained for multiplayer correction.
 /// Two seconds at the fixed 25 Hz sim rate.
 pub const RECENT_TIMELINE_HISTORY_FRAMES: usize = 50;
-/// Keep the rollback checker's five-frame window and a small margin hot.
-pub const UNCOMPRESSED_RECENT_CHECKPOINTS: usize = 8;
+/// Keep the entire recent rollback window live to avoid per-tick compression
+/// on the game thread. Sparse long-term history still compresses older states.
+pub const UNCOMPRESSED_RECENT_CHECKPOINTS: usize = RECENT_TIMELINE_HISTORY_FRAMES;
 
 /// Decide which pre-tick frames are eligible to become checkpoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -786,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_checkpoints_restore_after_compression_and_branching() {
+    fn recent_checkpoints_stay_uncompressed_and_restore_after_branching() {
         let mut assets = LevelAssets::default();
         let mut engine =
             Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
@@ -807,7 +808,8 @@ mod tests {
                 .iter()
                 .filter(|s| matches!(s.engine, StoredEngine::Live(_)))
                 .count(),
-            UNCOMPRESSED_RECENT_CHECKPOINTS
+            50,
+            "all retained recent checkpoints must stay uncompressed"
         );
         for frame in [10, 30, 51, 52, 59] {
             let restored = history
@@ -831,6 +833,36 @@ mod tests {
             ),
             hashes[30]
         );
+    }
+
+    #[test]
+    fn long_term_history_still_compresses_and_restores_older_checkpoints() {
+        let mut assets = LevelAssets::default();
+        let mut engine =
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let mut history = SnapshotHistory::new(CheckpointPolicy::EveryFrame, RetentionPolicy::All);
+        let mut hashes = Vec::new();
+        for frame in 0..3 {
+            hashes.push(crate::replay::state_hash(&engine));
+            history.checkpoint(frame, &engine);
+            engine.advance_frame(&assets, Default::default()).unwrap();
+        }
+        assert_eq!(history.snapshots.len(), 3);
+        assert!(matches!(
+            history.snapshots[0].engine,
+            StoredEngine::Compressed(_)
+        ));
+        assert!(matches!(
+            history.snapshots[1].engine,
+            StoredEngine::Compressed(_)
+        ));
+        assert!(matches!(history.snapshots[2].engine, StoredEngine::Live(_)));
+        for (frame, hash) in hashes.into_iter().enumerate() {
+            let restored = history
+                .restore(&assets, frame as u32, RestorePolicy::Exact)
+                .unwrap();
+            assert_eq!(crate::replay::state_hash(&restored.engine), hash);
+        }
     }
 
     #[test]

@@ -20,9 +20,10 @@
 //!
 //! Inspired by the "time rewind" feature in *Braid*.
 //!
-//! Older checkpoints use bitcode + zstd. The sparse tier retains one live
-//! engine, and the dense tier retains eight; active rewind sessions also cache
-//! live states for consecutive backward steps. Inputs share one command journal.
+//! Older sparse checkpoints use bitcode + zstd, retaining one live engine.
+//! All 50 dense recent checkpoints remain uncompressed. Active rewind sessions
+//! separately cache up to 25 live states for consecutive backward steps.
+//! Inputs share one command journal.
 
 use std::collections::BTreeMap;
 
