@@ -29,7 +29,7 @@ import {
 } from './replay.js';
 import { installTimeline } from './timeline.js';
 import { createRpcClient } from './rpc-client.js';
-import { fetchRunReplay, runFromQuery, type RunReplay } from './run-replay.js';
+import { fetchRunReplay, parseHostedReplayContent, runFromQuery, type RunReplay } from './run-replay.js';
 
 declare global {
     // Optional test/dev override for loading binaries from a local checkout.
@@ -340,6 +340,15 @@ async function selectedDemoDatadir(
     return { url: `${BINARIES_BASE}${url.slice(PUBLISHED_DEMO_ORIGIN.length)}`, identity: { sha256, byteLength } };
 }
 
+async function selectedFullReplayDatadir(
+    _base: string, build: BuildSelection, signal: AbortSignal,
+): Promise<{ readonly url: string; readonly identity: DemoDatadirIdentity }> {
+    const content = parseHostedReplayContent(await fetchJson<unknown>(
+        `${BINARIES_BASE}/datadirs/replays/${build.short}.json`, signal,
+    ), BINARIES_BASE);
+    return { url: content.url, identity: content };
+}
+
 async function verifyDemoDatadir(
     datadir: Uint8Array<ArrayBuffer>,
     identity: DemoDatadirIdentity,
@@ -358,6 +367,7 @@ window.addEventListener('pagehide', event => {
 });
 
 async function main(): Promise<void> {
+    if (pageParams.get('embed') === '1') document.documentElement.classList.add('embedded-replay');
     if (runQuery !== null && (pageParams.has('replay') || capturedBrowserJoinCode !== undefined)) {
         throw new Error('run= cannot be combined with replay= or a multiplayer invitation');
     }
@@ -397,7 +407,9 @@ async function main(): Promise<void> {
         },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (base, build, signal) => {
-            const demo = await selectedDemoDatadir(base, build, signal);
+            const demo = runReplay?.edition === 'full'
+                ? await selectedFullReplayDatadir(base, build, signal)
+                : await selectedDemoDatadir(base, build, signal);
             const response = await fetchWithProgress(
                 demo.url, build.source === 'latest' ? 'no-cache' : 'force-cache', 'application/zstd',
                 (loaded, total) => bootProgress('gamedata', 'loading game data…',

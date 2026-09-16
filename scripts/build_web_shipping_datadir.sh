@@ -80,7 +80,7 @@ target/release/convert_datadir \
     --audio-format opus \
     --zstd-window-log 30 \
     --web-content-manifest \
-    --web-content-edition demo \
+    --web-content-edition "${ROBIN_WEB_CONTENT_EDITION:-demo}" \
     "$mode"
 
 manifest="$output_dir/Data/datadir.bin"

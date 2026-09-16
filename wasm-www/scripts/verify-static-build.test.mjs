@@ -63,7 +63,7 @@ async function publicFixture(root) {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self' https: wss:; frame-src https://identity.robinhood.phiresky.xyz">
         <script type="module" src="/assets/game.js"></script>`);
     await writeFile(resolve(root, 'leaderboards/index.html'), `<!doctype html>
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; frame-src https://identity.robinhood.phiresky.xyz">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; frame-src 'self' https://identity.robinhood.phiresky.xyz">
         <script type="module" src="../assets/boards.js"></script>`);
 }
 

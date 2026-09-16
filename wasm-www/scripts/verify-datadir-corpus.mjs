@@ -207,13 +207,13 @@ function validateWebContentPath(path, label) {
     }
 }
 
-function parseWebContentManifest(bytes, label) {
+export function parseWebContentManifest(bytes, label, edition = 'demo') {
     const manifest = json(bytes, label);
     exactKeys(manifest, [
         'schema', 'edition', 'engine_version', 'native_content_sha256', 'datadir', 'files',
     ], label);
     exact(manifest.schema, WEB_CONTENT_MANIFEST_SCHEMA, `${label} schema`);
-    exact(manifest.edition, 'demo', `${label} edition`);
+    exact(manifest.edition, edition, `${label} edition`);
     if (!FULL_COMMIT.test(manifest.engine_version)) throw new Error(`${label} has an invalid engine_version`);
     if (!DIGEST.test(manifest.native_content_sha256)) {
         throw new Error(`${label} has an invalid native_content_sha256`);
@@ -377,7 +377,7 @@ export async function verifyDatadirCorpus(directory, { retainedGenerations = [],
     if (!files.has('_headers')) throw new Error('datadir corpus requires _headers');
     validateDatadirHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
     const allowedPrefix = `${DEMO_PARENT_ROOT}/`;
-    const invalid = [...files].filter(path => path !== '_headers' && !path.startsWith(allowedPrefix));
+    const invalid = [...files].filter(path => path !== '_headers' && !path.startsWith(allowedPrefix) && !path.startsWith('datadirs/full/') && !path.startsWith('datadirs/replays/'));
     if (invalid.length > 0) throw new Error(`datadir corpus contains non-Demo paths: ${invalid.join(', ')}`);
 
     const expected = new Set();
@@ -400,6 +400,31 @@ export async function verifyDatadirCorpus(directory, { retainedGenerations = [],
             root: DEMO_ROOT, datadirPath: DEMO_PATH, contentManifestPath: DEMO_CONTENT_MANIFEST_PATH,
         }, 'datadir corpus');
         for (const path of current.paths) expected.add(path);
+    }
+    for (const path of files) {
+        const match = /^datadirs\/full\/([0-9a-f]{64})\/robinhood-web-content\.json$/u.exec(path);
+        if (match === null) continue;
+        const bytes = await readFile(resolve(root, path));
+        exact(sha256(bytes), match[1], 'Full content manifest address');
+        const manifest = parseWebContentManifest(bytes, path, 'full');
+        expected.add(path);
+        const base = path.slice(0, path.lastIndexOf('/'));
+        for (const file of [manifest.datadir, ...manifest.files]) {
+            const object = `${base}/${file.path}`;
+            await verifyContentObject(root, object, file, 'Full replay content');
+            expected.add(object);
+        }
+    }
+    for (const path of files) {
+        if (!/^datadirs\/replays\/[0-9a-f]{12}\.json$/u.test(path)) continue;
+        const binding = json(await readFile(resolve(root, path)), path);
+        exactKeys(binding, ['url', 'sha256', 'byteLength'], path);
+        const match = /^\/datadirs\/full\/([0-9a-f]{64})\/datadir\.bin$/u.exec(binding.url);
+        if (match === null || !expected.has(binding.url.slice(1))) throw new Error(`${path} references missing Full data`);
+        await verifyContentObject(root, binding.url.slice(1), {
+            sha256: binding.sha256, byte_length: binding.byteLength,
+        }, path);
+        expected.add(path);
     }
     const extra = [...files].filter(path => path !== '_headers' && !expected.has(path));
     if (extra.length > 0) {

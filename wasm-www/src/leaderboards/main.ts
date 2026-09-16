@@ -381,7 +381,6 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
             ['Campaign score', `${run.startingCampaignScore} → ${run.finalCampaignScore}`],
             ['Verified', formatDate(run.verifiedAtUnixMs)],
         ]),
-        renderReplayActions(api, run),
     );
 
     const record = element('aside', { className: 'panel detail-section' });
@@ -398,6 +397,7 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     replace(
         app,
         pageHeading(`${labels.missionLabel} — verified run`, 'Full replay and the result the server reproduced from it.'),
+        element('section', { className: 'panel replay-section' }, [renderReplayActions(api, run)]),
         element('div', { className: 'detail-grid' }, [mainPanel, record]),
     );
 }
@@ -412,22 +412,24 @@ function renderReplayActions(api: HighscoreApi, run: RunDetail): HTMLElement {
     wrapper.append(actions);
     if (run.viewer.availability.status === 'unavailable') {
         wrapper.append(element('p', { className: 'notice', text: run.viewer.availability.safeReason }));
-    } else if (run.viewer.contentRequirement === 'bundled_demo') {
-        // The game page selects /wasm/<runtime build>/, the engine that recorded the replay.
+    } else {
         const viewerUrl = new URL('../', window.location.href);
         viewerUrl.search = '';
         viewerUrl.searchParams.set('run', run.runId);
-        actions.prepend(link('Watch replay', viewerUrl.toString(), 'button'));
-        wrapper.append(element('p', {
-            className: 'notice',
-            text: `Playback uses engine build ${run.viewer.runtimeBuild} with the Demo data it was published with.`,
+        viewerUrl.searchParams.set('embed', '1');
+        wrapper.prepend(element('iframe', {
+            className: 'replay-player',
+            attrs: {
+                src: viewerUrl.toString(), title: 'Replay player',
+                allow: 'autoplay; fullscreen', allowfullscreen: '',
+                referrerpolicy: 'no-referrer',
+            },
         }));
-    } else {
-        // TODO: browser playback of Full runs needs a local Full content picker outside multiplayer joins.
-        wrapper.append(element('p', {
-            className: 'notice',
-            text: `Playback requires a local Full installation and engine build ${run.viewer.runtimeBuild}. Download the replay to watch it in the game.`,
-        }));
+        viewerUrl.searchParams.delete('embed');
+        const open = link('Open replay in new tab', viewerUrl.toString(), 'button secondary');
+        open.target = '_blank';
+        open.rel = 'noopener';
+        actions.prepend(open);
     }
     return wrapper;
 }

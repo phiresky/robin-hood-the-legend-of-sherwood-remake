@@ -1272,3 +1272,14 @@ TODO: a native report form, browser replay attachments, native fatal-signal
 minidumps, queue retention settings, and coherent replay snapshots. Rust panic
 hooks do not capture OOM, SIGKILL or native fatal signals; a captured replay can
 end in an incomplete write.
+
+
+## Inline leaderboard replays
+
+Verified run pages include an embedded replay player with playback controls and a
+full-page link. Full-game replays load hosted shipping data automatically. Each
+recorded runtime has an immutable `datadirs/replays/<build>.json` binding to a
+content-addressed Full package; Demo play keeps its existing data selection.
+Build Full data with `ROBIN_WEB_CONTENT_EDITION=full scripts/build_web_shipping_datadir.sh`,
+then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publishing
+the datadir corpus. The matching recorded browser runtime must also be published.

@@ -143,7 +143,7 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
     // The game document must be cross-origin isolated so the threaded runtime
     // can share wasm memory with its decode workers. Its bundled worker
     // scripts are ordinary /assets/* responses and need the same COEP.
-    const game = await smokeHtml(fetchImpl, `${DEPLOYMENT.publicOrigin}/`, 'public-v1', "frame-ancestors 'none'");
+    const game = await smokeHtml(fetchImpl, `${DEPLOYMENT.publicOrigin}/`, 'public-v1', "frame-ancestors 'self'");
     for (const [name, value] of Object.entries(PUBLIC_ISOLATION)) {
         requireExactHeader(game.response, name, value, 'game document');
         requireExactHeader(game.asset, name, value, 'game worker-capable asset');
@@ -156,8 +156,8 @@ export async function smokeCloudflareDeployment(fetchImpl = fetch) {
         'public-v1',
         "frame-ancestors 'none'",
     );
-    for (const name of Object.keys(PUBLIC_ISOLATION)) {
-        requireNoHeader(leaderboard.response, name, 'leaderboard document');
+    for (const [name, value] of Object.entries(PUBLIC_ISOLATION)) {
+        requireExactHeader(leaderboard.response, name, value, 'leaderboard document');
     }
     const signer = await smokeHtml(
         fetchImpl,

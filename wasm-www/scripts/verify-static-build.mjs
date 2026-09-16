@@ -111,7 +111,7 @@ export async function verifyPublicBuild(directory) {
     const gamePolicy = csp(gameHtml, 'index.html');
     const leaderboardPolicy = csp(leaderboardHtml, 'leaderboards/index.html');
     if (JSON.stringify(directive(gamePolicy, 'frame-src')) !== JSON.stringify([DEPLOYMENT.signerOrigin])
-        || JSON.stringify(directive(leaderboardPolicy, 'frame-src')) !== JSON.stringify([DEPLOYMENT.signerOrigin])) {
+        || JSON.stringify(directive(leaderboardPolicy, 'frame-src')) !== JSON.stringify(["'self'", DEPLOYMENT.signerOrigin])) {
         throw new Error('Public documents must frame only the isolated signer origin');
     }
     if (JSON.stringify(directive(leaderboardPolicy, 'connect-src')) !== JSON.stringify(["'self'"])) {

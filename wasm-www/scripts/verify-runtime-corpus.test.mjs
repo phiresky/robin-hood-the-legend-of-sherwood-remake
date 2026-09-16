@@ -1,3 +1,4 @@
+import { addFullReplayContent } from './add-full-replay-content.mjs';
 import { admissionFixture } from './replay-admission-wasm-fixture.mjs';
 import assert from 'node:assert/strict';
 import { brotliCompressSync } from 'node:zlib';
@@ -556,4 +557,21 @@ test('current runtime admission is independently hashed, memory-capped and inclu
     await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /replayAdmissionWasm digest/);
     await rewriteRuntimeManifest(root, manifest => { manifest.sha256.replayAdmissionWasm = sha(unbounded); });
     await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /memory capped/);
+});
+
+
+test('hosted Full replay content preserves Demo data and rejects tampered bindings', async t => {
+    const demo = await demoPackage();
+    const full = await demoPackage({ edition: 'full' });
+    const root = await mkdtemp(resolve(tmpdir(), 'full-replay-content-'));
+    t.after(() => Promise.all([demo.root, full.root, root].map(path => rm(path, { recursive: true, force: true }))));
+    const corpus = resolve(root, 'corpus');
+    await assembleDatadirCorpus({ existing: null, demo: demo.root, output: corpus });
+    await addFullReplayContent({ corpus, source: full.root, build: '1699bc12ffb8', retainedGenerations: [] });
+    const bindingPath = resolve(corpus, 'datadirs/replays/1699bc12ffb8.json');
+    const binding = JSON.parse(await readFile(bindingPath, 'utf8'));
+    assert.equal(binding.sha256, full.document.datadir.sha256);
+    assert.equal((await verifyDatadirCorpus(corpus)).demo.datadir_sha256, demo.document.datadir.sha256);
+    await writeFile(bindingPath, JSON.stringify({ ...binding, sha256: '0'.repeat(64) }));
+    await assert.rejects(verifyDatadirCorpus(corpus), /digest|sha256/u);
 });

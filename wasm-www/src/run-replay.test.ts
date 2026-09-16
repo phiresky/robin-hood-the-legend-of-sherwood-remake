@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { fetchRunReplay, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
+import { fetchRunReplay, parseHostedReplayContent, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
 
 const build = '0123456789ab';
 const replay = new TextEncoder().encode(`rhrec-${build}-AAAA`);
@@ -46,19 +46,19 @@ test('run query ids are bounded opaque text', () => {
 test('a run launches its recorded engine build with the exact published replay', async () => {
     const { fetchImpl, urls } = api(runDocument());
     const result = await fetchRunReplay('run-1', 'https://robinhood.example/api/v1/', fetchImpl, new AbortController().signal);
-    assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, content: `rhrec-${build}-AAAA` });
+    assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, edition: 'demo', content: `rhrec-${build}-AAAA` });
     assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay']);
 });
 
-test('run playback refuses unavailable, Full, mismatched and tampered runs', async () => {
+test('run playback refuses unavailable, mismatched and tampered runs', async () => {
     const signal = new AbortController().signal;
     assert.throws(() => parseRunLaunch(runDocument({ run_id: 'other' }), 'run-1'), /different or unsupported/u);
     assert.throws(() => parseRunLaunch(runDocument({ viewer: {
         availability: { status: 'unavailable', safe_reason: 'Build retired.' }, content_requirement: 'bundled_demo', runtime_build: build,
     } }), 'run-1'), /Build retired/u);
-    assert.throws(() => parseRunLaunch(runDocument({ viewer: {
+    assert.equal( parseRunLaunch(runDocument({ viewer: {
         availability: { status: 'available' }, content_requirement: 'user_local_retail', runtime_build: build,
-    } }), 'run-1'), /local Full installation/u);
+    } }), 'run-1').edition, 'full');
     assert.throws(() => parseRunLaunch(runDocument({ recorded_engine_version: 'ffffffffffff' }), 'run-1'), /published engine build/u);
     assert.throws(() => parseRunLaunch(runDocument({ viewer: {
         availability: { status: 'available' }, content_requirement: 'bundled_demo', runtime_build: '../latest',
@@ -72,4 +72,14 @@ test('run playback refuses unavailable, Full, mismatched and tampered runs', asy
     const otherDocument = runDocument();
     ((otherDocument.replay as Record<string, unknown>).artifact as Record<string, unknown>).sha256 = createHash('sha256').update(otherBuild).digest('hex');
     await assert.rejects(fetchRunReplay('run-1', '/api/v1', api(otherDocument, otherBuild).fetchImpl, signal), /not recorded by engine build/u);
+});
+
+
+test('hosted Full replay bindings stay content-addressed and on the game origin', () => {
+    const binding = { url: `/datadirs/full/${'a'.repeat(64)}/datadir.bin`, sha256: 'b'.repeat(64), byteLength: 512 };
+    assert.equal(parseHostedReplayContent(binding, 'https://game.example').url, `https://game.example${binding.url}`);
+    for (const url of ['https://other.example/datadir.bin', '//other.example/x', '/datadirs/full/../demo/datadir.bin', `${binding.url}?x=1`]) {
+        assert.throws(() => parseHostedReplayContent({ ...binding, url }, 'https://game.example'));
+    }
+    assert.throws(() => parseHostedReplayContent({ ...binding, byteLength: 0 }, 'https://game.example'));
 });

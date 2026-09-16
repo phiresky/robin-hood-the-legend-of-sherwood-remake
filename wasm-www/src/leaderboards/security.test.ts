@@ -77,7 +77,7 @@ test('leaderboard CSP pins the dedicated signer and has no executable blob excep
     const html = readFileSync(new URL('../../leaderboards/index.html', import.meta.url), 'utf8');
     const policy = cspDirectives(html);
     assert.deepEqual(policy.get('script-src'), new Set(["'self'"]));
-    assert.deepEqual(policy.get('frame-src'), new Set(['https://identity.robinhood.phiresky.xyz']));
+    assert.deepEqual(policy.get('frame-src'), new Set(["'self'", 'https://identity.robinhood.phiresky.xyz']));
     assert.deepEqual(policy.get('connect-src'), new Set(["'self'"]));
     assert.deepEqual(policy.get('style-src'), new Set(["'self'"]));
     assert.deepEqual(policy.get('object-src'), new Set(["'none'"]));

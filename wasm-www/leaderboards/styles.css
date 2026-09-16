@@ -267,3 +267,6 @@ footer {
     .hide-small { display: none; }
     .player-results .primary-metric { font-size: .95rem; }
 }
+
+.replay-section { margin-bottom: 1.5rem; padding: 1rem; }
+.replay-player { display: block; width: 100%; height: min(76vh, 760px); min-height: 360px; border: 0; background: #111; border-radius: 6px; margin-bottom: 1rem; }

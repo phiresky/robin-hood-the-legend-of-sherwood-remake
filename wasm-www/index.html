@@ -24,6 +24,12 @@
             background: #000;
             image-rendering: pixelated;
         }
+        .embedded-replay { height: 100%; }
+        .embedded-replay body { height: 100%; overflow: hidden; }
+        .embedded-replay #canvas { width: 100% !important; height: calc(100dvh - 48px) !important; margin: 0; object-fit: contain; }
+        .embedded-replay #toolbar, .embedded-replay #log { display: none; }
+        .embedded-replay #replay-timeline { min-height: 36px; }
+        .embedded-replay #canvas:fullscreen { height: 100vh !important; }
         #canvas:fullscreen {
             width: 100vw;
             height: 100vh;

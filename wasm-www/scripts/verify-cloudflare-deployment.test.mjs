@@ -52,7 +52,7 @@ test('signer remains an exact distinct Custom Domain', async () => {
 test('header policies fail closed on clickjacking and cache weakening', async () => {
     const snapshot = await loadDeploymentSnapshot();
     const hostile = [
-        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace("frame-ancestors 'none'", 'frame-ancestors *'); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace("frame-ancestors 'self'", 'frame-ancestors *'); },
         candidate => { candidate.signerHeaders = candidate.signerHeaders.replace(`frame-ancestors ${DEPLOYMENT.publicOrigin}`, 'frame-ancestors *'); },
         candidate => { candidate.signerHeaders += '\n/*\n  X-Frame-Options: DENY\n'; },
         candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('max-age=31536000, immutable', 'max-age=60'); },
@@ -76,7 +76,7 @@ test('game isolation and signer frame compatibility fail closed', async () => {
         candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Embedder-Policy: require-corp', 'Cross-Origin-Embedder-Policy: unsafe-none'); },
         candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Opener-Policy: same-origin', 'Cross-Origin-Opener-Policy: same-origin-allow-popups'); },
         candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('Cross-Origin-Resource-Policy: same-origin', 'Cross-Origin-Resource-Policy: cross-origin'); },
-        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('  ! Cross-Origin-Opener-Policy\n', ''); },
+        candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('/leaderboards/*', '/leaderboards/*\n  ! Cross-Origin-Opener-Policy'); },
         candidate => { candidate.publicHeaders = candidate.publicHeaders.replace('/assets/*\n', '/assets/*\n  ! Cross-Origin-Embedder-Policy\n'); },
         candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('  Cross-Origin-Embedder-Policy: require-corp\n', ''); },
         candidate => { candidate.signerHeaders = candidate.signerHeaders.replace('Cross-Origin-Resource-Policy: same-site', 'Cross-Origin-Resource-Policy: same-origin'); },

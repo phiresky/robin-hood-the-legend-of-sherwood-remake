@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { DEPLOYMENT } from './verify-cloudflare-deployment.mjs';
+import { DEPLOYMENT, PUBLIC_ISOLATION } from './verify-cloudflare-deployment.mjs';
 import { DEMO_PATH, RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
 import { smokeCloudflareDeployment } from './smoke-cloudflare-deployment.mjs';
 
@@ -25,7 +25,7 @@ function fixtureFetch({
     demoManifestSha256 = DEMO_SHA256,
     retainedDemoStatus = 200,
     gameIsolation = { 'cross-origin-embedder-policy': 'require-corp', 'cross-origin-opener-policy': 'same-origin' },
-    leaderboardIsolation = {},
+    leaderboardIsolation = PUBLIC_ISOLATION,
     signerIsolation = { 'cross-origin-embedder-policy': 'require-corp', 'cross-origin-resource-policy': 'same-site' },
     runtimeResourcePolicy = 'same-origin',
     // The live datadir Worker predates CORP; the smoke must not require it.
@@ -176,7 +176,7 @@ function fixtureFetch({
                 'content-type': 'text/html',
                 'x-content-type-options': 'nosniff',
                 'x-robinhood-static-origin': 'public-v1',
-                'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+                'content-security-policy': leaderboard ? "default-src 'none'; frame-ancestors 'none'" : "default-src 'none'; frame-ancestors 'self'",
                 'cross-origin-resource-policy': 'same-origin',
                 ...(leaderboard ? leaderboardIsolation : gameIsolation),
             },
@@ -217,7 +217,7 @@ test('deployment smoke requires game isolation, an isolation-compatible signer, 
         [{ gameIsolation: { 'cross-origin-opener-policy': 'same-origin' } }, /Cross-Origin-Embedder-Policy: require-corp/u],
         [{ gameIsolation: { 'cross-origin-embedder-policy': 'credentialless', 'cross-origin-opener-policy': 'same-origin' } }, /Cross-Origin-Embedder-Policy: require-corp/u],
         [{ gameIsolation: { 'cross-origin-embedder-policy': 'require-corp' } }, /Cross-Origin-Opener-Policy: same-origin/u],
-        [{ leaderboardIsolation: { 'cross-origin-opener-policy': 'same-origin' } }, /leaderboard document unexpectedly exposes Cross-Origin-Opener-Policy/u],
+        [{ leaderboardIsolation: { 'cross-origin-opener-policy': 'same-origin' } }, /leaderboard document.*Cross-Origin-Embedder-Policy/u],
         [{ signerIsolation: { 'cross-origin-resource-policy': 'same-site' } }, /identity signer document must set Cross-Origin-Embedder-Policy/u],
         [{ signerIsolation: { 'cross-origin-embedder-policy': 'require-corp' } }, /identity signer document must set Cross-Origin-Resource-Policy: same-site/u],
         [{ runtimeResourcePolicy: null }, /runtime pointer must set cross-origin-resource-policy/u],

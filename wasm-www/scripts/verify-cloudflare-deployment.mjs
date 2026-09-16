@@ -176,12 +176,12 @@ export function validatePublicHeaders(text) {
     }
     requireExactHeader(root, 'Cross-Origin-Resource-Policy', SAME_ORIGIN_RESOURCE, 'public resources');
     requireHeader(text, 'Content-Security-Policy', [
-        "frame-ancestors 'none'",
+        "frame-ancestors 'self'",
         `frame-src ${DEPLOYMENT.signerOrigin}`,
         "object-src 'none'",
         "base-uri 'none'",
     ], 'public');
-    requireHeader(text, 'X-Frame-Options', ['DENY'], 'public');
+    requireHeader(text, 'X-Frame-Options', ['SAMEORIGIN'], 'public');
     requireHeader(text, 'X-Content-Type-Options', ['nosniff'], 'public');
     requireHeader(text, 'Referrer-Policy', ['no-referrer'], 'public');
     requireHeader(text, 'X-Robinhood-Static-Origin', ['public-v1'], 'public');
@@ -196,11 +196,13 @@ export function validatePublicHeaders(text) {
     if (leaderboardCsp === undefined
         || !/(?:^|;)\s*connect-src\s+'self'\s*(?:;|$)/u.test(leaderboardCsp)
         || /(?:^|\s)(?:https:|wss:)(?:\s|;|$)/u.test(leaderboardCsp)
-        || !leaderboardCsp.includes(`frame-src ${DEPLOYMENT.signerOrigin}`)
+        || !leaderboardCsp.includes(`frame-src 'self' ${DEPLOYMENT.signerOrigin}`)
         || !leaderboardCsp.includes("frame-ancestors 'none'")) {
         throw new Error('leaderboard response CSP must be self-only except for the isolated signer frame');
     }
-    for (const name of Object.keys(PUBLIC_ISOLATION)) requireDetached(leaderboardBlock, name, 'leaderboard headers');
+    if (/^\s*! Cross-Origin-(?:Embedder|Opener)-Policy/mu.test(leaderboardBlock)) {
+        throw new Error('leaderboard headers must retain isolation for the embedded replay');
+    }
     if (/^\s*(?:!\s*)?Cross-Origin-/imu.test(routeBlock(text, '/assets/*'))) {
         throw new Error('public asset headers must inherit the site cross-origin policy unchanged');
     }

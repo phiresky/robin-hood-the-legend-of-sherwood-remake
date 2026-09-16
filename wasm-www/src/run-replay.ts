@@ -12,6 +12,7 @@ const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
 export type RunReplay = {
     readonly runId: string;
     readonly runtimeBuild: string;
+    readonly edition: 'demo' | 'full';
     /** Exact compact replay (`rhrec-<runtimeBuild>-...`). */
     readonly content: string;
 };
@@ -26,7 +27,7 @@ export function runFromQuery(params: URLSearchParams): string | null {
     return value;
 }
 
-type Launch = { readonly runtimeBuild: string; readonly sha256: string; readonly byteLength: number };
+type Launch = { readonly edition: 'demo' | 'full'; readonly runtimeBuild: string; readonly sha256: string; readonly byteLength: number };
 
 /** Minimal checks of the RunDetailV2 fields playback needs. */
 export function parseRunLaunch(document: unknown, runId: string): Launch {
@@ -40,10 +41,10 @@ export function parseRunLaunch(document: unknown, runId: string): Launch {
         const reason = typeof availability.safe_reason === 'string' ? availability.safe_reason : 'unavailable';
         throw new Error(`run ${runId} cannot be watched: ${reason}`);
     }
-    if (viewer.content_requirement !== 'bundled_demo') {
-        // TODO: support user_local_retail runs with a local Full content picker outside multiplayer joins.
-        throw new Error(`run ${runId} needs a local Full installation, which browser replay playback does not support yet`);
+    if (viewer.content_requirement !== 'bundled_demo' && viewer.content_requirement !== 'user_local_retail') {
+        throw new Error(`run ${runId} has an unsupported content requirement`);
     }
+    const edition = viewer.content_requirement === 'bundled_demo' ? 'demo' : 'full';
     const runtimeBuild = viewer.runtime_build;
     if (typeof runtimeBuild !== 'string' || !RUNTIME_BUILD_RE.test(runtimeBuild)
         || run.recorded_engine_version !== runtimeBuild) {
@@ -56,7 +57,7 @@ export function parseRunLaunch(document: unknown, runId: string): Launch {
         || artifact.media_type !== RANKED_REPLAY_MEDIA_TYPE) {
         throw new Error(`run ${runId} has an invalid replay artifact`);
     }
-    return { runtimeBuild, sha256: artifact.sha256, byteLength: artifact.byte_length };
+    return { edition, runtimeBuild, sha256: artifact.sha256, byteLength: artifact.byte_length };
 }
 
 export async function fetchRunReplay(
@@ -84,7 +85,7 @@ export async function fetchRunReplay(
     if (!content.startsWith(`rhrec-${launch.runtimeBuild}-`)) {
         throw new Error(`run ${runId}: the replay was not recorded by engine build ${launch.runtimeBuild}`);
     }
-    return { runId, runtimeBuild: launch.runtimeBuild, content };
+    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content };
 }
 
 async function get(
@@ -118,4 +119,20 @@ function record(value: unknown, label: string): Record<string, unknown> {
         throw new Error(`${label} must be an object`);
     }
     return value as Record<string, unknown>;
+}
+
+
+/** Resolve a published, build-specific Full replay content binding. */
+export function parseHostedReplayContent(value: unknown, origin: string): {
+    readonly url: string; readonly sha256: string; readonly byteLength: number;
+} {
+    const content = record(value, 'replay content');
+    if (typeof content.url !== 'string'
+        || !/^\/datadirs\/full\/[0-9a-f]{64}\/datadir\.bin$/u.test(content.url)
+        || typeof content.sha256 !== 'string' || !SHA256_RE.test(content.sha256)
+        || typeof content.byteLength !== 'number' || !Number.isSafeInteger(content.byteLength)
+        || content.byteLength <= 0 || content.byteLength > 25 * 1024 * 1024) {
+        throw new Error('Full replay data is not available for this player version');
+    }
+    return { url: new URL(content.url, origin).toString(), sha256: content.sha256, byteLength: content.byteLength };
 }
