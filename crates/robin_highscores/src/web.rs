@@ -318,6 +318,7 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
         .route("/readyz", get(readiness))
         .route("/api/v1/leaderboard-metadata", get(leaderboard_metadata))
         .route("/api/v1/leaderboards", get(leaderboard))
+        .route("/api/v1/latest-runs", get(latest_runs))
         .route("/api/v1/runs/{run_id}", get(run_detail))
         .route("/api/v1/runs/{run_id}/replay", get(run_replay))
         .route("/api/v1/players/{public_key}", get(player_profile))
@@ -1137,6 +1138,53 @@ async fn leaderboard(
         ApiError::Internal
     })?;
     Ok(Json(page))
+}
+
+#[derive(Serialize, Deserialize)]
+struct LatestRun {
+    run: RunSummaryV2,
+    verified_at_unix_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LatestRunsPage {
+    schema_version: u32,
+    runs: Vec<LatestRun>,
+}
+
+async fn latest_runs(State(state): State<AppState>) -> Result<Json<LatestRunsPage>, ApiError> {
+    let records = state
+        .database
+        .latest_runs(&state.config.board_ids())
+        .await?;
+    let runs = records
+        .into_iter()
+        .map(|record| {
+            let run = RunSummaryV2 {
+                schema_version: SCHEMA_VERSION_V2,
+                run_id: opaque(&record.run_id)?,
+                board_id: opaque(&record.board_id)?,
+                mission_id: record.mission_id,
+                max_concurrent_players: record.max_concurrent_players,
+                participant_instance_count: record.participant_instance_count,
+                uploader: record.uploader.as_ref().map(public_participant),
+                metrics: RunMetricsV1 {
+                    original_score_delta: record.original_score_delta,
+                    active_simulation_ticks: record.active_simulation_ticks,
+                    ransom_collected: signed_mission_money(record.ransom_collected)?,
+                },
+            };
+            run.validate().map_err(|_| ApiError::Internal)?;
+            Ok(LatestRun {
+                run,
+                verified_at_unix_ms: record.verified_at_ms,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    Ok(Json(LatestRunsPage {
+        schema_version: 1,
+        runs,
+    }))
 }
 
 async fn run_detail(

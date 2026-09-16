@@ -26,11 +26,11 @@ export function parsePublicSubmissionStatus(value: unknown, requestedId: string)
 
 export function submissionPresentation(status: PublicSubmissionStatus): { title: string; message: string; pending: boolean } {
     switch (status.state) {
-        case 'queued': return { title: 'Unverified — queued', message: 'Your replay was received and is waiting for verification. It is not on the leaderboard yet.', pending: true };
-        case 'verifying': return { title: 'Unverified — verifying', message: 'The server is replaying this recording and checking its result. This page updates automatically.', pending: true };
-        case 'retry_pending': return { title: 'Unverified — retry pending', message: 'Verification was interrupted. The server will retry automatically.', pending: true };
+        case 'queued': return { title: 'Waiting for a replay check', message: 'Your replay was received and is waiting for verification. It is not on the leaderboard yet.', pending: true };
+        case 'verifying': return { title: 'Checking your replay', message: 'The server is replaying this recording and checking its result. This page updates automatically.', pending: true };
+        case 'retry_pending': return { title: 'Replay check delayed', message: 'Verification was interrupted. The server will retry automatically.', pending: true };
         case 'verified': return { title: 'Verified', message: 'Verification completed. Open the verified result to see its score, settings and replay.', pending: false };
         case 'rejected': return { title: 'Not verified', message: 'This replay did not pass verification. It has not earned a leaderboard result.', pending: false };
-        case 'failed': return { title: 'Verification failed', message: 'The server could not complete verification. This submission has not earned a leaderboard result.', pending: false };
+        case 'failed': return { title: 'Verification failed', message: 'The server could not complete verification. This run has not been added to the leaderboard.', pending: false };
     }
 }

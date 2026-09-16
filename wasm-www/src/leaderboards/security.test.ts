@@ -28,14 +28,13 @@ test('actual participant views keep hostile names inert and expose only public i
     replace(document.body, uploaderView({ seat: 0, username: name, publicKey, publicKeyFingerprint: fingerprint }, playerLink));
     assert.equal(document.querySelector('a')?.textContent, name);
     assert.equal(document.querySelector('a')?.getAttribute('href'), '?player=' + publicKey);
-    assert.equal(document.querySelector('.fingerprint')?.textContent, fingerprint);
-    assert.match(document.querySelector('.fingerprint')?.getAttribute('title') ?? '', /only its owner/u);
+    assert.equal(document.querySelector('.fingerprint'), null);
     assert.equal(document.querySelectorAll('img, script').length, 0);
-    assert.equal(document.body.textContent, name + fingerprint);
+    assert.equal(document.body.textContent, name);
 
     replace(document.body, uploaderView(null, playerLink));
     assert.equal(document.querySelectorAll('a').length, 0);
-    assert.equal(document.body.textContent, 'Anonymous uploader');
+    assert.equal(document.body.textContent, 'Anonymous');
 });
 
 test('achievement rendering awards only earned decisions and keeps all labels inert', t => {

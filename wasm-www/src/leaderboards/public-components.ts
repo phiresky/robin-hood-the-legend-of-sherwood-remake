@@ -15,23 +15,19 @@ type PlayerLink = (publicKey: string, label: string) => HTMLAnchorElement;
 export function participantView(participant: PublicParticipant, playerLink: PlayerLink): HTMLElement {
     return element('span', { className: 'player' }, [
         playerLink(participant.publicKey, participant.username),
-        element('span', {
-            className: 'fingerprint',
-            text: participant.publicKeyFingerprint,
-            attrs: { title: `Public key ${participant.publicKey}; only its owner can change this username` },
-        }),
+
     ]);
 }
 
 /** The named uploader, or an explicit anonymous marker. */
 export function uploaderView(uploader: PublicParticipant | null, playerLink: PlayerLink): HTMLElement {
     return uploader === null
-        ? element('span', { className: 'player', text: 'Anonymous uploader' })
+        ? element('span', { className: 'player', text: 'Anonymous' })
         : participantView(uploader, playerLink);
 }
 
-export function participationLabel(maxConcurrentPlayers: number, participantInstanceCount: number): string {
-    return `${formatInteger(maxConcurrentPlayers)} max concurrent · ${formatInteger(participantInstanceCount)} total instance${participantInstanceCount === 1 ? '' : 's'}`;
+export function participationLabel(maxConcurrentPlayers: number, _participantInstanceCount: number): string {
+    return maxConcurrentPlayers === 1 ? 'Solo' : `${formatInteger(maxConcurrentPlayers)} players`;
 }
 
 export function appendAchievements(target: HTMLElement, achievements: readonly Achievement[]): void {
@@ -75,7 +71,7 @@ export function playerTables(
     function renderPlayerPersonalBests(personalBests: readonly PlayerPersonalBest[]): HTMLElement {
         if (personalBests.length === 0) return statePanel(
             'No personal bests yet',
-            'This public key does not currently hold a verified result on any published board.',
+            'This player has not set a record yet.',
         );
         const section = element('section', {
             className: 'panel table-panel player-results',
@@ -85,12 +81,12 @@ export function playerTables(
         const scroll = element('div', { className: 'table-scroll' });
         const table = element('table');
         table.append(element('caption', {
-            text: `${formatInteger(personalBests.length)} verified board best${personalBests.length === 1 ? '' : 's'}`,
+            text: `${formatInteger(personalBests.length)} personal best${personalBests.length === 1 ? '' : 's'}`,
         }));
         const head = element('thead');
         const header = element('tr');
         for (const [label, className] of [
-            ['Board', ''], ['Best', ''], ['Players', 'hide-small'], ['Record', ''],
+            ['Board', ''], ['Best', ''], ['Players', 'hide-small'], ['Replay', ''],
         ] as const) header.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
         head.append(header);
         const body = element('tbody');
@@ -103,7 +99,7 @@ export function playerTables(
                     className: 'hide-small',
                     text: best.filter.maxConcurrentPlayers === null
                         ? 'Any player count'
-                        : `${formatInteger(best.filter.maxConcurrentPlayers)} max concurrent`,
+                        : `${formatInteger(best.filter.maxConcurrentPlayers)} players`,
                 }),
                 element('td', {}, [runLink(best.runId, 'Details')]),
             );
@@ -120,8 +116,8 @@ export function playerTables(
             const empty = statePanel(
                 cursor === null ? 'No verified run history' : 'No runs on this page',
                 cursor === null
-                    ? 'No publicly attributed verified runs are currently available for this key.'
-                    : 'The history cursor reached an empty page. Return to the previous page.',
+                    ? 'This player has no public runs yet.'
+                    : 'Return to the previous page to see earlier runs.',
             );
             if (cursor !== null) empty.append(renderPlayerPagination(page, cursor));
             return empty;
@@ -130,16 +126,16 @@ export function playerTables(
             className: 'panel table-panel player-results',
             attrs: { 'aria-labelledby': 'player-history-heading' },
         });
-        section.append(element('h2', { text: 'Verified run history', attrs: { id: 'player-history-heading' } }));
+        section.append(element('h2', { text: 'Recent runs', attrs: { id: 'player-history-heading' } }));
         const scroll = element('div', { className: 'table-scroll' });
         const table = element('table');
         table.append(element('caption', {
-            text: `${formatInteger(page.runs.length)} publicly attributed run${page.runs.length === 1 ? '' : 's'} on this page`,
+            text: `${formatInteger(page.runs.length)} run${page.runs.length === 1 ? '' : 's'} on this page`,
         }));
         const head = element('thead');
         const header = element('tr');
         for (const [label, className] of [
-            ['Run', ''], ['Result', ''], ['Players', 'hide-small'], ['Verified', 'hide-small'], ['Record', ''],
+            ['Run', ''], ['Result', ''], ['Players', 'hide-small'], ['Added', 'hide-small'], ['Replay', ''],
         ] as const) header.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
         head.append(header);
         const body = element('tbody');
@@ -153,16 +149,16 @@ export function playerTables(
     function renderPlayerHistoryRow(entry: PlayerRunHistoryEntry): HTMLTableRowElement {
         const row = element('tr');
         row.append(
-            subjectCell(entry.run.boardId, entry.run.missionId, entry.run.uploader === null ? 'Anonymous' : 'Named'),
+            subjectCell(entry.run.boardId, entry.run.missionId, participationLabel(entry.run.maxConcurrentPlayers, entry.run.participantInstanceCount)),
             element('td', {}, [
                 element('div', { className: 'player' }, [
                     element('span', {
                         className: 'primary-metric',
-                        text: `${formatInteger(entry.run.metrics.originalScoreDelta)} score`,
+                        text: `${formatInteger(entry.run.metrics.originalScoreDelta)} points`,
                     }),
                     element('span', {
                         className: 'fingerprint',
-                        text: `${formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration)} active · ${formatInteger(entry.run.metrics.ransomCollected)} net money`,
+                        text: `${formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration)} · ${formatInteger(entry.run.metrics.ransomCollected)} net money`,
                     }),
                 ]),
             ]),

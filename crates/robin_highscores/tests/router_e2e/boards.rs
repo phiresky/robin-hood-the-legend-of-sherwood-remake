@@ -577,3 +577,64 @@ async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() 
         .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn latest_runs_are_newest_first_bounded_and_preserve_public_visibility() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[0x91; 32]);
+    rig.rename(&owner, "Recent player", Ipv4Addr::new(127, 0, 9, 1))
+        .await;
+    let mut ids = Vec::new();
+    for index in 0..13 {
+        ids.push(
+            rig.publish_run(
+                &owner,
+                &format!("latest-{index}"),
+                100 - index,
+                1501,
+                if index == 12 {
+                    ParticipantPublicDisclosureV1::Anonymous
+                } else {
+                    ParticipantPublicDisclosureV1::NamedProfile
+                },
+            )
+            .await,
+        );
+    }
+    let fetch = || async {
+        let response = rig
+            .send(empty_request(
+                Method::GET,
+                "/api/v1/latest-runs",
+                Ipv4Addr::LOCALHOST,
+            ))
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        json_body::<serde_json::Value>(response).await
+    };
+    let page = fetch().await;
+    assert_eq!(page["schema_version"], 1);
+    let runs = page["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 10);
+    assert_eq!(runs[0]["run"]["run_id"], ids[12].as_str());
+    assert!(runs[0]["run"]["uploader"].is_null());
+    assert_eq!(runs[1]["run"]["uploader"]["username"], "Recent player");
+    assert_eq!(runs[9]["run"]["run_id"], ids[3].as_str());
+    sqlx::query("UPDATE submissions SET tombstoned_at_ms = created_at_ms WHERE id = (SELECT submission_id FROM verified_runs WHERE id = ?)")
+        .bind(ids[12].as_str()).execute(rig.database.fixture_pool()).await.unwrap();
+    sqlx::query("UPDATE verified_runs SET mission_id = 'SherwoodOutro' WHERE id = ?")
+        .bind(ids[11].as_str())
+        .execute(rig.database.fixture_pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE verified_runs SET board_id = 'retired-board' WHERE id = ?")
+        .bind(ids[10].as_str())
+        .execute(rig.database.fixture_pool())
+        .await
+        .unwrap();
+    let page = fetch().await;
+    let runs = page["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 10);
+    assert_eq!(runs[0]["run"]["run_id"], ids[9].as_str());
+    assert_eq!(runs[9]["run"]["run_id"], ids[0].as_str());
+}

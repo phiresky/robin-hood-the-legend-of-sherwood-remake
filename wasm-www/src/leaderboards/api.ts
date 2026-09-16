@@ -1,3 +1,6 @@
+import { browsableMetadata } from './missions.js';
+import { parseLatestRuns } from './public-response.js';
+import type { LatestRun } from './types.js';
 import { withAggregateViews } from './board-filters.js';
 import { parsePublicSubmissionStatus, type PublicSubmissionStatus } from './submission-status.js';
 import { apiUrl } from './config.js';
@@ -56,7 +59,11 @@ export class HighscoreApi {
     }
 
     async metadata(signal?: AbortSignal): Promise<BoardMetadata> {
-        return withAggregateViews(parseBoardMetadata(await this.getJson(['leaderboard-metadata'], signal)));
+        return browsableMetadata(withAggregateViews(parseBoardMetadata(await this.getJson(['leaderboard-metadata'], signal))));
+    }
+
+    async latestRuns(signal?: AbortSignal): Promise<readonly LatestRun[]> {
+        return parseLatestRuns(await this.getJson(['latest-runs'], signal));
     }
 
     async submissionStatus(id: string, signal?: AbortSignal): Promise<PublicSubmissionStatus> {

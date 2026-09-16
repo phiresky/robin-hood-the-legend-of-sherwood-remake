@@ -38,6 +38,7 @@ import {
     strictObject,
     strictlyIncreasingByOrder,
     u16,
+    versionedObject,
     versionedObjectV2,
 } from './decode.js';
 import { canonicalDocumentSha256Sync, compareUtf8, parseCanonicalMap } from './canonical.js';
@@ -522,4 +523,15 @@ export function parseRunDetail(value: unknown): RunDetail {
         achievements,
         viewer,
     };
+}
+
+export function parseLatestRuns(value: unknown): readonly import('./types.js').LatestRun[] {
+    const obj = versionedObject(value, 'latest_runs', ['runs']);
+    const runs = array(obj.runs, 'latest_runs.runs');
+    if (runs.length > 10) throw new Error('Too many latest runs');
+    return runs.map((value, index) => {
+        const path = `latest_runs.runs[${index}]`;
+        const item = strictObject(value, path, ['run', 'verified_at_unix_ms']);
+        return { run: parseRunSummary(item.run, `${path}.run`), verifiedAtUnixMs: positiveUnixMilliseconds(item.verified_at_unix_ms, `${path}.verified_at_unix_ms`) };
+    });
 }

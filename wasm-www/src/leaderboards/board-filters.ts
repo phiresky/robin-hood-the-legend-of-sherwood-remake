@@ -13,7 +13,7 @@ export function requireBoard(metadata: BoardMetadata, boardId: string): Board {
 
 /**
  * Resolve URL filters against published boards: board × mission × metric, with
- * the first published choice as default. A named but unpublished choice fails
+ * full-game browsing as default. A named but unpublished choice fails
  * clearly instead of silently showing another board.
  */
 export function normalizeFilters(
@@ -21,7 +21,9 @@ export function normalizeFilters(
     metadata: BoardMetadata,
     rememberedBoardId: string | null = null,
 ): NormalizedBoardFilters {
-    const fallback = metadata.boards.find(item => item.boardId === rememberedBoardId) ?? metadata.boards[0];
+    const fallback = metadata.boards.find(item => item.boardId === rememberedBoardId)
+        ?? metadata.boards.find(item => item.boardId === 'full-any')
+        ?? metadata.boards.find(item => item.edition === 'full') ?? metadata.boards[0];
     if (fallback === undefined) throw new Error('This server publishes no ranked boards.');
     const board = input.boardId === null ? fallback : requireBoard(metadata, input.boardId);
     const missionId = input.missionId ?? board.missions[0]?.missionId;

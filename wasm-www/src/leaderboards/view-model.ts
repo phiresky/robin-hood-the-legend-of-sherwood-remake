@@ -1,6 +1,5 @@
 import type { SelectedBoardFilters } from './state.js';
 import type { Board, BoardMetadata, BoardPage } from './types.js';
-import { editionLabel } from './format.js';
 
 /** The server must answer exactly the requested board query. */
 export function validateBoardView(page: BoardPage, filters: SelectedBoardFilters): void {
@@ -15,9 +14,9 @@ export function validateBoardView(page: BoardPage, filters: SelectedBoardFilters
 
 export function boardPolicyLabel(board: Board): string {
     const settings = board.simulationPolicy.kind === 'any_config'
-        ? 'any gameplay settings'
+        ? 'Any rules'
         : `${board.presetName} / ${board.difficultyName}`;
-    return `${editionLabel(board.edition)} · ${settings} · state loading ${board.allowStateLoad ? 'allowed' : 'excluded'}`;
+    return `${settings} · ${board.allowStateLoad ? 'Save loading allowed' : 'No save loading'}`;
 }
 
 /** Labels for a run's board and mission; a board may no longer be published. */

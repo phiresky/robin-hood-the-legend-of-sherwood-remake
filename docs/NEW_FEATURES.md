@@ -1290,3 +1290,7 @@ then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publish
 the datadir corpus. The matching recorded browser runtime must also be published.
 
 - Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.
+
+### Leaderboard browsing and latest submissions
+
+The leaderboard site defaults to the full game and combines full-game and demo missions in one numbered, grouped selector. Locations without a mission victory are excluded. Times show hundredths of a second, preserving every 25 Hz simulation frame. The first results page also shows the ten most recently verified public runs across missions, via `GET /api/v1/latest-runs`; anonymous uploads remain anonymous and removed runs are excluded.
