@@ -14,6 +14,18 @@ where
         + for<'a> bitcode::Decode<'a>
         + StateHash,
 {
+    check_round_trip_with_native(name, live, expected_restored, expected_restored);
+}
+
+fn check_round_trip_with_native<T>(name: &str, live: &T, expected_restored: &T, expected_native: &T)
+where
+    T: Serialize
+        + DeserializeOwned
+        + std::fmt::Debug
+        + bitcode::Encode
+        + for<'a> bitcode::Decode<'a>
+        + StateHash,
+{
     let json = serde_json::to_string(live).unwrap();
     let restored: T = serde_json::from_str(&json).unwrap();
     assert_eq!(
@@ -34,7 +46,7 @@ where
     let native_decoded: T = bitcode::decode(&bitcode::encode(live)).unwrap();
     assert_eq!(
         format!("{native_decoded:?}"),
-        format!("{expected_restored:?}"),
+        format!("{expected_native:?}"),
         "{name}: native decoded value"
     );
     assert_eq!(
@@ -118,7 +130,7 @@ fn ai_global_state_round_trip() {
         value.primary_target_multiplicity_scratch.clear();
         value.primary_target_multiplicity_initialized = false;
     });
-    check_round_trip("AiGlobalState", &live, &expected);
+    check_round_trip_with_native("AiGlobalState", &live, &expected, &live);
 }
 
 #[test]

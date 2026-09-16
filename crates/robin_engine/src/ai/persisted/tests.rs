@@ -330,7 +330,13 @@ fn global_projection_reconstructs_nonpersisted_scratch_without_changing_hash() {
     raw.primary_target_multiplicity_scratch.insert(7, 19);
     raw.primary_target_multiplicity_initialized = true;
     let raw_clone = raw.clone();
-    let restored = assert_projection_matches_wire!(raw.clone(), AiGlobalState);
+    let restored = assert_projection_matches_wire!(raw.persisted_clone(), AiGlobalState);
+    let rollback: AiGlobalState = bitcode::decode(&bitcode::encode(&raw)).unwrap();
+    assert_eq!(
+        rollback.primary_target_multiplicity_scratch,
+        raw.primary_target_multiplicity_scratch
+    );
+    assert!(rollback.primary_target_multiplicity_initialized);
     assert_eq!(
         format!("{restored:?}"),
         format!("{:?}", raw.persisted_clone())

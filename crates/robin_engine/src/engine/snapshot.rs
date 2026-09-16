@@ -39,7 +39,7 @@ struct FlatEngineSnapshot {
 /// clone. Canonical domains selectively copy surviving state and reconstruct
 /// process-local resources without executing a serialization codec.
 /// Its serde representation is the existing nine-domain engine save layout.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 #[serde(rename = "EngineInner")]
 pub struct PersistedEngineState {
     mission_domain: MissionDomain,

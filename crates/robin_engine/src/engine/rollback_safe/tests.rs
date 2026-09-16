@@ -515,10 +515,7 @@ fn ranked_policy_rejects_timed_and_ambience_noop_commands_in_both_phases() {
             let config = policy.expected_config();
             engine.inner.control.sim_config = config;
             engine.inner.control.mission_start_sim_config = config;
-            engine
-                .inner
-                .control
-                .install_ranked_simulation_policy(policy);
+            let execution = crate::ranked_resim::RankedExecutionContext::new(policy);
             let ranked_noop = SimCommand::host(command.clone());
             let input = match phase {
                 SimulationCommandPhase::PreHourglass => {
@@ -529,8 +526,8 @@ fn ranked_policy_rejects_timed_and_ambience_noop_commands_in_both_phases() {
                 }
             };
 
-            let error = engine
-                .advance_frame(&assets, input)
+            let error = execution
+                .advance_frame(&mut engine, &assets, input)
                 .expect_err("ranked no-op setting command must be rejected");
             assert_eq!(
                 error,
@@ -1282,6 +1279,12 @@ fn frame_api_applies_sound_external_fact_at_pre_hourglass_boundary() {
     );
 }
 
+fn ranked_execution() -> crate::ranked_resim::RankedExecutionContext {
+    crate::ranked_resim::RankedExecutionContext::new(
+        crate::engine::RankedSimulationPolicy::standard_medium(),
+    )
+}
+
 fn ranked_sound_boundary_fixture(variant: i32) -> (Engine, LevelAssets) {
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -1293,10 +1296,6 @@ fn ranked_sound_boundary_fixture(variant: i32) -> (Engine, LevelAssets) {
     let config = policy.expected_config();
     engine.inner.control.sim_config = config;
     engine.inner.control.mission_start_sim_config = config;
-    engine
-        .inner
-        .control
-        .install_ranked_simulation_policy(policy);
 
     let profile_id = 0x4651_0000;
     let exclamation_id = 62;
@@ -1343,10 +1342,58 @@ fn ranked_sound_resolution(duration_frames: u32) -> crate::sound::ResolvedExclam
 }
 
 #[test]
+fn verifier_context_enforces_rules_after_save_load_and_compressed_restore() {
+    let (engine, assets) = ranked_sound_boundary_fixture(-1);
+    let execution = ranked_execution();
+    let persisted = engine.capture_persisted_state().unwrap();
+    let loaded = Engine::restore_from_snapshot(
+        &mut crate::engine::HostDisplayState::default(),
+        Engine::from_persisted_state(persisted),
+        &assets,
+    )
+    .unwrap();
+    let compressed = crate::engine::CompressedEngineSnapshot::capture(&engine).unwrap();
+    for mut restored in [loaded, compressed.restore(&assets).unwrap()] {
+        let before = crate::replay::state_hash(&restored);
+        let setting =
+            SimulationFrameInput::no_hourglass().with_post_commands(vec![SimCommand::host(
+                PlayerCommand::SetTimedMissionsEnabled { enabled: true },
+            )]);
+        assert!(matches!(
+            execution.advance_frame(&mut restored, &assets, setting),
+            Err(FrameAdvanceError::RankedSimulationSettingCommandRejected { .. })
+        ));
+        let sound = SimulationFrameInput::no_hourglass().with_external_facts(
+            ExternalFacts::default().with_sound_boundary(SoundBoundary::replay(vec![])),
+        );
+        assert!(matches!(
+            execution.advance_frame(&mut restored, &assets, sound),
+            Err(FrameAdvanceError::SoundBoundaryRejected { .. })
+        ));
+        assert_eq!(crate::replay::state_hash(&restored), before);
+
+        // The same engine can run locally without inheriting verifier rules.
+        restored
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_commands(vec![SimCommand::host(
+                    PlayerCommand::SetTimedMissionsEnabled { enabled: false },
+                )]),
+            )
+            .unwrap();
+        assert!(matches!(
+            execution.advance_frame(&mut restored, &assets, SimulationFrameInput::no_hourglass()),
+            Err(FrameAdvanceError::RankedSimulationConfigViolation { .. })
+        ));
+    }
+}
+
+#[test]
 fn ranked_sound_boundary_accepts_only_sealed_authored_timing() {
     let (mut random_engine, random_assets) = ranked_sound_boundary_fixture(-1);
-    random_engine
+    ranked_execution()
         .advance_frame(
+            &mut random_engine,
             &random_assets,
             SimulationFrameInput::no_hourglass().with_external_facts(
                 ExternalFacts::default()
@@ -1356,8 +1403,9 @@ fn ranked_sound_boundary_accepts_only_sealed_authored_timing() {
         .expect("random playback uses the canonical maximum English duration");
 
     let (mut explicit_engine, explicit_assets) = ranked_sound_boundary_fixture(0);
-    explicit_engine
+    ranked_execution()
         .advance_frame(
+            &mut explicit_engine,
             &explicit_assets,
             SimulationFrameInput::no_hourglass().with_external_facts(
                 ExternalFacts::default()
@@ -1378,8 +1426,9 @@ fn ranked_sound_boundary_rejects_forged_duration_and_variant() {
     ] {
         let (mut engine, assets) = ranked_sound_boundary_fixture(variant);
         let before = crate::replay::state_hash(&engine);
-        let error = engine
+        let error = ranked_execution()
             .advance_frame(
+                &mut engine,
                 &assets,
                 SimulationFrameInput::no_hourglass().with_external_facts(
                     ExternalFacts::default().with_sound_boundary(SoundBoundary::live(vec![
@@ -1403,8 +1452,9 @@ fn ranked_sound_boundary_rejects_forged_duration_and_variant() {
 fn ranked_sound_boundary_rejects_replay_policy() {
     let (mut engine, assets) = ranked_sound_boundary_fixture(-1);
     let before = crate::replay::state_hash(&engine);
-    let error = engine
+    let error = ranked_execution()
         .advance_frame(
+            &mut engine,
             &assets,
             SimulationFrameInput::no_hourglass().with_external_facts(
                 ExternalFacts::default()

@@ -855,8 +855,10 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Unified mission timeline and non-blocking multiplayer UI**. Rewind,
   multiplayer correction, and rollback verification share one mission-owned
-  command journal with dense recent and exponentially retained checkpoint
-  tiers. Snapshot/load adoption seeds an explicit checkpoint at its exact
+  command journal with dense recent checkpoints and whole-mission rewind
+  checkpoints every 10 seconds. Older checkpoints use bitcode + zstd with
+  reusable codec buffers; interactive rewind caches at most 25 live states.
+  Snapshot/load adoption seeds an explicit checkpoint at its exact
   frame, including between normal sparse boundaries. Blocking gameplay modal
   traffic uses client proposals and host-only decisions; remote peers cannot
   choose the host's restart or load outcome. Campaign map/description and

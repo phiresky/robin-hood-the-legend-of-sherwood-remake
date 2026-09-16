@@ -101,6 +101,7 @@ pub mod short_briefings;
 pub mod sight_obstacle;
 pub mod sim_rng;
 pub mod sim_timeline;
+pub mod snapshot_storage;
 pub mod sound;
 pub mod sound_cache;
 pub use robin_engine_types::sound_config;

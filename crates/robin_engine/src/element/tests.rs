@@ -1442,7 +1442,7 @@ fn golden_human_fixture() -> HumanData {
 #[test]
 fn human_data_encodings_match_golden_digests() {
     const GOLDEN: [&str; 3] = [
-        "a345fdbeef1bcbcb73438cea08f98ac7a1e3ff2854d4d6cd536fcd9c02ec7a5b",
+        "600900248360d89deceec299dea428d63b258544b9b4ae20ca4ba9b025a68582",
         "eeda54a748e35f4dd3e7832493ef4ea7dbef53349ac5c5ebc01648a33e206e98",
         "5573d930aa658f93bfc0723ccfd4db8920912011d9ee7bc98129338b7ea8a551",
     ];
@@ -1451,7 +1451,9 @@ fn human_data_encodings_match_golden_digests() {
     assert_eq!(human_golden_digests(&human), GOLDEN);
 
     human.sorting_distance = 1234.5;
-    assert_eq!(human_golden_digests(&human), GOLDEN);
+    let runtime_digests = human_golden_digests(&human);
+    assert_ne!(runtime_digests[0], GOLDEN[0]);
+    assert_eq!(runtime_digests[1..], GOLDEN[1..]);
 
     let json = serde_json::to_string(&human).unwrap();
     let from_json: HumanData = serde_json::from_str(&json).unwrap();
@@ -1460,8 +1462,8 @@ fn human_data_encodings_match_golden_digests() {
     assert_eq!(human_golden_digests(&from_json), GOLDEN);
 
     let from_bitcode: HumanData = bitcode::decode(&bitcode::encode(&human)).unwrap();
-    assert_eq!(from_bitcode.sorting_distance, 0.0);
-    assert_eq!(human_golden_digests(&from_bitcode), GOLDEN);
+    assert_eq!(from_bitcode.sorting_distance, 1234.5);
+    assert_eq!(human_golden_digests(&from_bitcode), runtime_digests);
 }
 
 /// SHA-256 digests of the entity table's bitcode bytes, the world save JSON

@@ -15,6 +15,7 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> Result<(), String> {
         // The sound update completes after the preceding engine frame in the
         // Original. Its callbacks therefore finish before the next
@@ -62,8 +63,8 @@ impl EngineInner {
                         resolution.identifier, resolution.actor_id, expected_identifier
                     ));
                 }
-                if self.control.ranked_simulation_policy().is_some() {
-                    Self::validate_ranked_speech_resolution(assets, &pending, &resolution)?;
+                if let Some(execution) = execution {
+                    execution.validate_speech_resolution(assets, &pending, &resolution)?;
                 }
                 self.feedback.sound_sim.pending_exclamations.remove(0);
             } else if replay_injected_resolutions {
@@ -119,8 +120,9 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> bool {
-        self.hourglass_phase_sound_boundary(sim, assets)
+        self.hourglass_phase_sound_boundary(sim, assets, execution)
             .unwrap_or_else(|reason| panic!("internal sound boundary rejected: {reason}"));
         let cur_frame = self.control.frame_counter;
         // Drain matured sound-source finishes.  Replaces the

@@ -123,6 +123,46 @@ impl GameRuntimeSnapshot {
     }
 }
 
+/// Replay markers are cold save-load checkpoints. Keep their engine compressed
+/// while preserving the existing sound and host-state restoration boundary.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct CompressedGameRuntimeSnapshot {
+    engine: robin_engine::snapshot_storage::CompressedSnapshotBytes,
+    sound: crate::sound::PersistedSoundManager,
+    game_persistent: GamePersistentState,
+}
+
+impl CompressedGameRuntimeSnapshot {
+    pub(crate) fn capture(engine: &Engine, host: &Host, game: &crate::game::Game) -> Result<Self> {
+        let snapshot = GameRuntimeSnapshot::capture(engine, host, game)?;
+        Ok(Self {
+            engine: robin_engine::snapshot_storage::CompressedSnapshotBytes::encode(
+                &snapshot.engine,
+            )
+            .map_err(anyhow::Error::msg)?,
+            sound: snapshot.sound,
+            game_persistent: snapshot.game_persistent,
+        })
+    }
+
+    pub(crate) fn apply_to_with_game(
+        &self,
+        engine: &mut Engine,
+        host: &mut Host,
+        game: &mut crate::game::Game,
+        assets: &LevelAssets,
+    ) -> Result<()> {
+        let snapshot = GameRuntimeSnapshot {
+            engine: self.engine.decode().map_err(anyhow::Error::msg)?,
+            sound: self.sound.clone(),
+            game_persistent: self.game_persistent.clone(),
+        };
+        snapshot
+            .apply_to_with_game(engine, host, game, assets)
+            .map_err(Into::into)
+    }
+}
+
 /// One post-load path for a decoded disk payload and a pinned typed snapshot.
 fn apply_restored_mission(
     restored_engine: Engine,

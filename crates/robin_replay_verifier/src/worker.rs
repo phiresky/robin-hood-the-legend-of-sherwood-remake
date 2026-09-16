@@ -308,13 +308,15 @@ fn verify(
     let starting_campaign_score = preparation.starting_campaign_score();
     let (approved_engine, assets) = preparation.into_engine_and_assets();
     let (engine, _, _, _) = approved_engine.into_parts();
-    let resimulation =
-        robin_engine::ranked_resim::resimulate_canonical_ranked_replay(engine, &assets, &data)
-            .map_err(|error| {
-                tracing::info!(%error, "ranked resimulation rejected the replay");
-                let (code, detail) = ranked_resimulation_failure(&error);
-                stage.reject(code, detail)
-            })?;
+    let execution = robin_engine::ranked_resim::RankedExecutionContext::new(policy);
+    let resimulation = robin_engine::ranked_resim::resimulate_canonical_ranked_replay(
+        engine, &assets, &data, &execution,
+    )
+    .map_err(|error| {
+        tracing::info!(%error, "ranked resimulation rejected the replay");
+        let (code, detail) = ranked_resimulation_failure(&error);
+        stage.reject(code, detail)
+    })?;
     if resimulation.outcome != robin_engine::game_operation::GameCode::LevelSucceeded {
         return Err(stage.reject(
             VerificationRejectionCodeV1::TerminalInvalid,

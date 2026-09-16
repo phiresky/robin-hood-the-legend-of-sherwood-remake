@@ -5,11 +5,13 @@
 //!
 //! Reports thread CPU time; excludes file loading, validation hashes, and live
 //! level-resource reattachment. Compression contexts are reused. Retained byte
-//! buffers are boxed slices, so their allocation size equals their length.
+//! buffers are slices without spare capacity (boxed or shared through Arc).
 //! SNAPSHOT_BENCH_STACK_BYTES overrides the default 32 MiB worker stack.
 
 use cpu_time::ThreadTime;
 use robin_engine::engine::Engine;
+use robin_engine::engine::PersistedEngineState;
+use robin_engine::snapshot_storage::CompressedSnapshotBytes;
 use robin_util::state_hash::StateHash;
 use serde::{Deserialize, Serialize};
 use std::{hash::Hasher, hint::black_box};
@@ -17,6 +19,7 @@ use std::{hash::Hasher, hint::black_box};
 const SAMPLES: usize = 9;
 const OPERATIONS: usize = 32;
 const RETAINED: usize = 8;
+const VALIDATION_BATCH: usize = 1000;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Samples {
@@ -95,6 +98,11 @@ fn run() {
             serde_json::from_slice(&std::fs::read(&path).expect("read save")).expect("parse save");
         let engine: Engine = serde_json::from_value(value["engine"].take()).expect("decode engine");
         drop(value);
+        // Copy only for the isolated validation benchmark, outside timed work.
+        let validation_tape: robin_engine::spellforge::SpellforgeTape = serde_json::from_value(
+            serde_json::to_value(&engine).unwrap()["scripts"]["spellforge"].clone(),
+        )
+        .expect("snapshot Spellforge tape");
         eprintln!("{path}: encoding snapshot");
         let bytes = engine.encode_native_snapshot().into_boxed_slice();
         let mut compressor = zstd::bulk::Compressor::new(0).unwrap();
@@ -112,6 +120,15 @@ fn run() {
         );
         drop(restored);
         drop(decompressed);
+        let reused = CompressedSnapshotBytes::encode(&*engine).unwrap();
+        let restored =
+            Engine::from_persisted_state(reused.decode::<PersistedEngineState>().unwrap());
+        assert_eq!(hash(&engine), hash(&restored));
+        assert_eq!(
+            serde_json::to_value(&engine).unwrap(),
+            serde_json::to_value(&restored).unwrap()
+        );
+        drop(restored);
 
         let mut clones = Samples::default();
         let mut encode = Samples::default();
@@ -120,9 +137,15 @@ fn run() {
         let mut compressed_decode = Samples::default();
         let mut zstd_encode = Samples::default();
         let mut zstd_decode = Samples::default();
+        let mut reused_encode = Samples::default();
+        let mut reused_decode = Samples::default();
+        let mut raw_encode = Samples::default();
+        let mut raw_decode = Samples::default();
+        let mut validation = Samples::default();
+        let raw_bytes = bitcode::encode(&*engine);
         for round in 0..=SAMPLES {
-            for offset in 0..7 {
-                let mode = (round + offset) % 7;
+            for offset in 0..12 {
+                let mode = (round + offset) % 12;
                 let mut warmup = Samples::default();
                 match mode {
                     0 => sample(
@@ -178,7 +201,7 @@ fn run() {
                             &mut zstd_encode
                         },
                     ),
-                    _ => sample(
+                    6 => sample(
                         || {
                             decompressor
                                 .decompress(black_box(&compressed), bytes.len())
@@ -190,8 +213,67 @@ fn run() {
                             &mut zstd_decode
                         },
                     ),
+                    7 => sample(
+                        || CompressedSnapshotBytes::encode(black_box(&*engine)).unwrap(),
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut reused_encode
+                        },
+                    ),
+                    8 => sample(
+                        || {
+                            Engine::from_persisted_state(
+                                black_box(&reused).decode::<PersistedEngineState>().unwrap(),
+                            )
+                        },
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut reused_decode
+                        },
+                    ),
+                    9 => sample(
+                        || bitcode::encode(black_box(&*engine)).into_boxed_slice(),
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut raw_encode
+                        },
+                    ),
+                    10 => sample(
+                        || {
+                            Engine::from_persisted_state(
+                                bitcode::decode::<PersistedEngineState>(black_box(&raw_bytes))
+                                    .unwrap(),
+                            )
+                        },
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut raw_decode
+                        },
+                    ),
+                    _ => sample(
+                        || {
+                            for _ in 0..VALIDATION_BATCH {
+                                black_box(&validation_tape).validate_snapshot().unwrap();
+                            }
+                        },
+                        if round == 0 {
+                            &mut warmup
+                        } else {
+                            &mut validation
+                        },
+                    ),
                 }
             }
+        }
+        for value in &mut validation.create_us {
+            *value /= VALIDATION_BATCH as f64;
+        }
+        for value in &mut validation.drop_us {
+            *value /= VALIDATION_BATCH as f64;
         }
         println!(
             "{}",
@@ -213,6 +295,12 @@ fn run() {
                 "bitcode_zstd_decode": compressed_decode.summary(),
                 "zstd_encode": zstd_encode.summary(),
                 "zstd_decode": zstd_decode.summary(),
+                "reused_bitcode_zstd_encode": reused_encode.summary(),
+                "reused_bitcode_zstd_decode": reused_decode.summary(),
+                "reused_compressed_bytes": reused.stored_bytes(),
+                "raw_bitcode_encode": raw_encode.summary(),
+                "raw_bitcode_decode": raw_decode.summary(),
+                "snapshot_validation": validation.summary(),
             })
         );
     }
