@@ -756,7 +756,9 @@ pub struct ActorData {
     /// Active push-flight.  When `Some`, the entity is being pushed through
     /// the air by a push/circle/charge strike.  Each frame the position
     /// advances by the stored increment.
-    pub active_flight: Option<ActiveFlight>,
+    /// Large optional action states are boxed so inactive actors and smaller
+    /// entity variants do not reserve their payload in every entity slot.
+    pub active_flight: Option<Box<ActiveFlight>>,
 
     // -- Lift climb state --
     /// If the actor currently owns a ladder-lift reservation, which sector
@@ -777,7 +779,7 @@ pub struct ActorData {
     /// call sites and retained between them. Used by `tick_arrows` to block
     /// incoming arrows.
     ///
-    pub shield_obstacle: Option<crate::sight_obstacle::SightObstacle>,
+    pub shield_obstacle: Option<Box<crate::sight_obstacle::SightObstacle>>,
 
     /// Last computed produced-noise volume.  Persists across frames
     /// to implement the `RHMATERIAL_LIGHT_SHADOW` carry-over in

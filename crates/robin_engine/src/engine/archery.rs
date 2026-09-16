@@ -3293,7 +3293,7 @@ mod tests {
         {
             let actor = holder.actor_data_mut().unwrap();
             actor.action_state = ActionState::HoldingShield;
-            actor.shield_obstacle = Some(crate::bow_shot::compute_shield_obstacle(
+            actor.shield_obstacle = Some(Box::new(crate::bow_shot::compute_shield_obstacle(
                 MapPoint::new(50.0, 0.0),
                 0.0,
                 4,
@@ -3304,7 +3304,7 @@ mod tests {
                     height: 40.0,
                     z_offset: 10.0,
                 },
-            ));
+            )));
         }
         let holder = engine.add_test_entity(holder);
 

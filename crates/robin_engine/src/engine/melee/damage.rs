@@ -2745,7 +2745,7 @@ impl EngineInner {
             victim
                 .actor_data_mut()
                 .expect("falling-hit victim lost actor data")
-                .active_flight = Some(crate::element::ActiveFlight {
+                .active_flight = Some(Box::new(crate::element::ActiveFlight {
                 geometry: crate::element::FlightGeometry::World3d,
                 increment_x: dx / frames as f32,
                 increment_y: dy_world / frames as f32,
@@ -2759,7 +2759,7 @@ impl EngineInner {
                 goal_sector: victim_sector,
                 obstacle: goal_obstacle,
                 ladder_fall: false,
-            });
+            }));
         } else {
             // TODO: Verify whether a completely blocked zero-distance
             // Takeoff preparation retains a zero-increment flight object.

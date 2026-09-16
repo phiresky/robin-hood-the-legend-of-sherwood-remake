@@ -32,6 +32,7 @@ pub(super) fn tick_audio(
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
     assets: &engine_api::LevelAssets,
+    playing_back: bool,
 ) -> Option<engine_api::SoundBoundary> {
     let alert_status = match engine.ai_global().overall_alert_status {
         AlertLevel::Green => AlertStatus::Green,
@@ -99,6 +100,27 @@ pub(super) fn tick_audio(
         &engine.sound_sim().sources,
         &mut pending_play_delayed_sources,
     );
+    // The hourglass drains the queue; whatever it left behind
+    // (nothing today, but defensive) goes back on host for next frame.
+    audio.deferred.extend(
+        pending_play_delayed_sources
+            .into_iter()
+            .map(DeferredAudioRequest::PlayDelayedSource),
+    );
+    resolve_audio_boundary(engine, assets, resolved_exclamations, playing_back)
+}
+
+fn resolve_audio_boundary(
+    engine: &engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+    resolved_exclamations: Vec<crate::sound::ResolvedHostExclamation>,
+    playing_back: bool,
+) -> Option<engine_api::SoundBoundary> {
+    // Recorded boundaries own speech timing during playback. The local mixer
+    // can finish loading after the recorded request has already been consumed.
+    if playing_back {
+        return None;
+    }
     let resolved_exclamations: Vec<_> = resolved_exclamations
         .into_iter()
         .map(|resolved| {
@@ -130,13 +152,6 @@ pub(super) fn tick_audio(
             }
         })
         .collect();
-    // The hourglass drains the queue; whatever it left behind
-    // (nothing today, but defensive) goes back on host for next frame.
-    audio.deferred.extend(
-        pending_play_delayed_sources
-            .into_iter()
-            .map(DeferredAudioRequest::PlayDelayedSource),
-    );
     (!resolved_exclamations.is_empty())
         .then_some(engine_api::SoundBoundary::live(resolved_exclamations))
 }
@@ -1307,6 +1322,33 @@ mod tests {
             save_markers: BTreeMap::new(),
             load_backs: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn replay_audio_does_not_resolve_consumed_speech_again() {
+        let (assets, manager, _, _, _, _) = stepping_fixture(None);
+        let before = manager.engine.encode_native_snapshot();
+        let resolved = crate::sound::ResolvedHostExclamation {
+            actor_id: 126,
+            identifier: 1213333504,
+            exclamation_id: 0,
+            length_ms: 1000,
+        };
+        assert!(resolve_audio_boundary(&manager.engine, &assets, vec![resolved], true).is_none());
+        assert_eq!(manager.engine.encode_native_snapshot(), before);
+    }
+
+    #[test]
+    #[should_panic(expected = "without its authoritative pending request")]
+    fn live_audio_still_rejects_speech_without_a_pending_request() {
+        let (assets, manager, _, _, _, _) = stepping_fixture(None);
+        let resolved = crate::sound::ResolvedHostExclamation {
+            actor_id: 126,
+            identifier: 1213333504,
+            exclamation_id: 0,
+            length_ms: 1000,
+        };
+        resolve_audio_boundary(&manager.engine, &assets, vec![resolved], false);
     }
 
     fn stepping_fixture(

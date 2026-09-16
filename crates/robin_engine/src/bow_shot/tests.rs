@@ -2275,12 +2275,12 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
         let mut holder = make_soldier(50.0, 0.0);
         let actor = holder.actor_data_mut().unwrap();
         actor.action_state = ActionState::HoldingShield;
-        actor.shield_obstacle = Some(compute_shield_obstacle(
+        actor.shield_obstacle = Some(Box::new(compute_shield_obstacle(
             MapPoint { x: 50.0, y: 0.0 },
             0.0,
             4,
             &shield_params_for_soldier(20, 40),
-        ));
+        )));
         holder.element_data_mut().set_direction_instantly(4);
         holder
     };
@@ -4375,7 +4375,7 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
         actor.action_state = ActionState::HoldingShield;
         let params = shield_params_for_soldier(20, 40);
         let obs = compute_shield_obstacle(MapPoint { x: 50.0, y: 0.0 }, 0.0, 4, &params);
-        actor.shield_obstacle = Some(obs);
+        actor.shield_obstacle = Some(obs.into());
     }
     shield_holder.element_data_mut().set_direction_instantly(4);
     // The original game scans every actor and checks only whether a shield is held. Saved
@@ -4539,7 +4539,7 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
             4,
             &shield_params_for_pc(false),
         );
-        holder.actor_data_mut().unwrap().shield_obstacle = Some(stale);
+        holder.actor_data_mut().unwrap().shield_obstacle = Some(stale.into());
         if explicit_refresh {
             let mut profiles = ProfileManager::new();
             profiles
@@ -4749,12 +4749,12 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
     holder.element_data_mut().set_direction_instantly(15);
     let actor = holder.actor_data_mut().unwrap();
     actor.action_state = ActionState::HoldingShield;
-    actor.shield_obstacle = Some(compute_shield_obstacle(
+    actor.shield_obstacle = Some(Box::new(compute_shield_obstacle(
         MapPoint::new(140.006_48, 588.663_45),
         0.0,
         15,
         &shield_params_for_soldier(40, 50),
-    ));
+    )));
     let (mut engine, assets) = projectile_engine(entity_table(vec![
         Some(make_pc(100.0, 800.0)),
         Some(holder),
@@ -4810,12 +4810,12 @@ fn ground_crossing_is_attributed_to_first_front_facing_shield() {
     holder.element_data_mut().set_direction_instantly(15);
     let actor = holder.actor_data_mut().expect("soldier actor data");
     actor.action_state = ActionState::HoldingShield;
-    actor.shield_obstacle = Some(compute_shield_obstacle(
+    actor.shield_obstacle = Some(Box::new(compute_shield_obstacle(
         MapPoint::new(140.006_48, 588.663_45),
         0.0,
         15,
         &shield_params_for_soldier(40, 50),
-    ));
+    )));
     let entities = entity_table(vec![Some(holder)]);
     let holder_id = entities.get_at_index(0).expect("shield holder slot").0;
 
