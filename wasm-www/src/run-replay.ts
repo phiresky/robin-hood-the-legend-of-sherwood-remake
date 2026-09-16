@@ -11,8 +11,8 @@ const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
 
 /** Host-only fixes for archived runtimes; simulation and replay schemas stay identical. */
 export function runPlaybackBuild(recordedBuild: string): string {
-    // This patch disables player-save storage during playback.
-    return recordedBuild === '1699bc12ffb8' ? '340d66324974' : recordedBuild;
+    // Save isolation, viewer camera/audio controls, and replay speech handling.
+    return recordedBuild === '1699bc12ffb8' ? '1f546fbb6547' : recordedBuild;
 }
 
 export type RunReplay = {
