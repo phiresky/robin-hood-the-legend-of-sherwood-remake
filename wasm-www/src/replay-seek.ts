@@ -1,8 +1,8 @@
 import type { RobinRpc } from './replay.js';
 import { replayCheckpointRevision } from './replay-checkpoints.ts';
 
-const PRESENT_INTERVAL_MS = 40;
-const SIMULATION_BUDGET_MS = 30;
+const PRESENT_INTERVAL_MS = 500;
+const SIMULATION_BUDGET_MS = PRESENT_INTERVAL_MS - 50;
 
 /** Leave a browser paint opportunity between bounded batches of replay work. */
 export async function seekReplay(
@@ -47,7 +47,7 @@ export async function seekReplay(
         options.progress(frame);
         await present(0);
     }
-    let batch = 8;
+    let batch = 128;
     const measurements: { frames: number; work_ms: number; elapsed_ms: number }[] = [];
     while (frame < target && !options.cancelled()) {
         // A background download may finish while a long seek is underway.
@@ -70,7 +70,9 @@ export async function seekReplay(
         frame = next;
         if (options.cancelled()) return;
         options.progress(frame);
-        if (frame < target) await present(Math.max(0, PRESENT_INTERVAL_MS - elapsed));
+        // Spend the half-second budget advancing playback, not sleeping while
+        // the ordinary game loop repeatedly redraws the same paused state.
+        if (frame < target) await present(0);
     }
     console.info('[replay seek timing]', JSON.stringify({
         target, elapsed_ms: now() - requestedStateAt, batches: measurements.length,

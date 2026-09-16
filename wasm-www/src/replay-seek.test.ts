@@ -32,7 +32,7 @@ test('sidecar arriving during a seek is used without restarting', async () => {
         checkpointRevision: () => time >= 250 ? 1 : 0, present: async () => { time += 40; } });
     assert.equal(frame, 4010);
     assert.equal(probes, 2);
-    assert(simulated < 250);
+    assert(simulated < 2500);
 });
 
 test('long seeks yield between adaptive batches and stop exactly at their target', async () => {
@@ -51,9 +51,9 @@ test('long seeks yield between adaptive batches and stop exactly at their target
         present: async delay => { paints++; assert(delay >= 0); time += delay; },
     });
     assert.equal(frame, 4000);
-    assert(paints > 100, 'progress is painted throughout the seek');
+    assert(paints >= 15 && paints <= 20, 'long seek targets about two updates per second');
     assert.equal(paints, targets.length - 1);
-    assert(targets.every((value, i) => value - (targets[i - 1] ?? 0) <= 15));
+    assert(targets.every((value, i) => value - (targets[i - 1] ?? 0) <= 225));
 });
 
 test('slow presentation does not shrink fast simulation into tiny batches', async () => {
@@ -77,22 +77,23 @@ test('slow presentation does not shrink fast simulation into tiny batches', asyn
         present: async delay => { time += delay; },
     });
     assert.equal(frame, 249);
-    assert(batches.length <= 8, `used ${batches.length} batches for a checkpoint remainder`);
-    assert(batches.every(size => size <= 50), 'simulation stays within the 30 ms budget');
+    assert(batches.length <= 2, `used ${batches.length} batches for a checkpoint remainder`);
+    assert(batches.every(size => size <= 750), 'simulation stays within the 450 ms budget');
+    assert(time < 500, 'short catch-up does not sleep to fill the presentation interval');
 });
 
 test('backward seeks rewind to zero, then replay the prefix in visible batches', async () => {
-    let frame = 100, cancelled = false;
+    let frame = 500, cancelled = false;
     const targets: number[] = [];
     const rpc: RobinRpc = async <T>(method: string, params?: unknown): Promise<T> => {
         if (method === 'state') return { replay: { frame } } as T;
         frame = (params as { frame: number }).frame; targets.push(frame); return {} as T;
     };
-    await seekReplay(rpc, 80, {
+    await seekReplay(rpc, 280, {
         cancelled: () => cancelled, progress: () => {}, now: () => 0,
         present: async () => { if (frame > 0) cancelled = true; },
     });
-    assert.deepEqual(targets, [0, 8]);
+    assert.deepEqual(targets, [0, 128]);
 });
 
 test('retired and failed seeks do not dispatch subsequent batches', async () => {
