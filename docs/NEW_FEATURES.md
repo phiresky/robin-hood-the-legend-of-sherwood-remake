@@ -1283,3 +1283,5 @@ content-addressed Full package; Demo play keeps its existing data selection.
 Build Full data with `ROBIN_WEB_CONTENT_EDITION=full scripts/build_web_shipping_datadir.sh`,
 then stage it with `wasm-www/scripts/add-full-replay-content.mjs` before publishing
 the datadir corpus. The matching recorded browser runtime must also be published.
+
+- Full-game leaderboard “Any ruleset” is a combined browsing view across configured Full boards, with shared ranking and pagination. The legacy `full-any` URL remains supported; it is no longer a production submission board.

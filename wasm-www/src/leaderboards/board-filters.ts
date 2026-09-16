@@ -96,3 +96,22 @@ function unique(values: readonly FacetOption[]): readonly FacetOption[] {
     const seen = new Set<string>();
     return values.filter(value => !seen.has(value.id) && seen.add(value.id));
 }
+
+/** Full-game browsing combines configured submission boards without publishing a new one. */
+export function withAggregateViews(metadata: BoardMetadata): BoardMetadata {
+    const full = metadata.boards.filter(board => board.edition === 'full');
+    const first = full[0];
+    if (first === undefined) return metadata;
+    const aggregate: Board = {
+        ...first,
+        boardId: 'full-any', displayName: 'Full / Any ruleset',
+        presetId: 'any', presetName: 'Any ruleset',
+        difficultyId: 'any', difficultyName: 'Any difficulty',
+        simulationPolicy: { kind: 'any_config' },
+        allowStateLoad: full.some(board => board.allowStateLoad),
+        metrics: ['original_score', 'fastest_success'].filter(metric => full.some(board => board.metrics.includes(metric as Board['metrics'][number]))) as Board['metrics'],
+        missions: [...new Map(full.flatMap(board => board.missions).map(mission => [mission.missionId, mission])).values()],
+    };
+    return { ...metadata, boards: [...metadata.boards.filter(board => board.boardId !== 'full-any'), aggregate]
+        .sort((a, b) => a.boardId < b.boardId ? -1 : a.boardId > b.boardId ? 1 : 0) };
+}

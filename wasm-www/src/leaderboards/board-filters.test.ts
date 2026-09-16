@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters } from './board-filters.js';
+import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters, withAggregateViews } from './board-filters.js';
 import { boardDocument, metadataDocument } from './model-fixtures.js';
 import { parseBoardMetadata } from './public-response.js';
 import type { BoardFilters } from './state.js';
@@ -70,4 +70,20 @@ test('a leaderboard page must answer the exact requested board query', () => {
     for (const change of [{ boardId: 'other' }, { missionId: 'Dem_Lin_MP' }, { metric: 'fastest_success' as const }, { maxConcurrentPlayers: null }, { playerPublicKey: '1'.repeat(64) }]) {
         assert.throws(() => validateBoardView({ ...page, filter: { ...page.filter, ...change } }, filters), /different filters/u);
     }
+});
+
+test('Any ruleset is a browsing view built from all full-game submission boards', () => {
+    const source = metadata([
+        boardDocument({ board_id: 'full-standard-normal', edition: 'full',
+            viewer_content_requirement: 'user_local_retail' }),
+    ]);
+    const views = withAggregateViews(source);
+    assert.equal(source.boards.some(board => board.boardId === 'full-any'), false);
+    const any = normalizeFilters({ ...empty, boardId: 'full-any' }, views).board;
+    assert.deepEqual(any.metrics, ['original_score', 'fastest_success']);
+    assert.deepEqual(new Set(any.missions.map(mission => mission.missionId)),
+        new Set(source.boards.filter(board => board.edition === 'full').flatMap(board => board.missions.map(mission => mission.missionId))));
+    const standard = views.boards.find(board => board.boardId === 'full-standard-normal')!;
+    assert.equal(boardForFacet(views, standard, { presetId: 'any' }).boardId, 'full-any');
+    assert.equal(withAggregateViews(views).boards.filter(board => board.boardId === 'full-any').length, 1);
 });

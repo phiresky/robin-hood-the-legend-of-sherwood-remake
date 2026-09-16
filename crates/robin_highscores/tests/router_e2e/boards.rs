@@ -489,3 +489,91 @@ async fn an_older_signed_username_update_cannot_roll_back_a_newer_one() {
     assert_eq!(profile.username, "Locksley");
     assert_eq!(rig.count("SELECT COUNT(*) FROM username_history").await, 2);
 }
+
+#[tokio::test]
+async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() {
+    let rig = TestRig::with_config(|config| {
+        for board in &mut config.boards {
+            board.edition = robin_run_protocol::OfficialContentEditionV1::Full;
+            board.viewer_content_requirement =
+                robin_run_protocol::ViewerContentRequirementV2::UserLocalRetail;
+        }
+        config
+            .boards
+            .push(robin_highscores::test_support::demo_board(
+                "excluded-demo",
+                &[MISSION_ID],
+            ));
+    })
+    .await;
+    let key = SigningKey::from_bytes(&[0x93; 32]);
+    rig.rename(&key, "Aggregate player", Ipv4Addr::LOCALHOST)
+        .await;
+    let mut runs = Vec::new();
+    for (label, score) in [
+        ("aggregate-a", 30),
+        ("aggregate-b", 50),
+        ("aggregate-c", 30),
+        ("aggregate-demo", 100),
+    ] {
+        runs.push(
+            rig.publish_run(
+                &key,
+                label,
+                score,
+                100,
+                ParticipantPublicDisclosureV1::Anonymous,
+            )
+            .await,
+        );
+    }
+    // Place accepted fixtures on distinct configured boards; the aggregate must
+    // rank them together while excluding a different content edition.
+    for (id, board) in [(&runs[1], SCORE_ONLY_BOARD_ID), (&runs[3], "excluded-demo")] {
+        sqlx::query("UPDATE verified_runs SET board_id = ? WHERE id = ?")
+            .bind(board)
+            .bind(id.as_str())
+            .execute(rig.database.fixture_pool())
+            .await
+            .unwrap();
+    }
+    let first = page(
+        &rig,
+        &leaderboard_uri("full-any", "original_score", 2, None),
+    )
+    .await;
+    assert_eq!(
+        first
+            .entries
+            .iter()
+            .map(|e| (&e.run_id, e.rank))
+            .collect::<Vec<_>>(),
+        [(&runs[1], 1), (&runs[0], 2)]
+    );
+    let cursor = first.next_cursor.unwrap();
+    let second = page(
+        &rig,
+        &leaderboard_uri("full-any", "original_score", 2, Some(&cursor.opaque_token)),
+    )
+    .await;
+    assert_eq!(second.entries.len(), 1);
+    assert_eq!(
+        (
+            &second.entries[0].run_id,
+            second.entries[0].rank,
+            second.entries[0].position
+        ),
+        (&runs[2], 2, 3)
+    );
+    assert!(second.next_cursor.is_none());
+    let exact = page(&rig, &leaderboard_uri(BOARD_ID, "original_score", 10, None)).await;
+    assert_eq!(exact.entries.len(), 2);
+    let response = rig
+        .send(empty_request(
+            Method::GET,
+            &leaderboard_uri(BOARD_ID, "original_score", 2, Some(&cursor.opaque_token)),
+            Ipv4Addr::LOCALHOST,
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

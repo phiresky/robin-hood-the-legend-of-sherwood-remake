@@ -931,13 +931,18 @@ missions = [{ mission_id = "Dem_Lei_MP", display_name = "Leicester" }]
         }
         let production: ServerConfig =
             toml::from_str(include_str!("../ops/production/server.toml")).unwrap();
+        assert!(
+            production
+                .board(&OpaqueId::new("full-any").unwrap())
+                .is_none()
+        );
         let full_any = production
-            .board(&OpaqueId::new("full-any").unwrap())
+            .board(&OpaqueId::new("full-standard-normal").unwrap())
             .unwrap();
         assert_eq!(full_any.missions.len(), 38);
         assert!(full_any.mission("Sherwood").is_none());
         assert!(full_any.mission("SherwoodOutro").is_some());
-        assert_eq!(production.boards.len(), 14);
+        assert_eq!(production.boards.len(), 13);
     }
 
     #[test]

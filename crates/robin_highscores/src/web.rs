@@ -1041,16 +1041,37 @@ async fn leaderboard(
             state.config.max_page_size
         )));
     }
-    let board = state
-        .config
-        .board(&query.board_id)
-        .ok_or(ApiError::NotFound)?;
-    if board.mission(&query.mission_id).is_none() {
+    // The legacy full-any URL is a browsing filter, not a submission board.
+    let boards: Vec<_> = if query.board_id.as_str() == "full-any" {
+        state
+            .config
+            .boards
+            .iter()
+            .filter(|board| board.edition == robin_run_protocol::OfficialContentEditionV1::Full)
+            .collect()
+    } else {
+        vec![
+            state
+                .config
+                .board(&query.board_id)
+                .ok_or(ApiError::NotFound)?,
+        ]
+    };
+    let mission_boards: Vec<_> = boards
+        .into_iter()
+        .filter(|board| board.mission(&query.mission_id).is_some())
+        .collect();
+    if mission_boards.is_empty() {
         return Err(ApiError::NotFound);
     }
-    if !board.metrics.contains(&query.metric) {
+    let board_ids: Vec<_> = mission_boards
+        .into_iter()
+        .filter(|board| board.metrics.contains(&query.metric))
+        .map(|board| board.board_id.as_str().to_owned())
+        .collect();
+    if board_ids.is_empty() {
         return Err(ApiError::BadRequest(
-            "the board does not rank this metric".to_owned(),
+            "the selected boards do not rank this metric".to_owned(),
         ));
     }
     let filter = query.filter();
@@ -1079,7 +1100,7 @@ async fn leaderboard(
         run_id: cursor.run_id.clone(),
     });
     let board_query = BoardQuery {
-        board_id: query.board_id.as_str(),
+        board_ids: &board_ids,
         mission_id: &query.mission_id,
         metric: query.metric,
         max_concurrent_players: query.max_concurrent_players,

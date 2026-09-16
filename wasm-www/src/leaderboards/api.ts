@@ -1,3 +1,4 @@
+import { withAggregateViews } from './board-filters.js';
 import { parsePublicSubmissionStatus, type PublicSubmissionStatus } from './submission-status.js';
 import { apiUrl } from './config.js';
 import { DEFAULT_NETWORK_DEADLINE_MS, NetworkDeadline } from '../network_deadline.js';
@@ -55,7 +56,7 @@ export class HighscoreApi {
     }
 
     async metadata(signal?: AbortSignal): Promise<BoardMetadata> {
-        return parseBoardMetadata(await this.getJson(['leaderboard-metadata'], signal));
+        return withAggregateViews(parseBoardMetadata(await this.getJson(['leaderboard-metadata'], signal)));
     }
 
     async submissionStatus(id: string, signal?: AbortSignal): Promise<PublicSubmissionStatus> {

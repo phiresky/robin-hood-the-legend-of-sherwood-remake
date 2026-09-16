@@ -25,9 +25,15 @@ fn push_board_conditions(query: &mut QueryBuilder<Sqlite>, board: &BoardQuery<'_
     query
         .push(" s.status = 'accepted' AND s.tombstoned_at_ms IS NULL AND m.metric = ")
         .push_bind(metric_name(board.metric))
-        .push(" AND r.board_id = ")
-        .push_bind(board.board_id.to_owned())
-        .push(" AND r.mission_id = ")
+        .push(" AND r.board_id IN (");
+    {
+        let mut ids = query.separated(", ");
+        for id in board.board_ids {
+            ids.push_bind(id.clone());
+        }
+    }
+    query
+        .push(") AND r.mission_id = ")
         .push_bind(board.mission_id.to_owned())
         .push(" AND r.accepted_sequence <= ")
         .push_bind(watermark);

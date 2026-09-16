@@ -141,59 +141,6 @@ missions = [
 ]
 
 [[boards]]
-board_id = "full-any"
-display_name = "Full / Any ruleset"
-edition = "full"
-preset_id = "any"
-preset_name = "Any ruleset"
-difficulty_id = "any"
-difficulty_name = "Any difficulty"
-simulation_policy = { kind = "any_config" }
-allow_state_load = true
-metrics = ["original_score", "fastest_success"]
-viewer_content_requirement = "user_local_retail"
-missions = [
-  { mission_id = "Emb01_FoA_EC", display_name = "Official FULL Emb01_FoA_EC" },
-  { mission_id = "Emb02_FoC_MK", display_name = "Official FULL Emb02_FoC_MK" },
-  { mission_id = "Emb03_FoC_MP", display_name = "Official FULL Emb03_FoC_MP" },
-  { mission_id = "Emb04_FoA_MP", display_name = "Official FULL Emb04_FoA_MP" },
-  { mission_id = "Emb05_FoB_MP", display_name = "Official FULL Emb05_FoB_MP" },
-  { mission_id = "Emb06_FoC_EC", display_name = "Official FULL Emb06_FoC_EC" },
-  { mission_id = "Emb07_FoB_JMS", display_name = "Official FULL Emb07_FoB_JMS" },
-  { mission_id = "Emb08_FoA_JMS", display_name = "Official FULL Emb08_FoA_JMS" },
-  { mission_id = "Emb09_FoB_JMS", display_name = "Official FULL Emb09_FoB_JMS" },
-  { mission_id = "EmbTut_FoC_EC", display_name = "Official FULL EmbTut_FoC_EC" },
-  { mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_VL" },
-  { mission_id = "H02_Not_EC", display_name = "Official FULL H02_Not_EC" },
-  { mission_id = "H03_Der_MK", display_name = "Official FULL H03_Der_MK" },
-  { mission_id = "H04_Lei_VL", display_name = "Official FULL H04_Lei_VL" },
-  { mission_id = "H05_Lin_EC", display_name = "Official FULL H05_Lin_EC" },
-  { mission_id = "H07_Not_MK", display_name = "Official FULL H07_Not_MK" },
-  { mission_id = "H09_Not_VL", display_name = "Official FULL H09_Not_VL" },
-  { mission_id = "H10_Yor_VL", display_name = "Official FULL H10_Yor_VL" },
-  { mission_id = "H12_Not_MP", display_name = "Official FULL H12_Not_MP" },
-  { mission_id = "S01_Not_VL", display_name = "Official FULL S01_Not_VL" },
-  { mission_id = "S02_Lei_MP", display_name = "Official FULL S02_Lei_MP" },
-  { mission_id = "S03_FoB_MP", display_name = "Official FULL S03_FoB_MP" },
-  { mission_id = "S04_Der_EC", display_name = "Official FULL S04_Der_EC" },
-  { mission_id = "S05_Yrk_EC", display_name = "Official FULL S05_Yrk_EC" },
-  { mission_id = "SherwoodOutro", display_name = "Official FULL SherwoodOutro" },
-  { mission_id = "Str01_Lin_EC", display_name = "Official FULL Str01_Lin_EC" },
-  { mission_id = "Str02_Der_MP", display_name = "Official FULL Str02_Der_MP" },
-  { mission_id = "Str03_Yor_MK", display_name = "Official FULL Str03_Yor_MK" },
-  { mission_id = "Tac01_FoA_MP", display_name = "Official FULL Tac01_FoA_MP" },
-  { mission_id = "Tac02_FoB_EC", display_name = "Official FULL Tac02_FoB_EC" },
-  { mission_id = "Tac03_FoC_MP", display_name = "Official FULL Tac03_FoC_MP" },
-  { mission_id = "Tac04_FoA_EC", display_name = "Official FULL Tac04_FoA_EC" },
-  { mission_id = "Tac05_FoC_MP", display_name = "Official FULL Tac05_FoC_MP" },
-  { mission_id = "Tac06_FoB_EC", display_name = "Official FULL Tac06_FoB_EC" },
-  { mission_id = "Tac17_FoC_EC", display_name = "Official FULL Tac17_FoC_EC" },
-  { mission_id = "Tac18_FoA_EC", display_name = "Official FULL Tac18_FoA_EC" },
-  { mission_id = "Tac19_FoB_EC", display_name = "Official FULL Tac19_FoB_EC" },
-  { mission_id = "Tac21_FoB_EC", display_name = "Official FULL Tac21_FoB_EC" },
-]
-
-[[boards]]
 board_id = "full-original-easy"
 display_name = "Full / Original / Easy"
 edition = "full"

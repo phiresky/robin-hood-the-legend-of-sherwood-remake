@@ -187,10 +187,10 @@ pub struct PublicIdentity {
     pub username: String,
 }
 
-/// Exact board addressed by a leaderboard query.
+/// Configured boards included in one leaderboard query.
 #[derive(Debug, Clone)]
 pub struct BoardQuery<'a> {
-    pub board_id: &'a str,
+    pub board_ids: &'a [String],
     pub mission_id: &'a str,
     pub metric: robin_run_protocol::BoardMetricV1,
     pub max_concurrent_players: Option<u16>,

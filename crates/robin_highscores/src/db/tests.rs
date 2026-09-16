@@ -1351,7 +1351,7 @@ async fn accepted_run_is_published_and_bound_to_its_job_board_and_replay() {
     let rows = database
         .leaderboard_rows(
             &BoardQuery {
-                board_id: BOARD_ID,
+                board_ids: &visible,
                 mission_id: MISSION_ID,
                 metric: robin_run_protocol::BoardMetricV1::FastestSuccess,
                 max_concurrent_players: Some(1),
