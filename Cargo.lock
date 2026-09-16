@@ -6022,6 +6022,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-time",
+ "zstd",
 ]
 
 [[package]]

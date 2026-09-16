@@ -3,7 +3,8 @@ export function installCursorMode(canvas: HTMLCanvasElement, button: HTMLButtonE
     const document = canvas.ownerDocument;
     const refresh = () => {
         const captured = document.pointerLockElement === canvas;
-        button.textContent = captured ? 'Release cursor' : 'Capture cursor';
+        button.textContent = 'Capture cursor';
+        button.hidden = captured;
         button.setAttribute('aria-pressed', String(captured));
         status.textContent = captured ? 'Edge scrolling on · Esc releases cursor' : 'Edge scrolling off';
     };
@@ -11,23 +12,21 @@ export function installCursorMode(canvas: HTMLCanvasElement, button: HTMLButtonE
         refresh();
         status.textContent = 'Cursor capture failed. Click Capture cursor to retry.';
     };
-    const toggle = async () => {
-        if (document.pointerLockElement === canvas) document.exitPointerLock();
-        else {
-            try { canvas.focus(); await canvas.requestPointerLock(); }
-            catch { failed(); }
-        }
+    const capture = async () => {
+        if (document.pointerLockElement === canvas) return;
+        try { canvas.focus(); await canvas.requestPointerLock(); }
+        catch { failed(); }
     };
     const captureDrag = (event: PointerEvent) => {
         if (event.button === 0 && document.pointerLockElement === null) canvas.setPointerCapture(event.pointerId);
     };
-    button.addEventListener('click', toggle);
+    button.addEventListener('click', capture);
     canvas.addEventListener('pointerdown', captureDrag);
     document.addEventListener('pointerlockchange', refresh);
     document.addEventListener('pointerlockerror', failed);
     refresh();
     return () => {
-        button.removeEventListener('click', toggle);
+        button.removeEventListener('click', capture);
         canvas.removeEventListener('pointerdown', captureDrag);
         document.removeEventListener('pointerlockchange', refresh);
         document.removeEventListener('pointerlockerror', failed);

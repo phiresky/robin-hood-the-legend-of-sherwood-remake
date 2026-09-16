@@ -60,6 +60,7 @@ rayon = "1"
 
 [dev-dependencies]
 cpu-time = "1"
+zstd.workspace = true
 robin_test_support.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true

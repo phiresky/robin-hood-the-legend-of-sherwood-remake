@@ -23,10 +23,14 @@ test('capture mode follows successful lock, Escape, and refusal; default is free
     };
     const dispose = installCursorMode(canvas, button, status);
     assert.match(status.textContent!, /off/);
+    assert.equal(button.hidden, false);
     button.click();
     assert.equal(button.getAttribute('aria-pressed'), 'true');
+    assert.equal(button.hidden, true);
+    assert.equal(button.textContent, 'Capture cursor');
     document.exitPointerLock();
     assert.equal(button.getAttribute('aria-pressed'), 'false');
+    assert.equal(button.hidden, false);
     assert.match(status.textContent!, /off/);
     fail = true;
     button.click();
