@@ -71,6 +71,11 @@ impl ReplayArtifactV1 {
     /// their recorded schema and only need [`Validate`].
     pub fn validate_current_schema(&self) -> Result<(), ValidationError> {
         self.validate()?;
+        if self.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1 {
+            return Err(ValidationError::ClaimMismatch {
+                field: "replay.artifact.media_type",
+            });
+        }
         if self.replay_schema_version != crate::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1 {
             return Err(ValidationError::ClaimMismatch {
                 field: "replay.replay_schema_version",
@@ -83,7 +88,9 @@ impl ReplayArtifactV1 {
 impl Validate for ReplayArtifactV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.artifact.validate()?;
-        if self.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1 {
+        if self.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
+            && self.artifact.media_type != "application/x-robin-rhrec+compact"
+        {
             return Err(ValidationError::ClaimMismatch {
                 field: "replay.artifact.media_type",
             });
@@ -265,6 +272,17 @@ impl InputProvenanceStatusV1 {
 mod tests {
     use super::*;
     use crate::{Digest32, Signature64, SignatureAlgorithmV1};
+
+    #[test]
+    fn archived_compact_artifacts_are_readable_but_cannot_be_uploaded() {
+        let mut replay = submission().replay;
+        replay.artifact.media_type = "application/x-robin-rhrec+compact".into();
+        assert!(replay.validate().is_ok());
+        assert!(replay.validate_current_schema().is_err());
+        replay.replay_schema_version = 48;
+        assert!(replay.validate().is_ok());
+        assert!(replay.validate_current_schema().is_err());
+    }
 
     pub(crate) fn submission() -> SubmissionV3 {
         SubmissionV3 {

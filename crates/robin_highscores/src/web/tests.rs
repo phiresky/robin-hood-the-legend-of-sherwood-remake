@@ -7,6 +7,29 @@ use std::sync::Arc;
 use tower::ServiceExt as _;
 
 #[tokio::test]
+async fn stored_replay_download_preserves_envelope_and_bytes() {
+    for (bytes, expected) in [
+        (b"RHREC\x01payload".as_slice(), RANKED_REPLAY_MEDIA_TYPE_V1),
+        (
+            b"rhrec-build-payload".as_slice(),
+            "application/x-robin-rhrec+compact",
+        ),
+    ] {
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), bytes).unwrap();
+        let mut file = tokio::fs::File::open(source.path()).await.unwrap();
+        assert_eq!(stored_replay_media_type(&mut file).await.unwrap(), expected);
+        let mut downloaded = Vec::new();
+        file.read_to_end(&mut downloaded).await.unwrap();
+        assert_eq!(downloaded, bytes);
+    }
+    let source = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(source.path(), b"unknown envelope").unwrap();
+    let mut file = tokio::fs::File::open(source.path()).await.unwrap();
+    assert!(stored_replay_media_type(&mut file).await.is_err());
+}
+
+#[tokio::test]
 async fn owned_mutation_keeps_its_lease_after_response_cancellation() {
     use std::sync::atomic::{AtomicBool, Ordering};
 

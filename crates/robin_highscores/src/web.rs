@@ -47,6 +47,7 @@ use sha2::Digest as _;
 use std::convert::Infallible;
 use std::str::FromStr as _;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 use tokio_util::io::ReaderStream;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -1215,6 +1216,11 @@ async fn run_detail(
         );
         ApiError::Internal
     })?;
+    let mut replay_file = state
+        .replay_store
+        .open_verified(&run.replay_sha256, run.replay_bytes)
+        .await?;
+    let replay_media_type = stored_replay_media_type(&mut replay_file).await?;
     let detail = RunDetailV2 {
         schema_version: SCHEMA_VERSION_V2,
         run_id: opaque(&run.run_id)?,
@@ -1234,7 +1240,7 @@ async fn run_detail(
             artifact: ArtifactRefV1 {
                 sha256: Digest32::from_bytes(run.replay_sha256),
                 byte_length: run.replay_bytes,
-                media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
+                media_type: replay_media_type.to_owned(),
             },
             replay_schema_version: run.replay_schema_version,
         },
@@ -1321,19 +1327,40 @@ async fn run_checkpoints(
     Ok(response)
 }
 
+/// Inspect the immutable artifact because archived schemas can have either
+/// envelope. Restore the cursor so downloads retain their exact signed bytes.
+async fn stored_replay_media_type(file: &mut tokio::fs::File) -> Result<&'static str, ApiError> {
+    let mut prefix = [0; 6];
+    file.read_exact(&mut prefix)
+        .await
+        .map_err(|_| ApiError::Internal)?;
+    file.rewind().await.map_err(|_| ApiError::Internal)?;
+    match &prefix {
+        b"RHREC\x01" => Ok(RANKED_REPLAY_MEDIA_TYPE_V1),
+        b"rhrec-" => Ok("application/x-robin-rhrec+compact"),
+        _ => {
+            tracing::error!(
+                error_code = "stored_replay_envelope_invalid",
+                "stored replay has an unknown envelope"
+            );
+            Err(ApiError::Internal)
+        }
+    }
+}
+
 async fn replay_response(
     state: &AppState,
     digest: [u8; 32],
     bytes: u64,
 ) -> Result<Response, ApiError> {
-    let file = state.replay_store.open_verified(&digest, bytes).await?;
+    let mut file = state.replay_store.open_verified(&digest, bytes).await?;
+    let media_type = stored_replay_media_type(&mut file).await?;
     let body = Body::from_stream(ReaderStream::new(file));
     let mut response = body.into_response();
     *response.status_mut() = StatusCode::OK;
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static(RANKED_REPLAY_MEDIA_TYPE_V1),
-    );
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(media_type));
     response.headers_mut().insert(
         CONTENT_LENGTH,
         HeaderValue::from_str(&bytes.to_string()).map_err(|_| ApiError::Internal)?,
