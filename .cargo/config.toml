@@ -39,6 +39,9 @@ rustflags = [
 ]
 
 [env]
+# Direct native snapshot encoders need room for their generated aggregate
+# state in debug builds. This also sets the stack for Cargo's test threads.
+RUST_MIN_STACK = "33554432"
 "CXXSTDLIB_x86_64-pc-windows-gnu" = "static=stdc++"
 
 [unstable]

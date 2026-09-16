@@ -463,7 +463,10 @@ impl PresentationEngine {
 }
 
 impl Engine {
-    /// Encode a native engine snapshot through the bounded-stack facade codec.
+    /// Encode a native engine snapshot in one bitcode pass.
+    ///
+    /// Callers should reserve a 32 MiB thread stack for debug builds, where
+    /// generated codec state and its construction temporaries remain on stack.
     pub fn encode_native_snapshot(&self) -> Vec<u8> {
         self.try_encode_native_snapshot().expect(
             "authoritative engine reached snapshot encoding with an invalid Spellforge tape",

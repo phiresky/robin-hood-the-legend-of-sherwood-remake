@@ -208,7 +208,7 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// the same deterministic state boundaries. Unit tests retain test-only
 /// `Clone` and Serde implementations for low-level engine fixtures.
 #[cfg_attr(test, derive(Clone))]
-#[derive(robin_state_hash_derive::StateHash)]
+#[derive(robin_state_hash_derive::StateHash, bitcode::Encode)]
 pub struct EngineInner {
     /// Deterministic mission outcome, campaign, objective, and stats state.
     pub(crate) mission_domain: MissionDomain,
