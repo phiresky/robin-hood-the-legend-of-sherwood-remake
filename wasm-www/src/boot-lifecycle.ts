@@ -119,9 +119,10 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
         shippingFiles = undefined;
     }
     deps.runtimeStarted();
+    // Queue playback before startup can enter an interactive player-creation dialog.
+    await withAbort(signal, () => deps.installReplay(rpc, wasm, base, signal));
     await withAbort(signal, () => rpc('info'));
     signal.throwIfAborted();
-    await withAbort(signal, () => deps.installReplay(rpc, wasm, base, signal));
 }
 
 export function assertMultiplayerWasmCompatibility(
