@@ -1183,7 +1183,7 @@ mod tests {
             engine
                 .orders
                 .sequence_manager
-                .elements_to_go
+                .deferred_elements_to_go()
                 .iter()
                 .any(|&(sequence, index)| {
                     engine
