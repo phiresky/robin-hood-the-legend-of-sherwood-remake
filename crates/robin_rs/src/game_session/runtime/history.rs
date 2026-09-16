@@ -8,11 +8,30 @@ use serde::{Serialize, Serializer};
 pub(in crate::game_session) struct ReconstructionHistory {
     pub(super) buffer: RewindBuffer,
     checker: Option<RollbackChecker>,
+    capture_enabled: bool,
 }
 
 impl ReconstructionHistory {
-    pub(super) fn new(buffer: RewindBuffer, checker: Option<RollbackChecker>) -> Self {
-        Self { buffer, checker }
+    pub(super) fn new(
+        buffer: RewindBuffer,
+        checker: Option<RollbackChecker>,
+        capture_enabled: bool,
+    ) -> Self {
+        assert!(
+            capture_enabled || checker.is_none(),
+            "rollback checker requires history capture"
+        );
+        Self {
+            buffer,
+            checker,
+            capture_enabled,
+        }
+    }
+
+    pub(super) fn begin_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.capture_enabled {
+            self.buffer.begin_frame(frame, engine);
+        }
     }
 
     /// Read-only view of retained reconstruction frames. Mutation stays behind
@@ -30,7 +49,9 @@ impl ReconstructionHistory {
     }
 
     pub(in crate::game_session) fn checkpoint_recent(&mut self, frame: u32, engine: &Engine) {
-        self.buffer.checkpoint_recent(frame, engine);
+        if self.capture_enabled {
+            self.buffer.checkpoint_recent(frame, engine);
+        }
     }
 
     #[cfg(test)]
@@ -60,8 +81,11 @@ impl ReconstructionHistory {
 
     pub(super) fn adopt_snapshot(&mut self, frame: u32, engine: &Engine) {
         self.buffer = RewindBuffer::new();
-        self.buffer.seed_initial_anchor(frame, engine);
         self.reset_checker();
+        if !self.capture_enabled {
+            return;
+        }
+        self.buffer.seed_initial_anchor(frame, engine);
         // Loading occurs after open_frame; reopen its capture against adopted state.
         self.buffer.begin_frame(frame, engine);
     }
@@ -72,6 +96,9 @@ impl ReconstructionHistory {
     }
 
     pub(in crate::game_session) fn commit(&mut self, input: SimulationFrameInput, engine: &Engine) {
+        if !self.capture_enabled {
+            return;
+        }
         self.buffer.end_frame_input(input);
         if let Some(checker) = self.checker.as_mut() {
             checker.check_after_commit(&self.buffer, engine);
@@ -82,7 +109,8 @@ impl ReconstructionHistory {
 impl Serialize for ReconstructionHistory {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("ReconstructionHistory", 2)?;
+        let mut state = serializer.serialize_struct("ReconstructionHistory", 3)?;
+        state.serialize_field("capture_enabled", &self.capture_enabled)?;
         state.serialize_field("next_record_frame", &self.buffer.next_record_frame())?;
         state.serialize_field("has_checker", &self.checker.is_some())?;
         state.end()
@@ -103,7 +131,7 @@ mod tests {
     fn snapshot_adoption_replaces_history_and_reopens_the_adopted_boundary() {
         let mut assets = LevelAssets::default();
         let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
-        let mut history = ReconstructionHistory::new(RewindBuffer::new(), None);
+        let mut history = ReconstructionHistory::new(RewindBuffer::new(), None, true);
         history.buffer.begin_frame(0, &engine);
         history
             .buffer
@@ -120,7 +148,7 @@ mod tests {
 
     #[test]
     fn diagnostic_serialization_cannot_restore_live_reconstruction_authority() {
-        let history = ReconstructionHistory::new(RewindBuffer::new(), None);
+        let history = ReconstructionHistory::new(RewindBuffer::new(), None, true);
         let json = serde_json::to_value(&history).unwrap();
         assert!(serde_json::from_value::<ReconstructionHistory>(json).is_err());
     }
