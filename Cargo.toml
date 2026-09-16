@@ -107,6 +107,7 @@ mlua = { version = "0.12", features = ["luau", "send"] }
 rilua = { version = "=0.1.24", features = ["send"] }
 nonmax = "0.5"
 nix = "0.31"
+mimalloc = "0.1.52"
 png = "0.18"
 rand = "0.10"
 rustix = "1"

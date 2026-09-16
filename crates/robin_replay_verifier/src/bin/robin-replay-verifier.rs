@@ -1,3 +1,6 @@
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // Limits precede even argv/path and job parsing: hostile bitcode can
     // request an allocation large enough to abort rather than unwind.

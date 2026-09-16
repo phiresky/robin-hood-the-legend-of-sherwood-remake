@@ -12,6 +12,7 @@ name = "robin-replay-verifier"
 path = "src/bin/robin-replay-verifier.rs"
 
 [dependencies]
+mimalloc.workspace = true
 clap = { workspace = true, features = ["derive"] }
 nix = { workspace = true, features = ["resource"] }
 robin_engine.workspace = true
