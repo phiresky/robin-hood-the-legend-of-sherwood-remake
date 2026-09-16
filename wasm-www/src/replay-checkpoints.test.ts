@@ -5,7 +5,10 @@ import { loadReplayCheckpoints } from './replay-checkpoints.ts';
 test('sidecar download waits for replay startup and installs after background validation', async () => {
     let started = false, downloaded = false, installed = false;
     const bytes = new Uint8Array([1]);
-    await loadReplayCheckpoints(async <T>() => ({ replay: started ? { frame: 12 } : null }) as T,
+    await loadReplayCheckpoints(async <T>() => {
+        if (!started) throw new Error('engine not ready — no active mission RPC session');
+        return { replay: { frame: 12 } } as T;
+    },
         new AbortController().signal, {
             wait: async () => { assert.equal(downloaded, false); started = true; },
             download: async () => { assert(started); downloaded = true; return bytes; },
