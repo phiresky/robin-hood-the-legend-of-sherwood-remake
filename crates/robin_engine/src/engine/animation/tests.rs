@@ -179,7 +179,7 @@ fn pc_beggar_execute_turns_during_both_transitions_and_idle() {
 
 #[test]
 fn leaving_beggar_state_effect_does_not_overwrite_a_newer_pc_action() {
-    let mut entity = Entity::Pc(ActorPc {
+    let entity = Entity::Pc(ActorPc {
         element: {
             let mut initial_element =
                 ElementData::from_initial_posture(crate::element::Posture::SimulatingBeggar);
@@ -297,7 +297,7 @@ fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
 
 #[test]
 fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ActorPc;
@@ -603,7 +603,7 @@ fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
 
 #[test]
 fn lowering_sword_start_restores_upright_waiting_state() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
             initial_element.kind = ElementKind::ActorPc;
@@ -633,7 +633,7 @@ fn lowering_sword_start_restores_upright_waiting_state() {
 
 #[test]
 fn helping_climb_done_applies_posture_and_toolbar_action() {
-    let mut pc = Entity::Pc(ActorPc {
+    let pc = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -665,7 +665,7 @@ fn helping_climb_done_applies_posture_and_toolbar_action() {
 #[test]
 fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
     for motion in [MotionState::Done, MotionState::Terminated] {
-        let mut pc = Entity::Pc(ActorPc {
+        let pc = Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1056,7 +1056,7 @@ fn arrow_extraction_start_is_universal_for_civilians() {
 
 #[test]
 fn bow_equip_start_enters_aiming_state() {
-    let mut entity = Entity::Pc(ActorPc {
+    let entity = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
