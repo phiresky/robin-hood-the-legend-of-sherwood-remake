@@ -128,6 +128,11 @@ fn run() {
     // Include each saved state once, rather than duplicating the save cache
     // in every seek checkpoint. Browser host state is outside this estimate.
     let save_markers = saved_payloads.len();
+    let sidecar = compressed(&bitcode::encode(&checkpoints), 19);
+    let sidecar_with_saves = compressed(
+        &bitcode::encode(&(checkpoints.clone(), saved_payloads.clone())),
+        19,
+    );
     let with_saves = bitcode::encode(&(file, checkpoints, saved_payloads));
     println!(
         "{}",
@@ -141,7 +146,11 @@ fn run() {
             "added_bytes": combined - baseline,
             "raw_bundle_bytes": bundle.len(),
             "save_markers": save_markers,
-            "combined_with_save_states_bytes": envelope_bytes + compressed(&with_saves, 19),
+        "combined_with_save_states_bytes": envelope_bytes + compressed(&with_saves, 19),
+        "sidecar_bytes": sidecar,
+        "sidecar_with_save_states_bytes": sidecar_with_saves,
+        "replay_plus_sidecar_bytes": baseline + sidecar,
+        "replay_plus_sidecar_with_save_states_bytes": baseline + sidecar_with_saves,
             "independent_checkpoint_level3_bytes": independent_level3,
             "independent_checkpoint_level19_bytes": independent_level19,
         })
