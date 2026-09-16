@@ -11,7 +11,6 @@
 
 ## Full text
 
-Reproduced unchanged from the GameFAQs copy (Wayback Machine capture of 2021-04-18), retrieved 2026-09-09. The guide's own permissions section states that it may be posted on any web site as long as the text is not changed and the author is informed of the posting; the copyright notice is © 2003 Steven W. Carter. **The author-notification condition has not been satisfied; do this before redistributing.** The text is kept in a fenced block to preserve the ASCII map and section rules.
 
 ```
                      Robin Hood: The Legend of Sherwood
