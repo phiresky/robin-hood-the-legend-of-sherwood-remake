@@ -261,11 +261,37 @@ pub(super) struct MissionPresentation {
     )>,
 }
 
+/// A presentation clock shared by fixed and intermediate renders.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct PresentationClock {
+    next_us: Option<u64>,
+    period_us: u64,
+}
+
+impl PresentationClock {
+    fn reserve(&mut self, now_us: u64, period_us: u64) -> u64 {
+        assert!(period_us > 0);
+        let next = if self.period_us == period_us {
+            self.next_us.unwrap_or(now_us)
+        } else {
+            now_us
+        };
+        // Keep modest CPU jitter off the sample clock. After a real stall,
+        // skip expired slots rather than submitting them in a catch-up burst.
+        let skipped = now_us.saturating_sub(next).saturating_add(period_us / 2) / period_us;
+        let sample = next.saturating_add(skipped.saturating_mul(period_us));
+        self.next_us = Some(sample.saturating_add(period_us));
+        self.period_us = period_us;
+        sample
+    }
+}
+
 /// One fixed-tick-late, host-only presentation state. The working engine is
 /// always a clone of the current authoritative tick: animation/gameplay state
 /// remains at 25 Hz while only spatial transforms are sampled between the two
 /// adjacent snapshots. It is never serialized into saves or rollback state.
 pub(super) struct NativeRefreshInterpolation {
+    presentation_clock: PresentationClock,
     previous: Option<SpatialPresentationSnapshot>,
     current: Option<SpatialPresentationSnapshot>,
     working: Option<PresentationEngine>,
@@ -349,6 +375,7 @@ impl NativeRefreshInterpolation {
     fn new() -> Self {
         crate::presentation_timing::reset();
         Self {
+            presentation_clock: PresentationClock::default(),
             previous: None,
             current: None,
             working: None,
@@ -409,10 +436,32 @@ impl NativeRefreshInterpolation {
         self.latest_frame = Some(frame);
     }
 
-    pub(super) fn sample(&mut self, now_ms: u32) -> Option<CameraPresentationPose> {
+    /// The native game runs on a dedicated thread. Wait before acquiring the
+    /// surface so an immediately available image cannot cause a render burst.
+    /// Unknown monitor rates and browser rAF retain the platform pacing path.
+    pub(super) fn wait_for_presentation(&mut self) -> Option<u64> {
+        let now_us = crate::window::process_uptime_us();
+        let Some(period_us) = crate::window::presentation_period_us() else {
+            self.presentation_clock = PresentationClock::default();
+            return None;
+        };
+        if self.presentation_clock.period_us != period_us {
+            tracing::info!(period_us, "presentation clock follows monitor refresh");
+        }
+        let sample_us = self.presentation_clock.reserve(now_us, period_us);
+        #[cfg(not(target_arch = "wasm32"))]
+        if sample_us > now_us {
+            std::thread::sleep(std::time::Duration::from_micros(sample_us - now_us));
+        }
+        Some(sample_us)
+    }
+
+    pub(super) fn sample(&mut self, sample_us: u64) -> Option<CameraPresentationPose> {
+        let now_ms = (sample_us / 1_000) as u32;
+        let elapsed_ms = now_ms.wrapping_sub(self.segment_started_at_ms) as i32 as f32
+            + (sample_us % 1_000) as f32 / 1_000.0;
         let alpha = if self.segment_active {
-            now_ms.wrapping_sub(self.segment_started_at_ms) as f32
-                / robin_engine::engine::FRAME_TIME_MS as f32
+            elapsed_ms / robin_engine::engine::FRAME_TIME_MS as f32
         } else {
             1.0
         }
@@ -434,6 +483,7 @@ impl NativeRefreshInterpolation {
     }
 
     pub(super) fn clear(&mut self) {
+        self.presentation_clock = PresentationClock::default();
         self.previous = None;
         self.current = None;
         self.working = None;
@@ -985,6 +1035,23 @@ pub(super) struct InteractiveMission {
 #[cfg(test)]
 mod tests {
     use super::MissionInput;
+
+    #[test]
+    fn presentation_clock_spaces_bursts_and_skips_stalled_slots() {
+        let mut clock = super::PresentationClock::default();
+        let period = 16_667;
+        assert_eq!(clock.reserve(100_000, period), 100_000);
+        assert_eq!(clock.reserve(104_000, period), 116_667);
+        assert_eq!(clock.reserve(107_000, period), 133_334);
+        assert_eq!(clock.reserve(150_500, period), 150_001);
+        // A long stall discards expired slots instead of replaying a burst.
+        assert_eq!(clock.reserve(220_000, period), 216_669);
+        assert_eq!(clock.reserve(221_000, period), 233_336);
+        // Moving to another monitor starts a new cadence.
+        assert_eq!(clock.reserve(240_000, 6_944), 240_000);
+        assert_eq!(clock.reserve(241_000, 6_944), 246_944);
+    }
+
     use super::{CameraPresentationPose, MissionUi, RenderViewState};
     use crate::input::ThreadedInput;
     use crate::input_translator::{GameAction, GameKey, InputTranslator, TranslationFlags};
@@ -996,6 +1063,39 @@ mod tests {
         let mut translator = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
         translator.install_hud_dead_zones();
         MissionInput::new(ThreadedInput::new(), translator)
+    }
+
+    #[test]
+    fn camera_samples_remain_uniform_when_cpu_submission_is_bursty() {
+        let mut clock = super::PresentationClock::default();
+        let previous = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(0.0, 0.0),
+            old_view_position: robin_engine::coordinates::MapPoint::new(0.0, 0.0),
+            zoom_factor: 1.0,
+            old_zoom_factor: 1.0,
+        };
+        let current = CameraPresentationPose {
+            view_position: robin_engine::coordinates::MapPoint::new(24.0, 0.0),
+            ..previous
+        };
+        // The same fixed-tick motion, rendered after uneven CPU work. Every
+        // refresh must advance 10 pixels at 600 pixels/second.
+        let positions: Vec<_> = [100_000, 104_000, 107_000]
+            .into_iter()
+            .map(|now| {
+                let sample = clock.reserve(now, 16_667);
+                CameraPresentationPose::interpolate(
+                    previous,
+                    current,
+                    (sample - 100_000) as f32 / 40_000.0,
+                )
+                .view_position
+                .x
+            })
+            .collect();
+        for pair in positions.windows(2) {
+            assert!((pair[1] - pair[0] - 10.0).abs() < 0.001, "{positions:?}");
+        }
     }
 
     #[test]

@@ -4,6 +4,12 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Regular native presentation samples.** Camera and entity interpolation share
+  a monitor-rate sample clock across simulation ticks and intermediate renders.
+  Frames wait for their slot instead of submitting bursts when swapchain images
+  are immediately available; long stalls skip expired slots. Platforms without
+  a reported monitor rate retain their existing presentation pacing.
+
 - **Vulkan presentation feedback profiling (Linux).** With
   `ROBIN_GAMEPLAY_PROFILE=1`, supported Vulkan devices collect asynchronous
   `VK_EXT_present_timing` feedback for actual display presentation. INFO logs
