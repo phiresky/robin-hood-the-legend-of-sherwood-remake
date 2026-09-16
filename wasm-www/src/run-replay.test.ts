@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { fetchRunReplay, fetchRunCheckpoints, parseHostedReplayContent, parseRunLaunch, runFromQuery, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
+import { fetchRunReplay, fetchRunCheckpoints, parseHostedReplayContent, parseRunLaunch, runFromQuery, runPlaybackBuild, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
+
+test('recorded builds select compatible viewer fixes', () => {
+    assert.equal(runPlaybackBuild('e7557179eb05'), 'e8a05403acdc');
+    assert.equal(runPlaybackBuild('1699bc12ffb8'), '1f546fbb6547');
+    assert.equal(runPlaybackBuild('0123456789ab'), '0123456789ab');
+});
 
 const build = '0123456789ab';
 const replay = new TextEncoder().encode(`RHREC\x01${build}\x28\xb5\x2f\xfd`);
