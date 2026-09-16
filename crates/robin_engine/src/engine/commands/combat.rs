@@ -130,7 +130,10 @@ impl EngineInner {
         use crate::element::Entity;
         use crate::order::OrderType;
 
-        self.prepare_tactical_player_combat_command(sim, assets, pc_id);
+        let recording = self.players.qa_recording_for.contains(&pc_id);
+        if !recording {
+            self.prepare_tactical_player_combat_command(sim, assets, pc_id);
+        }
 
         // VIP gate
         let target_is_vip = self
@@ -188,19 +191,10 @@ impl EngineInner {
                     target_id
                 };
                 self.apply_interaction_with_seek(sim, assets, pc_id, launch_target, cmd, false);
+                if recording {
+                    self.stop_recording_macro();
+                }
             }
-            return;
-        }
-
-        // When recording a macro, the swordfight sequence is
-        // registered as a QA step and recording stops — the PC does
-        // *not* engage the fight live.  The QA step + titbit are
-        // already appended in `record_macro_step_for_pc` (called from
-        // `apply_command` at the top of dispatch); short-circuit here
-        // so we don't double up with a live launch, then stop the
-        // recording.
-        if self.players.qa_recording_for.contains(&pc_id) {
-            self.stop_recording_macro();
             return;
         }
 
@@ -224,13 +218,15 @@ impl EngineInner {
         };
 
         // Table swordfight check
-        if let Some(aggressor_line_idx) = crate::engine::melee::is_table_swordfight_needed(
-            &self.world.entities,
-            &self.world.fast_grid,
-            &assets.profile_manager,
-            pc_id,
-            target_id,
-        ) {
+        if !recording
+            && let Some(aggressor_line_idx) = crate::engine::melee::is_table_swordfight_needed(
+                &self.world.entities,
+                &self.world.fast_grid,
+                &assets.profile_manager,
+                pc_id,
+                target_id,
+            )
+        {
             self.apply_table_swordfight(
                 sim,
                 assets,
@@ -254,6 +250,15 @@ impl EngineInner {
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|p| p.distance[crate::weapons::WeaponDistance::Default as usize] as f32)
             .unwrap_or(40.0);
+        if recording {
+            self.retain_recorded_quick_action(
+                pc_id,
+                classical_swordfight_sequence(pc_id, target_id, action_style, seek_tolerance),
+                None,
+            );
+            self.stop_recording_macro();
+            return;
+        }
         tracing::trace!(
             actor = ?pc_id,
             target = ?target_id,
@@ -478,31 +483,8 @@ impl EngineInner {
         }
         let _ = pc_layer;
 
-        let mut seek_elem =
-            SequenceElement::new_movement(1, Command::Seek, Some(pc_id), action_style);
-        let mut enter_elem = SequenceElement::new_generic(2, Command::EnterSwordfight, Some(pc_id));
-        enter_elem.set_property(Field::Opponent, FieldValue::Element(target_id));
-        enter_elem.set_property(Field::JumplineDestination, FieldValue::Integer(0));
-        enter_elem.command_level = 1;
-
-        let mut post_seek = Sequence::new();
-        post_seek.append_element(enter_elem);
-        if let SequenceElementData::Movement {
-            element,
-            tolerance,
-            flags,
-            post_seek_sequence,
-            ..
-        } = &mut seek_elem.data
-        {
-            *element = Some(target_id);
-            *tolerance = seek_tolerance;
-            *flags |= MoveFlags::SEEK;
-            *post_seek_sequence = Some(post_seek.into_post_seek());
-        }
-
-        let mut sequence = Sequence::new();
-        sequence.append_element(seek_elem);
+        let sequence =
+            classical_swordfight_sequence(pc_id, target_id, action_style, seek_tolerance);
         self.launch_sequence(sim, assets, sequence);
     }
 
@@ -711,4 +693,35 @@ impl EngineInner {
         // this new seek, the older successor is instructed first.
         self.launch_sequence(sim, assets, sequence);
     }
+}
+
+fn classical_swordfight_sequence(
+    actor: EntityId,
+    target: EntityId,
+    action: crate::order::OrderType,
+    distance: f32,
+) -> Sequence {
+    let mut seek = SequenceElement::new_movement(1, Command::Seek, Some(actor), action);
+    let mut enter = SequenceElement::new_generic(1, Command::EnterSwordfight, Some(actor));
+    enter.set_property(Field::Opponent, FieldValue::Element(target));
+    enter.set_property(Field::JumplineDestination, FieldValue::Integer(0));
+    enter.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
+    let mut post_seek = Sequence::new();
+    post_seek.append_element(enter);
+    if let SequenceElementData::Movement {
+        element,
+        tolerance,
+        flags,
+        post_seek_sequence,
+        ..
+    } = &mut seek.data
+    {
+        *element = Some(target);
+        *tolerance = distance;
+        *flags |= MoveFlags::SEEK;
+        *post_seek_sequence = Some(post_seek.into_post_seek());
+    }
+    let mut sequence = Sequence::new();
+    sequence.append_element(seek);
+    sequence
 }

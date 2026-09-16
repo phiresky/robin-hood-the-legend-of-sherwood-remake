@@ -1,5 +1,4 @@
-//! Post-recording interaction execution. These handlers deliberately do not
-//! capture macro steps: the parent preflight and shared recorder have run first.
+//! Interaction construction after command preflight and marker recording.
 
 use super::{recorded_ground_target_titbit_layer, recorded_interaction_quick_phase};
 use crate::element::{Command, EntityId};
@@ -18,6 +17,19 @@ impl EngineInner {
         running: &bool,
     ) {
         let recording_interaction = self.players.qa_recording_for.contains(actor);
+        if recording_interaction
+            && *command == Command::EnterSwordfight
+            && self.get_entity(*target).is_some_and(|entity| {
+                crate::engine::melee::is_vip_from_profile(entity, &assets.profile_manager)
+            })
+            && !self
+                .get_entity(*actor)
+                .and_then(|entity| entity.pc_data())
+                .is_some_and(|pc| pc.robin)
+        {
+            self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+            return;
+        }
         // Macro recording: if `actor` is in the recording set
         // and a slot is armed, append this interaction as a step.
         if recording_interaction {
@@ -120,18 +132,58 @@ impl EngineInner {
                     .get_or_insert(*actor)
                     .set_slot_titbit(slot as usize, tb);
             }
-            // NOTE: the QuickActionStep is appended by the shared
-            // `record_macro_step_for` helper which ran at the top
-            // of `apply_command`; no append here to avoid
-            // duplicating the dotted-chain step.
         }
         if recording_interaction {
-            // Seek-interaction construction stores the constructed sequence
-            // in the active QA slot and sends STOP_RECORDING_MACRO;
-            // it does not also launch that sequence live. The parity
-            // trace records the semantic interaction before this
-            // branch, so replay must preserve the recording-only
-            // disposition explicitly.
+            if matches!(
+                self.get_entity(*target),
+                Some(crate::element::Entity::Target(_))
+            ) && matches!(
+                command,
+                Command::SearchCmd
+                    | Command::UseLever
+                    | Command::HitTarget
+                    | Command::HandleTarget
+                    | Command::TakeTarget
+                    | Command::Pay
+            ) {
+                let target_entity = self.get_entity(*target).expect("recorded target exists");
+                let destination = target_entity.element_data().position_map();
+                let sector = target_entity.element_data().sector();
+                let layer = target_entity.element_data().layer();
+                let turn_point = target_entity
+                    .current_gameplay_point_map()
+                    .expect("recorded target has an interaction point");
+                let action = if *running {
+                    crate::order::OrderType::RunningUpright
+                } else if self
+                    .get_entity(*actor)
+                    .expect("recorded actor exists")
+                    .element_data()
+                    .posture()
+                    == crate::element::Posture::Crouched
+                {
+                    crate::order::OrderType::WalkingCrouched
+                } else {
+                    crate::order::OrderType::WalkingUpright
+                };
+                self.replay_recorded_target_interaction(
+                    sim,
+                    assets,
+                    *actor,
+                    *target,
+                    *command,
+                    destination,
+                    sector,
+                    layer,
+                    action,
+                    turn_point,
+                );
+            } else if *command == Command::EnterSwordfight {
+                self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+                return;
+            } else {
+                self.apply_interaction_with_seek(sim, assets, *actor, *target, *command, *running);
+            }
             self.stop_recording_macro();
             return;
         }
@@ -188,6 +240,7 @@ impl EngineInner {
         target_field: &Field,
         titbit_layer: &u16,
     ) {
+        let recording = self.players.qa_recording_for.contains(actor);
         if self.players.qa_recording_for.contains(actor) {
             // Each Original ground-target input handler authors its
             // dedicated phase directly; it does not derive the icon
@@ -233,10 +286,6 @@ impl EngineInner {
                     .get_or_insert(*actor)
                     .set_slot_titbit(slot as usize, tb);
             }
-            // QuickActionStep appended by `record_macro_step_for`
-            // at the top of `apply_command`.
-            self.stop_recording_macro();
-            return;
         }
         let mut elem = SequenceElement::new_generic(1, *command, Some(*actor));
         // The sequence field is the full 3D throw target (the
@@ -257,6 +306,9 @@ impl EngineInner {
         // instruction at the post-entity manager boundary.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_or_record_quick_action_sequence(sim, assets, *actor, seq);
+        if recording {
+            self.stop_recording_macro();
+        }
     }
 }

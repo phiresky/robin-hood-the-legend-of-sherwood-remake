@@ -8,9 +8,8 @@
 //! interaction metadata, and marker ID together, so shifting a slot transfers
 //! its complete state without synchronizing another representation.
 //!
-//! The dotted-chain segments connecting the PC to each recorded step's
-//! world position come from `Titbits::draw_lines`; we retain the recorded
-//! `position` per step for that.
+//! Manual dotted chains use the slots' retained titbit identities; automatic
+//! queue entries additionally retain their command and marker operands.
 
 use serde::{Deserialize, Serialize};
 
@@ -103,10 +102,8 @@ pub struct RecordedQaMoveRoute {
     pub goal_layer: u16,
 }
 
-/// The specific player command captured at a macro step — enough to
-/// rebuild a [`PlayerCommand`](crate::player_command::PlayerCommand) at
-/// playback time.  Replay clones each recorded sequence element and
-/// relaunches it as a fresh command.
+/// Resolved command operands retained by an automatic queue entry.
+/// Manual slots retain authored sequences instead of redispatching commands.
 #[derive(
     Debug,
     Clone,
@@ -288,13 +285,10 @@ mod map_point_tuple_serde {
     bitcode::Decode,
 )]
 pub struct QuickActionSlot {
-    pub steps: Vec<QuickActionStep>,
-    /// Exact owner-local sequences restored from an Original v48 save.
-    /// These cannot be losslessly reconstructed as high-level player
-    /// commands, so playback launches copies of the retained payloads.
-    legacy_action_sequence: Option<Sequence>,
-    legacy_seek_sequence: Option<Sequence>,
-    pub(crate) quickito: LegacyQuickito,
+    /// Authored commands retained without executing their orders.
+    action_sequence: Option<Sequence>,
+    seek_sequence: Option<Sequence>,
+    pub(crate) quickito: Quickito,
     titbit: Option<crate::titbit::TitbitId>,
 }
 
@@ -311,7 +305,7 @@ pub struct QuickActionSlot {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub(crate) struct LegacyQuickito {
+pub struct Quickito {
     pub kind: QuickAction,
     pub interactor: Option<EntityId>,
     pub button: u16,
@@ -319,14 +313,13 @@ pub(crate) struct LegacyQuickito {
 
 impl PartialEq for QuickActionSlot {
     fn eq(&self, other: &Self) -> bool {
-        self.steps == other.steps
-            && serde_json::to_value(&self.legacy_action_sequence)
+        serde_json::to_value(&self.action_sequence)
+            .expect("serialize legacy QA action for equality")
+            == serde_json::to_value(&other.action_sequence)
                 .expect("serialize legacy QA action for equality")
-                == serde_json::to_value(&other.legacy_action_sequence)
-                    .expect("serialize legacy QA action for equality")
-            && serde_json::to_value(&self.legacy_seek_sequence)
+            && serde_json::to_value(&self.seek_sequence)
                 .expect("serialize legacy QA seek for equality")
-                == serde_json::to_value(&other.legacy_seek_sequence)
+                == serde_json::to_value(&other.seek_sequence)
                     .expect("serialize legacy QA seek for equality")
             && self.quickito == other.quickito
             && self.titbit == other.titbit
@@ -335,52 +328,41 @@ impl PartialEq for QuickActionSlot {
 
 impl QuickActionSlot {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty()
-            && self.legacy_action_sequence.is_none()
-            && self.quickito.kind == QuickAction::None
+        self.action_sequence.is_none() && self.quickito.kind == QuickAction::None
     }
     pub fn len(&self) -> usize {
-        self.steps
-            .len()
-            .max(
-                self.legacy_action_sequence
-                    .as_ref()
-                    .map_or(0, |sequence| sequence.len()),
-            )
+        self.action_sequence
+            .as_ref()
+            .map_or(0, |sequence| sequence.len())
             .max(usize::from(self.quickito.kind != QuickAction::None))
     }
 
-    pub(crate) fn legacy_sequences(&self) -> Option<(&Sequence, Option<&Sequence>)> {
-        self.legacy_action_sequence
+    pub fn sequences(&self) -> Option<(&Sequence, Option<&Sequence>)> {
+        self.action_sequence
             .as_ref()
-            .map(|action| (action, self.legacy_seek_sequence.as_ref()))
+            .map(|action| (action, self.seek_sequence.as_ref()))
     }
 
     pub(crate) fn retained_sequence_sizes(&self) -> (Option<usize>, Option<usize>) {
         (
-            self.legacy_action_sequence
-                .as_ref()
-                .map(|sequence| sequence.len()),
-            self.legacy_seek_sequence
-                .as_ref()
-                .map(|sequence| sequence.len()),
+            self.action_sequence.as_ref().map(|sequence| sequence.len()),
+            self.seek_sequence.as_ref().map(|sequence| sequence.len()),
         )
     }
 
-    pub(crate) fn legacy_quickito(&self) -> Option<LegacyQuickito> {
+    pub fn quickito(&self) -> Option<Quickito> {
         (self.quickito.kind != QuickAction::None).then_some(self.quickito)
     }
 
     pub(crate) fn retained(
         action: Option<Sequence>,
         seek: Option<Sequence>,
-        quickito: LegacyQuickito,
+        quickito: Quickito,
         titbit: Option<crate::titbit::TitbitId>,
     ) -> Self {
         Self {
-            steps: Vec::new(),
-            legacy_action_sequence: action,
-            legacy_seek_sequence: seek,
+            action_sequence: action,
+            seek_sequence: seek,
             quickito,
             titbit,
         }
@@ -408,13 +390,6 @@ pub struct PcMacroState {
     /// Counters belong to memory positions and do not move with slot tetris.
     special_counts: [u16; NUMBER_OF_QA_MEMORY],
     recording_slot: Option<u8>,
-    /// Whether the armed manual slot still contains its previous QA. Original
-    /// keeps that state live until the first replacement action is captured.
-    ///
-    /// This replaces the old serialized `recording_backup` representation.
-    /// It is not wire-compatible with SAVE53/NET17/REPLAY11; this state layout
-    /// starts at SAVE54/NET18/REPLAY12.
-    recording_replaces_existing: bool,
 }
 
 impl Default for PcMacroState {
@@ -423,7 +398,6 @@ impl Default for PcMacroState {
             slots: std::array::from_fn(|_| QuickActionSlot::default()),
             special_counts: [0; NUMBER_OF_QA_MEMORY],
             recording_slot: None,
-            recording_replaces_existing: false,
         }
     }
 }
@@ -498,40 +472,39 @@ impl PcMacroState {
             (slot_idx as usize) < NUMBER_OF_QA_MEMORY,
             "slot_idx {slot_idx} out of range 0..{NUMBER_OF_QA_MEMORY}"
         );
-        let slot = usize::from(slot_idx);
-        self.recording_replaces_existing = !self.slots[slot].is_empty();
+
         self.recording_slot = Some(slot_idx);
     }
 
-    /// Stop recording.  Keeps whatever was appended; the slot is
-    /// committed at this point.
+    /// Stop recording while preserving the slot's retained payload.
     pub fn stop_recording(&mut self) {
-        self.recording_replaces_existing = false;
         self.recording_slot = None;
     }
 
-    pub fn recording_replaces_existing_slot(&self) -> Option<u8> {
-        self.recording_slot
-            .filter(|_| self.recording_replaces_existing)
-    }
-
-    /// Append a step if currently recording.  No-op otherwise.
-    pub fn append_if_recording(&mut self, step: QuickActionStep) {
-        if let Some(idx) = self.recording_slot {
-            let idx = usize::from(idx);
-            if self.recording_replaces_existing || self.slots[idx].steps.is_empty() {
-                let quickito = LegacyQuickito {
+    /// Replace the armed slot's commands while preserving its marker identity.
+    pub fn retain_sequence(&mut self, action: Sequence, seek: Option<Sequence>) {
+        if let Some(slot) = self.recording_slot {
+            let slot = usize::from(slot);
+            let metadata = self.slots[slot].quickito;
+            let titbit = self.slots[slot].titbit;
+            self.slots[slot] = QuickActionSlot::retained(
+                Some(action),
+                seek,
+                Quickito {
                     kind: QuickAction::None,
-                    ..self.slots[idx].quickito
-                };
-                self.slots[idx] = QuickActionSlot {
-                    quickito,
-                    ..QuickActionSlot::default()
-                };
-                self.special_counts[idx] = 0;
-                self.recording_replaces_existing = false;
-            }
-            self.slots[idx].steps.push(step);
+                    ..metadata
+                },
+                titbit,
+            );
+            self.special_counts[slot] = 0;
+        }
+    }
+    pub fn retain_quickito(&mut self, quickito: Quickito) {
+        if let Some(slot) = self.recording_slot {
+            let slot = usize::from(slot);
+            let titbit = self.slots[slot].titbit;
+            self.slots[slot] = QuickActionSlot::retained(None, None, quickito, titbit);
+            self.special_counts[slot] = 0;
         }
     }
 
@@ -539,15 +512,13 @@ impl PcMacroState {
     /// fired.
     pub fn clear_slot(&mut self, slot_idx: usize) {
         if let Some(s) = self.slots.get_mut(slot_idx) {
-            s.steps.clear();
-            s.legacy_action_sequence = None;
-            s.legacy_seek_sequence = None;
-            s.quickito = LegacyQuickito::default();
+            s.action_sequence = None;
+            s.seek_sequence = None;
+            s.quickito = Quickito::default();
             s.titbit = None;
         }
         if self.recording_slot == Some(slot_idx as u8) {
             self.recording_slot = None;
-            self.recording_replaces_existing = false;
         }
     }
 
@@ -576,7 +547,7 @@ impl PcMacroState {
     pub(crate) fn deactivate_slot(&mut self, slot: usize) {
         let metadata = self.slots[slot].quickito;
         self.clear_slot(slot);
-        self.slots[slot].quickito = LegacyQuickito {
+        self.slots[slot].quickito = Quickito {
             kind: QuickAction::None,
             ..metadata
         };
@@ -608,7 +579,6 @@ impl PcMacroState {
             && (rs as usize) >= slot_idx
         {
             self.recording_slot = None;
-            self.recording_replaces_existing = false;
         }
     }
 }
@@ -777,45 +747,28 @@ impl MacroStore {
             .find(|(id, _)| *id == pc)
             .map(|(_, s)| s)
     }
-
-    /// Append to any PC currently recording.  Convenience wrapper for
-    /// the `qa_recording_for == Some(pc)` branch.
-    pub fn append(&mut self, pc: EntityId, step: QuickActionStep) {
-        self.get_or_insert(pc).append_if_recording(step);
-    }
-}
-
-/// Build the dotted-chain segments for one macro slot.
-///
-/// ```text
-/// from = pc.position_map();
-/// for step in slot.steps:
-///     to = step.position;  // flattened: y -= z
-///     draw_dotted_line(from, to, ...);
-///     from = to;
-/// ```
-///
-/// Returns the `(from, to)` pairs in draw order; the renderer feeds
-/// each into `DrawManager::draw_dotted_line` with `DISTANCE_DOT` spacing
-/// and the global titbit dotted-start phase (one per game).
-pub fn dotted_chain_segments(
-    pc_position_map: MapPoint,
-    slot: &QuickActionSlot,
-) -> Vec<(MapPoint, MapPoint)> {
-    let mut segs = Vec::with_capacity(slot.steps.len());
-    let mut from = pc_position_map;
-    for step in &slot.steps {
-        let to = step.position;
-        segs.push((from, to));
-        from = to;
-    }
-    segs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sequence::SequenceElement;
+
+    fn action_sequence(action: Action) -> Sequence {
+        let command = match action {
+            Action::Bow => Command::ShootBow,
+            Action::Hit => Command::HitCmd,
+            Action::Stone => Command::ThrowStone,
+            _ => panic!("unsupported test action {action:?}"),
+        };
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(
+            1,
+            command,
+            Some(EntityId::Pc(crate::entity_id::PcId(1))),
+        ));
+        sequence
+    }
 
     fn route() -> RecordedQaMoveRoute {
         RecordedQaMoveRoute {
@@ -1122,14 +1075,14 @@ mod tests {
         let mut store = MacroStore::new();
         store.get_or_insert(pc).adopt_slot(
             1,
-            QuickActionSlot::retained(Some(sequence), None, LegacyQuickito::default(), None),
+            QuickActionSlot::retained(Some(sequence), None, Quickito::default(), None),
             0,
         );
 
         let state = store.get(pc).expect("adopted PC macro state");
         assert!(state.has_macro(1));
         assert_eq!(state.slot(1).expect("slot").len(), 1);
-        assert!(state.slot(1).expect("slot").legacy_sequences().is_some());
+        assert!(state.slot(1).expect("slot").sequences().is_some());
 
         store
             .get_mut(pc)
@@ -1148,7 +1101,7 @@ mod tests {
             QuickActionSlot::retained(
                 None,
                 None,
-                LegacyQuickito {
+                Quickito {
                     kind: QuickAction::Interact,
                     interactor: Some(target),
                     button: 0x0008,
@@ -1162,8 +1115,8 @@ mod tests {
         assert!(state.has_macro(2));
         assert_eq!(state.slot(2).expect("slot").len(), 1);
         assert_eq!(
-            state.slot(2).expect("slot").legacy_quickito(),
-            Some(LegacyQuickito {
+            state.slot(2).expect("slot").quickito(),
+            Some(Quickito {
                 kind: QuickAction::Interact,
                 interactor: Some(target),
                 button: 0x0008,
@@ -1181,10 +1134,10 @@ mod tests {
     fn begin_recording_keeps_occupied_slot_live() {
         let mut s = PcMacroState::default();
         s.begin_recording(0);
-        s.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        s.retain_sequence(action_sequence(Action::Bow), None);
         assert_eq!(s.slots[0].len(), 1);
 
-        // Re-arming keeps the live slot intact until a new step commits.
+        // Re-arming keeps the live slot intact until a new sequence is retained.
         s.stop_recording();
         s.begin_recording(0);
         assert_eq!(s.slots[0].len(), 1);
@@ -1196,12 +1149,12 @@ mod tests {
         let mut state = PcMacroState::default();
         state.adopt_slot(
             0,
-            QuickActionSlot::retained(Some(Sequence::new()), None, LegacyQuickito::default(), None),
+            QuickActionSlot::retained(Some(Sequence::new()), None, Quickito::default(), None),
             0,
         );
         state.adopt_slot(
             1,
-            QuickActionSlot::retained(None, Some(Sequence::new()), LegacyQuickito::default(), None),
+            QuickActionSlot::retained(None, Some(Sequence::new()), Quickito::default(), None),
             0,
         );
         assert!(state.has_macro(0));
@@ -1220,7 +1173,7 @@ mod tests {
     fn completion_and_deactivation_preserve_distinct_retained_metadata() {
         let target = EntityId::new(9, crate::element::EntityIdKind::Soldier);
         let titbit = Some(crate::titbit::TitbitId::new(41).unwrap());
-        let metadata = LegacyQuickito {
+        let metadata = Quickito {
             kind: QuickAction::None,
             interactor: Some(target),
             button: 8,
@@ -1243,7 +1196,7 @@ mod tests {
         let quickito_slot = QuickActionSlot::retained(
             None,
             None,
-            LegacyQuickito {
+            Quickito {
                 kind: QuickAction::Interact,
                 ..metadata
             },
@@ -1252,7 +1205,7 @@ mod tests {
         state.adopt_slot(1, quickito_slot.clone(), 8);
         state.complete_slot(1);
         assert!(!state.has_macro(1));
-        assert_eq!(state.slots[1].quickito, LegacyQuickito::default());
+        assert_eq!(state.slots[1].quickito, Quickito::default());
         assert_eq!(state.get_slot_titbit(1), titbit);
         assert_eq!(state.special_count(1), 8);
 
@@ -1273,9 +1226,9 @@ mod tests {
                 QuickActionSlot::retained(
                     Some(Sequence::new()),
                     None,
-                    LegacyQuickito {
+                    Quickito {
                         button: slot as u16 + 10,
-                        ..LegacyQuickito::default()
+                        ..Quickito::default()
                     },
                     Some(crate::titbit::TitbitId::new(slot as u32 + 20).unwrap()),
                 ),
@@ -1293,7 +1246,7 @@ mod tests {
     #[test]
     fn recording_into_seek_only_slot_discards_stale_payload_but_keeps_interaction_metadata() {
         let mut state = PcMacroState::default();
-        let metadata = LegacyQuickito {
+        let metadata = Quickito {
             kind: QuickAction::None,
             interactor: Some(EntityId::new(9, crate::element::EntityIdKind::Soldier)),
             button: 8,
@@ -1309,23 +1262,26 @@ mod tests {
             7,
         );
         state.begin_recording(0);
-        state.append_if_recording(step(Action::Bow, 1.0, 2.0));
-        assert_eq!(state.slots[0].retained_sequence_sizes(), (None, None));
+        state.retain_sequence(action_sequence(Action::Bow), None);
+        assert_eq!(state.slots[0].retained_sequence_sizes(), (Some(1), None));
         assert_eq!(state.slots[0].quickito, metadata);
-        assert_eq!(state.get_slot_titbit(0), None);
+        assert_eq!(
+            state.get_slot_titbit(0),
+            Some(crate::titbit::TitbitId::new(41).unwrap())
+        );
         assert_eq!(state.special_count(0), 0);
         let marker = crate::titbit::TitbitId::new(42).unwrap();
         state.set_slot_titbit(0, marker);
-        state.append_if_recording(step(Action::Bow, 3.0, 4.0));
+        state.retain_sequence(action_sequence(Action::Bow), None);
         assert_eq!(state.get_slot_titbit(0), Some(marker));
-        assert_eq!(state.slots[0].len(), 2);
+        assert_eq!(state.slots[0].len(), 1);
     }
 
     #[test]
     fn canceling_empty_recording_preserves_previous_slot_and_titbit() {
         let mut state = PcMacroState::default();
         state.begin_recording(0);
-        state.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        state.retain_sequence(action_sequence(Action::Bow), None);
         state.stop_recording();
         let titbit = crate::titbit::TitbitId::new(42).expect("valid test titbit");
         state.set_slot_titbit(0, titbit);
@@ -1340,10 +1296,10 @@ mod tests {
     }
 
     #[test]
-    fn first_captured_step_atomically_replaces_armed_slot() {
+    fn captured_sequence_replaces_armed_slot_and_keeps_assigned_marker() {
         let mut state = PcMacroState::default();
         state.begin_recording(0);
-        state.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        state.retain_sequence(action_sequence(Action::Bow), None);
         state.stop_recording();
         state.set_slot_titbit(
             0,
@@ -1351,12 +1307,18 @@ mod tests {
         );
 
         state.begin_recording(0);
-        state.append_if_recording(step(Action::Hit, 20.0, 20.0));
+        state.retain_sequence(action_sequence(Action::Hit), None);
 
         let slot = state.slot(0).expect("replacement slot");
-        assert_eq!(slot.steps.len(), 1);
-        assert_eq!(slot.steps[0].action, Action::Hit);
-        assert!(state.get_slot_titbit(0).is_none());
+        assert_eq!(slot.len(), 1);
+        assert_eq!(
+            slot.sequences().unwrap().0.elements[0].command,
+            Command::HitCmd
+        );
+        assert_eq!(
+            state.get_slot_titbit(0),
+            Some(crate::titbit::TitbitId::new(42).unwrap())
+        );
     }
 
     #[test]
@@ -1433,24 +1395,24 @@ mod tests {
     }
 
     #[test]
-    fn append_is_noop_without_recording() {
+    fn retain_sequence_is_noop_without_recording() {
         let mut s = PcMacroState::default();
-        s.append_if_recording(step(Action::Bow, 10.0, 10.0));
+        s.retain_sequence(action_sequence(Action::Bow), None);
         assert!(s.slots.iter().all(|sl| sl.is_empty()));
     }
 
     #[test]
-    fn stop_commits_slot() {
+    fn stop_preserves_last_retained_sequence() {
         let mut s = PcMacroState::default();
         s.begin_recording(1);
-        s.append_if_recording(step(Action::Hit, 1.0, 2.0));
-        s.append_if_recording(step(Action::Hit, 3.0, 4.0));
+        s.retain_sequence(action_sequence(Action::Hit), None);
+        s.retain_sequence(action_sequence(Action::Hit), None);
         s.stop_recording();
 
         assert!(!s.is_recording());
         assert!(s.has_macro(1));
         assert!(!s.has_macro(0));
-        assert_eq!(s.slot(1).unwrap().len(), 2);
+        assert_eq!(s.slot(1).unwrap().len(), 1);
     }
 
     #[test]
@@ -1463,7 +1425,7 @@ mod tests {
     fn clear_slot_also_stops_recording_and_resets_titbit() {
         let mut s = PcMacroState::default();
         s.begin_recording(2);
-        s.append_if_recording(step(Action::Stone, 0.0, 0.0));
+        s.retain_sequence(action_sequence(Action::Stone), None);
         s.set_slot_titbit(2, crate::titbit::TitbitId::new(42).unwrap());
         s.clear_slot(2);
         assert!(!s.is_recording());
@@ -1489,11 +1451,11 @@ mod tests {
         let mut s = PcMacroState::default();
         // slot 0: empty (just completed)
         s.begin_recording(1);
-        s.append_if_recording(step(Action::Bow, 1.0, 1.0));
+        s.retain_sequence(action_sequence(Action::Bow), None);
         s.set_slot_titbit(1, crate::titbit::TitbitId::new(101).unwrap());
         s.stop_recording();
         s.begin_recording(2);
-        s.append_if_recording(step(Action::Hit, 2.0, 2.0));
+        s.retain_sequence(action_sequence(Action::Hit), None);
         s.set_slot_titbit(2, crate::titbit::TitbitId::new(202).unwrap());
         s.stop_recording();
 
@@ -1519,7 +1481,7 @@ mod tests {
     fn do_tetris_on_last_slot_just_clears_it() {
         let mut s = PcMacroState::default();
         s.begin_recording(2);
-        s.append_if_recording(step(Action::Hit, 0.0, 0.0));
+        s.retain_sequence(action_sequence(Action::Hit), None);
         s.set_slot_titbit(2, crate::titbit::TitbitId::new(55).unwrap());
         s.stop_recording();
 
@@ -1535,35 +1497,11 @@ mod tests {
         let a = EntityId::Pc(crate::entity_id::PcId(1));
         let b = EntityId::Pc(crate::entity_id::PcId(2));
         store.get_or_insert(a).begin_recording(0);
-        store.append(a, step(Action::Bow, 1.0, 1.0));
+        store
+            .get_or_insert(a)
+            .retain_sequence(action_sequence(Action::Bow), None);
         assert!(store.get(a).unwrap().has_macro(0));
         assert!(store.get(b).is_none());
-    }
-
-    #[test]
-    fn dotted_chain_matches_original_walk() {
-        let mut slot = QuickActionSlot::default();
-        slot.steps.push(step(Action::Bow, 10.0, 0.0));
-        slot.steps.push(step(Action::Hit, 20.0, 0.0));
-        slot.steps.push(step(Action::Heal, 20.0, 10.0));
-
-        let segs = dotted_chain_segments(MapPoint::new(0.0, 0.0), &slot);
-        assert_eq!(segs.len(), 3);
-        assert_eq!(segs[0], (MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0)));
-        assert_eq!(
-            segs[1],
-            (MapPoint::new(10.0, 0.0), MapPoint::new(20.0, 0.0))
-        );
-        assert_eq!(
-            segs[2],
-            (MapPoint::new(20.0, 0.0), MapPoint::new(20.0, 10.0))
-        );
-    }
-
-    #[test]
-    fn dotted_chain_empty_slot_is_empty() {
-        let segs = dotted_chain_segments(MapPoint::new(5.0, 5.0), &QuickActionSlot::default());
-        assert!(segs.is_empty());
     }
 
     #[test]
@@ -1581,27 +1519,18 @@ mod tests {
     fn posture_toggle_roundtrip_through_slot() {
         let mut s = PcMacroState::default();
         s.begin_recording(0);
-        s.append_if_recording(QuickActionStep {
-            action: Action::NoAction,
-            position: MapPoint::new(0.0, 0.0),
-            replay: QaReplayCommand::PostureToggle { to_crouch: true },
+        s.retain_quickito(Quickito {
+            kind: QuickAction::GoDown,
+            ..Quickito::default()
         });
-        s.append_if_recording(QuickActionStep {
-            action: Action::NoAction,
-            position: MapPoint::new(0.0, 0.0),
-            replay: QaReplayCommand::PostureToggle { to_crouch: false },
+        s.retain_quickito(Quickito {
+            kind: QuickAction::GoUp,
+            ..Quickito::default()
         });
         s.stop_recording();
         let slot = s.slot(0).unwrap();
-        assert_eq!(slot.len(), 2);
-        match slot.steps[0].replay {
-            QaReplayCommand::PostureToggle { to_crouch } => assert!(to_crouch),
-            _ => panic!("wrong replay variant"),
-        }
-        match slot.steps[1].replay {
-            QaReplayCommand::PostureToggle { to_crouch } => assert!(!to_crouch),
-            _ => panic!("wrong replay variant"),
-        }
+        assert_eq!(slot.len(), 1);
+        assert_eq!(slot.quickito().unwrap().kind, QuickAction::GoUp);
 
         // Round-trip through JSON.
         let json = serde_json::to_string(&s).unwrap();
@@ -1613,22 +1542,12 @@ mod tests {
     fn serde_roundtrip() {
         let mut s = PcMacroState::default();
         s.begin_recording(0);
-        s.append_if_recording(step(Action::Bow, 12.0, 34.0));
+        s.retain_sequence(action_sequence(Action::Bow), None);
         s.set_slot_titbit(0, crate::titbit::TitbitId::new(99).unwrap());
         s.stop_recording();
 
         let json = serde_json::to_string(&s).unwrap();
         let back: PcMacroState = serde_json::from_str(&json).unwrap();
         assert_eq!(s, back);
-
-        let mut obsolete = serde_json::to_value(&s).unwrap();
-        obsolete
-            .as_object_mut()
-            .expect("PC macro state object")
-            .remove("recording_replaces_existing");
-        assert!(
-            serde_json::from_value::<PcMacroState>(obsolete).is_err(),
-            "SAVE53-era Rust macro state must not enter the current schema"
-        );
     }
 }

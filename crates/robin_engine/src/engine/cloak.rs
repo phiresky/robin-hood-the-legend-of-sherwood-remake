@@ -119,6 +119,20 @@ impl EngineInner {
         assets: &LevelAssets,
         actor: EntityId,
     ) -> bool {
+        if !self.can_enter_reusable_cloak(assets, actor) {
+            return false;
+        }
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new(1, Command::EnterCloak, Some(actor)));
+        self.launch_sequence(sim, assets, sequence);
+        true
+    }
+
+    pub(crate) fn can_enter_reusable_cloak(
+        &mut self,
+        assets: &LevelAssets,
+        actor: EntityId,
+    ) -> bool {
         if !self.control.sim_config.reusable_cloaks {
             tracing::debug!(
                 ?actor,
@@ -212,9 +226,6 @@ impl EngineInner {
             }
         }
 
-        let mut sequence = Sequence::new();
-        sequence.append_element(SequenceElement::new(1, Command::EnterCloak, Some(actor)));
-        self.launch_sequence(sim, assets, sequence);
         true
     }
 
