@@ -5,6 +5,11 @@ mod frame_systems;
 mod mission;
 mod paths;
 
+#[test]
+fn actor_done_publishes_to_installed_order_before_frame_tail() {
+    EngineInner::new().assert_done_uses_installed_order_before_tail();
+}
+
 #[path = "tick_action_change_step.rs"]
 mod tick_action_change_step;
 
@@ -45,47 +50,6 @@ pub(super) fn capture_projectile_derived_tails<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, crate::element::ObjectType)>) {
     PROJECTILE_DERIVED_TAIL_TRACE.with(|probe| probe.capture(f))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NpcHourglassPhase {
-    SoldierPrelude,
-    Patrol,
-    BaseHuman,
-    Broadcasts,
-    View,
-    Detection,
-    Ambush,
-    Busy,
-    Ladder,
-    LockGate,
-    SixteenthFrame,
-    NormalTimer,
-    MacroTimer,
-    QueuedStimuli,
-}
-
-#[cfg(test)]
-thread_local! {
-    static NPC_HOURGLASS_PHASE_TRACE: super::test_support::Probe<NpcHourglassPhase> =
-        const { super::test_support::Probe::new() };
-}
-
-fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
-    tracing::trace!(
-        target: "robin_engine::engine::tick::npc_phases",
-        ?phase,
-        "npc hourglass phase"
-    );
-    #[cfg(test)]
-    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.record(phase));
-}
-
-#[cfg(test)]
-pub(super) fn capture_npc_hourglass_phases<T>(
-    f: impl FnOnce() -> T,
-) -> (T, Vec<NpcHourglassPhase>) {
-    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -664,11 +628,10 @@ const HOURGLASS_LOG_INTERVAL: u32 = 100;
 pub(super) enum HourglassPhase {
     DeferredEffectsStart,
     MissionAndMessages,
-    NpcOrders,
+    ControlAndCleanup,
     Paths,
     Entities,
     EntitySystems,
-    Npcs,
     GameplaySystems,
     Sequences,
     DeferredEffectsEnd,
@@ -677,7 +640,7 @@ pub(super) enum HourglassPhase {
 #[derive(Default)]
 struct HourglassPhaseStats {
     count: u32,
-    total_us: [u128; 10],
+    total_us: [u128; 9],
 }
 
 /// Opt-in detail inside the otherwise broad `EntitySystems` phase.
@@ -796,14 +759,13 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
                         count = stats.count,
                         deferred_start_us = stats.total_us[0] / stats.count as u128,
                         mission_us = stats.total_us[1] / stats.count as u128,
-                        npc_orders_us = stats.total_us[2] / stats.count as u128,
+                        control_and_cleanup_us = stats.total_us[2] / stats.count as u128,
                         paths_us = stats.total_us[3] / stats.count as u128,
                         entities_us = stats.total_us[4] / stats.count as u128,
                         entity_systems_us = stats.total_us[5] / stats.count as u128,
-                        npcs_us = stats.total_us[6] / stats.count as u128,
-                        gameplay_us = stats.total_us[7] / stats.count as u128,
-                        sequences_us = stats.total_us[8] / stats.count as u128,
-                        deferred_end_us = stats.total_us[9] / stats.count as u128,
+                        gameplay_us = stats.total_us[6] / stats.count as u128,
+                        sequences_us = stats.total_us[7] / stats.count as u128,
+                        deferred_end_us = stats.total_us[8] / stats.count as u128,
                         "perform_hourglass phase timing"
                     );
                     *stats = HourglassPhaseStats::default();
@@ -975,7 +937,7 @@ impl EngineInner {
         assets: &LevelAssets,
         simulation_body_allowed: bool,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
         let effects = self.perform_hourglass_authoritative(
             &mut display,
@@ -990,7 +952,7 @@ impl EngineInner {
     pub(crate) fn perform_frame_post_initialize(
         &mut self,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         // Keep the existing placeholder/restoration boundary around script callbacks.
         let display = std::mem::take(&mut self.feedback.cutscene_camera.display);
         let effects = self.perform_post_initialize_authoritative(assets);
@@ -1070,7 +1032,7 @@ impl EngineInner {
         input: &mut InputState,
         assets: &LevelAssets,
         dev: &mut DevState,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let mut camera = self.feedback.cutscene_camera.display.clone();
         let effects = self.perform_hourglass_authoritative(&mut camera, assets, true, None);
         self.feedback.cutscene_camera.display = camera;
@@ -1095,7 +1057,7 @@ impl EngineInner {
         assets: &LevelAssets,
         simulation_body_allowed: bool,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
-    ) -> super::SideEffects {
+    ) -> super::HostEffects {
         let _hourglass_timer = HourglassTimer::start();
 
         let sim = self.control.simulation_context();
@@ -1349,7 +1311,7 @@ impl EngineInner {
     fn perform_post_initialize_authoritative(
         &mut self,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         if !self.control.sim_config.script_enabled
             || self.script_domains.mission_ui.game_post_initialized
         {
@@ -1362,7 +1324,7 @@ impl EngineInner {
             self.script_domains.mission_ui.game_post_initialized = true;
             // Completion is authoritative even with no callback effects:
             // the host records Some as the replay's post-initialize stage bit.
-            return Some(super::SideEffects {
+            return Some(super::HostEffects {
                 code: GameCode::LevelInProgress,
                 ..Default::default()
             });
@@ -1391,7 +1353,7 @@ impl EngineInner {
         &mut self,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
-    ) -> Option<super::SideEffects> {
+    ) -> Option<super::HostEffects> {
         let camera = self.feedback.cutscene_camera.display.clone();
         let effects = self.perform_post_initialize_authoritative(assets);
         self.feedback.cutscene_camera.display = camera;
@@ -1440,8 +1402,8 @@ impl EngineInner {
             return code;
         }
 
-        time_hourglass_phase(HourglassPhase::NpcOrders, || {
-            self.hourglass_phase_npc_orders(sim, assets)
+        time_hourglass_phase(HourglassPhase::ControlAndCleanup, || {
+            self.hourglass_phase_control_and_cleanup(sim, assets)
         });
 
         time_hourglass_phase(HourglassPhase::Paths, || {
@@ -1454,8 +1416,6 @@ impl EngineInner {
         time_hourglass_phase(HourglassPhase::EntitySystems, || {
             self.hourglass_phase_entity_systems(sim, assets)
         });
-
-        time_hourglass_phase(HourglassPhase::Npcs, || self.hourglass_phase_npcs());
 
         time_hourglass_phase(HourglassPhase::GameplaySystems, || {
             self.hourglass_phase_gameplay_systems(sim, display, assets)
@@ -2360,6 +2320,29 @@ impl EngineInner {
             MotionState::Start | MotionState::InProgress => {}
             MotionState::Error => panic!("actor {owner:?} Execute returned MotionState::Error"),
         }
+    }
+
+    #[cfg(test)]
+    fn assert_done_uses_installed_order_before_tail(&mut self) {
+        let owner = self.add_test_entity(super::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let installed = self.install_test_order(owner, crate::order::OrderType::WaitingUpright);
+        let selected = self.install_test_order(owner, crate::order::OrderType::WaitingAlerted);
+        self.install_actor_order(owner, Some(installed));
+        self.select_sequence_element(
+            owner,
+            Some((selected.element.sequence_id, selected.element.element_index)),
+        );
+        self.finish_actor_execute_completion(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            None,
+            crate::sprite::MotionState::Done,
+        );
+        assert!(installed.resolve(&self.orders.sequence_manager).done);
+        assert!(!selected.resolve(&self.orders.sequence_manager).done);
     }
 
     /// Whether `owner` is a beggar civilian that refuses this command.

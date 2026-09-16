@@ -656,7 +656,6 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
         engine
             .feedback
             .pending_side_effects
-            .host_effects
             .has_signal(crate::engine::HostSignal::ResetInput)
     );
 }

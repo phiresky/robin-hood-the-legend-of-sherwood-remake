@@ -1421,34 +1421,9 @@ fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
         engine
             .feedback
             .pending_side_effects
-            .host_effects
             .take_modals(crate::engine::HostModalPhase::Popup),
         vec![crate::player_command::ModalKind::PopupText { text_id: 11 }]
     );
-}
-
-#[test]
-fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
-    let mut engine = EngineInner::new();
-    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
-    engine
-        .script_domains
-        .interactables
-        .patches
-        .push(crate::patch::Patch {
-            integrate_in_background: true,
-            ..Default::default()
-        });
-    let patch_index = crate::patch::PatchIndex::new(0).expect("zero is a valid patch index");
-
-    engine.apply_patch(sim, &LevelAssets::default(), patch_index);
-    assert!(engine.feedback.pending_side_effects.invalidate_background);
-
-    engine.feedback.pending_side_effects.invalidate_background = false;
-    engine.reset_patch(sim, &LevelAssets::default(), patch_index);
-    assert!(engine.feedback.pending_side_effects.invalidate_background);
 }
 
 #[test]

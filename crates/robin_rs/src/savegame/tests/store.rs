@@ -22,6 +22,35 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
     assert_eq!(manager.find_resume_target(), Some(0));
 }
 
+#[test]
+fn automatic_resume_skips_incompatible_checkpoints_without_removing_them() {
+    for version in [
+        save_file::SAVE_FORMAT_VERSION - 1,
+        save_file::SAVE_FORMAT_VERSION + 1,
+    ] {
+        let mut manager = SaveGameManager::new(String::new());
+        let mut continued = published_slot("Continue");
+        continued.timestamp = "100".into();
+        let mut autosave = published_slot("Autosave_200_0000");
+        autosave.timestamp = "200".into();
+        autosave.version = version;
+        for save in [continued, autosave] {
+            manager.insert_test_slot(save, SlotState::Published);
+        }
+        assert_eq!(manager.find_resume_target(), Some(0));
+
+        manager.catalog[0].version = version;
+        let incompatible = manager.saves().cloned().collect::<Vec<_>>();
+        assert_eq!(manager.find_resume_target(), None);
+        assert_eq!(manager.saves().cloned().collect::<Vec<_>>(), incompatible);
+
+        // A newer incompatible Continue must not mask a compatible autosave.
+        manager.catalog[0].timestamp = "300".into();
+        manager.catalog[1].version = save_file::SAVE_FORMAT_VERSION;
+        assert_eq!(manager.find_resume_target(), Some(1));
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn synchronous_publication_failure_matrix_recovers_only_completed_payloads() {
@@ -884,7 +913,7 @@ fn invalid_and_duplicate_index_names_are_rejected_before_recovery() {
 }
 
 #[test]
-fn corrupt_obsolete_and_unreadable_indexes_do_not_reset_existing_saves() {
+fn corrupt_invalid_and_unreadable_indexes_do_not_reset_existing_saves() {
     let root = tempfile::tempdir().unwrap();
     let payload = root.path().join("Savegame_000.json");
     let index = root.path().join("saves.json");
@@ -910,6 +939,85 @@ fn corrupt_obsolete_and_unreadable_indexes_do_not_reset_existing_saves() {
     std::fs::create_dir(&index).unwrap();
     assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
     assert_eq!(std::fs::read(payload).unwrap(), b"precious payload");
+}
+
+#[test]
+fn incompatible_payload_versions_do_not_block_the_save_store() {
+    use autosave_store::{AUTOSAVE_MANIFEST_FILE, AutosaveManifest};
+
+    for version in [
+        save_file::SAVE_FORMAT_VERSION - 1,
+        save_file::SAVE_FORMAT_VERSION + 1,
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().to_str().unwrap();
+        let mut quick = published_slot(special_slots::EX_QUICK);
+        quick.version = version;
+        let mut autosave = published_slot("Autosave_123_0000");
+        autosave.version = version;
+        let current = published_slot("Savegame_000");
+        let slots = vec![quick.clone(), current.clone()];
+        let index = serde_json::to_vec(&SaveIndex {
+            saves: slots.clone(),
+            next_id: 1,
+            save_directory: directory.into(),
+        })
+        .unwrap();
+        let manifest = serde_json::to_vec(&AutosaveManifest {
+            saves: vec![autosave.clone()],
+            ..Default::default()
+        })
+        .unwrap();
+        // An incompatible header must be rejected before decoding its body.
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "header": { "version": version }
+        }))
+        .unwrap();
+        std::fs::write(root.path().join("saves.json"), &index).unwrap();
+        std::fs::write(root.path().join(AUTOSAVE_MANIFEST_FILE), &manifest).unwrap();
+        for slot in [&quick, &autosave] {
+            std::fs::write(
+                root.path().join(format!("{}.json", slot.filename)),
+                &payload,
+            )
+            .unwrap();
+        }
+
+        let mut manager = SaveGameManager::load_index(directory).unwrap();
+        manager.load_autosaves().unwrap();
+        assert_eq!(
+            manager.saves().cloned().collect::<Vec<_>>(),
+            vec![quick.clone(), current, autosave.clone()]
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("saves.json")).unwrap(),
+            index
+        );
+        for slot in [&quick, &autosave] {
+            let selected = manager.find_by_filename(&slot.filename).unwrap();
+            let error = manager.preflight_exact_slot(selected).err().unwrap();
+            assert!(format!("{error:#}").contains(&format!(
+                "unsupported save file version: expected {}, got {version}",
+                save_file::SAVE_FORMAT_VERSION
+            )));
+            assert_eq!(
+                std::fs::read(root.path().join(format!("{}.json", slot.filename))).unwrap(),
+                payload
+            );
+        }
+        // Later index writes must also retain incompatible slots unchanged.
+        manager.save_index().unwrap();
+        let mut reopened = SaveGameManager::load_index(directory).unwrap();
+        reopened.load_autosaves().unwrap();
+        assert_eq!(
+            reopened.saves().cloned().collect::<Vec<_>>(),
+            manager.saves().cloned().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            std::fs::read(root.path().join(AUTOSAVE_MANIFEST_FILE)).unwrap(),
+            manifest
+        );
+    }
 }
 
 #[test]

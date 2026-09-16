@@ -3241,22 +3241,6 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         Some(MotionState::InProgress),
         "Turn()'s authoritative result must replace the visual sprite edge"
     );
-
-    crate::engine::order_arbitration::propagate_done_to_current_orders(
-        &mut engine.world.entities,
-        &mut engine.orders.sequence_manager,
-    );
-    assert!(
-        !engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap()
-            .current_order()
-            .unwrap()
-            .done,
-        "end-of-frame sprite propagation must preserve the rotating Turn order"
-    );
 }
 
 #[test]

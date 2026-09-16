@@ -49,12 +49,27 @@ impl SaveGameManager {
             .filter(|&i| self.slot_file_exists(i))
     }
 
-    /// Play resumes the latest published checkpoint. A lifecycle autosave can
-    /// be newer than Continue, particularly after advancing to another mission.
+    /// Play resumes the latest compatible published checkpoint. A lifecycle
+    /// autosave can be newer than Continue, particularly after advancing to
+    /// another mission. Incompatible checkpoints remain available for explicit
+    /// selection, where payload preflight reports the version error.
     pub fn find_resume_target(&self) -> Option<usize> {
         self.saves()
             .enumerate()
             .filter(|(_, save)| save.is_continue() || save.is_autosave())
+            .filter(|(_, save)| {
+                if save.version == save_file::SAVE_FORMAT_VERSION {
+                    true
+                } else {
+                    tracing::warn!(
+                        filename = save.filename,
+                        version = save.version,
+                        expected = save_file::SAVE_FORMAT_VERSION,
+                        "Skipping incompatible checkpoint for automatic resume"
+                    );
+                    false
+                }
+            })
             .max_by_key(|(_, save)| {
                 (
                     save.timestamp

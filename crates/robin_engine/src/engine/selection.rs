@@ -799,7 +799,7 @@ impl EngineInner {
         // effect flag wipes when consumed by `Host::apply_side_effects`.
         self.feedback
             .pending_side_effects
-            .invalidate_trajectory_preview = true;
+            .request_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview);
 
         // Cache the recording-macro state and use it to skip the
         // unselect-action / "stop in place" / pre-action-bow side effects
@@ -921,7 +921,9 @@ impl EngineInner {
             // double-click repeat path.
             input.ignore_mouse_event(false, false, true);
         } else {
-            self.feedback.pending_side_effects.cancel_multi_selection = true;
+            self.feedback
+                .pending_side_effects
+                .request_signal(crate::engine::HostSignal::CancelMultiSelection);
             // TODO(input): expose the third IgnoreMouseEvent argument as a
             // host side effect too. Resolved-command replay is independent
             // of this raw double-click latch, but live simulation-originated
@@ -1785,7 +1787,7 @@ mod tests {
             engine
                 .feedback
                 .pending_side_effects
-                .invalidate_trajectory_preview
+                .has_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview)
         );
     }
 
@@ -1804,9 +1806,14 @@ mod tests {
             engine
                 .feedback
                 .pending_side_effects
-                .invalidate_trajectory_preview
+                .has_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview)
         );
-        assert!(engine.feedback.pending_side_effects.cancel_multi_selection);
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
+                .has_signal(crate::engine::HostSignal::CancelMultiSelection)
+        );
     }
 
     #[test]

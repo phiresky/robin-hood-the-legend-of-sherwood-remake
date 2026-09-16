@@ -133,7 +133,6 @@ fn mission_state_transitions() {
         engine
             .feedback
             .pending_side_effects
-            .host_effects
             .has_signal(crate::engine::HostSignal::SilentWinWidgetSwap)
     );
 }
@@ -153,9 +152,7 @@ fn mission_won_first_time_raises_mission_state_notice() {
         engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
-        side_effects
-            .host_effects
-            .has_signal(crate::engine::HostSignal::MissionStateNotice),
+        side_effects.has_signal(crate::engine::HostSignal::MissionStateNotice),
         "expected pending_mission_state_notice side effect"
     );
 }

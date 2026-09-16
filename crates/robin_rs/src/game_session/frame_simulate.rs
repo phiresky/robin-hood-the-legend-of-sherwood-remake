@@ -1977,7 +1977,7 @@ mod tests {
             .advance_frame(&assets, Default::default())
             .expect("advance after closing the victory prompt");
         assert_eq!(
-            next.game_code(),
+            next.events.code,
             robin_engine::game_operation::GameCode::LevelSucceeded
         );
     }

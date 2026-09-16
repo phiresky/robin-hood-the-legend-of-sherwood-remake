@@ -276,12 +276,6 @@ pub struct PcData {
     /// Each entry counts down each frame and is removed at 0, preventing
     /// the same expression from repeating too quickly.
     pub forbidden_expressions: Vec<(u16, u16)>,
-
-    /// Last `combat_anim` id observed by the speech-trigger tick — used
-    /// to detect the START of a new animation and the DONE transition
-    /// (anim cleared) for a remark played after an action.
-    pub prev_combat_anim_id: u32,
-    pub prev_combat_anim_ot: Option<crate::order::OrderType>,
 }
 
 impl Default for PcData {
@@ -336,8 +330,6 @@ impl Default for PcData {
             melee_target: None,
             initial_action: 0,
             forbidden_expressions: Vec::new(),
-            prev_combat_anim_id: 0,
-            prev_combat_anim_ot: None,
         }
     }
 }

@@ -220,7 +220,7 @@ impl EngineInner {
                 self.players.user_locked = true;
                 self.feedback
                     .pending_side_effects
-                    .invalidate_trajectory_preview = true;
+                    .request_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview);
                 self.players.selection_before_user_lock = self.players.seats[0].selection.clone();
                 if let Some(pc_id) = self.players.seats[0].selection.first().copied() {
                     self.set_pc_action_from_message(
@@ -242,7 +242,6 @@ impl EngineInner {
                 }
                 self.feedback
                     .pending_side_effects
-                    .host_effects
                     .request_signal(crate::engine::HostSignal::ResetInput);
             }
             _ => unreachable!("apply_script_user_lock received {command:?}"),
@@ -309,7 +308,6 @@ impl EngineInner {
                 if let Some(position) = point {
                     self.feedback.cutscene_camera.view_position =
                         self.check_location_is_valid_for_camera(position);
-                    self.feedback.pending_side_effects.invalidate_background = true;
                 }
                 self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
             }
@@ -461,6 +459,11 @@ mod tests {
                 .sequence_manager
                 .queued_element_exists(owner, Command::UnequipBow)
         );
-        assert!(engine.feedback.pending_side_effects.cancel_multi_selection);
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
+                .has_signal(crate::engine::HostSignal::CancelMultiSelection)
+        );
     }
 }

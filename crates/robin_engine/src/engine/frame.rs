@@ -31,7 +31,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ConsoleResponse, DirectorCompletion, SideEffects};
+use super::{ConsoleResponse, DirectorCompletion, HostEffects};
 use crate::campaign::Campaign;
 use crate::console::ConsoleCommand;
 use crate::element::EntityId;
@@ -513,53 +513,6 @@ impl SimulationFrameInput {
     }
 }
 
-/// Ordered output events produced by the modeled hourglass transaction.
-///
-/// [`SideEffects`] remains the compatibility payload while callers migrate to
-/// the frame API. Keeping it behind this type makes the sim-to-host direction
-/// explicit without re-encoding or reordering any existing event fields.
-/// The host-local `SideEffects::pending_minimap_position` remains available in
-/// memory even though the `SideEffects` Serde representation deliberately
-/// skips it.
-#[derive(
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-#[serde(transparent)]
-pub struct SimEvents(SideEffects);
-
-impl SimEvents {
-    pub fn game_code(&self) -> GameCode {
-        self.0.code
-    }
-
-    pub fn side_effects(&self) -> &SideEffects {
-        &self.0
-    }
-
-    pub fn into_side_effects(self) -> SideEffects {
-        self.0
-    }
-}
-
-impl From<SideEffects> for SimEvents {
-    fn from(side_effects: SideEffects) -> Self {
-        Self(side_effects)
-    }
-}
-
-impl From<SimEvents> for SideEffects {
-    fn from(events: SimEvents) -> Self {
-        events.into_side_effects()
-    }
-}
-
 /// Result of one admitted engine-hourglass transaction.
 #[derive(
     Clone,
@@ -579,14 +532,14 @@ pub struct SimulationFrameOutput<Hash: robin_util::state_hash::StateHash = u64> 
     /// True exactly when this admission ran a simulation tick.
     pub hourglass_ran: bool,
     /// Output for the host to consume after the transaction.
-    pub events: SimEvents,
+    pub events: HostEffects,
     /// Ordered effects emitted by post-hourglass external actions and player
     /// commands. These must be delivered even when no hourglass or one-shot
     /// PostInitialize stage runs; otherwise a modal-issued command can strand
     /// its acknowledgement behind the modal that is waiting for it.
-    pub post_boundary_events: SimEvents,
+    pub post_boundary_events: HostEffects,
     /// Ordered effects produced by the optional one-shot lifecycle stage.
-    pub post_initialize_events: Option<SimEvents>,
+    pub post_initialize_events: Option<HostEffects>,
     /// Results for pre- then post-hourglass external actions, in order.
     pub external_action_results: Vec<ExternalActionResult>,
     /// Canonical deterministic engine-state hash after the full modeled
@@ -600,7 +553,7 @@ pub struct SimulationFrameOutput<Hash: robin_util::state_hash::StateHash = u64> 
 
 impl<Hash: robin_util::state_hash::StateHash> SimulationFrameOutput<Hash> {
     pub fn game_code(&self) -> GameCode {
-        self.events.game_code()
+        self.events.code
     }
 }
 

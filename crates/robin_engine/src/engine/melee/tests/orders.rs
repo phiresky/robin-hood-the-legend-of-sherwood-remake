@@ -887,7 +887,7 @@ fn enabling_temp_actions_restores_matching_slot_after_targeted_selection_collaps
         engine
             .feedback
             .pending_side_effects
-            .invalidate_trajectory_preview
+            .has_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview)
     );
 }
 
@@ -917,6 +917,6 @@ fn enabling_temp_actions_does_not_restore_action_absent_from_profile_slots() {
         !engine
             .feedback
             .pending_side_effects
-            .invalidate_trajectory_preview
+            .has_signal(crate::engine::HostSignal::InvalidateTrajectoryPreview)
     );
 }

@@ -415,6 +415,26 @@ impl LiveWindowSlot {
 
 static GAME_WINDOW: LiveWindowSlot = LiveWindowSlot::new();
 
+/// Native monitor cadence, when the window system exposes it. Browser pacing
+/// remains driven by requestAnimationFrame rather than a guessed refresh rate.
+pub(crate) fn presentation_period_us() -> Option<u64> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut rate = None;
+        GAME_WINDOW.with(|window| {
+            rate = window
+                .current_monitor()
+                .and_then(|monitor| monitor.refresh_rate_millihertz());
+        });
+        rate.filter(|rate| *rate > 0)
+            .map(|rate| 1_000_000_000 / u64::from(rate))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+}
+
 /// Commands flowing from the game out to the [`AppHandler`] / window.
 /// Picked up on the next `about_to_wait` / `new_events` callback.
 pub(crate) enum HostCmd {

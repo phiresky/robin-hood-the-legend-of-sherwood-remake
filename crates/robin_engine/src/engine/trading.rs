@@ -96,7 +96,6 @@ impl EngineInner {
             engine
                 .feedback
                 .pending_side_effects
-                .host_effects
                 .trade_receipts
                 .push(TradeReceipt::rejected(
                     request_id, prod_type, quantity, reason,
@@ -170,7 +169,6 @@ impl EngineInner {
 
         self.feedback
             .pending_side_effects
-            .host_effects
             .trade_receipts
             .push(TradeReceipt {
                 request_id,
@@ -325,11 +323,7 @@ mod tests {
         );
         assert_eq!(engine.mission_domain.mission_stat.collected_money, 0);
         assert_eq!(
-            engine
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts,
+            engine.feedback.pending_side_effects.trade_receipts,
             vec![TradeReceipt {
                 request_id: 1,
                 prod_type: Type::MakeArrow,
@@ -365,12 +359,7 @@ mod tests {
             ransom_before + 12
         );
         assert!(matches!(
-            engine
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts[0]
-                .outcome,
+            engine.feedback.pending_side_effects.trade_receipts[0].outcome,
             TradeOutcome::Sold {
                 units: 1,
                 unit_price: 2,
@@ -380,12 +369,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            engine
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts[1]
-                .outcome,
+            engine.feedback.pending_side_effects.trade_receipts[1].outcome,
             TradeOutcome::Sold {
                 units: 5,
                 unit_price: 2,
@@ -417,11 +401,7 @@ mod tests {
                 .get_value(CampaignValue::Ransom),
             ransom_before + 5
         );
-        let receipts = &engine
-            .feedback
-            .pending_side_effects
-            .host_effects
-            .trade_receipts;
+        let receipts = &engine.feedback.pending_side_effects.trade_receipts;
         assert_eq!(
             receipts[0].outcome,
             TradeOutcome::Rejected(TradeRejectReason::HostOnly)
@@ -443,12 +423,7 @@ mod tests {
         disabled.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&disabled.world.entities, Action::Bow), 6);
         assert_eq!(
-            disabled
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts[0]
-                .outcome,
+            disabled.feedback.pending_side_effects.trade_receipts[0].outcome,
             TradeOutcome::Rejected(TradeRejectReason::TradingDisabled)
         );
 
@@ -457,12 +432,7 @@ mod tests {
         outside.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&outside.world.entities, Action::Bow), 6);
         assert_eq!(
-            outside
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts[0]
-                .outcome,
+            outside.feedback.pending_side_effects.trade_receipts[0].outcome,
             TradeOutcome::Rejected(TradeRejectReason::NotInSherwood)
         );
 
@@ -474,12 +444,7 @@ mod tests {
         overflow.sell_sherwood_production_item(&assets, 0, 1, Type::MakeArrow, TradeQuantity::One);
         assert_eq!(stored_stock(&overflow.world.entities, Action::Bow), 6);
         assert_eq!(
-            overflow
-                .feedback
-                .pending_side_effects
-                .host_effects
-                .trade_receipts[0]
-                .outcome,
+            overflow.feedback.pending_side_effects.trade_receipts[0].outcome,
             TradeOutcome::Rejected(TradeRejectReason::CurrencyOverflow)
         );
     }

@@ -4,7 +4,7 @@
 //! moved to robin_rs once engine code stopped depending on it. Each
 //! client owns one `Host`; rollback snapshots ignore it (each client
 //! reconstructs its own from hardware context). Engine reaches host
-//! state only through input parameters and `SideEffects` outputs.
+//! state only through input parameters and `HostEffects` outputs.
 
 use robin_assets::frame_holder::{FrameHolder, PublishedFrameHolder};
 use robin_assets::shipping_datadir::ShippingDatadir;
@@ -14,7 +14,7 @@ use robin_engine::coordinates::{
 use robin_engine::element::EntityId;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{
-    DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, SideEffects, SoundCommand,
+    DrawOrder, FadeToBlack, GroundMarkSpriteData, HostEffects, InputState, SoundCommand,
 };
 use robin_engine::game_operation::GameCode;
 use robin_engine::markers as engine_markers;
@@ -327,12 +327,12 @@ impl Host {
 
         // Drop any UI-request queues that were in flight before the
         // load.  They live host-side now — accumulated from per-tick
-        // `SideEffects.pending_*` by `Host::apply_side_effects`.
+        // `HostEffects` by `Host::apply_side_effects`.
         self.effects.clear();
     }
 
     /// Apply engine outputs using only the frontend, audio and effect queues.
-    pub fn apply_side_effects(&mut self, fx: SideEffects) -> GameCode {
+    pub fn apply_side_effects(&mut self, fx: HostEffects) -> GameCode {
         self.frontend.apply_side_effects(
             fx,
             &mut self.audio,

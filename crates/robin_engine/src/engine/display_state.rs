@@ -55,10 +55,9 @@ impl EngineInner {
 
     //
     // The Rust GPU renderer re-composes the scene every frame, so there
-    // is no offscreen cache to invalidate from the engine — host cache
-    // bookkeeping (patch bake, window-regain-focus) is driven by
-    // `SideEffects::invalidate_background`, and save-load
-    // clears mid-zoom state via `EngineSnapshot::apply_to`.
+    // is no offscreen cache to invalidate from the engine. Patch background
+    // changes travel as explicit blit/restore requests; camera state is read
+    // directly for each render pass.
     pub(super) fn tick_display_state(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

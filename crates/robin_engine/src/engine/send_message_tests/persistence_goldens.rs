@@ -29,25 +29,20 @@ fn populated_engine() -> EngineInner {
     let effects = &mut engine.feedback.pending_side_effects;
     effects.code = crate::game_operation::GameCode::LevelSucceeded;
     effects.overlay = Some(crate::engine::OverlayChange::Hide);
-    effects.invalidate_background = true;
-    effects.reset_input = true;
+    effects.request_signal(crate::engine::HostSignal::ResetModalInput);
     effects.fade_to_black = Some(Some(crate::engine::FadeToBlack {
         speed: 12,
         frames_remaining: 7,
     }));
     effects.set_draw_hidden = Some(false);
-    effects.host_effects.extend_dialogues(vec![5, -1, 99]);
-    effects.host_effects.extend_popup_texts(vec![42]);
-    effects.host_effects.request_sherwood_report();
+    effects.extend_dialogues(vec![5, -1, 99]);
+    effects.extend_popup_texts(vec![42]);
+    effects.request_sherwood_report();
     {
-        effects
-            .host_effects
-            .request_signal(crate::engine::HostSignal::MissionStateNotice);
-        effects
-            .host_effects
-            .request_signal(crate::engine::HostSignal::MissionStatePopup);
+        effects.request_signal(crate::engine::HostSignal::MissionStateNotice);
+        effects.request_signal(crate::engine::HostSignal::MissionStatePopup);
     };
-    effects.ui_has_focus = true;
+    effects.request_signal(crate::engine::HostSignal::ClearUiFocus);
     effects.pending_minimap_position = Some(crate::coordinates::ScreenPoint::new(56.0, 78.0));
     effects.pending_minimap_display_maps = vec![crate::engine::MinimapDisplayRequest {
         show: true,
@@ -81,8 +76,8 @@ fn mission_script_and_side_effects_roundtrip_with_persisted_clone() {
     let effects = &engine.feedback.pending_side_effects;
     let effects_json = serde_json::to_string(effects).unwrap();
     let effects_native = bitcode::encode(effects);
-    let json_effects: crate::engine::SideEffects = serde_json::from_str(&effects_json).unwrap();
-    let native_effects: crate::engine::SideEffects = bitcode::decode(&effects_native).unwrap();
+    let json_effects: crate::engine::HostEffects = serde_json::from_str(&effects_json).unwrap();
+    let native_effects: crate::engine::HostEffects = bitcode::decode(&effects_native).unwrap();
     assert_eq!(bitcode::encode(&native_effects), effects_native);
     assert_eq!(
         native_effects.pending_minimap_position,

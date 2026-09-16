@@ -2737,10 +2737,7 @@ impl EngineInner {
                         elem_idx,
                         crate::sequence::Field::DialogId,
                     );
-                    self.feedback
-                        .pending_side_effects
-                        .host_effects
-                        .extend_dialogues([id]);
+                    self.feedback.pending_side_effects.extend_dialogues([id]);
                 }
                 self.sequence_presentation_reset_input(sim, assets);
             }
@@ -2751,10 +2748,7 @@ impl EngineInner {
                         elem_idx,
                         crate::sequence::Field::PopupTextId,
                     );
-                    self.feedback
-                        .pending_side_effects
-                        .host_effects
-                        .extend_popup_texts([id]);
+                    self.feedback.pending_side_effects.extend_popup_texts([id]);
                 }
                 self.sequence_presentation_reset_input(sim, assets);
             }

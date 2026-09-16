@@ -537,61 +537,20 @@ pub enum SoundCommand {
 
 // ─── Side effects ────────────────────────────────────────────────────
 
-/// Ordered request to change minimap visibility. The tuple wire representation
-/// is retained so naming these independent flags does not change snapshots.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-#[serde(from = "(bool, bool)", into = "(bool, bool)")]
+/// Ordered request to change minimap visibility and optionally restore its position.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MinimapDisplayRequest {
     pub show: bool,
     pub restore_position: bool,
-}
-
-impl robin_util::state_hash::StateHash for MinimapDisplayRequest {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.show, self.restore_position).state_hash(state);
-    }
-}
-
-impl From<(bool, bool)> for MinimapDisplayRequest {
-    fn from((show, restore_position): (bool, bool)) -> Self {
-        Self {
-            show,
-            restore_position,
-        }
-    }
-}
-
-impl From<MinimapDisplayRequest> for (bool, bool) {
-    fn from(request: MinimapDisplayRequest) -> Self {
-        (request.show, request.restore_position)
-    }
-}
-
-#[cfg(test)]
-mod minimap_display_request_tests {
-    use super::MinimapDisplayRequest;
-    use robin_util::state_hash::StateHash;
-    use std::hash::Hasher;
-
-    #[test]
-    fn named_flags_retain_tuple_json_and_native_bytes() {
-        for show in [false, true] {
-            for restore_position in [false, true] {
-                let tuple = (show, restore_position);
-                let request = MinimapDisplayRequest::from(tuple);
-                let json = serde_json::to_string(&request).unwrap();
-                assert_eq!(json, serde_json::to_string(&tuple).unwrap());
-                assert_eq!(bitcode::encode(&request), bitcode::encode(&tuple));
-                let mut named_hash = std::collections::hash_map::DefaultHasher::new();
-                let mut tuple_hash = std::collections::hash_map::DefaultHasher::new();
-                request.state_hash(&mut named_hash);
-                tuple.state_hash(&mut tuple_hash);
-                assert_eq!(named_hash.finish(), tuple_hash.finish());
-                let decoded: MinimapDisplayRequest = serde_json::from_str(&json).unwrap();
-                assert_eq!((decoded.show, decoded.restore_position), tuple);
-            }
-        }
-    }
 }
 
 /// Changes the PC-info hover overlay applied post-tick by the host.
@@ -715,11 +674,12 @@ pub struct MacroSlotLengths {
 
 /// Outputs produced by one simulation tick that must be applied to the
 /// host *after* the sim has finished. The sim never writes to the host
-/// directly — it pushes into `EngineInner::pending_side_effects`, which is
-/// drained and handed to [`Host::apply_side_effects`] every frame.
+/// directly — it pushes into its feedback output, which is drained at the
+/// admitted frame boundary. Game status and sound commands retain their
+/// authoritative frame timing; presentation requests have explicit host phases.
 ///
 /// This is the only channel through which sim-originated state reaches
-/// the host. Rollback replay discards the produced `SideEffects` so
+/// the host. Rollback replay discards the produced `HostEffects` so
 /// audio/UI aren't duplicated when a frame is re-simulated.
 #[derive(
     Debug,
@@ -731,7 +691,7 @@ pub struct MacroSlotLengths {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct SideEffects {
+pub struct HostEffects {
     /// The game-state code returned by the tick (in-progress / succeeded / failed / interrupted).
     pub code: crate::game_operation::GameCode,
     /// Exclamations and other sim-originated sound triggers.
@@ -743,18 +703,6 @@ pub struct SideEffects {
     pub host_events: Vec<HostEvent>,
     /// PC-info hover overlay show/hide requested by the sim this tick.
     pub overlay: Option<OverlayChange>,
-    /// Sim asked the host to invalidate its cached background this tick.
-    pub invalidate_background: bool,
-    /// Sim asked the host to drop any cached trajectory preview this tick.
-    /// Emitted from the scroll handlers and other places that invalidate
-    /// world-to-screen aim previews. Host clears `host.valid_trajectory`
-    /// on consume.
-    pub invalidate_trajectory_preview: bool,
-    /// Sim consumed a `ResetInput` broadcast this tick.  Host clears
-    /// the rubber-band / click-suppression flags on `InputState` so a
-    /// modal popup / dialog entered from a sequence command doesn't
-    /// leave a pending drag or click armed.
-    pub reset_input: bool,
     /// Fade-to-black overlay transition requested this tick.
     /// `Some(..)` = start/replace fade. `Some(None)` = clear fade.
     /// `None` = no change.
@@ -764,34 +712,17 @@ pub struct SideEffects {
     /// Whether the host should skip the render pass this frame.
     /// Used by fast-forward mode (render only every 32nd frame).
     pub skip_render: bool,
-    /// Deferred modal, signal, receipt and render requests, consumed using
-    /// the same typed representation on the host after rollback admission.
-    pub host_effects: super::HostEffects,
+    /// Modal requests are consumed by priority, preserving order within a phase.
+    pub modals: Vec<crate::player_command::ModalKind>,
+    /// Coalesced requests retain their own consumption phase.
+    pub signals: Vec<super::HostSignal>,
+    pub trade_receipts: Vec<crate::trading::TradeReceipt>,
+    pub background_blits: Vec<super::PendingBgBlit>,
     /// Entities the sim asked to render a one-frame full-alpha outline
     /// on this tick.  Currently only populated by the
     /// `AddPCToMissionTeam` native, marking the PC after it is added.
     /// Host merges into [`CursorFeedback::marked_pc_ids`] each frame.
     pub pending_mark_pc_ids: Vec<crate::element::EntityId>,
-    /// `CenterOn` forces a rubber-band cancel (clears the multi-select
-    /// / multi-unselect flags). The host clears the two flags on
-    /// [`InputState`] in `apply_side_effects`.
-    pub cancel_multi_selection: bool,
-    /// Swordfight-drag ignore-mouse-event bracket: when the selected PC
-    /// was swordfighting at the start of `perform_hourglass` but is no
-    /// longer swordfighting after the per-element / sequence-manager
-    /// hourglass pass, and a drag is in flight, the engine calls
-    /// `ignore_mouse_event(true, true, true)` so the in-flight drag
-    /// doesn't leak into a left-click release the frame the swordfight
-    /// ends.  Host drains this: if the flag is set and `is_dragging`
-    /// is true, it flips `ignore_next_left_click`, `ignore_next_drag`,
-    /// and `next_left_double_is_simple` on `InputState`.
-    pub pending_swordfight_drag_ignore: bool,
-    /// Sim observed `SimpleMessage::UiHasFocus` on the messenger this tick.
-    /// Host display preparation clears `InputState.controls.has_focus` before
-    /// later mouse dispatch. No separate host latch is needed by current code.
-    /// TODO: port the original RHDISPLAY_INITZOOM focus gate when implementing
-    /// that display path; preserve its per-frame message timing then.
-    pub ui_has_focus: bool,
     /// New top-left of the deployed minimap when an accepted drag /
     /// resize / setup-time validation moved it this tick. The host
     /// drains this by writing the top-left into the active
@@ -806,7 +737,7 @@ pub struct SideEffects {
     pub pending_minimap_display_maps: Vec<MinimapDisplayRequest>,
 }
 
-impl SideEffects {
+impl HostEffects {
     /// In-memory equivalent of a save round trip, without running a codec.
     ///
     /// This exhaustive destructure is the single persistence decision point:
@@ -820,17 +751,14 @@ impl SideEffects {
             displayed_noises: _,
             host_events: _,
             overlay: _,
-            invalidate_background: _,
-            invalidate_trajectory_preview: _,
-            reset_input: _,
             fade_to_black: _,
             set_draw_hidden: _,
             skip_render: _,
-            host_effects: _,
+            modals: _,
+            signals: _,
+            trade_receipts: _,
+            background_blits: _,
             pending_mark_pc_ids: _,
-            cancel_multi_selection: _,
-            pending_swordfight_drag_ignore: _,
-            ui_has_focus: _,
             pending_minimap_position,
             pending_minimap_display_maps: _,
         } = &mut clone;

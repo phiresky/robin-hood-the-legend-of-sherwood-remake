@@ -111,14 +111,7 @@ fn replay_boundary_is_callable_with_only_authoritative_capabilities() {
             if index == 0 {
                 assert!(!actual.output.hourglass_ran);
                 assert_eq!(actual.output.frame_after, actual.output.frame_before);
-                assert!(
-                    !actual
-                        .output
-                        .post_boundary_events
-                        .side_effects()
-                        .host_events
-                        .is_empty()
-                );
+                assert!(!actual.output.post_boundary_events.host_events.is_empty());
             } else {
                 assert!(!reconstructed.engine.get_golden_eye_mode());
                 // A bare synthetic engine has no mission script. Recording
@@ -190,7 +183,6 @@ fn reconstruction_surfaces_host_events_as_typed_output() {
         replayed
             .output
             .events
-            .side_effects()
             .host_events
             .iter()
             .any(|event| matches!(event, HostEvent::SetRightMouseDown { down: true }))
