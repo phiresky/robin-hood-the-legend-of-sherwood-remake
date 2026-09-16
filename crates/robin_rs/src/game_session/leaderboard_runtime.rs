@@ -59,7 +59,6 @@ async fn prepare(
     let bytes: Arc<[u8]> =
         crate::replay_format::encode_compact(replay, robin_replay_format::ENGINE_VERSION_HASH)
             .map_err(|error| RankedError::evidence(error.to_string()))?
-            .into_bytes()
             .into();
     let artifact = canonical_replay_artifact(&bytes, &header.mission_id)?;
     let api = LeaderboardApi::from_preferences(preferences)?;

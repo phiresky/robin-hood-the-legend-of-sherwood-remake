@@ -282,10 +282,10 @@ try {
         await waitFor(() => terminalFailures > finalFailures, 'final restored attempt completion');
         await rpc('set-paused', { paused: true });
         const replay = await rpc('get-replay');
-        if (typeof replay.content !== 'string' || !replay.content.startsWith('rhrec-')) {
+        if (!(replay.data instanceof Uint8Array) || new TextDecoder().decode(replay.data.subarray(0, 6)) !== 'RHREC\x01') {
             throw new Error('Unexpected replay export shape');
         }
-        const saved = await fetch('/restart-replay', { method: 'POST', body: replay.content });
+        const saved = await fetch('/restart-replay', { method: 'POST', body: replay.data });
         if (!saved.ok) throw new Error('Could not export Restart replay');
         console.log('harness: restart verified ' + JSON.stringify({ cycles: evidence }));
     };

@@ -22,7 +22,7 @@ const claims = {
         public_disclosure: 'named_profile',
         board_id: 'demo-standard-normal',
         mission_id: 'Dem_Lei_MP',
-        replay: { artifact: { sha256: '56'.repeat(32), byte_length: 1, media_type: 'application/x-robin-rhrec+compact' }, replay_schema_version: 1 },
+        replay: { artifact: { sha256: '56'.repeat(32), byte_length: 1, media_type: 'application/x-robin-rhrec' }, replay_schema_version: 1 },
         requested_metrics: ['original_score'],
     },
     sign_submission_owner_status: { schema_version: 2, public_key: publicKey, signed_at_unix_ms: signedAt, submission_id: 'sub-1' },

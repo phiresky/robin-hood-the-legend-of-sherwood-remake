@@ -462,10 +462,20 @@ async fn multipart_shape_and_compact_transport_fail_before_reservation() {
         submission(&owner, &jsonl, ParticipantPublicDisclosureV1::NamedProfile),
     );
     let jsonl_metadata = serde_json::to_vec(&jsonl_signed).unwrap();
+    let legacy = b"rhrec-0123456789ab-KLUv_Q".to_vec();
+    let legacy_signed = signed_submission(
+        &owner,
+        submission(&owner, &legacy, ParticipantPublicDisclosureV1::NamedProfile),
+    );
+    let legacy_metadata = serde_json::to_vec(&legacy_signed).unwrap();
     let mut duplicate_keys = metadata.clone();
     duplicate_keys.pop();
     duplicate_keys.extend_from_slice(b",\"schema_version\":2}");
     let cases: Vec<Vec<Part<'_>>> = vec![
+        vec![
+            ("submission", "application/json", &legacy_metadata),
+            ("replay", RANKED_REPLAY_MEDIA_TYPE_V1, &legacy),
+        ],
         vec![("submission", "application/json", &metadata)],
         vec![
             ("replay", RANKED_REPLAY_MEDIA_TYPE_V1, &replay),

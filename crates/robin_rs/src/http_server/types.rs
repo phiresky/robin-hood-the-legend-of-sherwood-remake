@@ -131,7 +131,7 @@ pub enum HttpPayload {
     /// on the next mission start.  The caller is responsible for
     /// triggering a mission restart (e.g. by sending a console command
     /// or by resetting the Game op) so the slot is actually picked up.
-    LoadReplay { data: String, paused: bool },
+    LoadReplay { data: Vec<u8>, paused: bool },
 }
 
 /// Internal routing types are deliberately separate from the transport schema.
@@ -162,7 +162,7 @@ pub(super) enum DeferredRequest {
 
 pub(super) enum ProcessRequest {
     ExportReplay,
-    LoadReplay { data: String, paused: bool },
+    LoadReplay { data: Vec<u8>, paused: bool },
 }
 
 pub(super) enum RoutedRequest {

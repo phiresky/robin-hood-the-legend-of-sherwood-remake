@@ -48,7 +48,8 @@ pub async fn rh_rpc(request: JsValue) -> Result<JsValue, JsValue> {
     struct Req {
         method: String,
         #[serde(default)]
-        params: serde_json::Value,
+        #[serde(with = "serde_wasm_bindgen::preserve")]
+        params: JsValue,
     }
     let req: Req = serde_wasm_bindgen::from_value(request).map_err(|e| {
         JsValue::from_str(
@@ -66,8 +67,41 @@ pub async fn rh_rpc(request: JsValue) -> Result<JsValue, JsValue> {
         }
         _ => {}
     }
-    let payload =
-        decode_request(&req.method, req.params).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let payload = if req.method == "load-replay" {
+        use wasm_bindgen::JsCast as _;
+        let data = js_sys::Reflect::get(&req.params, &JsValue::from_str("data"))?;
+        let bytes = data
+            .dyn_into::<js_sys::Uint8Array>()
+            .map_err(|_| JsValue::from_str("load-replay data must be a Uint8Array"))?;
+        if bytes.length() as usize
+            > crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_input_bytes
+        {
+            return Err(JsValue::from_str("replay exceeds binary input limit"));
+        }
+        let data = bytes.to_vec();
+        crate::replay_format::preflight_compact_transport(
+            &data,
+            &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
+        )
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let paused = js_sys::Reflect::get(&req.params, &JsValue::from_str("paused"))?;
+        let paused = if paused.is_undefined() {
+            false
+        } else {
+            paused
+                .as_bool()
+                .ok_or_else(|| JsValue::from_str("paused must be a boolean"))?
+        };
+        HttpPayload::LoadReplay { data, paused }
+    } else {
+        let params = if req.params.is_undefined() {
+            serde_json::Value::Null
+        } else {
+            serde_wasm_bindgen::from_value(req.params)
+                .map_err(|error| JsValue::from_str(&error.to_string()))?
+        };
+        decode_request(&req.method, params).map_err(|e| JsValue::from_str(&e.to_string()))?
+    };
     let queue = BROWSER_QUEUE
         .with(|binding| binding.borrow().upgrade())
         .ok_or_else(|| {

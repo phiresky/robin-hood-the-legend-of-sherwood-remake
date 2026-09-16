@@ -86,7 +86,6 @@ fn limits() -> VerificationLimitsV1 {
         max_input_bytes: 1024 * 1024,
         max_compressed_bytes: 1024 * 1024,
         max_decompressed_bytes: 4 * 1024 * 1024,
-        max_base64_payload_bytes: 1024 * 1024,
         max_campaign_bytes: 1024 * 1024,
         max_frames: 10_000,
         max_version_bytes: 128,
@@ -164,9 +163,7 @@ fn compact_replay(mission_id: &str, sim_config: robin_engine::engine::SimConfig)
     }
     .try_into()
     .unwrap();
-    robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-        .unwrap()
-        .into_bytes()
+    robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH).unwrap()
 }
 
 fn assert_rejected(output: &VerifierOutputV2, code: VerificationRejectionCodeV1, detail: &str) {

@@ -78,7 +78,7 @@ mod browser_transport_tests {
         let (response_tx, _rx) = Responder::channel();
         queue.lock().unwrap().push_back(HttpRequest {
             payload: HttpPayload::LoadReplay {
-                data: "early replay".into(),
+                data: b"early replay".to_vec(),
                 paused: true,
             },
             response_tx,
@@ -670,7 +670,7 @@ mod dispatch_tests {
             RoutedRequest::Process(ProcessRequest::ExportReplay)
         ));
         assert!(
-            matches!(HttpPayload::LoadReplay { data: "encoded".into(), paused: true }.classify(), RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused: true }) if data == "encoded")
+            matches!(HttpPayload::LoadReplay { data: b"encoded".to_vec(), paused: true }.classify(), RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused: true }) if data == b"encoded")
         );
     }
 
@@ -763,7 +763,7 @@ mod dispatch_tests {
             ),
             (
                 HttpPayload::LoadReplay {
-                    data: "rhrec-fixture".into(),
+                    data: b"binary-fixture".to_vec(),
                     paused: false,
                 },
                 InputTaintKind::ReplayPlayback,

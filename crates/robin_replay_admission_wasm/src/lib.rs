@@ -6,7 +6,7 @@
 //! optimization; a missing/shared/imported/oversized memory fails publishing.
 
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn validate_compact_replay(compact: &str) -> Result<(), wasm_bindgen::JsValue> {
+pub fn validate_compact_replay(compact: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     // The recorded source hash is provenance; this validates schema and limits.
     robin_replay_format::decode_compact_bounded(
         compact,

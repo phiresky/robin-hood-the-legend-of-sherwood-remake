@@ -19,7 +19,6 @@ pub struct VerificationLimitsV1 {
     pub max_input_bytes: u64,
     pub max_compressed_bytes: u64,
     pub max_decompressed_bytes: u64,
-    pub max_base64_payload_bytes: u64,
     pub max_campaign_bytes: u64,
     pub max_frames: u32,
     pub max_version_bytes: u32,
@@ -33,10 +32,6 @@ impl Validate for VerificationLimitsV1 {
             ("limits.max_input_bytes", self.max_input_bytes),
             ("limits.max_compressed_bytes", self.max_compressed_bytes),
             ("limits.max_decompressed_bytes", self.max_decompressed_bytes),
-            (
-                "limits.max_base64_payload_bytes",
-                self.max_base64_payload_bytes,
-            ),
             ("limits.max_campaign_bytes", self.max_campaign_bytes),
             ("limits.max_frames", u64::from(self.max_frames)),
             (

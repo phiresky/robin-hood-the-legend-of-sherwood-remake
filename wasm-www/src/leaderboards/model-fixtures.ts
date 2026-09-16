@@ -138,7 +138,7 @@ export function runDetail(): Record<string, unknown> {
         uploader,
         verified_at_unix_ms: 1_700_000_000_001,
         replay: {
-            artifact: { sha256: sha('a'), byte_length: 123, media_type: 'application/x-robin-rhrec+compact' },
+            artifact: { sha256: sha('a'), byte_length: 123, media_type: 'application/x-robin-rhrec' },
             replay_schema_version: 44,
         },
         recorded_engine_version: '0123456789ab',

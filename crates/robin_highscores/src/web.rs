@@ -136,7 +136,7 @@ fn require_multipart_media_type(
 
 /// Apply the cheap, exact transport grammar at the public HTTP boundary.
 ///
-/// This deliberately does not base64-decode, decompress, or deserialize the
+/// This deliberately does not decompress or deserialize the
 /// replay. Those attacker-controlled expansion stages remain exclusive to
 /// the contained verifier. The bounded byte buffer lets us reject a JSONL or
 /// alternate-format upload before reserving an upload or creating anything in
@@ -159,56 +159,12 @@ fn preflight_ranked_replay_transport(
             "replay SHA-256 does not match the signed submission".to_owned(),
         ));
     }
-    let text = std::str::from_utf8(bytes).map_err(|_| {
-        ApiError::BadRequest(
-            "ranked replay must use the canonical ASCII compact transport".to_owned(),
-        )
-    })?;
-    let preflight = robin_replay_format::preflight_compact_transport(
-        text,
+    robin_replay_format::preflight_compact_transport(
+        bytes,
         &robin_replay_format::DEFAULT_REPLAY_ADMISSION_LIMITS,
     )
-    .map_err(|error| {
-        ApiError::BadRequest(format!(
-            "ranked replay is not the canonical compact transport: {error}"
-        ))
-    })?;
-    // Unpadded base64url still has unused tail bits for payload lengths 2 or
-    // 3 modulo 4. A non-zero unused bit is an alternate spelling of the same
-    // decoded bytes, so reject it lexically without invoking a decoder.
-    let tail_is_canonical = match preflight.base64_payload.len() % 4 {
-        0 => true,
-        2 => preflight
-            .base64_payload
-            .as_bytes()
-            .last()
-            .and_then(|byte| base64url_sextet(*byte))
-            .is_some_and(|value| value & 0b00_1111 == 0),
-        3 => preflight
-            .base64_payload
-            .as_bytes()
-            .last()
-            .and_then(|byte| base64url_sextet(*byte))
-            .is_some_and(|value| value & 0b00_0011 == 0),
-        _ => false,
-    };
-    if !tail_is_canonical {
-        return Err(ApiError::BadRequest(
-            "ranked replay base64url text has non-canonical trailing bits".to_owned(),
-        ));
-    }
+    .map_err(|error| ApiError::BadRequest(format!("invalid binary replay: {error}")))?;
     Ok(())
-}
-
-const fn base64url_sextet(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'-' => Some(62),
-        b'_' => Some(63),
-        _ => None,
-    }
 }
 
 #[derive(Clone)]
