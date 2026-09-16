@@ -537,61 +537,20 @@ pub enum SoundCommand {
 
 // ─── Side effects ────────────────────────────────────────────────────
 
-/// Ordered request to change minimap visibility. The tuple wire representation
-/// is retained so naming these independent flags does not change snapshots.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-#[serde(from = "(bool, bool)", into = "(bool, bool)")]
+/// Ordered request to change minimap visibility and optionally restore its position.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct MinimapDisplayRequest {
     pub show: bool,
     pub restore_position: bool,
-}
-
-impl robin_util::state_hash::StateHash for MinimapDisplayRequest {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.show, self.restore_position).state_hash(state);
-    }
-}
-
-impl From<(bool, bool)> for MinimapDisplayRequest {
-    fn from((show, restore_position): (bool, bool)) -> Self {
-        Self {
-            show,
-            restore_position,
-        }
-    }
-}
-
-impl From<MinimapDisplayRequest> for (bool, bool) {
-    fn from(request: MinimapDisplayRequest) -> Self {
-        (request.show, request.restore_position)
-    }
-}
-
-#[cfg(test)]
-mod minimap_display_request_tests {
-    use super::MinimapDisplayRequest;
-    use robin_util::state_hash::StateHash;
-    use std::hash::Hasher;
-
-    #[test]
-    fn named_flags_retain_tuple_json_and_native_bytes() {
-        for show in [false, true] {
-            for restore_position in [false, true] {
-                let tuple = (show, restore_position);
-                let request = MinimapDisplayRequest::from(tuple);
-                let json = serde_json::to_string(&request).unwrap();
-                assert_eq!(json, serde_json::to_string(&tuple).unwrap());
-                assert_eq!(bitcode::encode(&request), bitcode::encode(&tuple));
-                let mut named_hash = std::collections::hash_map::DefaultHasher::new();
-                let mut tuple_hash = std::collections::hash_map::DefaultHasher::new();
-                request.state_hash(&mut named_hash);
-                tuple.state_hash(&mut tuple_hash);
-                assert_eq!(named_hash.finish(), tuple_hash.finish());
-                let decoded: MinimapDisplayRequest = serde_json::from_str(&json).unwrap();
-                assert_eq!((decoded.show, decoded.restore_position), tuple);
-            }
-        }
-    }
 }
 
 /// Changes the PC-info hover overlay applied post-tick by the host.
