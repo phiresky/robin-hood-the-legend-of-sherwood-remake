@@ -1023,7 +1023,6 @@ impl FrontendResources {
     pub fn rebind_frame_holder_ambiance(
         &mut self,
         ambiance: engine_api::Ambiance,
-        bypass_fog_sprites_crash: bool,
         shadow_color: u16,
     ) {
         let published = Arc::clone(
@@ -1032,29 +1031,24 @@ impl FrontendResources {
                 .expect("frame-holder opacity must be published before runtime rebinding"),
         );
         let holder = Arc::make_mut(&mut self.frame_holder);
-        if bypass_fog_sprites_crash {
-            holder.drop_variant_dictionaries(SpriteVariant::Night);
-            holder.drop_variant_dictionaries(SpriteVariant::Fog);
-        } else {
-            match ambiance {
-                engine_api::Ambiance::Fog => {
-                    holder.drop_variant_dictionaries(SpriteVariant::Night);
-                    holder.generate_fog_dictionaries();
-                    holder.set_global_shadow(10);
-                    holder.set_global_blip_shadow(40);
-                }
-                engine_api::Ambiance::Night => {
-                    holder.drop_variant_dictionaries(SpriteVariant::Fog);
-                    holder.generate_night_dictionaries();
-                    holder.set_global_shadow(40);
-                    holder.set_global_blip_shadow(60);
-                }
-                _ => {
-                    holder.drop_variant_dictionaries(SpriteVariant::Night);
-                    holder.drop_variant_dictionaries(SpriteVariant::Fog);
-                    holder.set_global_shadow(40);
-                    holder.set_global_blip_shadow(60);
-                }
+        match ambiance {
+            engine_api::Ambiance::Fog => {
+                holder.drop_variant_dictionaries(SpriteVariant::Night);
+                holder.generate_fog_dictionaries();
+                holder.set_global_shadow(10);
+                holder.set_global_blip_shadow(40);
+            }
+            engine_api::Ambiance::Night => {
+                holder.drop_variant_dictionaries(SpriteVariant::Fog);
+                holder.generate_night_dictionaries();
+                holder.set_global_shadow(40);
+                holder.set_global_blip_shadow(60);
+            }
+            _ => {
+                holder.drop_variant_dictionaries(SpriteVariant::Night);
+                holder.drop_variant_dictionaries(SpriteVariant::Fog);
+                holder.set_global_shadow(40);
+                holder.set_global_blip_shadow(60);
             }
         }
         holder.apply_arno_law(shadow_color);

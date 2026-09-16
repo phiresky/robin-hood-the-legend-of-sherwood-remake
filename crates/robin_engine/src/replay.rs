@@ -154,7 +154,8 @@ pub struct ReplayHeader {
 /// Version 46 removes duplicated movement, shot, and ability execution trackers.
 /// Version 47 removes the unused entity-mutation counter marker from state hashes.
 /// Version 48 stores canonical sequence links and ordinary door-route orders.
-pub const REPLAY_SCHEMA_VERSION: u32 = 48;
+/// Version 49 removes the retired fog-sprite bypass from simulation configuration.
+pub const REPLAY_SCHEMA_VERSION: u32 = 49;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

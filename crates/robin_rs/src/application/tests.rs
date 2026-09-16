@@ -835,7 +835,6 @@ fn cloned_launch_options_stay_local_while_profile_updates_are_shared() {
         highlander2: true,
         golden_eye: true,
         ignore_default_loose: true,
-        bypass_fog_sprites_crash: true,
         ..Default::default()
     });
     let original_options = original.options().clone();

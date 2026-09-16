@@ -58,10 +58,6 @@ pub struct CliArgs {
     #[arg(long)]
     pub highlander2: bool,
 
-    /// Bypass fog sprite loading that can crash on some converted data.
-    #[arg(long)]
-    pub no_fog: bool,
-
     /// Show the AI "whatsup" debug overlay.
     #[arg(long)]
     pub whatsup: bool,
@@ -269,7 +265,6 @@ impl Default for CliArgs {
             no_script: false,
             goldeneye: false,
             highlander2: false,
-            no_fog: false,
             whatsup: false,
             no_default_loose: false,
             check_sound_data: false,
@@ -445,7 +440,6 @@ pub(super) fn options_from_args(args: &CliArgs) -> engine_api::GlobalOptions {
         sound_enabled: !args.no_sound,
         script_enabled: !args.no_script,
         highlander2: args.highlander2,
-        bypass_fog_sprites_crash: args.no_fog,
         whatsup: args.whatsup,
         debug_surfaces: args.debug_surfaces,
         golden_eye: args.goldeneye,
@@ -621,7 +615,6 @@ mod tests {
             no_script: true,
             goldeneye: true,
             highlander2: true,
-            no_fog: true,
             whatsup: true,
             no_default_loose: true,
             check_sound_data: true,
@@ -894,7 +887,6 @@ mod tests {
             "--no-sound",
             "--no-script",
             "--highlander2",
-            "--no-fog",
             "--whatsup",
             "--goldeneye",
             "--no-default-loose",
@@ -906,7 +898,6 @@ mod tests {
         assert!(!args.global_options.sound_enabled);
         assert!(!args.global_options.script_enabled);
         assert!(args.global_options.highlander2);
-        assert!(args.global_options.bypass_fog_sprites_crash);
         assert!(args.global_options.whatsup);
         assert!(args.cli.goldeneye);
         assert!(args.global_options.golden_eye);

@@ -170,24 +170,11 @@ fn load_terrain_candidate(
 /// construction. Using this exact helper on both startup paths lets the host
 /// publish the hit-testing opacity generation into `LevelAssets` before the
 /// engine seals its static simulation projection.
-pub fn initialize_sprite_variants_for_ambiance(
-    host: &mut Host,
-    ambiance: Ambiance,
-    bypass_fog_sprites_crash: bool,
-) {
+pub fn initialize_sprite_variants_for_ambiance(host: &mut Host, ambiance: Ambiance) {
     let fh = host
         .frontend
         .resources
         .frame_holder_before_publication_mut();
-    // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
-    // Night and Fog dictionaries regardless of ambiance and skip the
-    // shadow-value set — the renderer then falls back to
-    // `SpriteVariant::Day` via `EngineInner::default_variant`.
-    if bypass_fog_sprites_crash {
-        fh.drop_variant_dictionaries(SpriteVariant::Night);
-        fh.drop_variant_dictionaries(SpriteVariant::Fog);
-        return;
-    }
     match ambiance {
         // Only Day / Fog / Night have dedicated sprite dictionaries;
         // Attack / Custom1..4 fall through to the Day branch.

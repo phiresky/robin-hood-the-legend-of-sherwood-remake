@@ -437,7 +437,6 @@ impl SimulationVisualRefresh<'_> {
                 host,
                 current_shadow_color,
                 current_visual_ambiance,
-                engine.sim_config().bypass_fog_sprites_crash,
             );
             *last_shadow_color = current_shadow_color;
         }

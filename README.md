@@ -401,7 +401,6 @@ Logging verbosity is controlled by `RUST_LOG` (`info`, `debug`,
 - `--no-sound` — disable audio
 - `--no-script` — disable mission script execution
 - `--highlander2` — spawn enemy NPCs as invulnerable
-- `--no-fog` — bypass fog sprite loading on converted data
 - `--whatsup` — show the AI debug overlay
 - `--goldeneye` — NPCs cannot see the player (debug cheat)
 - `--no-default-loose` — ignore the default mission-lost condition

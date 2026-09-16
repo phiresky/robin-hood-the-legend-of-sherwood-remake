@@ -1255,7 +1255,6 @@ pub(super) fn prepare_mission(
         &mut assets,
         effective_initial_ambiance,
         authored_initial_ambiance,
-        sim_config.bypass_fog_sprites_crash,
         &mut timer,
     );
 

@@ -897,13 +897,10 @@ impl MissionPresentation {
         host: &mut Host,
         shadow_color: u16,
         ambiance: robin_engine::engine::Ambiance,
-        bypass_fog_sprites_crash: bool,
     ) {
-        host.frontend.resources.rebind_frame_holder_ambiance(
-            ambiance,
-            bypass_fog_sprites_crash,
-            shadow_color,
-        );
+        host.frontend
+            .resources
+            .rebind_frame_holder_ambiance(ambiance, shadow_color);
         self.sprites.selection_mark_renderer.load(
             &mut resources.cursor,
             &self.renderer,

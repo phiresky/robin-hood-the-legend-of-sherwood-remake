@@ -36,7 +36,6 @@ impl VisualReplay {
         robin_rs::level_loading_host::initialize_sprite_variants_for_ambiance(
             &mut host,
             engine.weather().ambiance,
-            engine.sim_config().bypass_fog_sprites_crash,
         );
         robin_rs::level_loading_host::apply_background_map(
             engine,
