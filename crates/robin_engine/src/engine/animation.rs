@@ -366,6 +366,24 @@ pub(super) struct TakingNetTick {
     pub order_was_done: bool,
 }
 
+fn set_actor_states(
+    engine: &mut EngineInner,
+    entity_id: EntityId,
+    posture: Posture,
+    action: ActionState,
+) {
+    engine.set_entity_posture(entity_id, posture);
+    if let Some(actor) = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared")
+        .actor_data_mut()
+    {
+        actor.action_state = action;
+    }
+}
+
 fn forwards_pc_bow_action_on_start(
     entity: &Entity,
     anim_type: OrderType,
@@ -411,13 +429,6 @@ fn apply_soldier_execute_side_effects(
         return;
     }
 
-    let set_states = |e: &mut Entity, posture: Posture, action: ActionState| {
-        e.set_posture(posture);
-        if let Some(a) = e.actor_data_mut() {
-            a.action_state = action;
-        }
-    };
-
     match (anim_type, motion) {
         // TRANSITION_WAITING_UPRIGHT_WAITING_ALERTED: attentive = true
         (OT::TransitionWaitingUprightWaitingAlerted, MS::Done | MS::Terminated) => {
@@ -450,7 +461,7 @@ fn apply_soldier_execute_side_effects(
             | OT::TransitionWaitingAlertedWalkingAlerted,
             MS::Done | MS::Terminated,
         ) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // Walking / running animation Start: flip `action_state` to
@@ -471,13 +482,13 @@ fn apply_soldier_execute_side_effects(
             | OT::TransitionWalkingAlertedRunningAlerted,
             MS::Done | MS::Terminated,
         ) => {
-            set_states(entity, Posture::Upright, ActionState::MovingFast);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::MovingFast);
         }
         (
             OT::TransitionRunningUprightWalkingUpright | OT::TransitionRunningAlertedWalkingAlerted,
             MS::Done | MS::Terminated,
         ) => {
-            set_states(entity, Posture::Upright, ActionState::Moving);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Moving);
         }
 
         // BEING_UNCONSCIOUS_* START is handled for every human by
@@ -485,72 +496,102 @@ fn apply_soldier_execute_side_effects(
 
         // TRANSITION_RAISING_SWORD → WaitingSword on DONE
         (OT::TransitionRaisingSword, MS::Done) => {
-            set_states(entity, Posture::Upright, ActionState::WaitingSword);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
         }
 
         // TRANSITION_CHARGING → WaitingSword on DONE (damage resolved
         // separately in melee module).
         (OT::TransitionCharging, MS::Done) => {
-            set_states(entity, Posture::Upright, ActionState::WaitingSword);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
         }
 
         // TAKING: TERMINATED → Waiting
         (OT::Taking, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // TRANSITION_WAITING_SWORD_MENACING: TERMINATED → Menacing
         (OT::TransitionWaitingSwordMenacing, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Menacing);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Menacing);
         }
 
         // SLEEPING_UPRIGHT: every tick → (Upright, Sleeping)
         (OT::SleepingUpright, _) => {
-            set_states(entity, Posture::Upright, ActionState::Sleeping);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Sleeping);
         }
 
         // TRANSITION_SLEEPING_WAITING_UPRIGHT: TERMINATED → Waiting
         (OT::TransitionSleepingWaitingUpright, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // TRANSITION_MENACING_WAITING_SWORD: TERMINATED → WaitingSword
         (OT::TransitionMenacingWaitingSword, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::WaitingSword);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
         }
 
         // LEANING_OUT: START → (LeaningOut, Waiting)
         (OT::LeaningOut, MS::Start) => {
-            set_states(entity, Posture::LeaningOut, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::LeaningOut, ActionState::Waiting);
         }
 
         // TRANSITION_WAITING_ALERTED_LEANING_OUT: DONE → (LeaningOut, Waiting)
         (OT::TransitionWaitingAlertedLeaningOut, MS::Done) => {
-            set_states(entity, Posture::LeaningOut, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::LeaningOut, ActionState::Waiting);
         }
 
         // TRANSITION_LEANING_OUT_WAITING_ALERTED: DONE → (Upright, Waiting)
         (OT::TransitionLeaningOutWaitingAlerted, MS::Done) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // TRANSITION_LOWERING_BOW_LEANING_OUT: DONE/TERMINATED →
         // (LeaningOut, AimingWithBowDown).
         (OT::TransitionLoweringBowLeaningOut, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::LeaningOut, ActionState::AimingWithBowDown);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::LeaningOut,
+                ActionState::AimingWithBowDown,
+            );
         }
 
         // TRANSITION_RAISING_BOW_LEANING_OUT: DONE/TERMINATED →
         // (Upright, AimingWithBow).
         (OT::TransitionRaisingBowLeaningOut, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::AimingWithBow);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::AimingWithBow,
+            );
         }
 
         // SHOOTING_WITH_BOW_LEANING_OUT: DONE → (LeaningOut, AimingWithBow)
         // The actual arrow release side effect is handled in the
         // `bow_shot` module.
         (OT::ShootingWithBowLeaningOut, MS::Done) => {
-            set_states(entity, Posture::LeaningOut, ActionState::AimingWithBow);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::LeaningOut,
+                ActionState::AimingWithBow,
+            );
         }
 
         // LOOKING_LEFT / LOOKING_LEFT_ALERTED: START → LookToTheLeft,
@@ -581,7 +622,7 @@ fn apply_soldier_execute_side_effects(
         //   DONE:  deactivate the antagonist (hide the bottle).
         //   TERMINATED: blood_alcohol += profile.beer.
         (OT::DrinkingAle, MS::Start) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
         (OT::DrinkingAle, MS::Done) => {
             if let Some(a) = antagonist {
@@ -658,10 +699,16 @@ fn special_remark_due_at_sprite_phase(
 /// `tick_entity_movement`'s `is_moving()` gate never trips and the
 /// actor walks-in-place forever.
 pub(super) fn apply_actor_walk_start_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     use crate::order::OrderType as OT;
     use crate::sprite::MotionState as MS;
 
@@ -672,31 +719,34 @@ pub(super) fn apply_actor_walk_start_side_effect(
         return;
     }
 
-    let set_states = |e: &mut Entity, posture: Posture, action: ActionState| {
-        e.set_posture(posture);
-        if let Some(a) = e.actor_data_mut() {
-            a.action_state = action;
-        }
-    };
-
     match anim_type {
         OT::WalkingUpright | OT::WalkingAlerted => {
-            set_states(entity, Posture::Upright, ActionState::Moving);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Moving);
         }
         // The crouched walk keeps the actor crouched; only the action
         // state moves on. Sharing the upright arm made every crouched
         // walk order stand the actor up on its first frame.
         OT::WalkingCrouched => {
-            set_states(entity, Posture::Crouched, ActionState::Moving);
+            set_actor_states(engine, entity_id, Posture::Crouched, ActionState::Moving);
         }
         OT::RunningUpright => {
-            set_states(entity, Posture::Upright, ActionState::MovingFast);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::MovingFast);
         }
         OT::WalkingWithSword => {
-            set_states(entity, Posture::Upright, ActionState::MovingSword);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::MovingSword,
+            );
         }
         OT::RunningWithSword => {
-            set_states(entity, Posture::Upright, ActionState::MovingFastSword);
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::MovingFastSword,
+            );
         }
         _ => {}
     }
@@ -736,27 +786,20 @@ pub(super) fn apply_npc_execute_side_effects(
         return;
     }
 
-    let set_states = |e: &mut Entity, posture: Posture, action: ActionState| {
-        e.set_posture(posture);
-        if let Some(a) = e.actor_data_mut() {
-            a.action_state = action;
-        }
-    };
-
     match (anim_type, motion) {
         // SITTING: START → (Sitting, Waiting).
         (OT::Sitting, MS::Start) => {
-            set_states(entity, Posture::Sitting, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Sitting, ActionState::Waiting);
         }
 
         // TRANSITION_SITTING_WAITING_UPRIGHT: TERMINATED → (Upright, Waiting).
         (OT::TransitionSittingWaitingUpright, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // TRANSITION_WAITING_UPRIGHT_SITTING: TERMINATED → (Sitting, Waiting).
         (OT::TransitionWaitingUprightSitting, MS::Terminated) => {
-            set_states(entity, Posture::Sitting, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Sitting, ActionState::Waiting);
         }
 
         // TRANSITION_WAITING_UPRIGHT_SPECIAL (ENTER_LEISURE):
@@ -765,13 +808,13 @@ pub(super) fn apply_npc_execute_side_effects(
         // transition animation finishes (DONE) or is interrupted
         // (TERMINATED).
         (OT::TransitionWaitingUprightSpecial, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::Leisure, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Leisure, ActionState::Waiting);
         }
 
         // TRANSITION_SPECIAL_WAITING_UPRIGHT (leave-leisure):
         // DONE/TERMINATED → (Upright, Waiting).
         (OT::TransitionSpecialWaitingUpright, MS::Done | MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // BEGGAR_SHOWING_FACE: TERMINATED → (Upright, Waiting).
@@ -779,14 +822,14 @@ pub(super) fn apply_npc_execute_side_effects(
         // the beggar lacks the showing-face animation; dispatch remains
         // keyed on this original order type, matching the Original.
         (OT::BeggarShowingFace, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // POINTING: TERMINATED → (Upright, Waiting).
         // The booking site already sets the direction field; we only
         // restore the idle state when the point gesture finishes.
         (OT::Pointing, MS::Terminated) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
 
         // Base actor idle-state changes are applied by
@@ -823,7 +866,7 @@ pub(super) fn apply_npc_execute_side_effects(
         // victim is zeroed out).  The state change fires on DONE
         // (before the switch advances) rather than TERMINATED.
         (OT::Searching, MS::Done) => {
-            set_states(entity, Posture::Upright, ActionState::Waiting);
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             if let Some(victim) = antagonist {
                 engine.execute_pickpockets((entity_id, victim));
             }
@@ -943,10 +986,16 @@ fn weak_stunned_start_action_before_perform(
 /// effects for active animation arms whose completion logic is handled
 /// elsewhere.
 fn apply_active_animation_start_state_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     // Civilian execution overrides this entire family, coerces
     // the sprite animation to WAITING_UPRIGHT_BORED, and returns directly.
     // None of the base actor's posture/action-state switch arms run.
@@ -974,7 +1023,12 @@ fn apply_active_animation_start_state_side_effect(
             | OrderType::BeingStunnedSword,
             MotionState::Start,
         ) => {
-            entity.set_posture(Posture::Upright);
+            engine.set_entity_posture(entity_id, Posture::Upright);
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::WaitingSword;
             }
@@ -986,24 +1040,20 @@ fn apply_active_animation_start_state_side_effect(
         // let a knocked-out PC keep whatever action state it carried
         // into the blow (typically MovingSword or Bored).
         (OrderType::BeingUnconsciousSword, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
+            set_actor_states(engine, entity_id, Posture::Lying, ActionState::WaitingSword);
             return;
         }
         (OrderType::BeingUnconsciousBow, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::AimingWithBow;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Lying,
+                ActionState::AimingWithBow,
+            );
             return;
         }
         (OrderType::BeingUnconscious, MotionState::Start) if entity.is_human() => {
-            entity.set_posture(Posture::Lying);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Lying, ActionState::Waiting);
             return;
         }
         // Corpse-carry idle hold: only a PC ever executes it, and its
@@ -1012,10 +1062,12 @@ fn apply_active_animation_start_state_side_effect(
         // walk order stamped, and every later carry frame — including
         // the drop transition — inherits it.
         (OrderType::WaitingWithCorpse, MotionState::Start) if entity.is_pc() => {
-            entity.set_posture(Posture::CarryingCorpse);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::CarryingCorpse,
+                ActionState::Waiting,
+            );
             return;
         }
         // End of the lift animation: the carrier owns the body and is
@@ -1023,23 +1075,27 @@ fn apply_active_animation_start_state_side_effect(
         (OrderType::TransitionWaitingUprightCarryingCorpse, MotionState::Done)
             if entity.is_pc() =>
         {
-            entity.set_posture(Posture::CarryingCorpse);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::CarryingCorpse,
+                ActionState::Waiting,
+            );
             return;
         }
         (OrderType::Taking | OrderType::TakingCrouched, MotionState::Terminated)
             if entity.is_pc() =>
         {
-            entity.set_posture(if anim_type == OrderType::Taking {
-                Posture::Upright
-            } else {
-                Posture::Crouched
-            });
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                if anim_type == OrderType::Taking {
+                    Posture::Upright
+                } else {
+                    Posture::Crouched
+                },
+                ActionState::Waiting,
+            );
             return;
         }
         // The crouched idle loop is executed only by the PC, and settles
@@ -1047,10 +1103,7 @@ fn apply_active_animation_start_state_side_effect(
         // that stops crouch-walking keeps a stale Moving action state
         // into the following posture transition.
         (OrderType::WaitingCrouched, MotionState::Start) if entity.is_pc() => {
-            entity.set_posture(Posture::Crouched);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Crouched, ActionState::Waiting);
             return;
         }
         // Human actors own this START transition for players and other
@@ -1059,54 +1112,41 @@ fn apply_active_animation_start_state_side_effect(
         (OrderType::TransitionRaisingSword, MotionState::Start)
             if !matches!(entity, Entity::Soldier(_)) =>
         {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
             return;
         }
         (OrderType::TransitionLoweringSword, MotionState::Start) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             return;
         }
         (OrderType::WaitingUpright, MotionState::Start) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             return;
         }
         (
             OrderType::WaitingUprightBored | OrderType::WaitingUprightBoredRandom,
             MotionState::Start,
         ) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Bored;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Bored);
             return;
         }
         (
             OrderType::TransitionWaitingUprightBoredWaitingUpright,
             MotionState::Done | MotionState::Terminated,
         ) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             return;
         }
         (
             OrderType::TransitionWaitingUprightWaitingUprightBored,
             MotionState::Done | MotionState::Terminated,
         ) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Bored;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Bored);
             return;
         }
         (
@@ -1114,57 +1154,64 @@ fn apply_active_animation_start_state_side_effect(
             | OrderType::TransitionRunningUprightWaitingUpright,
             MotionState::Done | MotionState::Terminated,
         ) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             return;
         }
         (
             OrderType::TransitionWalkingCrouchedWaitingCrouched,
             MotionState::Done | MotionState::Terminated,
         ) => {
-            entity.set_posture(Posture::Crouched);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Crouched, ActionState::Waiting);
             return;
         }
         (OrderType::TransitionWaitingUprightHelpingClimbing, MotionState::Done) => {
-            entity.set_posture(Posture::HelpingToClimb);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::HelpingToClimb,
+                ActionState::Waiting,
+            );
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(pc) = entity.pc_data_mut() {
                 pc.current_action = crate::profiles::Action::HelpToClimb;
             }
             return;
         }
         (OrderType::TransitionHelpingClimbingWaitingUpright, MotionState::Done) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(pc) = entity.pc_data_mut() {
                 pc.current_action = crate::profiles::Action::NoAction;
             }
             return;
         }
         (OrderType::TransitionWaitingUprightSimulatingBeggar, MotionState::Done) => {
-            entity.set_posture(Posture::SimulatingBeggar);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::SimulatingBeggar,
+                ActionState::Waiting,
+            );
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(pc) = entity.pc_data_mut() {
                 pc.current_action = crate::profiles::Action::Beggar;
             }
             return;
         }
         (OrderType::TransitionSimulatingBeggarWaitingUpright, MotionState::Done) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             // Player action execution does not clear the action directly here. An
             // unselected PC stores NoAction, while a selected PC forwards
             // MSG_UNSELECT_ACTION(BEGGAR); the messenger can reject that
@@ -1174,17 +1221,11 @@ fn apply_active_animation_start_state_side_effect(
             return;
         }
         (OrderType::TransitionCrouchingUp, MotionState::Done | MotionState::Terminated) => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
             return;
         }
         (OrderType::TransitionCrouchingDown, MotionState::Done | MotionState::Terminated) => {
-            entity.set_posture(Posture::Crouched);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Crouched, ActionState::Waiting);
             return;
         }
         (
@@ -1192,8 +1233,13 @@ fn apply_active_animation_start_state_side_effect(
             MotionState::Start,
         ) => {
             if entity.element_data().posture() != Posture::AnonymousArcher {
-                entity.set_posture(Posture::Upright);
+                engine.set_entity_posture(entity_id, Posture::Upright);
             }
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::AimingWithBow;
             }
@@ -1204,8 +1250,13 @@ fn apply_active_animation_start_state_side_effect(
             MotionState::Start,
         ) => {
             if entity.element_data().posture() != Posture::AnonymousArcher {
-                entity.set_posture(Posture::Upright);
+                engine.set_entity_posture(entity_id, Posture::Upright);
             }
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
             }
@@ -1253,29 +1304,15 @@ fn apply_active_animation_start_state_side_effect(
         return;
     };
 
-    entity.set_posture(Posture::Upright);
+    engine.set_entity_posture(entity_id, Posture::Upright);
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = action_state;
     }
-}
-
-fn rejected_dead_idle_posture_callback_required(
-    entity: &Entity,
-    anim_type: OrderType,
-    motion: MotionState,
-) -> bool {
-    entity.is_human()
-        && motion == MotionState::Start
-        && matches!(
-            anim_type,
-            OrderType::WaitingUpright
-                | OrderType::WaitingUprightBored
-                | OrderType::WaitingUprightBoredRandom
-        )
-        && matches!(
-            entity.element_data().posture(),
-            Posture::Dead | Posture::DeadBack
-        )
 }
 
 /// PC `Taking` / `TakingCrouched` Done handler — fires when a PC finishes the generic
@@ -1449,7 +1486,17 @@ fn anim_forces_non_interruptable_on_start(anim_type: OrderType) -> bool {
 /// `DYING_SWORD` / `DYING_BOW` / `DYING_UPRIGHT` / `DYING_CROUCHED`
 /// on motion Start: set posture to Dead (if already dead) or Lying,
 /// then set action_state per family.
-fn apply_dying_start_side_effect(entity: &mut Entity, anim_type: OrderType, motion: MotionState) {
+fn apply_dying_start_side_effect(
+    engine: &mut EngineInner,
+    entity_id: EntityId,
+    anim_type: OrderType,
+    motion: MotionState,
+) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if !matches!(motion, MotionState::Start) {
         return;
     }
@@ -1468,17 +1515,15 @@ fn apply_dying_start_side_effect(entity: &mut Entity, anim_type: OrderType, moti
     } else {
         Posture::Lying
     };
-    entity.set_posture(posture);
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = action;
-    }
+    set_actor_states(engine, entity_id, posture, action);
 }
 
 /// `EXTRACTING_ARROW_UPRIGHT` / `EXTRACTING_ARROW_CROUCHED` /
 /// `EXTRACTING_ARROW_BOW` on motion Start restore the same posture and
 /// action state as the shared human action branch in the original game.
 fn apply_arrow_extraction_start_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
@@ -1491,10 +1536,7 @@ fn apply_arrow_extraction_start_side_effect(
         OrderType::ExtractingArrowBow => (Posture::Upright, ActionState::AimingWithBow),
         _ => return,
     };
-    entity.set_posture(posture);
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = action;
-    }
+    set_actor_states(engine, entity_id, posture, action);
 }
 
 /// `STANDING_UP*` on motion start follows the original game's shared human
@@ -1502,7 +1544,8 @@ fn apply_arrow_extraction_start_side_effect(
 /// enters sword waiting, and bow stand-up only restores upright
 /// posture while preserving the bow action state.
 fn apply_standing_up_start_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
@@ -1511,19 +1554,18 @@ fn apply_standing_up_start_side_effect(
     }
     match anim_type {
         OrderType::StandingUp => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::Waiting;
-            }
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
         }
         OrderType::StandingUpSword => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
         }
         OrderType::StandingUpBow => {
-            entity.set_posture(Posture::Upright);
+            engine.set_entity_posture(entity_id, Posture::Upright);
         }
         _ => {}
     }
@@ -1532,7 +1574,17 @@ fn apply_standing_up_start_side_effect(
 /// `BEING_CARRIED_LITTLE_JOHN` / `BEING_CARRIED_PEASANT_C` on motion
 /// Start enter the carried idle state in the shared human Execute
 /// branch.
-fn apply_carried_start_side_effect(entity: &mut Entity, anim_type: OrderType, motion: MotionState) {
+fn apply_carried_start_side_effect(
+    engine: &mut EngineInner,
+    entity_id: EntityId,
+    anim_type: OrderType,
+    motion: MotionState,
+) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if !matches!(
         (anim_type, motion),
         (
@@ -1545,7 +1597,12 @@ fn apply_carried_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
     if entity.actor_data().is_none() {
         return;
     }
-    entity.set_posture(Posture::Carried);
+    engine.set_entity_posture(entity_id, Posture::Carried);
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = ActionState::Waiting;
     }
@@ -1570,12 +1627,18 @@ fn endurance_for_smalltalk_recovery(
 /// animation start and recover tiredness by one tenth of endurance at
 /// Terminated.
 fn apply_smalltalk_start_and_recovery_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
     profile_manager: &crate::profiles::ProfileManager,
     probe: Option<(u32, u32)>,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     let is_smalltalk = matches!(
         anim_type,
         OrderType::StrikingLeftSmalltalk
@@ -1592,10 +1655,12 @@ fn apply_smalltalk_start_and_recovery_side_effect(
     }
     match motion {
         MotionState::Start => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
         }
         MotionState::Terminated => {
             let Some(endurance) = endurance_for_smalltalk_recovery(entity, profile_manager) else {
@@ -1635,25 +1700,27 @@ fn apply_striking_down_sword_side_effect(
     antagonist_direction: Option<i16>,
     entity_id: EntityId,
 ) {
-    let entity = engine
-        .world
-        .entities
-        .get_mut(entity_id)
-        .expect("animation owner disappeared");
     if anim_type != OrderType::StrikingDownSword {
         return;
     }
     match motion {
         MotionState::Start => {
-            entity.set_posture(Posture::Upright);
-            if let Some(actor) = entity.actor_data_mut() {
-                actor.action_state = ActionState::WaitingSword;
-            }
+            set_actor_states(
+                engine,
+                entity_id,
+                Posture::Upright,
+                ActionState::WaitingSword,
+            );
             let direction = antagonist_direction.unwrap_or_else(|| {
                 panic!(
                     "actor {entity_id:?} StrikingDownSword started without an antagonist direction"
                 )
             });
+            let entity = engine
+                .world
+                .entities
+                .get_mut(entity_id)
+                .expect("animation owner disappeared");
             entity.position_iface_mut().set_direction(
                 crate::position_interface::Direction::from_raw(i32::from(direction)),
             );
@@ -1677,7 +1744,8 @@ fn apply_striking_down_sword_side_effect(
 /// the active_ai_anim teardown never fires for these anims and the
 /// corpse loops the idle sprite forever.
 fn apply_being_dead_start_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
@@ -1703,10 +1771,7 @@ fn apply_being_dead_start_side_effect(
         | OrderType::BeingDeadFallenBack => Posture::DeadBack,
         _ => Posture::Dead,
     };
-    entity.set_posture(posture);
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = action;
-    }
+    set_actor_states(engine, entity_id, posture, action);
 }
 
 /// Pick the landing `(posture, optional action_state)` for a fall
@@ -1835,7 +1900,17 @@ fn uses_perform_flight(anim_type: OrderType) -> bool {
 /// and deliberately keeps the current posture/action until landing.
 /// Other fall families set state on later motion events — handled by
 /// `apply_falling_completion_side_effect`.
-fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, motion: MotionState) {
+fn apply_falling_start_side_effect(
+    engine: &mut EngineInner,
+    entity_id: EntityId,
+    anim_type: OrderType,
+    motion: MotionState,
+) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if !matches!(motion, MotionState::Start) {
         return;
     }
@@ -1868,10 +1943,7 @@ fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
         // deviation latch used by turn-vibration suppression.
         entity.position_iface_mut().set_anti_collision_on(false);
     }
-    entity.set_posture(Posture::Flying);
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = action_state;
-    }
+    set_actor_states(engine, entity_id, Posture::Flying, action_state);
 }
 
 /// Falling-hit / shoulder-fall / falling-back / ladder-wall completion
@@ -1879,10 +1951,16 @@ fn apply_falling_start_side_effect(entity: &mut Entity, anim_type: OrderType, mo
 /// here — that's Phase 5 and still flows through the `combat_anim`
 /// block.
 fn apply_falling_completion_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if anim_type == OrderType::Rolling {
         return;
     }
@@ -1896,7 +1974,12 @@ fn apply_falling_completion_side_effect(
     }
     let is_dead = entity.is_dead();
     if let Some((posture, action_state)) = fall_landing_states(anim_type, is_dead) {
-        entity.set_posture(posture);
+        engine.set_entity_posture(entity_id, posture);
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         let hard_hit_done = motion == MotionState::Done
             && matches!(
                 anim_type,
@@ -2021,7 +2104,8 @@ fn hold_weak_sword_at_action_done(
 /// - `PARRYING_SHIELD` on `MOTION_DONE`       → `(Upright, ParryingShield)`
 /// - `PARRYING_SHIELD` on `MOTION_TERMINATED` → `(Upright, HoldingShield)`
 fn apply_shield_transition_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
 ) {
@@ -2039,7 +2123,12 @@ fn apply_shield_transition_side_effect(
         _ => None,
     };
     if let Some(state) = new_state {
-        entity.set_posture(Posture::Upright);
+        engine.set_entity_posture(entity_id, Posture::Upright);
+        let entity = engine
+            .world
+            .entities
+            .get_mut(entity_id)
+            .expect("animation owner disappeared");
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = state;
         }
@@ -2075,14 +2164,16 @@ fn apply_pc_disguise_exit_side_effect(
     let entering_reusable_cloak = anim_type == OrderType::TransitionWaitingCapeWaitingUpright
         && command == Some(Command::EnterCloak)
         && reusable_cloaks_enabled;
-    entity.set_posture(if entering_reusable_cloak {
-        Posture::Cloaked
-    } else {
-        Posture::Upright
-    });
-    if let Some(actor) = entity.actor_data_mut() {
-        actor.action_state = ActionState::Waiting;
-    }
+    set_actor_states(
+        engine,
+        entity_id,
+        if entering_reusable_cloak {
+            Posture::Cloaked
+        } else {
+            Posture::Upright
+        },
+        ActionState::Waiting,
+    );
     if !entering_reusable_cloak {
         engine.execute_hidden_titbit_removals(entity_id);
     }
@@ -2094,11 +2185,17 @@ fn apply_pc_disguise_exit_side_effect(
 /// relative to the opponent's current action-done timing, and
 /// parry-to-waiting / low-parry completion return to WaitingSword.
 fn apply_sword_parry_side_effect(
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
     motion: MotionState,
     principal_frames_from_now: Option<i16>,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     let new_state = match (anim_type, motion) {
         (OrderType::TransitionWaitingSwordParryingSword, MotionState::Terminated) => {
             if let Some(human) = entity.human_data_mut() {
@@ -2138,18 +2235,21 @@ fn apply_sword_parry_side_effect(
         _ => None,
     };
     if let Some(state) = new_state {
-        entity.set_posture(Posture::Upright);
-        if let Some(actor) = entity.actor_data_mut() {
-            actor.action_state = state;
-        }
+        set_actor_states(engine, entity_id, Posture::Upright, state);
     }
 }
 
 fn apply_under_net_initialization_side_effect(
     sim: &crate::sim_rng::SimulationContext,
-    entity: &mut Entity,
+    engine: &mut EngineInner,
+    entity_id: EntityId,
     anim_type: OrderType,
 ) {
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     use crate::ai::EmoticonType;
     use crate::order::OrderType as OT;
 
@@ -2160,8 +2260,13 @@ fn apply_under_net_initialization_side_effect(
     let is_unconscious = entity.is_unconscious();
     let is_tied = entity.element_data().posture() == Posture::Tied;
     if !entity.is_dead() && !is_unconscious && !is_tied {
-        entity.set_posture(Posture::StuckUnderNet);
+        engine.set_entity_posture(entity_id, Posture::StuckUnderNet);
     }
+    let entity = engine
+        .world
+        .entities
+        .get_mut(entity_id)
+        .expect("animation owner disappeared");
     if let Some(actor) = entity.actor_data_mut() {
         actor.action_state = ActionState::Waiting;
     }

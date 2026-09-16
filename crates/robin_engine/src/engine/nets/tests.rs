@@ -853,7 +853,7 @@ fn unapply_clears_victims_and_releases_counters() {
     // post-dispatch state.
     engine.apply_net_falling_effect(sim, &assets, net_id);
     if let Some(entity) = engine.world.entities.get_mut(victim_id) {
-        entity.set_posture_stuck_under_net_for_human();
+        entity.set_posture(crate::element::Posture::StuckUnderNet);
     }
     assert_eq!(
         engine

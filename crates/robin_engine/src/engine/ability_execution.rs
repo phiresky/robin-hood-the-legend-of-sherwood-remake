@@ -27,7 +27,10 @@ impl EngineInner {
             if let Some(pc) = carrier.pc_data_mut() {
                 pc.carried = None;
             }
-            carrier.set_posture(crate::element::Posture::Upright);
+            self.set_entity_posture(carrier_id, crate::element::Posture::Upright);
+            let carrier = self
+                .get_entity_mut(carrier_id)
+                .expect("corpse-drop carrier disappeared");
             if let Some(actor) = carrier.actor_data_mut() {
                 actor.action_state = crate::element::ActionState::Waiting;
             }
@@ -89,18 +92,11 @@ impl EngineInner {
                 .position()
         });
 
-        if let Some(target) = self.get_entity_mut(target_id) {
-            let was_lying = target.element_data().posture().is_lying();
-            if let Some(human) = target.human_data_mut()
-                && human.last_is_lying_for_corpse_intersection.is_none()
-            {
-                // A loaded carried body may reach DropCorpse before its
-                // first owner observation. Seed that derived tracker from
-                // the authoritative pre-posture-change state so the synchronous
-                // post-mutation hook below still observes false -> true.
-                human.last_is_lying_for_corpse_intersection = Some(was_lying);
-            }
-            target.set_posture(drop_posture);
+        if self.get_entity(target_id).is_some() {
+            self.set_entity_posture(target_id, drop_posture);
+            let target = self
+                .get_entity_mut(target_id)
+                .expect("corpse-drop target disappeared");
             // Dropping a corpse transfers the carrier's obstacle,
             // plane, layer, and sector before either the instant or delayed
             // position write. It deliberately does not replace the corpse's
@@ -143,13 +139,6 @@ impl EngineInner {
                 actor.action_state = crate::element::ActionState::Waiting;
             }
         }
-        // Dropping a corpse updates the carried human's states
-        // while an outdoor delayed map-position update is still only queued.
-        // Updating human posture synchronously runs
-        // corpse-intersection updates at that boundary, so overlap must be
-        // tested against the body's old current position, not against the
-        // delayed drop destination applied at its later owner slot.
-        self.process_corpse_intersection_update_for(target_id);
         self.actor_wait(sim, assets, target_id);
 
         if in_building && let Some(target) = self.get_entity_mut(target_id) {
@@ -235,16 +224,19 @@ impl EngineInner {
         false
     }
     pub(super) fn apply_ability_carry_done(&mut self, carrier_id: EntityId, target_id: EntityId) {
+        self.set_entity_posture(carrier_id, Posture::CarryingCorpse);
         let carrier = self
             .get_entity_mut(carrier_id)
             .expect("Carry owner disappeared at completion");
-        carrier.set_posture(Posture::CarryingCorpse);
         carrier
             .actor_data_mut()
             .expect("Carry owner lost actor state")
             .action_state = ActionState::Waiting;
-        if let Some(target) = self.get_entity_mut(target_id) {
-            target.set_posture(crate::element::Posture::Carried);
+        if self.get_entity(target_id).is_some() {
+            self.set_entity_posture(target_id, crate::element::Posture::Carried);
+            let target = self
+                .get_entity_mut(target_id)
+                .expect("carried target disappeared");
             if let Some(actor) = target.actor_data_mut() {
                 actor.action_state = crate::element::ActionState::Waiting;
             }
@@ -264,11 +256,12 @@ impl EngineInner {
         actor_id: EntityId,
         target_id: EntityId,
     ) {
-        let target = self
-            .get_entity_mut(target_id)
-            .unwrap_or_else(|| panic!("tie target {target_id:?} vanished at Done"));
-        target.set_posture(crate::element::Posture::Tied);
-        if target.is_soldier() {
+        self.set_entity_posture(target_id, crate::element::Posture::Tied);
+        if self
+            .get_entity(target_id)
+            .expect("tie target disappeared")
+            .is_soldier()
+        {
             self.execute_ai_speech(
                 sim,
                 assets,
@@ -303,7 +296,12 @@ impl EngineInner {
         assert!(target.is_active(), "untie target became inactive at Done");
         assert!(target.is_npc(), "untie target stopped being an NPC at Done");
         assert!(!target.is_dead(), "untie target died before Done");
-        target.untie_human();
+        assert_eq!(
+            target.posture(),
+            Posture::Tied,
+            "cannot untie an untied entity"
+        );
+        self.set_entity_posture(target_id, Posture::Lying);
         // Preserve unconsciousness and concussion. The regular
         // human recovery tick remains the sole wake-up authority.
         self.actor_wait(sim, assets, target_id);
@@ -401,8 +399,11 @@ impl EngineInner {
                 }
             };
 
-            if let Some(climber) = self.get_entity_mut(climber_id) {
-                climber.set_posture(crate::element::Posture::Upright);
+            if self.get_entity(climber_id).is_some() {
+                self.set_entity_posture(climber_id, crate::element::Posture::Upright);
+                let climber = self
+                    .get_entity_mut(climber_id)
+                    .expect("climber disappeared");
                 // Sever climber → carrier back-reference.
                 if let Some(human) = climber.human_data_mut() {
                     human.carrier = None;
@@ -441,8 +442,11 @@ impl EngineInner {
 
         // Reset the helper to HelpingToClimb / Waiting and
         // sever the carrier-side link.
-        if let Some(helper) = self.get_entity_mut(helper_id) {
-            helper.set_posture(crate::element::Posture::HelpingToClimb);
+        if self.get_entity(helper_id).is_some() {
+            self.set_entity_posture(helper_id, crate::element::Posture::HelpingToClimb);
+            let helper = self
+                .get_entity_mut(helper_id)
+                .expect("climbing helper disappeared");
             if let Some(actor) = helper.actor_data_mut() {
                 actor.execution_frozen = false;
                 actor.action_state = crate::element::ActionState::Waiting;
@@ -1450,11 +1454,7 @@ impl EngineInner {
         // pair, changes posture, snaps the climber, and freezes the helper
         // when that order reaches its first Execute in the climber's later
         // owner slot.
-        crate::abilities::initialize_climb_on_shoulders_relationship(
-            &mut self.world.entities,
-            actor_id,
-            helper_id,
-        );
+        crate::abilities::initialize_climb_on_shoulders_relationship(self, actor_id, helper_id);
         self.actor_freeze_execution(sim, assets, helper_id);
         true
     }

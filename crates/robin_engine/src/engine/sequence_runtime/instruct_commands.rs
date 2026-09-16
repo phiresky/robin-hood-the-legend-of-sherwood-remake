@@ -475,7 +475,7 @@ impl EngineInner {
             self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
         } else {
             if victim.is_dead() {
-                victim.set_posture(crate::element::Posture::DeadBack);
+                self.set_entity_posture(owner, crate::element::Posture::DeadBack);
             }
             self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
         }

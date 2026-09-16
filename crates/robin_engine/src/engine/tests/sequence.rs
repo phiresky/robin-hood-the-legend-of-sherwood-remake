@@ -5847,18 +5847,11 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
         let human = target_entity.human_data_mut().expect("target is human");
         human.unconscious = true;
         human.concussion_of_the_brain = CONCUSSION_THRESHOLD;
-        human.last_is_lying_for_corpse_intersection = Some(false);
         target_entity
             .npc_data_mut()
             .expect("target is NPC")
             .life_points = 30;
     }
-    engine
-        .get_entity_mut(neighbour)
-        .expect("neighbour present")
-        .human_data_mut()
-        .expect("neighbour is human")
-        .last_is_lying_for_corpse_intersection = Some(true);
 
     let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -5878,15 +5871,6 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
             "waking up's synchronous lying-posture assignment must publish the overlap for {id:?}"
         );
     }
-    assert_eq!(
-        engine
-            .get_entity(target)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .last_is_lying_for_corpse_intersection,
-        Some(true)
-    );
 }
 
 /// `Point` → `Pointing` animation.

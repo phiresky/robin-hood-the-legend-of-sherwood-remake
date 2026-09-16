@@ -178,8 +178,8 @@ impl EngineInner {
             },
         );
         self.launch_element(sim, assets, element);
+        self.set_entity_posture(owner, crate::element::Posture::Upright);
         let entity = self.expect_entity_mut(owner, "incoming arrow shield pose");
-        entity.set_posture(crate::element::Posture::Upright);
         entity
             .actor_data_mut()
             .expect("shield owner is actor")

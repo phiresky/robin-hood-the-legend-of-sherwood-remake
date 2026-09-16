@@ -533,8 +533,10 @@ impl EngineInner {
             )
         };
         if bow_shot::is_bow_transition_order(order_type) {
-            bow_shot::apply_bow_transition_state_side_effect(shooter, order_type, motion);
-            if shooter.is_pc()
+            bow_shot::apply_bow_transition_state_side_effect(self, shooter_id, order_type, motion);
+            if self
+                .expect_entity(shooter_id, "bow owner after transition")
+                .is_pc()
                 && !script_driven
                 && motion == MotionState::Start
                 && matches!(
@@ -562,13 +564,9 @@ impl EngineInner {
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
             if order_type == OrderType::ShootingWithBowLeaningOut {
-                shooter
-                    .element_data_mut()
-                    .publish_order_posture(Posture::LeaningOut);
+                self.publish_entity_order_posture(shooter_id, Posture::LeaningOut);
             } else if shooter.element_data().posture() != Posture::AnonymousArcher {
-                shooter
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Upright);
+                self.publish_entity_order_posture(shooter_id, Posture::Upright);
             }
             return Some(motion);
         }
@@ -3738,14 +3736,6 @@ mod tests {
         {
             let target = engine.get_entity_mut(target_id).unwrap();
             target.element_data_mut().set_position_map(carried_position);
-            assert_eq!(
-                target
-                    .human_data()
-                    .unwrap()
-                    .last_is_lying_for_corpse_intersection,
-                None,
-                "freshly adopted carried bodies have no derived observer state"
-            );
         }
         let mut neighbour = TestActor::pc(Posture::Tied)
             .action_state(ActionState::Waiting)
@@ -3753,10 +3743,6 @@ mod tests {
         neighbour
             .element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
-        neighbour
-            .human_data_mut()
-            .unwrap()
-            .last_is_lying_for_corpse_intersection = Some(true);
         let neighbour_id = engine.add_test_entity(neighbour);
 
         let assets = engine.test_runtime_assets();

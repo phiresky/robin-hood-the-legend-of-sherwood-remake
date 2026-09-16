@@ -439,8 +439,8 @@ impl EngineInner {
 
     /// Initialize the timed fall from the actor's live takeoff position.
     pub(crate) fn initialize_ladder_fall(&mut self, victim_id: EntityId, destination: [f32; 3]) {
+        self.set_entity_posture(victim_id, Posture::Flying);
         let entity = self.expect_entity_mut(victim_id, "ladder-fall victim");
-        entity.set_posture(Posture::Flying);
         let position = entity.position_iface().get_position();
         let dx = destination[0] - position.x;
         let dy = destination[1] - position.y;
@@ -954,9 +954,9 @@ impl EngineInner {
                 }
             }
             if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)
-                && let Some(entity) = self.world.entities.get_mut(victim_id)
+                && self.world.entities.get(victim_id).is_some()
             {
-                entity.set_posture(posture);
+                self.set_entity_posture(victim_id, posture);
             }
             tracing::debug!(
                 victim = ?victim_id,

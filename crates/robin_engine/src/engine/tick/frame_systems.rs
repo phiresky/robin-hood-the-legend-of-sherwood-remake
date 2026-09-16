@@ -229,12 +229,6 @@ impl EngineInner {
     ) {
         self.tick_actor_owner_envelopes(sim, assets);
 
-        // Close posture writes made outside an actor's own update. Owner-local
-        // posture transitions already publish before the next owner runs.
-        {
-            let _detail = entity_system_detail_guard(EntitySystemDetail::CorpseUpdates);
-            self.process_corpse_intersection_updates();
-        }
         finish_entity_system_detail_frame();
 
         // Remarks decay once after all owners, including while hidden.

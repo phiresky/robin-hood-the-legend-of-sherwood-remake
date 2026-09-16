@@ -397,8 +397,8 @@ impl EngineInner {
             )
         };
         if motion == crate::sprite::MotionState::Start {
+            self.set_entity_posture(pc_id, crate::element::Posture::SimulatingBeggar);
             let pc = self.world.entities.get_mut(pc_id).unwrap();
-            pc.set_posture(crate::element::Posture::SimulatingBeggar);
             pc.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         }
         self.bid_for_money(assets, pc_id);

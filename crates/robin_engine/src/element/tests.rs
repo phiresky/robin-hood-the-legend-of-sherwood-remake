@@ -1338,7 +1338,6 @@ fn golden_human_fixture() -> HumanData {
         smalltalk_hint_opponent: Some(EntityId::Soldier(SoldierId(24))),
         relative_fighting_ability: 16,
         small_repulsive_radius: true,
-        last_is_lying_for_corpse_intersection: Some(true),
         killed_by_accident: true,
         parry_counter: 17,
         invulnerable: true,

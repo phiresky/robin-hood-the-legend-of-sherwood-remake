@@ -1182,12 +1182,7 @@ impl EngineInner {
                         | Posture::Tied
                 )
             {
-                self.expect_entity_mut(
-                    victim_id,
-                    "ReceiveSwordDamage grounded lethal posture publication",
-                )
-                .element_data_mut()
-                .publish_order_posture(Posture::Dead);
+                self.set_entity_posture(victim_id, Posture::Dead);
             }
             let (dseq, didx) = damage_element;
             self.element_terminated(sim, assets, &mut Vec::new(), dseq, didx);
@@ -1753,7 +1748,8 @@ impl EngineInner {
             // direction = (carrier_dir + 12) & 15.
             elem.set_direction_instantly((carrier_dir + 12) & 15);
             elem.sprite.compute_display_depth();
-            carried.set_posture(carried_posture);
+            self.set_entity_posture(carried_id, carried_posture);
+            let carried = self.expect_entity_mut(carried_id, "dropped body");
             // Corpse dropping ends by clearing the body's carrier
             // before clearing the carried relationship, and
             // clearing the human actor's carrier runs
@@ -1776,8 +1772,9 @@ impl EngineInner {
             }
         }
 
-        if let Some(carrier) = self.get_entity_mut(carrier_id) {
-            carrier.set_posture(Posture::Upright);
+        if self.get_entity(carrier_id).is_some() {
+            self.set_entity_posture(carrier_id, Posture::Upright);
+            let carrier = self.expect_entity_mut(carrier_id, "body carrier");
             if let Some(actor) = carrier.actor_data_mut() {
                 actor.action_state = ActionState::Waiting;
             }
@@ -2159,10 +2156,7 @@ impl EngineInner {
                         | Posture::Tied
                 )
             {
-                self.get_entity_mut(victim_id)
-                    .expect("piercing-damage victim disappeared during translation")
-                    .element_data_mut()
-                    .publish_order_posture(Posture::Dead);
+                self.set_entity_posture(victim_id, Posture::Dead);
             }
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
@@ -2797,8 +2791,7 @@ impl EngineInner {
         }
 
         // the stuck-under-net posture and waiting action state.
-        self.expect_entity_mut(victim_id, "apply_net posture victim")
-            .set_posture_stuck_under_net_for_human();
+        self.set_entity_posture(victim_id, Posture::StuckUnderNet);
 
         // Netted NPCs broadcast as DetectableType::Body to every NPC
         // *immediately* (not deferred via inform_my_friends) and
@@ -3681,9 +3674,7 @@ impl EngineInner {
         }
 
         if falling_anim.is_none() {
-            self.expect_entity_mut(victim_id, "knockout victim posture fallback")
-                .element_data_mut()
-                .publish_order_posture(Posture::Lying);
+            self.publish_entity_order_posture(victim_id, Posture::Lying);
         }
 
         // Queue roll if on a slope.
@@ -3755,7 +3746,7 @@ impl EngineInner {
             npc.inform_my_friends = attacker_is_pc;
         }
         if set_lying_now && !victim.element_data().posture().is_lying() {
-            victim.set_posture(Posture::Lying);
+            self.set_entity_posture(victim_id, Posture::Lying);
         }
     }
 }

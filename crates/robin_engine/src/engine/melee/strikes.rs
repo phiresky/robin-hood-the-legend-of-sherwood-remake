@@ -398,7 +398,8 @@ impl EngineInner {
         let profile_idx = {
             let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
-            entity.set_posture(Posture::Upright);
+            self.set_entity_posture(attacker_id, Posture::Upright);
+            let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let actor = entity.actor_data_mut().unwrap_or_else(|| {
                 panic!("melee MotionState::Start owner {attacker_id:?} lost actor data")
             });
@@ -1992,11 +1993,13 @@ impl EngineInner {
                     .entities
                     .get_mut(owner)
                     .expect("ladder fall owner disappeared");
-                entity.set_posture(if entity.is_dead() {
+                let posture = if entity.is_dead() {
                     Posture::DeadBack
                 } else {
                     Posture::Lying
-                });
+                };
+                self.set_entity_posture(owner, posture);
+                let entity = self.expect_entity_mut(owner, "ladder fall owner");
                 entity
                     .actor_data_mut()
                     .expect("ladder fall owner is not an actor")

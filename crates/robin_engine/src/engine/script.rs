@@ -1588,12 +1588,6 @@ impl EngineInner {
             .map(|entity| (entity.element_data().posture(), entity.is_npc()))
             .ok_or_else(|| format!("SetActorPosture target {actor_handle} is not human"))?;
 
-        let set_posture = |engine: &mut Self, posture| {
-            engine
-                .get_entity_mut(actor)
-                .expect("validated posture actor vanished")
-                .set_posture(posture);
-        };
         let wait = |engine: &mut Self, active: &mut Vec<ActiveScriptCall>| {
             let mut element = crate::sequence::SequenceElement::new(
                 1,
@@ -1633,24 +1627,24 @@ impl EngineInner {
                 if current == Posture::Lying && is_npc {
                     self.broadcast_resurrection(actor);
                 }
-                set_posture(self, Posture::Upright);
+                self.set_entity_posture(actor, Posture::Upright);
                 wait(self, active)?;
                 if current != Posture::CarryingCorpse {
                     clear_concussion(self);
                 }
             }
             2 => {
-                set_posture(self, Posture::Lying);
+                self.set_entity_posture(actor, Posture::Lying);
                 wait(self, active)?;
                 clear_concussion(self);
             }
             7 => {
                 notify_down(self);
-                set_posture(self, Posture::Tied);
+                self.set_entity_posture(actor, Posture::Tied);
                 wait(self, active)?;
             }
             10 => {
-                set_posture(self, Posture::Crouched);
+                self.set_entity_posture(actor, Posture::Crouched);
                 self.get_entity_mut(actor)
                     .expect("validated crouched actor vanished")
                     .actor_data_mut()
@@ -1660,10 +1654,10 @@ impl EngineInner {
             }
             15 => {
                 self.apply_scripted_life_points(sim, assets, actor, 0);
+                self.set_entity_posture(actor, Posture::Dead);
                 let entity = self
                     .get_entity_mut(actor)
                     .expect("validated dead actor vanished after virtual Kill");
-                entity.set_posture(Posture::Dead);
                 entity
                     .actor_data_mut()
                     .expect("validated dead human lost ActorData")
@@ -1671,7 +1665,7 @@ impl EngineInner {
                 wait(self, active)?;
             }
             16 => {
-                set_posture(self, Posture::Sitting);
+                self.set_entity_posture(actor, Posture::Sitting);
                 clear_concussion(self);
                 wait(self, active)?;
             }
@@ -1683,7 +1677,7 @@ impl EngineInner {
                     actor,
                     crate::sequence::SequencePriority::Injury,
                 );
-                set_posture(self, Posture::Lying);
+                self.set_entity_posture(actor, Posture::Lying);
                 self.apply_scripted_concussion(
                     sim,
                     assets,
@@ -1696,7 +1690,7 @@ impl EngineInner {
                 wait(self, active)?;
             }
             100 => {
-                set_posture(self, Posture::AnonymousArcher);
+                self.set_entity_posture(actor, Posture::AnonymousArcher);
                 self.get_entity_mut(actor)
                     .expect("validated AnonymousArcher actor vanished")
                     .actor_data_mut()

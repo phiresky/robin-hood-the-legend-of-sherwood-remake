@@ -1,33 +1,7 @@
-//! Corpse-intersection repulsion hook.
-//!
-//! **Why this exists.** Bodies lying on the ground carry a repulsion
-//! field that shoves other actors out of their hitbox.  When two
-//! corpses collapse on top of each other the normal radius is too
-//! large — they'd repel each other forever and never settle.  The
-//! fix is to shrink both corpses' radii
-//! ([`HumanData::small_repulsive_radius`]) so intersecting bodies
-//! sit still instead of self-launching.
-//!
-//! **How we wire it.** Many callers mutate `posture` directly through
-//! [`Entity::human_and_posture_mut`] (e.g. [`crate::combat::tie_up`])
-//! and the
-//! [`ElementData::set_posture`](crate::element::ElementData::set_posture)
-//! setter doesn't see `EngineInner`, so it cannot react by itself.
-//! Instead,
-//! [`HumanData::last_is_lying_for_corpse_intersection`] records the
-//! previously-observed lying state. The live actor walk calls
-//! [`EngineInner::process_corpse_intersection_update_for`] at every owner
-//! boundary, before the next creation slot can sample repulsive state.
-//! [`EngineInner::process_corpse_intersection_updates`] retains a full scan
-//! after the actor walk as a fallback for posture writes outside those owner
-//! envelopes.
-//!
-//! This closes the source-visible cross-owner boundary while retaining the
-//! centralized tracker needed by direct posture mutations.
+//! Immediate corpse-intersection updates at human posture transitions.
 
 use crate::coordinates::MapPoint;
 use crate::element::EntityId;
-use std::collections::HashSet;
 
 use super::EngineInner;
 
@@ -42,100 +16,37 @@ const INTERSECT_SQ_DIST: f32 =
     4.0 * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE) * (RADIUS_CORPSE + ACTIONRADIUS_CORPSE);
 
 impl EngineInner {
-    /// Reproduce original-game human posture changes when the base element
-    /// rejects a Dead/DeadBack -> nonlying posture write. The visible posture
-    /// remains dead, but the human override compares the requested posture
-    /// and synchronously runs the corpse-removal callback anyway.
-    pub(crate) fn process_rejected_nonlying_posture_request_for(&mut self, id: EntityId) {
-        self.update_intersecting_corpses_with_snapshot(id, false, None);
-    }
-
-    /// Close one human owner's posture-change corpse-intersection boundary.
+    /// Apply a guarded posture request and publish its spatial effects immediately.
     ///
-    /// Original performs this work synchronously from
-    /// original-game human posture changes, so a later creation slot must see
-    /// the updated anti-collision flag and repulsive radius. The full drain
-    /// remains as a fallback for posture writes outside the live actor walk.
-    pub(crate) fn process_corpse_intersection_update_for(&mut self, id: EntityId) {
-        let transition = {
-            let Some(entity) = self.world.entities.get_mut(id) else {
-                return;
-            };
-            let is_lying = entity.element_data().posture().is_lying();
-            let Some(human) = entity.human_data_mut() else {
-                return;
-            };
-            match human.last_is_lying_for_corpse_intersection {
-                None => {
-                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    None
-                }
-                Some(previous) if previous != is_lying => {
-                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    Some(is_lying)
-                }
-                Some(_) => None,
-            }
-        };
-        if let Some(b_added) = transition {
-            self.update_intersecting_corpses_with_snapshot(id, b_added, None);
+    /// The human callback compares the previous actual posture with the requested
+    /// posture, even when the dead-body guard rejects the underlying write.
+    pub fn set_entity_posture(&mut self, id: EntityId, posture: crate::element::Posture) {
+        let entity = self
+            .get_entity_mut(id)
+            .expect("posture transition owner disappeared");
+        let was_lying = entity.posture().is_lying();
+        let is_human = entity.is_human();
+        entity.set_posture(posture);
+        if is_human && was_lying != posture.is_lying() {
+            self.update_intersecting_corpses(id, posture.is_lying());
         }
     }
 
-    /// Per-tick drain: detect lying↔non-lying posture transitions on
-    /// every human and fire [`EngineInner::update_intersecting_corpses`]
-    /// for each.
-    ///
-    /// Seeds [`HumanData::last_is_lying_for_corpse_intersection`] on
-    /// the first observation (post-load or post-spawn) without
-    /// firing an update, so serialized `small_repulsive_radius`
-    /// values carry over untouched.
-    pub(crate) fn process_corpse_intersection_updates(&mut self) {
-        let mut transitions: Vec<(EntityId, bool)> = Vec::new();
-        // Reconstruct the lying population that existed at the start of the
-        // actor pass. The original game updates intersecting corpses synchronously
-        // from each posture change, so a later actor's new lying posture is not
-        // visible to an earlier actor's callback. The Rust scan observes all
-        // final postures at once; this staged set restores creation-order
-        // visibility while retaining the centralized posture tracker.
-        let mut logically_lying: HashSet<EntityId> = HashSet::new();
-
-        for (entity_id, entity) in self.world.entities.humans_mut() {
-            let is_lying = entity.element_data().posture().is_lying();
-            let Some(human) = entity.human_data_mut() else {
-                continue;
-            };
-            match human.last_is_lying_for_corpse_intersection {
-                None => {
-                    // First observation — seed the tracker without
-                    // triggering an update.  Serialized flags stay
-                    // authoritative across save/load.
-                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    if is_lying {
-                        logically_lying.insert(entity_id.into());
-                    }
-                }
-                Some(prev) if prev != is_lying => {
-                    if prev {
-                        logically_lying.insert(entity_id.into());
-                    }
-                    human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    transitions.push((entity_id.into(), is_lying));
-                }
-                Some(true) => {
-                    logically_lying.insert(entity_id.into());
-                }
-                Some(false) => {}
-            }
-        }
-
-        for (id, b_added) in transitions {
-            if b_added {
-                logically_lying.insert(id);
-            } else {
-                logically_lying.remove(&id);
-            }
-            self.update_intersecting_corpses_with_snapshot(id, b_added, Some(&logically_lying));
+    /// Publish an executing order's logical posture while retaining the sprite
+    /// position posture and synchronously updating the human spatial state.
+    pub(crate) fn publish_entity_order_posture(
+        &mut self,
+        id: EntityId,
+        posture: crate::element::Posture,
+    ) {
+        let entity = self
+            .get_entity_mut(id)
+            .expect("order posture owner disappeared");
+        let was_lying = entity.posture().is_lying();
+        let is_human = entity.is_human();
+        entity.element_data_mut().publish_order_posture(posture);
+        if is_human && was_lying != posture.is_lying() {
+            self.update_intersecting_corpses(id, posture.is_lying());
         }
     }
 
@@ -154,17 +65,7 @@ impl EngineInner {
     /// *other* corpse they stay small; otherwise the recursive
     /// `update_intersecting_corpses(_, true)` call on each of them
     /// restores the normal radius.
-    #[cfg(test)]
     pub(crate) fn update_intersecting_corpses(&mut self, corpse: EntityId, b_added: bool) {
-        self.update_intersecting_corpses_with_snapshot(corpse, b_added, None);
-    }
-
-    fn update_intersecting_corpses_with_snapshot(
-        &mut self,
-        corpse: EntityId,
-        b_added: bool,
-        logically_lying: Option<&HashSet<EntityId>>,
-    ) {
         // Snapshot the corpse's spatial keys; also the sector so we
         // can skip the whole operation inside buildings.
         let Some(entity) = self.get_entity(corpse) else {
@@ -179,10 +80,9 @@ impl EngineInner {
         // intersect test uses.  Stderr only, outside serialized state.
         if super::diagnostics::config().corpse_intersection {
             eprintln!(
-                "[CORPSE frame={} corpse={corpse:?} added={b_added} sector={corpse_sector:?} building={} layer={corpse_layer} pos={corpse_pos:?} staged={:?}]",
+                "[CORPSE frame={} corpse={corpse:?} added={b_added} sector={corpse_sector:?} building={} layer={corpse_layer} pos={corpse_pos:?}]",
                 self.control.frame_counter,
                 self.sector_is_building(corpse_sector),
-                logically_lying,
             );
         }
 
@@ -210,7 +110,6 @@ impl EngineInner {
                     corpse_layer,
                     corpse_pos,
                     /* candidate_small_flag */ false,
-                    logically_lying,
                 ) {
                     if let Some(h) = self.get_entity_mut(id).and_then(|e| e.human_data_mut()) {
                         h.small_repulsive_radius = true;
@@ -237,9 +136,8 @@ impl EngineInner {
                     corpse_layer,
                     corpse_pos,
                     /* candidate_small_flag */ true,
-                    logically_lying,
                 ) {
-                    self.update_intersecting_corpses_with_snapshot(id, true, logically_lying);
+                    self.update_intersecting_corpses(id, true);
                 }
             }
 
@@ -262,7 +160,6 @@ impl EngineInner {
         corpse_layer: u16,
         corpse_pos: MapPoint,
         candidate_small_flag: bool,
-        logically_lying: Option<&HashSet<EntityId>>,
     ) -> bool {
         if candidate == corpse {
             return false;
@@ -277,10 +174,7 @@ impl EngineInner {
             return false;
         }
         let ed = actor.element_data();
-        let is_logically_lying = logically_lying
-            .map(|lying| lying.contains(&candidate))
-            .unwrap_or_else(|| ed.posture().is_lying());
-        if !is_logically_lying || ed.layer() != corpse_layer || ed.sector() != corpse_sector {
+        if !ed.posture().is_lying() || ed.layer() != corpse_layer || ed.sector() != corpse_sector {
             return false;
         }
         let dx = ed.position_map().x - corpse_pos.x;
@@ -426,7 +320,6 @@ mod tests {
         corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
         let corpse_human = HumanData {
             small_repulsive_radius: true,
-            last_is_lying_for_corpse_intersection: Some(true),
             ..Default::default()
         };
         let corpse = engine.add_test_entity(Entity::Soldier(ActorSoldier {
@@ -450,7 +343,6 @@ mod tests {
         let pc_human = HumanData {
             unconscious: true,
             small_repulsive_radius: true,
-            last_is_lying_for_corpse_intersection: Some(true),
             ..Default::default()
         };
         let pc = engine.add_test_entity(Entity::Pc(ActorPc {
@@ -460,17 +352,12 @@ mod tests {
             pc: PcData::default(),
         }));
 
-        engine
-            .get_entity_mut(corpse)
-            .unwrap()
-            .set_posture(Posture::Upright);
+        engine.set_entity_posture(corpse, Posture::Upright);
         assert_eq!(
             engine.get_entity(corpse).unwrap().element_data().posture(),
             Posture::DeadBack,
             "the base element rejects the requested upright posture"
         );
-
-        engine.process_rejected_nonlying_posture_request_for(corpse);
 
         for id in [corpse, pc] {
             assert!(
@@ -710,11 +597,7 @@ mod tests {
         let removed = engine.add_test_entity(Entity::Civilian(removed));
         let later = engine.add_test_entity(Entity::Civilian(later));
 
-        engine
-            .get_entity_mut(removed)
-            .unwrap()
-            .set_posture(Posture::Upright);
-        engine.update_intersecting_corpses(removed, false);
+        engine.set_entity_posture(removed, Posture::Upright);
 
         assert!(
             engine
@@ -743,18 +626,15 @@ mod tests {
         );
     }
 
-    /// A lying corpse with a *serialized* `small_repulsive_radius = true`
-    /// (simulating a savegame load) must not have that flag cleared by
-    /// the very first drain — the tracker is seeded, no transition is
-    /// emitted.
+    /// Assigning the same lying posture preserves an adopted radius flag.
     #[test]
-    fn process_drain_seeds_without_firing() {
+    fn unchanged_lying_posture_preserves_radius() {
         let mut engine = EngineInner::new();
         let mut civ = civilian_at(100.0, 100.0, Posture::Lying, 1);
         civ.human.small_repulsive_radius = true;
         let a = engine.add_test_entity(Entity::Civilian(civ));
 
-        engine.process_corpse_intersection_updates();
+        engine.set_entity_posture(a, Posture::Lying);
 
         assert!(
             engine
@@ -764,36 +644,27 @@ mod tests {
                 .unwrap()
                 .small_repulsive_radius
         );
-        assert_eq!(
-            engine
-                .get_entity(a)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .last_is_lying_for_corpse_intersection,
-            Some(true)
-        );
     }
 
     #[test]
-    fn simultaneous_falls_preserve_owner_order_intersection_visibility() {
+    fn consecutive_falls_publish_intersections_immediately() {
         let mut engine = EngineInner::new();
-        let mut first = civilian_at(100.0, 100.0, Posture::Upright, 1);
-        first.human.last_is_lying_for_corpse_intersection = Some(false);
-        let mut second = civilian_at(110.0, 100.0, Posture::Upright, 1);
-        second.human.last_is_lying_for_corpse_intersection = Some(false);
+        let first = civilian_at(100.0, 100.0, Posture::Upright, 1);
+        let second = civilian_at(110.0, 100.0, Posture::Upright, 1);
         let first = engine.add_test_entity(Entity::Civilian(first));
         let second = engine.add_test_entity(Entity::Civilian(second));
 
-        engine
-            .get_entity_mut(first)
-            .unwrap()
-            .set_posture(Posture::Dead);
-        engine
-            .get_entity_mut(second)
-            .unwrap()
-            .set_posture(Posture::Dead);
-        engine.process_corpse_intersection_updates();
+        engine.set_entity_posture(first, Posture::Dead);
+        assert!(
+            !engine
+                .get_entity(first)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius,
+            "the first fall has no lying neighbour yet"
+        );
+        engine.set_entity_posture(second, Posture::Dead);
 
         assert!(
             engine
@@ -811,32 +682,21 @@ mod tests {
                 .human_data()
                 .unwrap()
                 .small_repulsive_radius,
-            "replaying both final postures at once must not clear the later corpse"
+            "the later fall must immediately publish its own radius"
         );
     }
 
     #[test]
-    fn owner_boundary_clears_door_ignore_before_later_actor_moves() {
+    fn standing_up_clears_door_ignore_immediately() {
         let mut engine = EngineInner::new();
         let mut standing = civilian_at(100.0, 100.0, Posture::Lying, 1);
-        standing.human.last_is_lying_for_corpse_intersection = Some(true);
         standing.actor.is_ignored_for_anti_collision = true;
         let standing = engine.add_test_entity(Entity::Civilian(standing));
 
-        engine
-            .get_entity_mut(standing)
-            .unwrap()
-            .set_posture(Posture::Upright);
-        engine.process_corpse_intersection_update_for(standing);
+        engine.set_entity_posture(standing, Posture::Upright);
 
         let entity = engine.get_entity(standing).unwrap();
-        assert_eq!(
-            entity
-                .human_data()
-                .unwrap()
-                .last_is_lying_for_corpse_intersection,
-            Some(false)
-        );
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert!(
             !entity.actor_data().unwrap().is_ignored_for_anti_collision,
             "a later actor's anti-collision gather must see the stood-up body"

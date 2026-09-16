@@ -285,7 +285,6 @@ fn convert_human(
         // The corpse-intersection observer is a Rust-only derived cache. None
         // makes its first tick seed from the authoritative saved flag without
         // generating an update.
-        last_is_lying_for_corpse_intersection: None,
         killed_by_accident: saved.killed_by_accident,
         parry_counter: saved.parry_counter,
         invulnerable: saved.invulnerable,

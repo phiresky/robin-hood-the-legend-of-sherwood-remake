@@ -1742,18 +1742,8 @@ impl EngineInner {
             pc.pc.life_points = 5;
             pc.human.concussion_of_the_brain = combat::CONCUSSION_MAX;
             pc.human.unconscious = true;
-            pc.element.set_posture(Posture::Lying);
+            self.set_entity_posture(pc_id, Posture::Lying);
         }
-        // Player-character wounding reaches the coma save through
-        // sets the lying posture, and human posture handling
-        // updates intersecting corpses
-        // synchronously on the lying transition. The wounding site is the
-        // *attacker's* creation slot, so the victim's own owner boundary —
-        // and the end-of-tick drain — are both too late: an actor whose slot
-        // falls between them samples the body's repulsive radius on the very
-        // next frame and would see the full corpse radius instead of the
-        // shrunken intersecting-corpse one.
-        self.process_corpse_intersection_update_for(pc_id);
         if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
             if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;

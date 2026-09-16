@@ -44,12 +44,12 @@ impl EngineInner {
             _ => None,
         };
         if let Some((posture, action_state)) = state {
+            self.set_entity_posture(entity_id, posture);
             let entity = self
                 .world
                 .entities
                 .get_mut(entity_id)
                 .expect("door transition owner disappeared");
-            entity.set_posture(posture);
             entity
                 .actor_data_mut()
                 .expect("door transition owner is not an actor")
@@ -97,8 +97,8 @@ impl EngineInner {
 
         match action {
             OT::TransitionWaitingCrouchedClimbingWallDown => {
+                self.set_entity_posture(entity_id, Posture::OnWall);
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
                     }
@@ -138,7 +138,12 @@ impl EngineInner {
                     if let Some(position) = pre_teleport_position {
                         pi.set_old_position(position);
                     }
-                    entity.set_posture(Posture::OnWall);
+                    self.set_entity_posture(entity_id, Posture::OnWall);
+                    let entity = self
+                        .world
+                        .entities
+                        .get_mut(entity_id)
+                        .expect("crenel transition owner disappeared");
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
                     }
@@ -165,12 +170,15 @@ impl EngineInner {
                 }
             }
             OT::TransitionClimbingWallUpWaitingCrouched => {
-                if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(if is_pc {
+                self.set_entity_posture(
+                    entity_id,
+                    if is_pc {
                         Posture::Crouched
                     } else {
                         Posture::Upright
-                    });
+                    },
+                );
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Waiting;
                     }
@@ -196,8 +204,8 @@ impl EngineInner {
                     point_out_probe,
                     "crenel climb-up transition",
                 );
+                self.set_entity_posture(entity_id, Posture::Flying);
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
-                    entity.set_posture(Posture::Flying);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
                     }
@@ -310,12 +318,12 @@ impl EngineInner {
             _ => None,
         };
         if let Some(posture) = terminal_posture {
+            self.set_entity_posture(entity_id, posture);
             let entity = self
                 .world
                 .entities
                 .get_mut(entity_id)
                 .expect("door transition owner disappeared");
-            entity.set_posture(posture);
             entity
                 .actor_data_mut()
                 .expect("door transition owner is not an actor")
@@ -368,7 +376,8 @@ impl EngineInner {
         };
         let elem = entity.element_data_mut();
         elem.update_grid_cell();
-        entity.set_posture(posture);
+        self.set_entity_posture(entity_id, posture);
+        let entity = self.expect_entity_mut(entity_id, "door transition owner");
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = action_state;
         }

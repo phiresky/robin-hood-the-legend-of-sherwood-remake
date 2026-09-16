@@ -247,9 +247,8 @@ impl Entity {
         self.element_data().posture
     }
 
-    /// Set posture through the corpse-transition guard.  Delegates to
-    /// [`ElementData::set_posture`].
-    pub fn set_posture(&mut self, p: Posture) {
+    /// Internal guarded write; live transitions use `EngineInner::set_entity_posture`.
+    pub(crate) fn set_posture(&mut self, p: Posture) {
         self.element_data_mut().set_posture(p);
     }
 
@@ -439,59 +438,6 @@ impl Entity {
             Self::Soldier(e) => Some((&mut e.human, &mut e.element.posture)),
             Self::Civilian(e) => Some((&mut e.human, &mut e.element.posture)),
             _ => None,
-        }
-    }
-
-    /// Release a tied human while preserving their neurological state.
-    ///
-    /// This is deliberately strict: interaction validation guarantees a
-    /// living tied human, so a stale or non-human completion is an invariant
-    /// violation rather than a silent no-op.
-    pub fn untie_human(&mut self) {
-        let (human, posture) = match self {
-            Self::Pc(e) => (&mut e.human, &mut e.element.posture),
-            Self::Soldier(e) => (&mut e.human, &mut e.element.posture),
-            Self::Civilian(e) => (&mut e.human, &mut e.element.posture),
-            _ => panic!("cannot untie a non-human entity"),
-        };
-        crate::combat::untie(human, posture);
-    }
-
-    pub fn set_posture_stuck_under_net_for_human(&mut self) -> bool {
-        match self {
-            Self::Pc(e) => {
-                e.element.set_posture(Posture::StuckUnderNet);
-                true
-            }
-            Self::Soldier(e) => {
-                e.element.set_posture(Posture::StuckUnderNet);
-                true
-            }
-            Self::Civilian(e) => {
-                e.element.set_posture(Posture::StuckUnderNet);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub fn remove_net_from_human(&mut self) -> bool {
-        fn apply(element: &mut ElementData, human: &mut HumanData) -> bool {
-            let prev_counter = human.stuck_under_nets_counter;
-            if human.stuck_under_nets_counter > 0 {
-                human.stuck_under_nets_counter -= 1;
-            }
-            if human.stuck_under_nets_counter == 0 && element.posture == Posture::StuckUnderNet {
-                element.set_posture(Posture::Lying);
-            }
-            prev_counter > 0 && human.stuck_under_nets_counter == 0
-        }
-
-        match self {
-            Self::Pc(e) => apply(&mut e.element, &mut e.human),
-            Self::Soldier(e) => apply(&mut e.element, &mut e.human),
-            Self::Civilian(e) => apply(&mut e.element, &mut e.human),
-            _ => false,
         }
     }
 

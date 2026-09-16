@@ -196,10 +196,7 @@ impl EngineInner {
                         None
                     };
                     if let Some(posture) = posture {
-                        self.world
-                            .entities
-                            .expect_entity_mut(owner, format_args!("post arrival posture"))
-                            .set_posture(posture);
+                        self.set_entity_posture(owner, posture);
                     }
                     self.duty_set_state(
                         sim,

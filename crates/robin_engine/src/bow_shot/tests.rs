@@ -3415,15 +3415,23 @@ fn aim_transitions_use_anonymous_raise_lower_orders() {
 fn unequip_bow_sets_waiting_on_animation_start() {
     let mut pc = make_pc(0.0, 0.0);
     pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+    let mut engine = crate::engine::EngineInner::new();
+    let pc = engine.add_test_entity(pc);
 
     apply_bow_transition_state_side_effect(
-        &mut pc,
+        &mut engine,
+        pc,
         OrderType::TransitionUnequipBow,
         SpriteMotionState::Start,
     );
 
     assert_eq!(
-        pc.actor_data().unwrap().action_state,
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::Waiting,
         "the unequip-bow transition sets Waiting when motion starts"
     );
@@ -3433,15 +3441,23 @@ fn unequip_bow_sets_waiting_on_animation_start() {
 fn equip_bow_sets_aiming_on_animation_start() {
     let mut pc = make_pc(0.0, 0.0);
     pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+    let mut engine = crate::engine::EngineInner::new();
+    let pc = engine.add_test_entity(pc);
 
     apply_bow_transition_state_side_effect(
-        &mut pc,
+        &mut engine,
+        pc,
         OrderType::TransitionEquipBow,
         SpriteMotionState::Start,
     );
 
     assert_eq!(
-        pc.actor_data().unwrap().action_state,
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::AimingWithBow,
         "the equip-bow transition sets AimingWithBow when motion starts"
     );
@@ -3522,15 +3538,23 @@ fn equip_and_unload_are_active_bow_transition_orders() {
 fn unload_bow_sets_waiting_on_animation_start() {
     let mut pc = make_pc(0.0, 0.0);
     pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
+    let mut engine = crate::engine::EngineInner::new();
+    let pc = engine.add_test_entity(pc);
 
     apply_bow_transition_state_side_effect(
-        &mut pc,
+        &mut engine,
+        pc,
         OrderType::TransitionUnloadBow,
         SpriteMotionState::Start,
     );
 
     assert_eq!(
-        pc.actor_data().unwrap().action_state,
+        engine
+            .get_entity(pc)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::Waiting,
         "the unload-bow transition sets Waiting when motion starts"
     );
@@ -3540,26 +3564,46 @@ fn unload_bow_sets_waiting_on_animation_start() {
 fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
     let mut soldier = make_soldier(0.0, 0.0);
     soldier.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+    let mut engine = crate::engine::EngineInner::new();
+    let soldier = engine.add_test_entity(soldier);
 
     apply_bow_transition_state_side_effect(
-        &mut soldier,
+        &mut engine,
+        soldier,
         OrderType::TransitionLoweringBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture(), Posture::LeaningOut);
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine.get_entity(soldier).unwrap().element_data().posture(),
+        Posture::LeaningOut
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::AimingWithBowDown
     );
 
     apply_bow_transition_state_side_effect(
-        &mut soldier,
+        &mut engine,
+        soldier,
         OrderType::TransitionRaisingBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture(), Posture::Upright);
     assert_eq!(
-        soldier.actor_data().unwrap().action_state,
+        engine.get_entity(soldier).unwrap().element_data().posture(),
+        Posture::Upright
+    );
+    assert_eq!(
+        engine
+            .get_entity(soldier)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .action_state,
         ActionState::AimingWithBow
     );
 }

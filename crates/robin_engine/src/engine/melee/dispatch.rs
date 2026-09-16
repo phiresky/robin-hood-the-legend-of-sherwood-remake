@@ -1024,7 +1024,7 @@ impl EngineInner {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
             }
-            entity.set_posture(Posture::Upright);
+            self.set_entity_posture(owner, Posture::Upright);
         }
         OrderEmitter::new(&mut self.orders.next_order_id).push(
             &mut self.orders.sequence_manager,
