@@ -49,6 +49,7 @@ use std::collections::HashMap;
 pub(super) struct MissionInput {
     pub(super) threaded: ThreadedInput,
     pub(super) translator: InputTranslator,
+    pub(super) replay_drag: Option<robin_engine::coordinates::ScreenPoint>,
 }
 
 impl MissionInput {
@@ -56,6 +57,7 @@ impl MissionInput {
         Self {
             threaded,
             translator,
+            replay_drag: None,
         }
     }
 
@@ -71,6 +73,7 @@ impl MissionInput {
     }
 
     pub(super) fn reset_after_modal(&mut self, host: &mut Host) {
+        self.replay_drag = None;
         host.frontend
             .reset_interaction(crate::host::InteractionReset::ModalClosed);
         self.threaded.reset_input_state();
@@ -79,6 +82,7 @@ impl MissionInput {
     }
 
     pub(super) fn reset_after_engine_request(&mut self, host: &mut Host) {
+        self.replay_drag = None;
         host.frontend
             .reset_interaction(crate::host::InteractionReset::EngineRequested);
         self.threaded.reset_input_state();
@@ -88,6 +92,7 @@ impl MissionInput {
 
 /// Native audio device plus mission-lifetime sample source and RNG.
 pub(super) struct MissionAudio {
+    replay_music_paused: bool,
     pub(super) backend: Option<PlatformAudioBackend>,
     pub(super) sample_loader: Box<SampleLoader>,
     pub(super) sound_rng: fastrand::Rng,
@@ -103,7 +108,21 @@ impl MissionAudio {
             backend,
             sample_loader,
             sound_rng,
+            replay_music_paused: false,
         }
+    }
+
+    pub(super) fn pause_replay_music(&mut self, paused: bool) {
+        use crate::sound::AudioBackend;
+        if let Some(backend) = self.backend.as_mut() {
+            if paused {
+                // Also pause tracks replaced by this frame's music transition.
+                backend.pause_music();
+            } else if self.replay_music_paused {
+                backend.resume_music();
+            }
+        }
+        self.replay_music_paused = paused;
     }
 
     pub(super) fn tick(
@@ -112,6 +131,7 @@ impl MissionAudio {
         audio: &mut crate::host::HostAudio,
         viewport: &crate::host::ViewportState,
         assets: &robin_engine::engine::LevelAssets,
+        playing_back: bool,
     ) -> Option<robin_engine::engine::SoundBoundary> {
         if let Some(backend) = self.backend.as_mut() {
             return tick_audio(
@@ -122,6 +142,7 @@ impl MissionAudio {
                 &*self.sample_loader,
                 &mut self.sound_rng,
                 assets,
+                playing_back,
             );
         }
         None

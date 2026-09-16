@@ -95,6 +95,7 @@ struct HostViewInput<'a> {
     view_suppressed: bool,
     /// Touch panning is additionally off when the preference disables it.
     pan_suppressed: bool,
+    playing_back: bool,
 }
 
 /// Apply host-only camera controls. These deliberately remain available while
@@ -103,6 +104,7 @@ fn apply_host_view_input(
     host: &mut Host,
     engine: &Engine,
     hud: &crate::game_session::interactive::MissionHud,
+    replay_drag: &mut Option<engine_coordinates::ScreenPoint>,
     view: HostViewInput<'_>,
 ) {
     let HostViewInput {
@@ -112,7 +114,37 @@ fn apply_host_view_input(
         events,
         view_suppressed,
         pan_suppressed,
+        playing_back,
     } = view;
+    if !playing_back || view_suppressed {
+        *replay_drag = None;
+    } else {
+        for event in events {
+            match *event {
+                GameEvent::MouseDown(x, y, 1, _) => {
+                    let point = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
+                    *replay_drag = touch_point_is_world(host, hud, point).then_some(point);
+                }
+                GameEvent::MouseMove { x, y, .. } => {
+                    if let Some(previous) = replay_drag.as_mut() {
+                        let point = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
+                        host.frontend.viewport.cancel_touch_motion();
+                        host.frontend
+                            .viewport
+                            .scroll_by(engine_coordinates::ScreenVec::new(
+                                previous.x - point.x,
+                                previous.y - point.y,
+                            ));
+                        *previous = point;
+                    }
+                }
+                GameEvent::MouseUp(_, _, 1) | GameEvent::WindowFocusChanged(false) => {
+                    *replay_drag = None;
+                }
+                _ => {}
+            }
+        }
+    }
     let now_ms = crate::window::process_uptime_ms();
     if pan_suppressed || engine.user_locked() {
         host.frontend.viewport.cancel_touch_motion();
@@ -503,6 +535,7 @@ pub(super) async fn collect_input_and_menus(
     // user wants to pan/zoom around the paused world.  Suppressed
     // only when the console or the pause menu has focus.
     let view = HostViewInput {
+        playing_back: runtime.replay().playback().is_some(),
         mouse_position: input.threaded.position(),
         keyboard_actions: &kb_actions,
         mouse_actions: &mouse_actions,
@@ -515,7 +548,7 @@ pub(super) async fn collect_input_and_menus(
             || pause_closed_this_frame
             || !host.frontend.preferences().touch_camera_gestures(),
     };
-    apply_host_view_input(host, engine, hud, view);
+    apply_host_view_input(host, engine, hud, &mut input.replay_drag, view);
 
     // ── Skip all sim-affecting input during replay / rewind ──
     // Recorded commands are injected at the tick boundary instead
