@@ -6,6 +6,7 @@
 //! Reports thread CPU time; excludes file loading, validation hashes, and live
 //! level-resource reattachment. Compression contexts are reused. Retained byte
 //! buffers are boxed slices, so their allocation size equals their length.
+//! SNAPSHOT_BENCH_STACK_BYTES overrides the default 32 MiB worker stack.
 
 use cpu_time::ThreadTime;
 use robin_engine::engine::Engine;
@@ -71,6 +72,18 @@ fn hash(engine: &Engine) -> u64 {
 }
 
 fn main() {
+    let stack_bytes = std::env::var("SNAPSHOT_BENCH_STACK_BYTES")
+        .map(|value| value.parse().expect("stack size in bytes"))
+        .unwrap_or(32 * 1024 * 1024);
+    std::thread::Builder::new()
+        .stack_size(stack_bytes)
+        .spawn(run)
+        .expect("spawn snapshot benchmark")
+        .join()
+        .expect("snapshot benchmark panicked");
+}
+
+fn run() {
     assert!(
         !cfg!(debug_assertions),
         "run this benchmark in release mode"
@@ -82,12 +95,14 @@ fn main() {
             serde_json::from_slice(&std::fs::read(&path).expect("read save")).expect("parse save");
         let engine: Engine = serde_json::from_value(value["engine"].take()).expect("decode engine");
         drop(value);
+        eprintln!("{path}: encoding snapshot");
         let bytes = engine.encode_native_snapshot().into_boxed_slice();
         let mut compressor = zstd::bulk::Compressor::new(0).unwrap();
         let mut decompressor = zstd::bulk::Decompressor::new().unwrap();
         let compressed = compressor.compress(&bytes).unwrap().into_boxed_slice();
         let decompressed = decompressor.decompress(&compressed, bytes.len()).unwrap();
         assert_eq!(&*bytes, decompressed.as_slice());
+        eprintln!("{path}: decoding snapshot");
         let restored = Engine::decode_native_snapshot(&decompressed).unwrap();
         assert_eq!(hash(&engine), hash(&restored));
         // Verify every surviving named field as well as the deterministic hash.

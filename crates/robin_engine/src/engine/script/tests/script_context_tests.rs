@@ -1411,7 +1411,7 @@ fn post_initialize_game_latch_survives_snapshots_without_a_script_mirror() {
 fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
     // The native engine codec requires more than libtest's default stack.
     std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024)
+        .stack_size(32 * 1024 * 1024)
         .spawn(|| {
             let sim = crate::sim_rng::test_context();
             let assets = LevelAssets::new();

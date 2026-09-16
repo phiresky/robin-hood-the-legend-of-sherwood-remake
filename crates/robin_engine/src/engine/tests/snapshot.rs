@@ -31,7 +31,7 @@ fn native_snapshot_rejects_version_before_decoding_domain_payloads() {
         // The version error wins even though no domain payload follows.
         let error = super::super::snapshot::decode_native_engine_inner(&bytes)
             .err()
-            .expect("only the current native snapshot shape is supported");
+            .expect("unsupported native snapshot version must fail");
         assert_eq!(
             error,
             format!("unsupported native snapshot version {version}; expected {current}")

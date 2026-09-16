@@ -99,20 +99,30 @@ fn run_native(args: robin_rs::main_entry::CliArgs) -> i32 {
     };
 
     if args.cli.headless {
-        return match pollster::block_on(robin_rs::main_entry::run_rust_game_headless(
-            campaign, profiles, shipping, &args,
-        )) {
-            Ok(code) => code,
-            Err(e) => {
-                tracing::error!("Headless game loop failed: {e}");
-                robin_rs::bug_report::capture_failure(
-                    robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
-                    &format!("{e:#}"),
-                    None,
-                );
-                1
-            }
-        };
+        // Match the windowed game thread's stack, including direct native
+        // snapshot encoding in unoptimized builds.
+        return std::thread::Builder::new()
+            .name("robin-headless".into())
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
+                match pollster::block_on(robin_rs::main_entry::run_rust_game_headless(
+                    campaign, profiles, shipping, &args,
+                )) {
+                    Ok(code) => code,
+                    Err(e) => {
+                        tracing::error!("Headless game loop failed: {e}");
+                        robin_rs::bug_report::capture_failure(
+                            robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError,
+                            &format!("{e:#}"),
+                            None,
+                        );
+                        1
+                    }
+                }
+            })
+            .expect("spawn headless game thread")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
     }
 
     match robin_rs::window::run_with_game(
