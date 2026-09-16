@@ -386,12 +386,15 @@ impl FixedTickRender<'_, '_> {
                 frame.started_at_ms,
                 interpolation_enabled,
             );
-            if interpolation_enabled {
+            let sample_time_us = if interpolation_enabled {
+                let scheduled_us = native_refresh_interpolation.wait_for_presentation();
                 render_ctx.renderer.prepare_presentation();
-            }
-            let sample_time_us = crate::window::process_uptime_us() / 1_000 * 1_000;
+                scheduled_us.unwrap_or_else(crate::window::process_uptime_us)
+            } else {
+                crate::window::process_uptime_us()
+            };
             let sampled_camera = native_refresh_interpolation
-                .sample((sample_time_us / 1_000) as u32)
+                .sample(sample_time_us)
                 .unwrap_or(saved_camera);
             sampled_camera.apply(host.frontend);
             let camera_sample = crate::presentation_timing::CameraSample::capture(
@@ -696,12 +699,14 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 ),
         };
         pace_interactive_frame(host, target, presentation_deadline_ms, |host, _| {
-            if native_refresh_interpolation.engine().is_some() {
+            let now_us = if native_refresh_interpolation.engine().is_some() {
+                let scheduled_us = native_refresh_interpolation.wait_for_presentation();
                 presentation.renderer.prepare_presentation();
-            }
-            let now_us = crate::window::process_uptime_us();
-            let now_ms = (now_us / 1_000) as u32;
-            let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
+                scheduled_us.unwrap_or_else(crate::window::process_uptime_us)
+            } else {
+                crate::window::process_uptime_us()
+            };
+            let Some(sampled_camera) = native_refresh_interpolation.sample(now_us) else {
                 return presentation.renderer.present_cached();
             };
             let render_engine = native_refresh_interpolation
@@ -711,7 +716,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let saved_draw_order = host.frontend.presentation.draw_order.clone();
             sampled_camera.apply(host.frontend);
             let camera_sample = crate::presentation_timing::CameraSample::capture(
-                now_us / 1_000 * 1_000,
+                now_us,
                 &host.frontend.viewport,
                 false,
             );
@@ -720,7 +725,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
             if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
-                super::render::prepare_display_info(host, now_ms);
+                super::render::prepare_display_info(host, crate::window::process_uptime_ms());
             }
             render_frame(
                 &render_engine,
@@ -1156,11 +1161,11 @@ async fn pace_interactive_frame(
             && target >= engine_api::FRAME_TIME_MS
             && !host.frontend.presentation.skip_render;
         if refresh_presentation {
-            // FIFO back-pressure is the refresh-rate clock. Each callback
-            // recomposes an absolute interpolation sample from immutable
-            // fixed-tick snapshots; deterministic and transient UI state do
-            // not advance. A generous cap guards broken surface
-            // implementations that return immediately without back-pressure.
+            // Each callback waits for its monitor-rate slot and recomposes
+            // an absolute interpolation sample from immutable fixed-tick
+            // snapshots. FIFO/rAF supplies pacing when no monitor rate is
+            // available. Deterministic and transient UI state do not advance.
+            // The cap guards surfaces that return without back-pressure.
             let presentation_start_us = crate::window::process_uptime_us();
             let mut schedule = RefreshPresentationSchedule::new(
                 presentation_start_us,
