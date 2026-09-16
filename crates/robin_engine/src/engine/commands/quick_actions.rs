@@ -2011,6 +2011,10 @@ pub(super) fn quick_action_sequence_is_valid(
         {
             return false;
         }
+        if element.owner.is_none() && element.command == Command::OpenScroll {
+            // Scroll opening is dispatched by the engine, not an actor.
+            return true;
+        }
         let owner = element
             .owner
             .unwrap_or_else(|| panic!("quick-action element {} has no owner", element.id));
@@ -2029,6 +2033,9 @@ pub(super) fn quick_action_sequence_is_valid(
                 ..
             } = &element.data
             && !post_seek.elements.iter().all(|element| {
+                if element.owner.is_none() && element.command == Command::OpenScroll {
+                    return true;
+                }
                 let owner = element
                     .owner
                     .unwrap_or_else(|| panic!("quick-action element {} has no owner", element.id));

@@ -2153,6 +2153,7 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
         .element
         .set_position_map(crate::coordinates::MapPoint::new(target_x, 100.0));
     corpse.element.set_sector(sector);
+    corpse.human.unconscious = true;
     let corpse_id = engine.add_test_entity(Entity::Pc(corpse));
 
     record_manual_command(
@@ -2278,7 +2279,7 @@ fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
 }
 
 fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
-    let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+    let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
     {
         let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
         pc.element_data_mut()
@@ -2286,14 +2287,6 @@ fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
         pc.element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
     }
-    bind_single_action_point(
-        &mut engine,
-        pc_id,
-        crate::order::OrderType::DroppingAle,
-        crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
-        crate::coordinates::SpriteAnchor::new(0.0, 0.0),
-    );
-
     let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
     record_manual_command(
         &mut engine,
@@ -2374,6 +2367,7 @@ fn setup_drop_ale_sector_identity_scene() -> (
     use crate::sector::{SectorNumber, SectorType};
 
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
+    engine.mission_domain.campaign.characters[0].status.num_ales = 1;
     bind_single_action_point(
         &mut engine,
         pc_id,
@@ -5412,7 +5406,8 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     let post_seek = post_seek_sequence
         .as_ref()
         .expect("recorded seek retains Turn and interaction");
-    assert_eq!(post_seek.len(), 2);
+    assert_eq!(post_seek.len(), 3);
+    assert_eq!(post_seek.get(2).unwrap().command, Command::CrouchDown);
     let turn = post_seek.get(0).expect("Turn follows seek");
     assert_eq!(turn.command, Command::Turn);
     assert_eq!(turn.command_level, 1);

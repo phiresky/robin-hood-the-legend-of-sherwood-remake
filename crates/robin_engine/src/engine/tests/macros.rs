@@ -428,7 +428,6 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
         destination,
         sector,
         layer,
-        post_seek_sequence,
         ..
     } = &sequence.elements[0].data
     else {
@@ -440,7 +439,11 @@ fn recorded_single_group_move_keeps_adjusted_destination_and_replays_exact_seek(
         Some(exact_sector)
     );
     assert_eq!(*layer, 0);
-    let post_seek = post_seek_sequence.as_ref().expect("arrival continuation");
+    let post_seek = engine
+        .get_entity(pc)
+        .and_then(Entity::actor_data)
+        .and_then(|actor| actor.post_seek_sequence.as_ref())
+        .expect("arrival continuation retained by the actor");
     assert_eq!(
         post_seek.elements[0].command,
         Command::SpeakHeroReachDestination
