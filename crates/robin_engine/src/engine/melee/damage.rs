@@ -371,6 +371,7 @@ impl EngineInner {
                         x: center.x,
                         y: center.y,
                     });
+                entity.sprite_mut().compute_display_depth();
             }
         }
     }
@@ -1384,7 +1385,7 @@ impl EngineInner {
                 // Ladder/wall arm of the hit-reaction posture switch.
                 // Like the shoulder arm this fires for lethal and KO
                 // hits too — the fall itself resolves the victim's fate.
-                self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+                self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
             } else if still_alive && still_conscious {
                 let anims = {
                     let e = self.expect_entity(victim_id, "sword-damage hit-reaction victim");
@@ -1751,9 +1752,7 @@ impl EngineInner {
             elem.set_position_map(carrier_pos);
             // direction = (carrier_dir + 12) & 15.
             elem.set_direction_instantly((carrier_dir + 12) & 15);
-            // Stop tracking the carrier's display order.
-            elem.sprite.display_order_ref = None;
-            elem.sprite.behind_display_order_ref = false;
+            elem.sprite.compute_display_depth();
             carried.set_posture(carried_posture);
             // Corpse dropping ends by clearing the body's carrier
             // before clearing the carried relationship, and
@@ -1839,7 +1838,8 @@ impl EngineInner {
             .element_data()
             .posture();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+            self.say_ouch(sim, assets, victim_id, None);
+            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
             return;
         }
         if pre_posture.is_lying() {
@@ -2086,7 +2086,7 @@ impl EngineInner {
         // damage-immunity arm: piercing damage has already subtracted
         // life and applied concussion when Original gets here.
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
             return;
         }
 
@@ -2464,7 +2464,7 @@ impl EngineInner {
         // through `translate_ladder_wall_fall`, matching the parallel
         // push-path routing.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
             return;
         }
 
@@ -2615,7 +2615,7 @@ impl EngineInner {
                 crate::engine::ai::ai_view_position_sector(self, victim.element_data()),
                 *victim.position_iface().get_move_box(),
                 victim.element_data().direction(),
-                if ticks > 1 { ticks } else { 8 },
+                ticks.max(1),
             )
         };
 
@@ -2718,10 +2718,18 @@ impl EngineInner {
             .expect_entity(victim_id, "falling-hit victim")
             .position_iface()
             .get_position();
-        self.set_obstacle_and_material(assets, victim_id, goal_obstacle);
-        self.expect_entity_mut(victim_id, "falling-hit victim")
-            .position_iface_mut()
-            .set_position(takeoff_position);
+        let plane = goal_obstacle.map(|handle| {
+            let obstacle = self
+                .sight_obstacles(assets)
+                .get(usize::from(handle))
+                .expect("falling-hit goal obstacle vanished");
+            crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points)
+        });
+        let position = self
+            .expect_entity_mut(victim_id, "falling-hit victim")
+            .position_iface_mut();
+        position.set_obstacle(goal_obstacle, plane);
+        position.set_position(takeoff_position);
 
         let flight_sector = crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
         let facing_sector = (flight_sector + 8) % 16;
@@ -2738,36 +2746,18 @@ impl EngineInner {
             crate::position_interface::Direction::from_raw(facing_sector as i32),
         );
         let dx = goal_x - victim_pos.x;
-        let dy = goal_y - victim_pos.y;
         let dz = goal_z - victim_z;
         let dy_world = (goal_y + goal_z) - (victim_pos.y + victim_z);
-        if dx.abs() > 0.01 || dy.abs() > 0.01 || dz.abs() > 0.01 {
-            victim
-                .actor_data_mut()
-                .expect("falling-hit victim lost actor data")
-                .active_flight = Some(Box::new(crate::element::ActiveFlight {
-                geometry: crate::element::FlightGeometry::World3d,
-                increment_x: dx / frames as f32,
-                increment_y: dy_world / frames as f32,
-                goal_x,
-                goal_y,
-                frames_remaining: frames,
-                antagonist: attacker_id,
-                increment_z: dz / frames as f32,
-                goal_z,
-                goal_layer: victim_layer,
-                goal_sector: victim_sector,
-                obstacle: goal_obstacle,
-                ladder_fall: false,
-            }));
-        } else {
-            // TODO: Verify whether a completely blocked zero-distance
-            // Takeoff preparation retains a zero-increment flight object.
-            tracing::debug!(
-                ?victim_id,
-                "falling-hit flight has no authorized displacement"
-            );
-        }
+        victim.position_iface_mut().set_flight_goal_and_increment(
+            crate::coordinates::WorldPoint3D::new(goal_x, goal_y + goal_z, goal_z),
+            crate::coordinates::WorldVec3D::new(
+                super::effects::ready_for_takeoff_increment(dx, frames),
+                super::effects::ready_for_takeoff_increment(dy_world, frames),
+                super::effects::ready_for_takeoff_increment(dz, frames),
+            ),
+            victim_sector,
+            victim_sector.and_then(|sector| sector.arena_index()),
+        );
     }
 
     /// Per-frame net-capture execute handler.

@@ -279,6 +279,7 @@ pub mod pc_info_overlay;
 pub mod player_profile_store;
 pub mod portrait_bar;
 pub mod presentation;
+pub mod presentation_timing;
 pub mod process_asset_cache;
 pub mod profiler;
 pub mod recon_report;
@@ -286,6 +287,7 @@ pub mod renderer;
 pub mod replay_archive;
 pub mod replay_format;
 pub mod replay_recording;
+pub mod replay_seek;
 pub mod replay_service;
 pub mod rewind;
 pub mod rollback_checker;
@@ -341,3 +343,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(target_os = "linux")]
+pub mod vulkan_presentation;

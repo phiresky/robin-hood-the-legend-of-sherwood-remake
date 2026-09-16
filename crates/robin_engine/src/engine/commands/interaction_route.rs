@@ -33,6 +33,20 @@ pub(super) fn target_interaction_assert_source_sector(
 }
 
 impl EngineInner {
+    pub(super) fn launch_or_record_quick_action_sequence(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor: EntityId,
+        sequence: Sequence,
+    ) {
+        if self.players.qa_recording_for.contains(&actor) {
+            self.retain_recorded_quick_action(actor, sequence, None);
+        } else {
+            self.launch_sequence(sim, assets, sequence);
+        }
+    }
+
     /// Launch the authored interaction directly in range; otherwise retain it
     /// as the seek continuation without changing its registration order.
     fn launch_or_seek_then(
@@ -47,7 +61,7 @@ impl EngineInner {
         command_seq: Sequence,
     ) {
         if dist <= action_distance {
-            self.launch_sequence(sim, assets, command_seq);
+            self.launch_or_record_quick_action_sequence(sim, assets, actor, command_seq);
             return;
         }
 
@@ -68,7 +82,7 @@ impl EngineInner {
 
         let mut seq = Sequence::new();
         seq.append_element(seek);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
     }
 
     pub(super) fn actor_action_distance(
@@ -221,7 +235,7 @@ impl EngineInner {
             // one final Execute tick before this interaction is instructed.
             let mut seq = Sequence::new();
             seq.append_element(elem);
-            self.launch_sequence(sim, assets, seq);
+            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
             return;
         }
 
@@ -514,7 +528,7 @@ impl EngineInner {
 
             let mut seq = Sequence::new();
             seq.append_element(seek);
-            self.launch_sequence(sim, assets, seq);
+            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
         } else {
             // Seek-based interaction builds and launches a sequence even
             // when no seek is necessary. Launching the owned element through
@@ -526,7 +540,7 @@ impl EngineInner {
             if append_posture_recovery {
                 self.append_posture_recovery(actor, &mut seq);
             }
-            self.launch_sequence(sim, assets, seq);
+            self.launch_or_record_quick_action_sequence(sim, assets, actor, seq);
         }
     }
 
@@ -727,7 +741,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
     }
 
     /// Fire `EVENT_STOP` on a target NPC that a PC is currently
@@ -854,26 +868,6 @@ impl EngineInner {
             return;
         };
 
-        if is_recording {
-            // Macro recording already installed the QA titbit and stored
-            // `QaReplayCommand::ScrollRead` through the top-level
-            // `record_macro_step_for` hook.  This matches the verified
-            // Original-game behavior:
-            //   NPC click handling -> player seek-sequence addition ->
-            //   quick-action assignment, then temporary action disabling only
-            //   when the actor is climbing or in a building,
-            //   followed by MSG_STOP_RECORDING_MACRO.
-            //
-            // The live scroll-read sequence is not launched while
-            // recording; playback rebuilds it from the semantic
-            // `ScrollRead` step and current engine state.
-            if self.is_pc_climbing_or_in_building(actor) {
-                self.apply_disable_all_actions_temp(0, Some(actor));
-            }
-            self.stop_recording_macro();
-            return;
-        }
-
         // Animation style — same decision matrix as
         // `apply_interaction_with_seek`: running overrides posture,
         // otherwise the seek inherits the PC's crouched/upright stance.
@@ -941,6 +935,9 @@ impl EngineInner {
             dist,
             command_seq,
         );
+        if is_recording && self.is_pc_climbing_or_in_building(actor) {
+            self.apply_disable_all_actions_temp(0, Some(actor));
+        }
     }
 
     /// Build `[Seek(USE_POINT, tolerance=8) → (turn(L1) →

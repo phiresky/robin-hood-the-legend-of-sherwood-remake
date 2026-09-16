@@ -1217,6 +1217,7 @@ fn apply_animation_sprite_placement(
             y: map_position.y + elevation,
             z: elevation,
         });
+    sprite.compute_display_depth();
 }
 
 /// Minimap bitmap metadata produced by the host after GPU upload and
@@ -2034,6 +2035,7 @@ impl EngineInner {
             loaded.mission.soldiers.extend(legendary_soldiers);
         }
         self.finish_mission_identity_stage(&loaded, mission_name, proto_level_name);
+        self.initialize_mission_display_depths();
         self.load_mission_script_stage(
             assets,
             mission_name,
@@ -2449,7 +2451,6 @@ impl EngineInner {
             .expect("fast-grid sector count exceeds u32");
         for (layer_idx, layer_areas) in motion_data.layers.iter().enumerate() {
             let mut move_areas = Vec::new();
-            let mut alt_move_areas = Vec::new();
 
             for area in layer_areas {
                 // The area's own motion sector precedes its obstacles.
@@ -2640,17 +2641,11 @@ impl EngineInner {
                     polygon: polygon_pts,
                     motion_obstacles: obstacles,
                 });
-                alt_move_areas.push(crate::pathfinder::MotionArea {
-                    skeleton: Vec::new(),
-                    polygon: Vec::new(),
-                    motion_obstacles: Vec::new(),
-                });
             }
 
             let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
             let static_data = graph.static_mut();
             static_data.move_layers.push(move_areas);
-            static_data.alternative_move_layers.push(alt_move_areas);
         }
     }
 
@@ -5417,6 +5412,7 @@ impl EngineInner {
                 if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
                 {
                     pc.element.update_grid_cell();
+                    pc.element.sprite.compute_display_depth();
                 }
 
                 // Set the work icon for the production type.

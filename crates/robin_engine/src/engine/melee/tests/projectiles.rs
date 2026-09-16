@@ -369,7 +369,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
             .unwrap()
             .installed_order
             .as_ref()
-            .map(|order| order.order_type),
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(OrderType::DyingUpright)
     );
 }

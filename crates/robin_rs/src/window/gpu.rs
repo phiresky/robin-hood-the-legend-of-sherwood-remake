@@ -98,7 +98,10 @@ fn log_adapter_info(adapter: &wgpu::Adapter) {
 }
 
 /// Negotiate limits/features for the adapter's backend and open the device.
-async fn request_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::Queue), String> {
+async fn request_device(
+    adapter: &wgpu::Adapter,
+    surface: &wgpu::Surface<'_>,
+) -> Result<(wgpu::Device, wgpu::Queue), String> {
     // WebGL2 lacks compute shaders, storage buffers, etc., so the
     // default `Limits` would fail `request_device` on the GL backend.
     // Drop to the WebGL2 baseline.  Native runs with full
@@ -129,15 +132,26 @@ async fn request_device(adapter: &wgpu::Adapter) -> Result<(wgpu::Device, wgpu::
         }
     }
 
+    let desc = wgpu::DeviceDescriptor {
+        label: Some("robin device"),
+        required_features,
+        required_limits,
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    };
+    #[cfg(target_os = "linux")]
+    match crate::vulkan_presentation::request_device(adapter, surface, &desc) {
+        Ok(Some(device)) => return Ok(device),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, "Vulkan presentation profiling unavailable; opening standard device")
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = surface;
     adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("robin device"),
-            required_features,
-            required_limits,
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        })
+        .request_device(&desc)
         .await
         .map_err(|e| format!("request_device: {e}"))
 }
@@ -172,6 +186,9 @@ fn configure_initial_surface(
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
     };
+    #[cfg(target_os = "linux")]
+    crate::vulkan_presentation::configure(surface, device, &surface_config);
+    #[cfg(not(target_os = "linux"))]
     surface.configure(device, &surface_config);
 
     tracing::info!(
@@ -217,7 +234,7 @@ pub(super) async fn build_game_window_async(
         .map_err(|e| format!("request_adapter: {e}"))?;
     log_adapter_info(&adapter);
 
-    let (device, queue) = request_device(&adapter).await?;
+    let (device, queue) = request_device(&adapter, &surface).await?;
 
     let surface_config =
         configure_initial_surface(&window, &surface, &adapter, &device, logical_w, logical_h);

@@ -10,7 +10,7 @@ use super::replay_init::ReplayAndRollback;
 use crate::game::Game;
 use crate::host::Host;
 use crate::rewind::RewindBuffer;
-use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
+use crate::save_file::{CompressedGameRuntimeSnapshot, GameRuntimeSnapshot, ReplaySaveIdentity};
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
 use robin_engine::game_operation::GameCode;
@@ -1328,6 +1328,27 @@ impl TimelineRuntime {
         Ok(())
     }
 
+    pub(super) fn restore_replay_checkpoint(
+        &mut self,
+        target: u32,
+        manager: &mut EngineManager,
+        host: &mut Host,
+        game: &mut Game,
+        assets: &LevelAssets,
+        modals: &mut super::session_policy::SessionModalScheduler,
+    ) -> Result<bool, MissionError> {
+        self.replay.prepare_seek_cache(host, game, manager)?;
+        let Some(timeline) = self
+            .replay
+            .restore_seek_checkpoint(target, manager, host, game, assets, modals)?
+        else {
+            return Ok(false);
+        };
+        self.reset_reconstruction_history(timeline, &manager.engine);
+        self.lifecycle.note_state_restored();
+        Ok(true)
+    }
+
     /// Manual ticks have their own recorder transaction without restarting the
     /// enclosing driver's clock or phase. The caller must first finalize the
     /// ordinary host frame, including its post-refresh contributions.
@@ -1445,7 +1466,7 @@ impl TimelineRuntime {
 pub(super) fn apply_replay_timeline_events_at_boundary(
     player: &ReplayPlayer,
     current_timeline: TimelineFrame,
-    pinned_saves: &mut BTreeMap<u32, GameRuntimeSnapshot>,
+    pinned_saves: &mut BTreeMap<u32, CompressedGameRuntimeSnapshot>,
     rewind_buffer: &mut RewindBuffer,
     host: &mut Host,
     game: &mut Game,
@@ -1470,7 +1491,7 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
 pub(super) fn apply_replay_timeline_events_with_hash_policy(
     player: &ReplayPlayer,
     current_timeline: TimelineFrame,
-    pinned_saves: &mut BTreeMap<u32, GameRuntimeSnapshot>,
+    pinned_saves: &mut BTreeMap<u32, CompressedGameRuntimeSnapshot>,
     rewind_buffer: &mut RewindBuffer,
     host: &mut Host,
     game: &mut Game,
@@ -1498,7 +1519,7 @@ pub(super) fn apply_replay_timeline_events_with_hash_policy(
         }
         pinned_saves.insert(
             frame,
-            GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
+            CompressedGameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
                 MissionError::replay(format!(
                     "replay save marker at ordinal {frame} could not pin save payload: {error:#}"
                 ))

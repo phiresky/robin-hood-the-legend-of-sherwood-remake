@@ -163,8 +163,6 @@ pub struct ParityFlightStep {
     pub geometry: String,
     pub order_id: Option<u32>,
     pub order_type: Option<String>,
-    pub frames_remaining_before: u16,
-    pub frames_remaining_after: Option<u16>,
     pub entry_position: ParityPoint3,
     pub entry_position_map: ParityPoint,
     pub old_position: ParityPoint3,

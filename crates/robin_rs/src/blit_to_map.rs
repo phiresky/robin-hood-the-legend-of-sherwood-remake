@@ -7,9 +7,10 @@
 //! background writes.
 
 use crate::bg_cache::BackgroundDecal;
-use crate::gfx_types::Rect;
+use crate::game_render::map_sprite_bounds;
 use crate::host::{HostEffectBatches, HostFrontend};
 use robin_assets::frame_holder::SpriteVariant;
+use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
 use robin_engine::engine::{PendingBgBlit, PendingBgBlitDecal};
 
@@ -49,15 +50,18 @@ pub fn render_background_decals(
     let margin = 256;
 
     for decal in frontend.resources.background_decals.in_draw_order() {
-        let dst_x = ((decal.dst_x as f32 - view.x) * zoom) as i32;
-        let dst_y = ((decal.dst_y as f32 - view.y) * zoom) as i32;
-        let dst_w = (decal.width as f32 * zoom).ceil().max(1.0) as u32;
-        let dst_h = (decal.height as f32 * zoom).ceil().max(1.0) as u32;
+        let bounds = map_sprite_bounds(
+            MapPoint::new(decal.dst_x as f32, decal.dst_y as f32),
+            decal.width,
+            decal.height,
+            view,
+            zoom,
+        );
 
-        if dst_x + dst_w as i32 <= -margin
-            || dst_y + dst_h as i32 <= -margin
-            || dst_x >= screen_w + margin
-            || dst_y >= screen_h + margin
+        if bounds.max.x <= -margin as f32
+            || bounds.max.y <= -margin as f32
+            || bounds.min.x >= (screen_w + margin) as f32
+            || bounds.min.y >= (screen_h + margin) as f32
         {
             continue;
         }
@@ -72,12 +76,14 @@ pub fn render_background_decals(
             continue;
         };
 
-        renderer.render_cached_sprite(
+        renderer.render_cached_map_sprite(
             decal.bank_id,
             SpriteVariant::Day,
             decal.shadow_color,
             decal.shadow_level,
-            Rect::new(dst_x, dst_y, dst_w, dst_h),
+            MapPoint::new(decal.dst_x as f32, decal.dst_y as f32),
+            view,
+            zoom,
         );
     }
 }

@@ -28,6 +28,7 @@ fn make_net(landing: WorldPoint3D) -> Entity {
     };
     element.set_position(landing);
     element.set_position_map(MapPoint::from_world_xyz(landing.x, landing.y, landing.z));
+    element.sprite.compute_display_depth();
     Entity::Net(ElementNet {
         element,
         object: ObjectData {
@@ -53,6 +54,68 @@ fn run_net_owner_path(
         });
     });
     trace
+}
+
+#[test]
+fn first_grounded_update_biases_net_and_only_single_net_victims_once() {
+    let sim = crate::sim_rng::test_context();
+    for crumpled in [false, true] {
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let mut entity = make_net(WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.net.crumpled = crumpled;
+        net.net.was_flying = true;
+        let net_id = engine.add_test_entity(entity);
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+        let victim = engine.get_entity_mut(victim_id).unwrap();
+        victim.human_data_mut().unwrap().stuck_under_nets_counter = 1;
+        victim.sprite_mut().display_order_ref = Some(net_id);
+        victim.sprite_mut().behind_display_order_ref = false;
+        let Entity::Net(net) = engine.get_entity_mut(net_id).unwrap() else {
+            unreachable!()
+        };
+        net.net.victims.push(victim_id);
+        engine.tick_net(&sim, &assets, net_id);
+        let expected = LAND_Y - if crumpled { 10.0 } else { 40.0 };
+        assert_eq!(
+            engine.get_entity(net_id).unwrap().sprite().display_depth,
+            expected
+        );
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(victim.sprite().display_depth, expected - 0.001);
+        assert_eq!(victim.sprite().display_order_ref, Some(net_id));
+        assert!(!victim.sprite().behind_display_order_ref);
+
+        engine
+            .get_entity_mut(net_id)
+            .unwrap()
+            .sprite_mut()
+            .display_depth = 900.0;
+        engine.tick_net(&sim, &assets, net_id);
+        assert_eq!(
+            engine.get_entity(victim_id).unwrap().sprite().display_depth,
+            expected - 0.001
+        );
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .stuck_under_nets_counter = 2;
+        engine.compute_net_victim_depths(net_id);
+        assert_eq!(
+            engine.get_entity(victim_id).unwrap().sprite().display_depth,
+            expected - 0.001
+        );
+    }
 }
 
 #[test]
@@ -880,8 +943,6 @@ fn vip_soldier_says_vip_net_no_remark() {
 fn capture_sets_victim_display_order_behind_net() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    // Capture should mark the victim's sprite as
-    // `display_order_ref = Some(net_id)` + `behind = true`.
     let mut engine = make_engine();
     let assets = assets_with_profiles();
     let landing = WorldPoint3D {
@@ -889,7 +950,13 @@ fn capture_sets_victim_display_order_behind_net() {
         y: LAND_Y,
         z: LAND_Z,
     };
-    let net_id = engine.add_test_entity(make_net(landing));
+    let mut entity = make_net(landing);
+    let Entity::Net(net) = &mut entity else {
+        unreachable!()
+    };
+    net.projectile.flying = true;
+    net.net.was_flying = true;
+    let net_id = engine.add_test_entity(entity);
     // The victim already has a default Sprite (non-Option).
     let victim_id = add_soldier(
         &mut engine,
@@ -902,18 +969,29 @@ fn capture_sets_victim_display_order_behind_net() {
         false,
     );
 
-    engine.apply_net_falling_effect(sim, &assets, net_id);
+    // The owner tick publishes captured victims' depth after the capture callback.
+    engine.tick_net(sim, &assets, net_id);
 
     let sprite = engine.get_entity(victim_id).unwrap().sprite();
-    assert_eq!(sprite.display_order_ref, Some(net_id));
-    assert!(sprite.behind_display_order_ref);
+    assert_eq!(
+        sprite.display_depth,
+        engine.get_entity(net_id).unwrap().sprite().display_depth - 0.001
+    );
+    assert_eq!(sprite.display_order_ref, None);
+    assert!(!sprite.behind_display_order_ref);
 
     engine.unapply_net_effect(sim, &assets, net_id);
     let sprite = engine.get_entity(victim_id).unwrap().sprite();
     assert_eq!(
-        sprite.display_order_ref, None,
-        "unapply should clear the behind-net reference"
+        sprite.display_depth,
+        engine
+            .get_entity(victim_id)
+            .unwrap()
+            .element_data()
+            .position()
+            .y
     );
+    assert_eq!(sprite.display_order_ref, None);
     assert!(!sprite.behind_display_order_ref);
 }
 

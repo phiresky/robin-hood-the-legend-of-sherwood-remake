@@ -464,7 +464,6 @@ pub(crate) fn level_assets_json(
                 "links": assets.navigation.pathfinder_graph.static_data.links.len(),
                 "link_configs": assets.navigation.pathfinder_graph.static_data.link_configs.len(),
                 "move_layers": assets.navigation.pathfinder_graph.static_data.move_layers.len(),
-                "alternative_move_layers": assets.navigation.pathfinder_graph.static_data.alternative_move_layers.len(),
             },
             "profiles": {
                 "characters": assets.profile_manager.characters.len(),

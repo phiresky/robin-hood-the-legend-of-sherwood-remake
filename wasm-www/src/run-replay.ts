@@ -21,6 +21,7 @@ export type RunReplay = {
     readonly edition: 'demo' | 'full';
     /** Exact binary replay artifact. */
     readonly content: Uint8Array;
+    checkpoints?: Uint8Array;
 };
 
 export function runFromQuery(params: URLSearchParams): string | null {
@@ -91,7 +92,16 @@ export async function fetchRunReplay(
     if (bytes.length <= header.length || !header.every((byte, index) => bytes[index] === byte)) {
         throw new Error(`run ${runId}: the replay was not recorded by engine build ${launch.runtimeBuild}`);
     }
-    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes };
+    let checkpoints: Uint8Array | undefined;
+    try {
+        const sidecar = await get(fetchImpl, `${runUrl}/checkpoints`, 'application/x-robin-rhseek', 64 * 1024 * 1024, signal, true);
+        if (sidecar.length !== 0) checkpoints = sidecar;
+    } catch (error) {
+        signal.throwIfAborted();
+        console.warn('Replay checkpoints unavailable; using local seeking:', error);
+    }
+    return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes,
+        ...(checkpoints === undefined ? {} : { checkpoints }) };
 }
 
 async function get(
@@ -100,6 +110,7 @@ async function get(
     mediaType: string,
     limit: number,
     signal: AbortSignal,
+    allowMissing = false,
 ): Promise<Uint8Array<ArrayBuffer>> {
     const response = await fetchImpl(url, {
         headers: { accept: mediaType },
@@ -109,6 +120,7 @@ async function get(
         referrerPolicy: 'no-referrer',
         signal,
     });
+    if (allowMissing && response.status === 404) return new Uint8Array();
     if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
     if (!(response.headers.get('content-type') ?? '').startsWith(mediaType)) {
         throw new Error(`${url} did not return ${mediaType}`);

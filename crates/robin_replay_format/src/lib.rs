@@ -22,6 +22,8 @@
 //! non-shared linear memory with a CI-inspected 384 MiB maximum. A normal game
 //! wasm instance is not an allocation boundary.
 
+pub mod seek;
+
 #[cfg(all(feature = "native-admission", not(target_arch = "wasm32")))]
 pub mod native_admission;
 use robin_engine::campaign::Campaign;

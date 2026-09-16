@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::sync::OnceLock;
 
 const LOG_INTERVAL: u32 = 120;
-const PHASE_COUNT: usize = 8;
+const PHASE_COUNT: usize = 10;
 
 #[derive(Clone, Copy)]
 pub(super) enum Phase {
@@ -19,7 +19,9 @@ pub(super) enum Phase {
     Render = 4,
     PostInitialize = 5,
     Pacing = 6,
-    Total = 7,
+    History = 7,
+    ManualSteps = 8,
+    Total = 9,
 }
 
 #[derive(Default)]
@@ -89,6 +91,10 @@ fn log_and_reset(stats: &mut Stats) {
         prepare_max_us = maximum(stats, Phase::Prepare),
         simulation_avg_us = average(stats, Phase::Simulation),
         simulation_max_us = maximum(stats, Phase::Simulation),
+        history_avg_us = average(stats, Phase::History),
+        history_max_us = maximum(stats, Phase::History),
+        manual_steps_avg_us = average(stats, Phase::ManualSteps),
+        manual_steps_max_us = maximum(stats, Phase::ManualSteps),
         recording_avg_us = average(stats, Phase::Recording),
         audio_avg_us = average(stats, Phase::Audio),
         render_avg_us = average(stats, Phase::Render),

@@ -75,8 +75,6 @@ struct SpatialPresentationPose {
     posture: crate::element::Posture,
     carrier: Option<EntityId>,
     carried: Option<EntityId>,
-    display_order_ref: Option<EntityId>,
-    behind_display_order_ref: bool,
     mobile_index: Option<u16>,
     delayed_teleport_queued: bool,
     pc_teleport_counter: Option<u16>,
@@ -100,8 +98,6 @@ impl SpatialPresentationPose {
             posture: element.posture(),
             carrier: entity.human_data().and_then(|human| human.carrier),
             carried: entity.pc_data().and_then(|pc| pc.carried),
-            display_order_ref: element.sprite.display_order_ref,
-            behind_display_order_ref: element.sprite.behind_display_order_ref,
             mobile_index: entity.fx_data().and_then(|fx| fx.mobile_index),
             delayed_teleport_queued: element.position_delayed || element.position_map_delayed,
             pc_teleport_counter: entity.pc_data().map(|pc| pc.teleport_counter),
@@ -146,8 +142,6 @@ impl SpatialPresentationPose {
             || self.posture != next.posture
             || self.carrier != next.carrier
             || self.carried != next.carried
-            || self.display_order_ref != next.display_order_ref
-            || self.behind_display_order_ref != next.behind_display_order_ref
             || self.mobile_index != next.mobile_index
             || self.delayed_teleport_queued
             || next.delayed_teleport_queued
@@ -243,6 +237,9 @@ pub struct Engine {
     /// It is deliberately absent from snapshots and the simulation hash.
     bootstrap_open: bool,
 }
+
+mod compressed_snapshot;
+pub use compressed_snapshot::CompressedEngineSnapshot;
 
 impl serde::Serialize for Engine {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -463,7 +460,10 @@ impl PresentationEngine {
 }
 
 impl Engine {
-    /// Encode a native engine snapshot through the bounded-stack facade codec.
+    /// Encode a native engine snapshot in one bitcode pass.
+    ///
+    /// Callers should reserve a 32 MiB thread stack for debug builds, where
+    /// generated codec state and its construction temporaries remain on stack.
     pub fn encode_native_snapshot(&self) -> Vec<u8> {
         self.try_encode_native_snapshot().expect(
             "authoritative engine reached snapshot encoding with an invalid Spellforge tape",
@@ -791,28 +791,6 @@ impl Engine {
         let rng_seed = inner.rng_seed();
         let sim_config = inner.control.sim_config;
         (inner.into_campaign(), mission_idx, rng_seed, sim_config)
-    }
-
-    /// Construct a mission engine for ranked resimulation and install the
-    /// board's simulation policy before the first frame.
-    ///
-    /// Fails when the policy does not admit the requested `SimConfig`.
-    pub fn new_ranked(
-        args: EngineArgs,
-        simulation_policy: crate::engine::RankedSimulationPolicy,
-    ) -> Result<Self, EngineError> {
-        simulation_policy
-            .validate_config(args.sim_config)
-            .map_err(|error| EngineError::MissionLevelStage {
-                stage: "ranked simulation policy",
-                reason: error.to_string(),
-            })?;
-        let mut engine = Self::new(args)?;
-        engine
-            .inner
-            .control
-            .install_ranked_simulation_policy(simulation_policy);
-        Ok(engine)
     }
 
     /// Create a fully-initialised engine for mission play.
@@ -1295,6 +1273,7 @@ impl Engine {
             assets,
             frame,
             SelectionCommandBatchMode::InferNestedSelection,
+            None,
             crate::replay::state_hash,
         )
     }
@@ -1311,7 +1290,23 @@ impl Engine {
             assets,
             frame,
             SelectionCommandBatchMode::InferNestedSelection,
+            None,
             |_| (),
+        )
+    }
+
+    pub(crate) fn advance_frame_with_execution(
+        &mut self,
+        assets: &LevelAssets,
+        frame: SimulationFrameInput,
+        execution: &crate::ranked_resim::RankedExecutionContext,
+    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        self.advance_frame_with_command_batch_mode(
+            assets,
+            frame,
+            SelectionCommandBatchMode::InferNestedSelection,
+            Some(execution),
+            crate::replay::state_hash,
         )
     }
 
@@ -1320,6 +1315,7 @@ impl Engine {
         assets: &LevelAssets,
         frame: SimulationFrameInput,
         command_batch_mode: SelectionCommandBatchMode,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
         hash: impl FnOnce(&EngineInner) -> Hash,
     ) -> Result<SimulationFrameOutput<Hash>, FrameAdvanceError> {
         if frame.run_hourglass {
@@ -1357,14 +1353,13 @@ impl Engine {
             run_post_initialize,
         } = frame;
 
-        let ranked_policy = self.inner.control.ranked_simulation_policy();
-        if let Some(policy) = ranked_policy {
-            Self::validate_ranked_simulation_config(policy, self.inner.control.sim_config)?;
-            Self::validate_ranked_simulation_commands(
+        if let Some(execution) = execution {
+            execution.validate_config(self.inner.control.sim_config)?;
+            crate::ranked_resim::RankedExecutionContext::validate_commands(
                 &commands,
                 SimulationCommandPhase::PreHourglass,
             )?;
-            Self::validate_ranked_simulation_commands(
+            crate::ranked_resim::RankedExecutionContext::validate_commands(
                 &post_commands,
                 SimulationCommandPhase::PostHourglass,
             )?;
@@ -1390,10 +1385,10 @@ impl Engine {
         // leave earlier director/sound mutations partially committed.
         if !external_facts.is_empty() {
             let mut staged_inner = self.inner.clone_authoritative_state();
-            Self::apply_frame_external_facts(&mut staged_inner, assets, external_facts)?;
+            Self::apply_frame_external_facts(&mut staged_inner, assets, external_facts, execution)?;
             self.inner = staged_inner;
         } else {
-            Self::apply_frame_external_facts(&mut self.inner, assets, external_facts)?;
+            Self::apply_frame_external_facts(&mut self.inner, assets, external_facts, execution)?;
         }
 
         let mut external_action_results = external_actions
@@ -1408,7 +1403,7 @@ impl Engine {
 
         let mut side_effects = if run_hourglass {
             self.inner
-                .perform_frame_hourglass(assets, simulation_body_allowed)
+                .perform_frame_hourglass(assets, simulation_body_allowed, execution)
         } else {
             SideEffects {
                 code: crate::game_operation::GameCode::LevelInProgress,
@@ -1437,8 +1432,8 @@ impl Engine {
             .then(|| self.inner.perform_frame_post_initialize(assets))
             .flatten()
             .map(SimEvents::from);
-        if let Some(policy) = ranked_policy {
-            Self::validate_ranked_simulation_config(policy, self.inner.control.sim_config)?;
+        if let Some(execution) = execution {
+            execution.validate_config(self.inner.control.sim_config)?;
         }
         let frame_after = self.inner.control.frame_counter;
         let state_hash = hash(&self.inner);
@@ -1461,61 +1456,11 @@ impl Engine {
         })
     }
 
-    fn validate_ranked_simulation_config(
-        policy: super::RankedSimulationPolicy,
-        observed: SimConfig,
-    ) -> Result<(), FrameAdvanceError> {
-        policy
-            .validate_config(observed)
-            .map_err(|error| match error {
-                super::RankedSimulationPolicyError::ConfigMismatch { field } => {
-                    tracing::error!(
-                        field = field.config_field(),
-                        "ranked frame rejected because its immutable simulation config drifted"
-                    );
-                    FrameAdvanceError::RankedSimulationConfigViolation { field }
-                }
-                error @ (super::RankedSimulationPolicyError::InvalidIdentity(_)
-                | super::RankedSimulationPolicyError::MissingCustomConfiguration
-                | super::RankedSimulationPolicyError::InvalidCustomConfiguration(_)) => {
-                    unreachable!("installed ranked policy was already validated: {error}")
-                }
-            })
-    }
-
-    fn validate_ranked_simulation_commands(
-        commands: &[super::SimCommand],
-        phase: SimulationCommandPhase,
-    ) -> Result<(), FrameAdvanceError> {
-        for (index, command) in commands.iter().enumerate() {
-            let Some(field) = command
-                .player_input()
-                .command
-                .ranked_simulation_setting_mutation()
-            else {
-                continue;
-            };
-            tracing::error!(
-                ?phase,
-                index,
-                player_id = command.player_input().player_id.0,
-                command = ?command.player_input().command,
-                field = field.config_field(),
-                "rejected command which attempted to edit an immutable ranked setting"
-            );
-            return Err(FrameAdvanceError::RankedSimulationSettingCommandRejected {
-                phase,
-                index,
-                field,
-            });
-        }
-        Ok(())
-    }
-
     fn apply_frame_external_facts(
         inner: &mut EngineInner,
         assets: &LevelAssets,
         external_facts: ExternalFacts,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> Result<(), FrameAdvanceError> {
         let ExternalFacts {
             director_completions,
@@ -1533,9 +1478,7 @@ impl Engine {
         }
         if let Some(sound_boundary) = sound_boundary {
             let policy = sound_boundary.policy;
-            if inner.control.ranked_simulation_policy().is_some()
-                && policy == SoundBoundaryPolicy::Replay
-            {
+            if execution.is_some() && policy == SoundBoundaryPolicy::Replay {
                 return Err(FrameAdvanceError::SoundBoundaryRejected {
                     policy,
                     reason: "ranked simulation accepts only live sound boundaries validated against the sealed speech timing catalog".into(),
@@ -1549,7 +1492,7 @@ impl Engine {
                 .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
             let sim = inner.control.simulation_context();
             inner
-                .hourglass_phase_sound_boundary(&sim, assets)
+                .hourglass_phase_sound_boundary(&sim, assets, execution)
                 .map_err(|reason| FrameAdvanceError::SoundBoundaryRejected { policy, reason })?;
         }
         for (index, route) in recorded_drop_ale_routes.into_iter().enumerate() {

@@ -690,22 +690,9 @@ impl EngineInner {
             if is_human {
                 self.update_roll_after_crossing(assets, entity_id);
             }
-            let installed_order = self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(Entity::actor_data)
-                .and_then(|actor| actor.installed_order);
-            let compute_direction = installed_order.and_then(|installed| {
-                let (seq, elem) = self.world.entities.current_element_for_actor(entity_id)?;
-                self.orders
-                    .sequence_manager
-                    .get_element(seq, elem)?
-                    .orders
-                    .iter()
-                    .find(|order| order.order_id == installed.order_id)
-                    .map(|order| order.compute_direction)
-            });
+            let compute_direction = self
+                .actor_installed_order(entity_id)
+                .map(|order| order.compute_direction);
             if let Some(compute_direction) = compute_direction
                 && let Some(entity) = self.world.entities.get_mut(entity_id)
             {

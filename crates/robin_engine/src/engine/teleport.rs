@@ -88,6 +88,7 @@ impl EngineInner {
                 direction: 0,
                 action: OrderType::RunningUpright,
                 speed_factor: 1.0,
+                linked_seek: None,
                 post_seek_sequence: None,
             };
             self.launch_element(sim, assets, elem);

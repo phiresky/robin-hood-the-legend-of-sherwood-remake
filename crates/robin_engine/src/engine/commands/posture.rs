@@ -15,18 +15,7 @@ impl EngineInner {
         danger_point: &crate::coordinates::WorldPoint3D,
         danger_point_layer: &u16,
     ) {
-        if self.players.qa_recording_for.contains(actor) {
-            // The first shield click already selected the protectee.
-            // Original's second click updates the prompt state, stores
-            // the concrete Seek -> RaiseShield quick action, and stops
-            // recording without launching it against the live actor.
-            self.world.shield.is_protected = true;
-            self.world.shield.protected_pc = Some(*protected_pc);
-            self.world.shield.danger_point = *danger_point;
-            self.world.shield.danger_point_layer = *danger_point_layer;
-            self.stop_recording_macro();
-            return;
-        }
+        let recording = self.players.qa_recording_for.contains(actor);
         self.apply_raise_shield_with_danger(
             sim,
             assets,
@@ -35,6 +24,9 @@ impl EngineInner {
             *danger_point,
             *danger_point_layer,
         );
+        if recording {
+            self.stop_recording_macro();
+        }
     }
 
     /// Handle the second click of the Shield two-click protocol.
@@ -69,7 +61,8 @@ impl EngineInner {
         // Stamp the new danger point on the acting PC so
         // `sync_danger_point_titbits` refreshes the `DangerPoint`
         // titbit next tick.
-        if let Some(entity) = self.world.entities.get_mut(actor)
+        if !self.players.qa_recording_for.contains(&actor)
+            && let Some(entity) = self.world.entities.get_mut(actor)
             && let Some(actor_data) = entity.actor_data_mut()
         {
             actor_data.shield_face_point = Some(danger_point.to_map());
@@ -116,7 +109,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek_elem);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
     }
 
     /// Set the protector's `shield_protected` forward pointer.

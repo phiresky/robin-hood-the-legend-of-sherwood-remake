@@ -6022,6 +6022,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-time",
+ "zstd",
 ]
 
 [[package]]
@@ -6197,12 +6198,14 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_replay_format",
+ "robin_run_types",
  "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.20",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -6210,6 +6213,7 @@ name = "robin_replay_admission_wasm"
 version = "0.0.0"
 dependencies = [
  "robin_replay_format",
+ "sha2 0.11.0",
  "wasm-bindgen",
 ]
 
@@ -6256,6 +6260,7 @@ version = "0.0.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
+ "ash",
  "async-channel",
  "base64 0.23.1",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
@@ -8926,8 +8931,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b7fb58561a792bc237628ba0792e332de418fefe145f13b5ed8201e6d52f58"
 dependencies = [
  "android_system_properties",
  "arrayvec",

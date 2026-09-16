@@ -369,7 +369,7 @@ impl EngineInner {
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
         if on_ladder {
-            self.translate_ladder_wall_fall(assets, owner, (seq_id, elem_idx));
+            self.translate_ladder_wall_fall(sim, assets, owner, (seq_id, elem_idx));
         }
 
         // Book the first struggle animation onto the wasp-sting
@@ -551,10 +551,8 @@ impl EngineInner {
                 cleared_selected_goal = true;
             }
 
-            // `installed_order` is Rust's mirror of the selected actor order.
-            // The original game clears that reference before entering the NPC
-            // condolence callback, so every recursive Think must observe
-            // NONANIMATION_END rather than the completed sprite transition.
+            // Clear the installed reference before the condolence callback so
+            // recursive Think observes NONANIMATION_END.
             if detaches_selected_order && let Some(actor) = entity.actor_data_mut() {
                 tracing::trace!(
                     ?owner,
@@ -565,9 +563,11 @@ impl EngineInner {
                     detached = ?actor.installed_order,
                     "condolation card detaching installed order"
                 );
-                actor.installed_order = None;
                 actor.selected_sequence_element = None;
             }
+        }
+        if detaches_selected_order {
+            self.install_actor_order(owner, None);
         }
         if let Some(provenance) = &goal_owner_provenance {
             let selected = self.world.entities.current_element_for_actor(owner);
@@ -1556,9 +1556,7 @@ mod tests {
     }
 
     fn door_fight_route_fixture(crossed: bool) -> (EngineInner, EntityId, Position) {
-        use crate::element::{
-            ActorData, ActorPc, ElementData, HumanData, InstalledActorOrder, PcData,
-        };
+        use crate::element::{ActorData, ActorPc, ElementData, HumanData, PcData};
         use crate::engine::MissionScript;
         use crate::fast_find_grid::GridSector;
         use crate::gate::{Door, DoorType};
@@ -1637,13 +1635,7 @@ mod tests {
         element.set_layer(6);
         let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
-            actor: ActorData {
-                installed_order: (!crossed).then_some(InstalledActorOrder {
-                    order_id: std::num::NonZeroU32::new(1).unwrap(),
-                    order_type: OrderType::RunningUpright,
-                }),
-                ..ActorData::default()
-            },
+            actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData {
                 life_points: 100,
@@ -1652,6 +1644,7 @@ mod tests {
         }));
 
         if !crossed {
+            engine.install_test_order(pc, OrderType::RunningUpright);
             engine
                 .get_entity_mut(pc)
                 .unwrap()
@@ -1670,12 +1663,11 @@ mod tests {
             .sequence_manager
             .sequences_iter()
             .find(|sequence| {
-                sequence
-                    .elements
-                    .iter()
-                    .any(|element| element.owner == Some(pc))
+                sequence.elements.first().is_some_and(|element| {
+                    element.owner == Some(pc) && element.command == Command::WaitTimer
+                })
             })
-            .expect("door-fight sequence")
+            .expect("door-fight sequence beginning with its timed wait")
     }
 
     #[test]
@@ -1752,7 +1744,6 @@ mod tests {
 
     #[test]
     fn door_fight_route_does_not_adapt_dormant_pass_under_wait_order() {
-        use crate::element::InstalledActorOrder;
         use crate::sim_rng::{RngSite, with_draw_trace};
 
         let sim = crate::sim_rng::test_context();
@@ -1762,11 +1753,7 @@ mod tests {
             .unwrap()
             .position_iface_mut()
             .clear_door();
-        let actor = engine.get_entity_mut(pc).unwrap().actor_data_mut().unwrap();
-        actor.installed_order = Some(InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(2).unwrap(),
-            order_type: OrderType::WaitingUpright,
-        });
+        engine.install_test_order(pc, OrderType::WaitingUpright);
 
         let (_, draws) = with_draw_trace(|| {
             engine.send_before_door_to_fight_pc(

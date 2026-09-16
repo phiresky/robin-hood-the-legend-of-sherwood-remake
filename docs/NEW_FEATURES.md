@@ -6,6 +6,19 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches with paint opportunities targeting 25 updates per second. Progress remains visible, and a new timeline target redirects an in-progress seek.
 
+- **Vulkan presentation feedback profiling (Linux).** With
+  `ROBIN_GAMEPLAY_PROFILE=1`, supported Vulkan devices collect asynchronous
+  `VK_EXT_present_timing` feedback for actual display presentation. INFO logs
+  report measured display gaps, missed fixed-refresh slots when known, and
+  120-interval summaries; add
+  `RUST_LOG=info,presentation_perf=debug` for per-present IDs, display-stage
+  timestamps, GPU-ready timestamps and time-domain identifiers. The selected
+  stage is explicitly logged (`first_pixel_out` or `first_pixel_visible`).
+  Unknown timestamps are not classified as discarded frames; VRR/unknown
+  refresh timing does not produce missed-refresh counts. Resize resets tracking.
+  Unsupported devices retain CPU presentation diagnostics, which are estimates.
+  Local wgpu-hal hook provenance is in `vendor/wgpu-hal/ROBIN_PATCHES.md`.
+
 - **In-game leaderboard registration.** Every submission checks the uploader's
   server profile first: Previous Plays, mission-end buttons, retries, and
   automatic uploads share one registration gate on native and browser builds.
@@ -857,8 +870,10 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Unified mission timeline and non-blocking multiplayer UI**. Rewind,
   multiplayer correction, and rollback verification share one mission-owned
-  command journal with dense recent and exponentially retained checkpoint
-  tiers. Snapshot/load adoption seeds an explicit checkpoint at its exact
+  command journal with dense recent checkpoints and whole-mission rewind
+  checkpoints every 10 seconds. Older checkpoints use bitcode + zstd with
+  reusable codec buffers; interactive rewind caches at most 25 live states.
+  Snapshot/load adoption seeds an explicit checkpoint at its exact
   frame, including between normal sparse boundaries. Blocking gameplay modal
   traffic uses client proposals and host-only decisions; remote peers cannot
   choose the host's restart or load outcome. Campaign map/description and
@@ -874,6 +889,15 @@ A list of which additional features we have added, which ones we might still wan
   after which every peer reconnects from the resulting authoritative snapshot.
   Local keyboard and HTTP pause changes are rejected in multiplayer so one peer
   cannot stop only its own timeline.
+
+- **Fast verified-replay seeking**. The validator produces an optional zstd-19
+  checkpoint sidecar without modifying the signed replay. Browser playback
+  downloads and validates it in the isolated admission worker, then recompresses
+  individual checkpoints into the same bitcode + zstd memory cache used by local
+  seeks. Checkpoints are keyed by replay ordinal every 250 records, so save/load
+  branches remain distinct. The sidecar includes saved-state dependencies and a
+  sparse modal-effect journal; missing or incompatible artifacts fall back to
+  normal replay. The sidecar is served only for publicly accessible runs.
 
 - **Host-authoritative multiplayer session transitions.** Load, Restart,
   QuickLoad, and Sherwood campaign launch use a prepare/ready/commit barrier.

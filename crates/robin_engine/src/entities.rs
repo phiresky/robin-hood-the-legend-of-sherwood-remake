@@ -110,16 +110,6 @@ impl Entities {
         Self { slots }
     }
 
-    /// Exact sparse slots used by the current native engine snapshot codec.
-    pub(crate) fn snapshot_slots(&self) -> &[Option<Entity>] {
-        &self.slots
-    }
-
-    /// Restore exact sparse slots from the current native snapshot codec.
-    pub(crate) fn from_snapshot_slots(slots: Vec<Option<Entity>>) -> Self {
-        Self { slots }
-    }
-
     pub fn len(&self) -> usize {
         self.slots.len()
     }

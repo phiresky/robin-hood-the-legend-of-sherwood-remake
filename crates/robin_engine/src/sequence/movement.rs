@@ -60,38 +60,6 @@ impl SequenceManager {
 
     // ─── Cancellation helpers ───────────────────────────────────
 
-    /// Snapshot the entries which the original game will visit when stopping
-    /// unlaunched elements. The loop captures
-    /// the list size on entry, so callback-appended work is deliberately not
-    /// part of this result.
-    pub fn pending_elements_for_owner(&self, owner: EntityId) -> Vec<(SequenceId, usize)> {
-        self.elements_to_go
-            .iter()
-            .copied()
-            .filter(|(seq_id, elem_idx)| {
-                self.get_element(*seq_id, *elem_idx).is_some_and(|element| {
-                    element.owner == Some(owner) && element.state != SequenceState::Interrupted
-                })
-            })
-            .collect()
-    }
-
-    /// Physically remove terminal tombstones after a callback-separated
-    /// pending Stop scan. State-aware registration queries hide each stopped
-    /// entry immediately; compacting once after the snapshot finishes keeps
-    /// the stable manager queue identical to Original without an O(queue)
-    /// retain after every root.
-    pub(crate) fn compact_terminal_elements_to_go(&mut self) {
-        self.elements_to_go.retain(|(seq_id, elem_idx)| {
-            self.sequences.get(seq_id).is_none_or(|sequence| {
-                sequence
-                    .elements
-                    .get(*elem_idx)
-                    .is_none_or(|element| element.state != SequenceState::Interrupted)
-            })
-        });
-    }
-
     /// Returns `true` if `owner` has a queued element with this command.
     /// Includes both not-yet-launched `elements_to_go` entries and
     /// cross-postponed elements.
@@ -644,58 +612,47 @@ impl crate::engine::EngineInner {
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) {
-        // Work from the same roots as Original's
-        // Stop not-yet-launched sequence elements: entries currently registered in
-        // the manager's to-go list for this owner. A root can be too strong to
-        // stop while still owning a postponed pointer; sequence stopping
-        // follows that pointer unconditionally, so retain the cross-sequence
-        // targets returned by Rust's split-storage representation.
-        let roots = self
-            .orders
-            .sequence_manager
-            .pending_elements_for_owner(owner);
-        self.stop_pending_roots(
-            sim,
-            assets,
-            active_scripts,
-            owner,
-            roots,
-            stop_priority,
-            resolver,
-        );
-        self.orders
-            .sequence_manager
-            .compact_terminal_elements_to_go();
-    }
-
-    pub(crate) fn stop_pending_roots(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        owner: EntityId,
-        roots: impl IntoIterator<Item = (SequenceId, usize)>,
-        stop_priority: SequencePriority,
-        resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
-    ) {
-        for (sequence, index) in roots {
-            if !self
+        // Capture the entry count, but read each queue slot after the previous
+        // Stop callback. Remove only this owner's interrupted entry before
+        // visiting the next one; callback-appended work belongs to a later scan.
+        let mut count = self.orders.sequence_manager.elements_to_go.len();
+        let mut queue_index = 0;
+        while queue_index < count {
+            let (sequence, index) = self.orders.sequence_manager.elements_to_go[queue_index];
+            if self
                 .orders
                 .sequence_manager
                 .get_element(sequence, index)
-                .is_some_and(|element| element.owner == Some(owner))
+                .expect("pending Stop entry references a missing element")
+                .owner
+                == Some(owner)
             {
-                continue;
+                self.stop_live_sequence_element(
+                    sim,
+                    assets,
+                    active_scripts,
+                    SequenceElementRef::new(sequence, index),
+                    stop_priority,
+                    resolver,
+                    &mut HashSet::new(),
+                );
+                if self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, index)
+                    .expect("pending Stop element disappeared during its callback")
+                    .state
+                    == SequenceState::Interrupted
+                {
+                    self.orders
+                        .sequence_manager
+                        .elements_to_go
+                        .remove(queue_index);
+                    count -= 1;
+                    continue;
+                }
             }
-            self.stop_live_sequence_element(
-                sim,
-                assets,
-                active_scripts,
-                SequenceElementRef::new(sequence, index),
-                stop_priority,
-                resolver,
-                &mut HashSet::new(),
-            );
+            queue_index += 1;
         }
     }
 

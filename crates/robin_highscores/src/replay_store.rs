@@ -66,6 +66,61 @@ pub struct ReplayInventoryEntry {
 }
 
 impl ReplayStore {
+    /// Derived, replaceable cache bound to the immutable replay digest.
+    pub async fn store_checkpoints(
+        &self,
+        digest: &[u8; 32],
+        bytes: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        if bytes.is_empty() {
+            return Err(StoreError::Empty);
+        }
+        if bytes.len() > robin_replay_format::seek::MAX_BYTES {
+            return Err(StoreError::TooLarge {
+                limit: robin_replay_format::seek::MAX_BYTES as u64,
+            });
+        }
+        let shard = self.ensure_shard(digest).await?;
+        let name = format!("{}.rhseek", hex::encode(digest));
+        crate::physical_work::spawn_blocking(move || {
+            use std::io::Write;
+            let temporary = format!(".seek-{}.tmp", uuid::Uuid::now_v7());
+            let result = (|| -> std::io::Result<()> {
+                let mut file =
+                    crate::secure_fs::create_private_file(&shard, Path::new(&temporary))?;
+                file.write_all(&bytes)?;
+                file.set_permissions(std::fs::Permissions::from_mode(
+                    crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
+                ))?;
+                file.sync_all()?;
+                shard.rename(&temporary, &shard, &name)?;
+                crate::secure_fs::sync_private_dir(&shard)
+            })();
+            if result.is_err() {
+                let _ = shard.remove_file(&temporary);
+            }
+            result
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+        Ok(())
+    }
+
+    pub async fn open_checkpoints(&self, digest: &[u8; 32]) -> Result<tokio::fs::File, StoreError> {
+        let shard = self.open_shard(digest).await?;
+        let name = format!("{}.rhseek", hex::encode(digest));
+        let file = crate::physical_work::spawn_blocking(move || {
+            let file = crate::secure_fs::open_regular_file(&shard, Path::new(&name))?;
+            let len = file.metadata()?.len();
+            if len == 0 || len > robin_replay_format::seek::MAX_BYTES as u64 {
+                return Err(std::io::Error::other("invalid seek sidecar length"));
+            }
+            Ok(file)
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+        Ok(tokio::fs::File::from_std(file))
+    }
     pub async fn create(root: PathBuf, max_bytes: u64) -> Result<Self, StoreError> {
         match tokio::fs::symlink_metadata(&root).await {
             Ok(metadata) => {
@@ -342,6 +397,21 @@ impl ReplayStore {
             )
         };
         let quarantine_name = format!("{}-{}.rhrec", claim_token, hex::encode(digest));
+        // Remove the derived cache on retries too, including after a completed rename.
+        match self.open_shard(digest).await {
+            Ok(shard) => {
+                let sidecar = format!("{}.rhseek", hex::encode(digest));
+                crate::physical_work::spawn_blocking(move || match shard.remove_file(sidecar) {
+                    Ok(()) => crate::secure_fs::sync_private_dir(&shard),
+                    Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error),
+                })
+                .await
+                .map_err(std::io::Error::other)??;
+            }
+            Err(StoreError::Io(error)) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         match self
             .open_pinned_verified(
                 Arc::clone(&purge),
@@ -570,6 +640,37 @@ async fn set_private_directory_permissions(path: &Path) -> Result<(), StoreError
 mod tests {
     use super::*;
     use futures_util::stream;
+
+    #[tokio::test]
+    async fn checkpoint_cache_replaces_atomically_and_is_removed_with_replay() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ReplayStore::create(temp.path().join("replays"), 100)
+            .await
+            .unwrap();
+        let bytes = Bytes::from_static(b"replay");
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        store
+            .store_stream(stream::iter([Ok::<_, &str>(bytes)]), digest, 6)
+            .await
+            .unwrap();
+        assert!(store.open_checkpoints(&digest).await.is_err());
+        for expected in [b"first".to_vec(), b"replacement".to_vec()] {
+            store
+                .store_checkpoints(&digest, expected.clone())
+                .await
+                .unwrap();
+            let mut file = store.open_checkpoints(&digest).await.unwrap();
+            let mut actual = Vec::new();
+            file.read_to_end(&mut actual).await.unwrap();
+            assert_eq!(actual, expected);
+        }
+        let quarantine = store
+            .quarantine_for_purge(&digest, 6, "test-claim")
+            .await
+            .unwrap();
+        assert!(store.open_checkpoints(&digest).await.is_err());
+        store.remove_quarantined(&quarantine).await.unwrap();
+    }
 
     #[tokio::test]
     async fn stores_verified_content_by_digest_and_deduplicates() {

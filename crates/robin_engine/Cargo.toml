@@ -51,6 +51,7 @@ robin_run_types.workspace = true
 sha2.workspace = true
 nonmax = { workspace = true, features = ["serde"] }
 bitcode.workspace = true
+zstd.workspace = true
 enum-map = { workspace = true, features = ["serde"] }
 indexmap = { workspace = true, features = ["serde"] }
 smart-default = "0.7"

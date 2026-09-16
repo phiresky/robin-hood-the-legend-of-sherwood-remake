@@ -11,8 +11,8 @@ use std::ffi::OsString;
 use std::io::{self, Seek as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
-/// Frozen four-flag invocation:
-/// `--job FILE --replay FILE --content-root DIR --result FILE`.
+/// `--job FILE --replay FILE --content-root DIR --result FILE`
+/// with optional `--checkpoints FILE` for a pre-created sidecar output.
 #[derive(clap::Parser, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[command(name = "robin-replay-verifier", disable_help_flag = true)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +25,8 @@ pub struct WorkerPaths {
     pub content_root: PathBuf,
     #[arg(long)]
     pub result: PathBuf,
+    #[arg(long)]
+    pub checkpoints: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,7 +55,7 @@ pub enum WorkerPathError {
 }
 
 impl WorkerPaths {
-    /// Parse exactly the four flag/value pairs. The iterator does not include
+    /// Parse the required flag/value pairs and optional checkpoint output. The iterator does not include
     /// argv[0]. No positional arguments or `--flag=value` spellings are
     /// accepted, keeping the worker invocation unambiguous.
     pub fn parse_flags(args: impl IntoIterator<Item = OsString>) -> Result<Self, WorkerPathError> {
@@ -73,11 +75,14 @@ impl WorkerPaths {
     }
 
     pub fn validate(&self) -> Result<(), WorkerPathError> {
-        let files = [
+        let mut files = vec![
             ("--job", &self.job),
             ("--replay", &self.replay),
             ("--result", &self.result),
         ];
+        if let Some(path) = &self.checkpoints {
+            files.push(("--checkpoints", path));
+        }
         for &(flag, path) in &files {
             validate_normalized_absolute(flag, path)?;
             validate_existing_components(flag, path)?;
@@ -328,6 +333,7 @@ mod tests {
         std::fs::write(directory.path().join("result.json"), b"stale result").unwrap();
         std::fs::create_dir(directory.path().join("content")).unwrap();
         let paths = WorkerPaths {
+            checkpoints: None,
             job: directory.path().join("job.json"),
             replay: directory.path().join("replay.rhrec"),
             content_root: directory.path().join("content"),

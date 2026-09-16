@@ -278,11 +278,12 @@ struct QueuedDraw {
     corners: Option<[(f32, f32); 4]>,
     /// `(u0, v0, u1, v1)` in 0..1 source-texture coords. Solid-color
     /// draws use the full white texture so the values are `(0,0,1,1)`.
+    /// Map draws repeat the map-to-texture texel offset at both endpoints.
     uv: [f32; 4],
     /// RGBA in linear 0..1, multiplied with the sampled texel.
     /// `DrawOperation::ColorizeFrozen` repurposes this as
     /// `(hue/360, scale, _, _)` — the `fs_colorize` shader in
-    /// `shaders/quad.wgsl` reads it.
+    /// `shaders/quad.wgsl` reads it. Map draws pack `(view_x, view_y, zoom, _)`.
     tint: [f32; 4],
     /// Operation owns its valid texture/blend combination. The remaining
     /// fields are already packed shader inputs, not application preferences.
@@ -318,6 +319,7 @@ enum DrawOperation {
         texture: u32,
         blend: BlendMode,
     },
+    Map(u32),
     ColorizeFrozen,
     FramebufferAlpha,
     ViewConeGradient,
@@ -335,6 +337,7 @@ impl DrawOperation {
                 QuadTexture::Frame(index) => TextureSource::Frame(index),
             },
             Self::Masked { texture, .. } => TextureSource::Frame(texture),
+            Self::Map(texture) => TextureSource::Frame(texture),
             Self::ColorizeFrozen => TextureSource::FrozenScene,
             Self::FramebufferAlpha => TextureSource::Framebuffer,
             Self::ViewConeGradient | Self::StencilClear => TextureSource::White,
@@ -893,6 +896,12 @@ impl Renderer {
         let _ = self.try_present();
     }
 
+    /// Reserve the next surface before sampling time-dependent scene state.
+    /// The subsequent present consumes it; resize/mode changes release it.
+    pub(crate) fn prepare_presentation(&mut self) {
+        self.frame.prepare_presentation(&self.gpu);
+    }
+
     /// True only when a swapchain texture was acquired and submitted.
     /// This is not a physical display presentation timestamp.
     pub fn try_present(&mut self) -> bool {
@@ -972,6 +981,28 @@ impl Renderer {
     pub fn upload_background_texture(&mut self, width: u32, height: u32, pixels: &[u16]) -> bool {
         self.resources
             .upload_background_texture(&self.gpu, width, height, pixels)
+    }
+
+    /// Terrain and replacement sprites use the same screen-to-map pixel lookup.
+    pub(crate) fn render_map_background(
+        &mut self,
+        view: robin_engine::coordinates::MapPoint,
+        zoom: f32,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(bg) = self.resources.background_texture.as_ref() else {
+            return false;
+        };
+        let texture = self.queue_cached_bg(bg.bind_group.clone());
+        self.frame.queued.push(QueuedDraw {
+            dst: Rect::new(0, 0, width, height),
+            corners: None,
+            uv: [0.0; 4],
+            tint: [view.x, view.y, zoom, 0.0],
+            operation: DrawOperation::Map(texture),
+        });
+        true
     }
 
     pub fn render_background_texture(

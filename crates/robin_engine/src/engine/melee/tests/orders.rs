@@ -129,8 +129,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        let old_order =
-            engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -146,11 +145,8 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
                 .actor_data_mut()
                 .unwrap();
             actor.action_state = ActionState::MovingSword;
-            actor.installed_order = Some(crate::element::InstalledActorOrder {
-                order_id: old_order,
-                order_type: OrderType::WalkingWithSword,
-            });
         }
+        engine.publish_selected_order_as_installed(victim);
 
         // The selected request remains F while its installed replacement
         // row is H, exactly separating the original game's command selection from
@@ -169,7 +165,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        let strike_order = engine.push_new_order(
+        engine.push_new_order(
             strike_sequence,
             0,
             OrderType::StrikingRoundLeftSword,
@@ -188,10 +184,6 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             let attacker_entity = engine.get_entity_mut(attacker).unwrap();
             let actor = attacker_entity.actor_data_mut().unwrap();
             actor.action_state = ActionState::WaitingSword;
-            actor.installed_order = Some(crate::element::InstalledActorOrder {
-                order_id: strike_order,
-                order_type: OrderType::StrikingRoundLeftSword,
-            });
             let sprite = &mut attacker_entity.element_data_mut().sprite;
             sprite.current_row = 0;
             sprite.current_frame = 0;
@@ -200,6 +192,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             sprite.action_done_counter = 1;
             sprite.last_action = OrderType::StrikingRoundLeftSword;
         }
+        engine.publish_selected_order_as_installed(attacker);
 
         let profiles = std::sync::Arc::get_mut(&mut assets.profile_manager).unwrap();
         profiles.soldiers[0].fighting = 50;

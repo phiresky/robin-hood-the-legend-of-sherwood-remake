@@ -29,6 +29,7 @@ function api(document: unknown, replayBytes: Uint8Array = replay, replayType = R
     const fetchImpl = (async (input: RequestInfo | URL) => {
         const url = String(input);
         urls.push(url);
+        if (url.endsWith('/checkpoints')) return new Response(null, { status: 404 });
         if (url.endsWith('/replay')) {
             return new Response(replayBytes.slice(), { headers: { 'content-type': replayType } });
         }
@@ -47,7 +48,7 @@ test('a run launches its recorded engine build with the exact published replay',
     const { fetchImpl, urls } = api(runDocument());
     const result = await fetchRunReplay('run-1', 'https://robinhood.example/api/v1/', fetchImpl, new AbortController().signal);
     assert.deepEqual(result, { runId: 'run-1', runtimeBuild: build, edition: 'demo', content: replay });
-    assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay']);
+    assert.deepEqual(urls, ['https://robinhood.example/api/v1/runs/run-1', 'https://robinhood.example/api/v1/runs/run-1/replay', 'https://robinhood.example/api/v1/runs/run-1/checkpoints']);
 });
 
 test('run playback refuses unavailable, mismatched and tampered runs', async () => {
@@ -72,6 +73,17 @@ test('run playback refuses unavailable, mismatched and tampered runs', async () 
     const otherDocument = runDocument();
     ((otherDocument.replay as Record<string, unknown>).artifact as Record<string, unknown>).sha256 = createHash('sha256').update(otherBuild).digest('hex');
     await assert.rejects(fetchRunReplay('run-1', '/api/v1', api(otherDocument, otherBuild).fetchImpl, signal), /not recorded by engine build/u);
+});
+
+test('run downloads an optional checkpoint sidecar without changing the replay', async () => {
+    const base = api(runDocument()).fetchImpl;
+    const sidecar = new Uint8Array([1, 2, 3]);
+    const fetchImpl = (async (url, init) => String(url).endsWith('/checkpoints')
+        ? new Response(sidecar, { headers: { 'content-type': 'application/x-robin-rhseek' } })
+        : base(url, init)) as typeof fetch;
+    const result = await fetchRunReplay('run-1', '/api/v1', fetchImpl, new AbortController().signal);
+    assert.deepEqual(result.content, replay);
+    assert.deepEqual(result.checkpoints, sidecar);
 });
 
 

@@ -133,7 +133,8 @@ fn mission_state_transitions() {
         engine
             .feedback
             .pending_side_effects
-            .pending_silent_win_widget_swap
+            .host_effects
+            .has_signal(crate::engine::HostSignal::SilentWinWidgetSwap)
     );
 }
 
@@ -143,7 +144,7 @@ fn mission_won_first_time_raises_mission_state_notice() {
     // On the first post-win frame with no PC guarded, the engine
     // fires the `LEAVE_MISSION_NOW` mission-state notice +
     // `EnableWidgetQuitMission(false)`.  Both are routed through
-    // `SideEffects.pending_mission_state_notice`.
+    // the shared host-effects queue.
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
@@ -152,7 +153,9 @@ fn mission_won_first_time_raises_mission_state_notice() {
         engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
-        side_effects.pending_mission_state_notice,
+        side_effects
+            .host_effects
+            .has_signal(crate::engine::HostSignal::MissionStateNotice),
         "expected pending_mission_state_notice side effect"
     );
 }
@@ -1922,10 +1925,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
 
     let mut engine = EngineInner::new();
 
-    // All same priority (soldier); sort falls back to display_order
-    // then EntityId (insertion / creation order).  Soldiers with no
-    // sprite fall back to position.y as their display_order (matches
-    // sort_for_display).
+    // Equal-priority soldiers sort by published depth, then creation order.
     let mk = |y: f32| {
         let mut element = {
             let mut initial_element = ElementData::default();
@@ -1933,6 +1933,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
             initial_element
         };
         element.set_position(WorldPoint3D { x: 0.0, y, z: 0.0 });
+        element.sprite.compute_display_depth();
         Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),
@@ -1998,8 +1999,8 @@ fn frame_hourglass_preserves_and_advances_the_owned_camera_display() {
 
     // The first frame consumes the initial Redraw operation. The second must
     // retain that reset and apply the director's Scroll operation.
-    engine.perform_frame_hourglass(&assets, false);
-    engine.perform_frame_hourglass(&assets, false);
+    engine.perform_frame_hourglass(&assets, false, None);
+    engine.perform_frame_hourglass(&assets, false, None);
 
     assert_ne!(
         engine.feedback.cutscene_camera.view_position,

@@ -5,6 +5,9 @@
 //! network transport, HTTP queue, wall clock, renderer, audio backend, modal
 //! auto-dismissal, or debugger stepping surface to accidentally consult.
 
+mod execution;
+pub use execution::RankedExecutionContext;
+
 use crate::campaign::Campaign;
 use crate::engine::{Engine, LevelAssets};
 use crate::game_operation::GameCode;
@@ -82,12 +85,31 @@ enum StateHashPolicy {
 /// Execute the uploaded canonical replay after independently proving its
 /// deterministic checkpoint coverage and command admission.
 pub fn resimulate_canonical_ranked_replay(
+    engine: Engine,
+    assets: &LevelAssets,
+    replay: &ReplayData,
+    execution: &RankedExecutionContext,
+) -> Result<RankedResimulation, RankedResimulationError> {
+    resimulate_canonical_ranked_replay_observed(engine, assets, replay, execution, |_, _, _| {})
+}
+
+/// Observe pre-record state and post-transaction output without changing the
+/// verified execution path. Collected artifacts are publishable only on success.
+pub fn resimulate_canonical_ranked_replay_observed(
     mut engine: Engine,
     assets: &LevelAssets,
     replay: &ReplayData,
+    execution: &RankedExecutionContext,
+    mut observe: impl FnMut(u32, &Engine, Option<&crate::engine::SimulationFrameOutput>),
 ) -> Result<RankedResimulation, RankedResimulationError> {
-    let (resimulation, _) =
-        resimulate_ranked_replay_inner(&mut engine, assets, replay, StateHashPolicy::Validate)?;
+    let (resimulation, _) = resimulate_ranked_replay_inner(
+        &mut engine,
+        assets,
+        replay,
+        execution,
+        StateHashPolicy::Validate,
+        &mut observe,
+    )?;
     Ok(resimulation)
 }
 
@@ -98,6 +120,7 @@ pub fn regenerate_canonical_ranked_replay(
     mut engine: Engine,
     assets: &LevelAssets,
     replay: &ReplayData,
+    execution: &RankedExecutionContext,
 ) -> Result<(ReplayData, RankedResimulation), RankedResimulationError> {
     let mut normalized = replay.clone();
     normalized
@@ -107,7 +130,9 @@ pub fn regenerate_canonical_ranked_replay(
         &mut engine,
         assets,
         &normalized,
+        execution,
         StateHashPolicy::Regenerate,
+        &mut |_, _, _| {},
     )?;
     normalized
         .replace_state_hashes(hashes)
@@ -122,8 +147,16 @@ fn resimulate_ranked_replay_inner(
     engine: &mut Engine,
     assets: &LevelAssets,
     replay: &ReplayData,
+    execution: &RankedExecutionContext,
     hash_policy: StateHashPolicy,
+    observe: &mut impl FnMut(u32, &Engine, Option<&crate::engine::SimulationFrameOutput>),
 ) -> Result<(RankedResimulation, std::collections::BTreeMap<u32, u64>), RankedResimulationError> {
+    execution
+        .validate_config(engine.sim_config())
+        .map_err(|error| RankedResimulationError::FrameAdvance {
+            frame: 0,
+            message: error.to_string(),
+        })?;
     replay
         .validate_layout()
         .map_err(|message| RankedResimulationError::Admission { message })?;
@@ -156,6 +189,7 @@ fn resimulate_ranked_replay_inner(
     let mut saves = std::collections::BTreeMap::new();
     let mut display = crate::engine::HostDisplayState::default();
     for frame in 0..replay_frames {
+        observe(frame, engine, None);
         if let Some(marker) = replay.save_marker_for_frame(frame) {
             let actual = state_hash(engine);
             if actual != marker.state_hash {
@@ -248,12 +282,13 @@ fn resimulate_ranked_replay_inner(
             // hashes checked. They must not advance or re-finalize the engine.
             continue;
         }
-        let output = engine.advance_frame(assets, input).map_err(|error| {
-            RankedResimulationError::FrameAdvance {
+        let output = execution
+            .advance_frame(engine, assets, input)
+            .map_err(|error| RankedResimulationError::FrameAdvance {
                 frame,
                 message: error.to_string(),
-            }
-        })?;
+            })?;
+        observe(frame, engine, Some(&output));
         if output.hourglass_ran {
             active_simulation_ticks = active_simulation_ticks.checked_add(1).ok_or_else(|| {
                 RankedResimulationError::Admission {
@@ -427,6 +462,35 @@ fn validate_terminal_recorder_shape(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_execution(engine: &Engine) -> RankedExecutionContext {
+        RankedExecutionContext::new(
+            crate::ranked_rules::ranked_policy_for_board(
+                robin_run_types::BoardSimulationPolicyV1::AnyConfig,
+                engine.sim_config(),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn resimulate_canonical_ranked_replay(
+        engine: Engine,
+        assets: &LevelAssets,
+        replay: &ReplayData,
+    ) -> Result<RankedResimulation, RankedResimulationError> {
+        let execution = fixture_execution(&engine);
+        super::resimulate_canonical_ranked_replay(engine, assets, replay, &execution)
+    }
+
+    fn regenerate_canonical_ranked_replay(
+        engine: Engine,
+        assets: &LevelAssets,
+        replay: &ReplayData,
+    ) -> Result<(ReplayData, RankedResimulation), RankedResimulationError> {
+        let execution = fixture_execution(&engine);
+        super::regenerate_canonical_ranked_replay(engine, assets, replay, &execution)
+    }
+
     use crate::engine::SimulationFrameInput;
     use crate::player_command::{PlayerCommand, PlayerInput};
     use crate::replay::{REPLAY_SCHEMA_VERSION, ReplayFile, ReplayFrame, ReplayHeader};
@@ -610,6 +674,28 @@ mod tests {
         assert_eq!(
             verified.final_deterministic_state_hash,
             expected.final_deterministic_state_hash
+        );
+
+        // A recorded load replaces the engine, but must retain the verifier's
+        // authority over the next frame's host-supplied facts.
+        let mut forged_sound = ReplayFile::from(&canonical);
+        forged_sound
+            .frames
+            .get_mut(&25)
+            .unwrap()
+            .input
+            .external_facts = crate::engine::ExternalFacts::default()
+            .with_sound_boundary(crate::engine::SoundBoundary::replay(Vec::new()));
+        let error = resimulate_canonical_ranked_replay(
+            engine.clone(),
+            &assets,
+            &forged_sound.try_into().unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, RankedResimulationError::FrameAdvance { frame: 25, ref message }
+                if message.contains("ranked simulation accepts only live sound boundaries")),
+            "recorded load dropped verifier rules: {error:?}",
         );
 
         let mut tainted = ReplayFile::from(&canonical);

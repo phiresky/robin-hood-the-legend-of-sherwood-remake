@@ -347,6 +347,7 @@ impl CameraPresentationPose {
 
 impl NativeRefreshInterpolation {
     fn new() -> Self {
+        crate::presentation_timing::reset();
         Self {
             previous: None,
             current: None,

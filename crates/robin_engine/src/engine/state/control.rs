@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::engine::{RankedSimulationPolicy, SimConfig, SimulationGateState, SimulationRng};
+use crate::engine::{SimConfig, SimulationGateState, SimulationRng};
 
 /// Deterministic clock, random stream, and global simulation-rate controls.
 ///
@@ -29,13 +29,6 @@ pub(crate) struct SimulationControl {
     pub(crate) mission_start_rng_seed: u64,
     pub(crate) mission_start_sim_config: SimConfig,
     pub(crate) fast_forward: bool,
-    /// Process-local ranked command/config admission capability. Its public
-    /// identity is bound by the rules-config digest and is never reconstructed
-    /// from an ordinary save or multiplayer snapshot.
-    #[state_hash(skip)]
-    #[bitcode(skip)]
-    #[serde(skip)]
-    pub(crate) ranked_simulation_policy: Option<RankedSimulationPolicy>,
     /// A completed simulation tick is followed by presentation-only entity
     /// `Refresh` work. Parity snapshots sit between those calls, so Rust
     /// applies the pending arrow and frame-sound work immediately before the
@@ -58,7 +51,6 @@ pub(crate) struct SimulationControl {
     /// proposer's and target's Original creation orders, for the current
     /// frame only.
     #[state_hash(skip)]
-    #[bitcode(skip)]
     #[serde(skip)]
     pub(crate) original_impossible_action_done_deadlines: BTreeMap<(u32, u32), VecDeque<i16>>,
 }
@@ -96,7 +88,6 @@ impl SimulationControl {
             fast_forward,
             arrow_refresh_pending,
             popup_scroll_last_display_frame,
-            ranked_simulation_policy: _,
             original_impossible_action_done_deadlines: _,
         } = control;
         sim_config.validate().map_err(|error| error.to_string())?;
@@ -110,7 +101,6 @@ impl SimulationControl {
             speed_int: *speed_int,
             chorus_timer: *chorus_timer,
             rng: SimulationRng::with_seed(rng.persisted_seed()?),
-            ranked_simulation_policy: None,
             original_impossible_action_done_deadlines: BTreeMap::new(),
             sim_config: *sim_config,
             mission_start_rng_seed: *mission_start_rng_seed,
@@ -138,7 +128,6 @@ impl SimulationControl {
             mission_start_rng_seed: seed,
             mission_start_sim_config: sim_config,
             fast_forward: false,
-            ranked_simulation_policy: None,
             arrow_refresh_pending: false,
             popup_scroll_last_display_frame: None,
             original_impossible_action_done_deadlines: BTreeMap::new(),
@@ -147,22 +136,6 @@ impl SimulationControl {
 
     pub(crate) fn simulation_context(&self) -> crate::sim_rng::SimulationContext {
         self.rng.context(self.sim_config)
-    }
-
-    pub(crate) fn install_ranked_simulation_policy(&mut self, policy: RankedSimulationPolicy) {
-        policy
-            .validate_config(self.sim_config)
-            .unwrap_or_else(|error| {
-                panic!("attempted to install incompatible ranked simulation policy: {error}")
-            });
-        assert!(
-            self.ranked_simulation_policy.replace(policy).is_none(),
-            "ranked simulation policy was installed more than once"
-        );
-    }
-
-    pub(crate) const fn ranked_simulation_policy(&self) -> Option<RankedSimulationPolicy> {
-        self.ranked_simulation_policy
     }
 
     pub(crate) fn engine_locked(&self) -> bool {

@@ -121,7 +121,7 @@ fn mytalk_uses_concrete_sound_manager_resolution_duration() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 7,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -143,7 +143,7 @@ fn stop_exclamation_cancels_unresolved_request_before_fifo_resolution() {
     assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
 
     engine.queue_resolved_exclamations(Vec::new());
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets);
+    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
     assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
     assert_eq!(mytalk_ai(&engine, soldier_id).current_remark, Remark::Arrow);
 }
@@ -453,7 +453,7 @@ fn speech_calls_preserve_rejected_accepted_busy_and_emergency_attempts() {
         exclamation_id: Remark::Wounded as u16,
         duration_frames: 5,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets);
+    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets, None);
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
         engine.feedback.sound_sim.playing_exclamations[0].exclamation_id,

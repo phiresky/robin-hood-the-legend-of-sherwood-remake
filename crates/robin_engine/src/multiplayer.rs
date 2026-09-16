@@ -86,8 +86,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Protocol 56 carries canonical sequence links and ordinary door-route orders
 /// in authoritative snapshots (save 88 / replay 48).
 /// Protocol 57 removes the retired fog-sprite bypass from snapshot configuration.
-/// Protocol 58 carries consolidated quick-action storage and actor execution state.
-pub const NET_PROTOCOL_VERSION: u32 = 58;
+/// Protocol 59 carries ordered pathfinder state and canonical action payloads.
+/// Protocol 60 carries canonical order ownership, sequence links, and host effects.
+pub const NET_PROTOCOL_VERSION: u32 = 60;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

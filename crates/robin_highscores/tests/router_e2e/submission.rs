@@ -153,6 +153,42 @@ async fn signed_submission_queue_and_verified_publication_cross_the_router() {
     assert_eq!(detail.starting_campaign_score, 100);
     assert_eq!(detail.uploader.as_ref().unwrap().username, "Robin");
     assert_eq!(detail.viewer.runtime_build, "0123456789ab");
+    let sidecar_path = format!("/api/v1/runs/{run_id}/checkpoints");
+    assert_eq!(
+        rig.send(empty_request(
+            Method::GET,
+            &sidecar_path,
+            Ipv4Addr::LOCALHOST
+        ))
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    rig.replay_store
+        .store_checkpoints(
+            Digest32::digest_bytes(&replay).as_bytes(),
+            b"verified checkpoint cache".to_vec(),
+        )
+        .await
+        .unwrap();
+    let sidecar = rig
+        .send(empty_request(
+            Method::GET,
+            &sidecar_path,
+            Ipv4Addr::LOCALHOST,
+        ))
+        .await;
+    assert_eq!(sidecar.status(), StatusCode::OK);
+    assert_eq!(
+        sidecar.headers()["content-type"],
+        "application/x-robin-rhseek"
+    );
+    assert_eq!(
+        axum::body::to_bytes(sidecar.into_body(), 1024)
+            .await
+            .unwrap(),
+        "verified checkpoint cache"
+    );
     assert_eq!(
         detail.replay.artifact.sha256,
         Digest32::digest_bytes(&replay)

@@ -3059,16 +3059,6 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let (position, layer, sector) = {
-            let entity = self
-                .world
-                .entities
-                .get(entity_id)
-                .unwrap_or_else(|| panic!("landed actor {entity_id} is missing"));
-            let data = entity.element_data();
-            (data.position_map(), data.layer(), data.sector())
-        };
-
         for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
             if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                 continue;
@@ -3084,9 +3074,16 @@ impl EngineInner {
             let owning_motion_sector = self.script_domains.zones.scripts[zone_idx]
                 .owning_motion_sector
                 .get();
-            let is_inside = grid_sector.layer == layer
-                && sector.map(i16::from) == Some(owning_motion_sector)
-                && grid_sector.contains_point(position);
+            // Earlier zone callbacks can relocate the actor synchronously.
+            let data = self
+                .world
+                .entities
+                .get(entity_id)
+                .unwrap_or_else(|| panic!("landed actor {entity_id} is missing"))
+                .element_data();
+            let is_inside = grid_sector.layer == data.layer()
+                && data.sector().map(i16::from) == Some(owning_motion_sector)
+                && grid_sector.contains_point(data.position_map());
             if was_inside != is_inside {
                 self.dispatch_script_zone_crossing(sim, assets, zone_idx, entity_id, is_inside);
             }
@@ -3807,8 +3804,8 @@ impl EngineInner {
                     tracing::debug!("StartDialog({dialog_id}): queued for game session");
                     self.feedback
                         .pending_side_effects
-                        .pending_dialogues
-                        .push(dialog_id);
+                        .host_effects
+                        .extend_dialogues([dialog_id]);
                     // The original game's dialog start is synchronous and its menu-screen
                     // constructor re-enters the game refresh before returning
                     // to the script VM.
@@ -3830,7 +3827,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
-                    self.feedback.pending_side_effects.pending_show_console = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_signal(crate::engine::HostSignal::ShowConsole);
                     self.forward_message(
                         sim,
                         assets,
@@ -3988,8 +3988,8 @@ impl EngineInner {
                     tracing::debug!("DisplayPopupText({text_id}): queued for UI system");
                     self.feedback
                         .pending_side_effects
-                        .pending_popup_texts
-                        .push(text_id);
+                        .host_effects
+                        .extend_popup_texts([text_id]);
                     // Displaying scripted popup text opens the popup scroll synchronously. The first
                     // popup in a universal frame constructs its colorized
                     // background and re-enters game refresh with
@@ -4007,7 +4007,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
-                    self.feedback.pending_side_effects.pending_sherwood_report = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_sherwood_report();
                     self.forward_message(
                         sim,
                         assets,
@@ -4106,6 +4109,9 @@ impl EngineInner {
                             .expect("SetActorLocation entity vanished before grid refresh");
                         entity.element_data_mut().set_position_map(pt);
                         entity.element_data_mut().update_grid_cell();
+                        if spawn_elevation_probe.is_none() {
+                            entity.sprite_mut().compute_display_depth();
+                        }
                         continue;
                     }
                     let entity = self
@@ -4144,13 +4150,6 @@ impl EngineInner {
                         }
                     }
 
-                    // The original game computes display order without a root element here,
-                    // but that method updates only the derived float sort key.
-                    // It does not change the display-order reference, so both the
-                    // reference and its behind/front flag survive a teleport.
-                    // In particular, schema-16 traces can expose a dormant
-                    // `behind=true` while the reference is null.
-
                     // Ordinary SetActorLocation refreshes the projection
                     // obstacle from the destination point. RecordEnterGame
                     // deliberately does not: Original sets its outside 3D
@@ -4173,6 +4172,12 @@ impl EngineInner {
                             let ed = entity.element_data_mut();
                             ed.set_obstacle_index(new_obstacle_handle, plane);
                         }
+                    }
+
+                    if spawn_elevation_probe.is_none() {
+                        self.expect_entity_mut(id, "SetActorLocation display depth")
+                            .sprite_mut()
+                            .compute_display_depth();
                     }
 
                     // Spawn-elevation compose (RecordEnterGame path):

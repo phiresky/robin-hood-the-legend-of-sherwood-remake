@@ -137,6 +137,8 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.14"
 
 [patch.crates-io]
+# Vulkan presentation hooks; provenance: vendor/wgpu-hal/ROBIN_PATCHES.md.
+wgpu-hal = { path = "vendor/wgpu-hal" }
 # Deterministic VM patch provenance and upgrade procedure: vendor/rilua/ROBIN_PATCHES.md.
 rilua = { path = "vendor/rilua" }
 # winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the

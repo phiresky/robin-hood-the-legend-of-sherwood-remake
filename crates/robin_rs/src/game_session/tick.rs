@@ -557,7 +557,14 @@ fn seek_replay_step(
         return;
     }
     let result = (|| -> Result<(), RpcError> {
-        if target < from {
+        let restored = if let Some(scheduler) = session_modals.as_deref_mut() {
+            timeline
+                .restore_replay_checkpoint(target, manager, host, game, assets, scheduler)
+                .map_err(|error| RpcError::internal(error.to_string()))?
+        } else {
+            false
+        };
+        if target < from && !restored {
             timeline
                 .rewind_replay_to_start(manager, host, game, assets)
                 .map_err(|error| RpcError::internal(error.to_string()))?;
@@ -566,8 +573,6 @@ fn seek_replay_step(
                 scheduler.checkpoint(0, &host.effects);
             }
         }
-        // TODO: Cache raw ordinal checkpoints for faster long seeks.
-        // The ordinary simulation-frame cache cannot cross load-backs.
         let current = timeline
             .replay()
             .playback()
@@ -829,7 +834,18 @@ pub(super) fn run_forward_ticks_with_session_modals(
             let player = timeline.replay().playback().expect("active replay");
             let ordinal = player.current_frame();
             let loads_state = player.load_back_for_frame(ordinal).is_some();
+            let current_timeline = timeline.current_frame();
             if let Some(scheduler) = session_modals.as_deref_mut() {
+                timeline
+                    .replay_mut()
+                    .capture_seek_checkpoint(
+                        current_timeline,
+                        &manager.engine,
+                        host,
+                        game,
+                        scheduler,
+                    )
+                    .map_err(|error| RpcError::internal(error.to_string()))?;
                 scheduler.checkpoint(ordinal, &host.effects);
             }
             timeline
@@ -1158,9 +1174,18 @@ pub(super) fn dismiss_pending_modals(host: &mut Host) -> usize {
             host.effects.has_signal(HostSignal::MissionStatePopup),
         );
     }
-    drop(host.effects.take_dialogues());
-    drop(host.effects.take_popup_texts());
-    drop(host.effects.take_debriefings());
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Dialogue),
+    );
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Popup),
+    );
+    drop(
+        host.effects
+            .take_modals(robin_engine::engine::HostModalPhase::Debriefing),
+    );
     host.effects.take_sherwood_report();
     host.effects.take_signal(HostSignal::MissionStatePopup);
     n

@@ -96,7 +96,7 @@ pub(super) struct SessionModalScheduler {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct ModalCheckpoint {
+pub(super) struct ModalCheckpoint {
     active: Option<ModalBatchState<ModalKind>>,
     pending: Vec<ModalKind>,
     leave_prompt: bool,
@@ -206,6 +206,24 @@ impl TerminalAdapter {
 }
 
 impl SessionModalScheduler {
+    pub(super) fn capture_seek(&self, effects: &crate::host::HostEffectBatches) -> ModalCheckpoint {
+        ModalCheckpoint {
+            active: self.active.clone(),
+            pending: effects.pending_modal_kinds(),
+            leave_prompt: effects.has_signal(crate::host::HostSignal::MissionStatePopup),
+        }
+    }
+
+    pub(super) fn restore_seek(
+        &mut self,
+        ordinal: u32,
+        state: ModalCheckpoint,
+        effects: &mut crate::host::HostEffectBatches,
+    ) {
+        self.checkpoints.insert(ordinal, state);
+        self.last_observed_ordinal = Some(self.last_observed_ordinal.unwrap_or(0).max(ordinal));
+        self.restore(ordinal, effects);
+    }
     /// Sparse pre-record state: unchanged host records share the preceding
     /// checkpoint. Retain future entries during rewind so forward replay can
     /// revisit the same dense ordinal, including stationary transactions.
@@ -336,15 +354,11 @@ pub(super) fn take_next_scripted_batch(
         }
         let items: VecDeque<_> = match lane {
             ScriptedModalLane::Dialogue => effects
-                .take_dialogues()
-                .into_iter()
-                .map(|dialog_id| ModalKind::Dialog { dialog_id })
-                .collect(),
+                .take_modals(robin_engine::engine::HostModalPhase::Dialogue)
+                .into(),
             ScriptedModalLane::Popup => effects
-                .take_popup_texts()
-                .into_iter()
-                .map(|text_id| ModalKind::PopupText { text_id })
-                .collect(),
+                .take_modals(robin_engine::engine::HostModalPhase::Popup)
+                .into(),
             ScriptedModalLane::SherwoodReport => {
                 if effects.take_sherwood_report() {
                     VecDeque::from([ModalKind::SherwoodReport])
@@ -354,13 +368,17 @@ pub(super) fn take_next_scripted_batch(
             }
             ScriptedModalLane::Debriefing => {
                 let (lost, won): (Vec<_>, Vec<_>) = effects
-                    .take_debriefings()
+                    .take_modals(robin_engine::engine::HostModalPhase::Debriefing)
                     .into_iter()
-                    .partition(|id| matches!(id, DebriefingTextId::Lose { .. }));
-                lost.into_iter()
-                    .chain(won)
-                    .map(|text_id| ModalKind::Debriefing { text_id })
-                    .collect()
+                    .partition(|kind| {
+                        matches!(
+                            kind,
+                            ModalKind::Debriefing {
+                                text_id: DebriefingTextId::Lose { .. }
+                            }
+                        )
+                    });
+                lost.into_iter().chain(won).collect()
             }
             ScriptedModalLane::LeaveMission => {
                 if effects.take_signal(HostSignal::MissionStatePopup) {

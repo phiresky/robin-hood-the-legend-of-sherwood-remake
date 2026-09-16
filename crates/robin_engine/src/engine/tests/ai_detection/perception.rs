@@ -177,7 +177,6 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 
 #[test]
 fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
-    use crate::element::InstalledActorOrder;
     use crate::order::OrderType;
     use crate::sim_rng::{RngSite, with_draw_trace};
 
@@ -195,14 +194,7 @@ fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
             .current_order_for_actor(&engine.world.entities, npc_id)
             .is_none()
     );
-    engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::actor_data_mut)
-        .expect("periodic owner has actor data")
-        .installed_order = Some(InstalledActorOrder {
-        order_id: std::num::NonZeroU32::new(1).unwrap(),
-        order_type: OrderType::WaitingUprightBored,
-    });
+    engine.install_test_order(npc_id, OrderType::WaitingUprightBored);
     // Register zero reaches the every-16-frame update at frame 100.
     engine.control.frame_counter = 100;
 
@@ -237,6 +229,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             sector: SectorHandle::new(0),
             ..Position::default()
         };
+        engine.install_test_order(owner, OrderType::WaitingAlerted);
         let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
             unreachable!()
         };
@@ -244,10 +237,6 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             .element
             .set_position_map(MapPoint::new(position.x, position.y));
         soldier.element.set_sector(position.sector);
-        soldier.actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: OrderType::WaitingAlerted,
-        });
         let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
         ai.base.me = owner.index();
         ai.base.current_state = AiState::Attacking;

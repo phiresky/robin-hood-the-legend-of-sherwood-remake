@@ -154,7 +154,7 @@ impl EngineInner {
                     actor.action_state,
                     actor
                         .installed_order
-                        .as_ref()
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager))
                         .map(|order| (order.order_type, order.order_id)),
                 )
             })
@@ -234,7 +234,7 @@ impl EngineInner {
                     actor.action_state,
                     actor
                         .installed_order
-                        .as_ref()
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager))
                         .map(|order| (order.order_type, order.order_id)),
                 )
             })

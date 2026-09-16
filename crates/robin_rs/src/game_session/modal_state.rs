@@ -711,14 +711,15 @@ pub(super) async fn drain_pending_dialogues(
     // recording, the interactive result is appended to the recorder
     // so future replays of this file can reproduce the dismissal.
     if host.effects.dialogue_count() != 0 {
-        let dialog_ids: Vec<i32> = host.effects.take_dialogues();
+        let dialogs = host
+            .effects
+            .take_modals(robin_engine::engine::HostModalPhase::Dialogue);
         if headless {
             tracing::debug!(
-                count = dialog_ids.len(),
+                count = dialogs.len(),
                 "headless: auto-dismissing pending dialogues"
             );
-            for dialog_id in dialog_ids {
-                let kind = engine_player_command::ModalKind::Dialog { dialog_id };
+            for kind in dialogs {
                 let result = pop_matching_dismissal(replay_modal_dismissals, &kind)
                     .unwrap_or(engine_player_command::DialogResult::Completed);
                 ctx.modal_dismissals
@@ -733,9 +734,12 @@ pub(super) async fn drain_pending_dialogues(
             // slice to `show_dialogue_batch`.  `replay_result` pulls
             // from the per-frame replay queue so playback reproduces
             // the recorded dismissal exactly.
-            let mut sentences_per_id: Vec<(i32, Vec<DialogueSentence>)> =
-                Vec::with_capacity(dialog_ids.len());
-            for dialog_id in dialog_ids {
+            let mut prepared: Vec<(engine_player_command::ModalKind, Vec<DialogueSentence>)> =
+                Vec::with_capacity(dialogs.len());
+            for kind in dialogs {
+                let engine_player_command::ModalKind::Dialog { dialog_id } = kind else {
+                    unreachable!("dialogue phase contains dialogues");
+                };
                 let sentences = build_dialogue_sentences(
                     dialog_id,
                     descriptors,
@@ -745,15 +749,12 @@ pub(super) async fn drain_pending_dialogues(
                 if sentences.is_empty() {
                     continue;
                 }
-                sentences_per_id.push((dialog_id, sentences));
+                prepared.push((kind, sentences));
             }
-            let entries: Vec<ingame_menu::BatchDialogue<'_>> = sentences_per_id
+            let entries: Vec<ingame_menu::BatchDialogue<'_>> = prepared
                 .iter()
-                .map(|(dialog_id, sentences)| {
-                    let kind = engine_player_command::ModalKind::Dialog {
-                        dialog_id: *dialog_id,
-                    };
-                    let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
+                .map(|(kind, sentences)| {
+                    let replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
                     let modal_net = host.transport.net().map(|net| {
                         ModalNet::new(
                             net,
@@ -771,11 +772,9 @@ pub(super) async fn drain_pending_dialogues(
 
             let results =
                 ingame_menu::show_dialogue_batch(ctx, &mut host.audio.sound, &entries).await;
+            drop(entries);
 
-            for ((dialog_id, _), result) in sentences_per_id.iter().zip(results.iter().copied()) {
-                let kind = engine_player_command::ModalKind::Dialog {
-                    dialog_id: *dialog_id,
-                };
+            for ((kind, _), result) in prepared.into_iter().zip(results) {
                 ctx.modal_dismissals
                     .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
@@ -1209,18 +1208,23 @@ pub(super) async fn drain_pending_popup_scroll(
     // Script natives `DisplayPopupText` and the `DisplayAllPopupTexts`
     // cheat push text IDs onto `pending_popup_texts`.
     if host.effects.popup_text_count() != 0 {
-        let text_ids: Vec<i32> = host.effects.take_popup_texts();
+        let popups = host
+            .effects
+            .take_modals(robin_engine::engine::HostModalPhase::Popup);
         if ctx.menu_resources.is_none() {
             // Without `IngameMenuResources` the parchment background, OK
             // button sprite, and font cache are all unavailable — we
             // genuinely cannot render anything, so drop the queue.
             tracing::warn!(
                 "DisplayPopupText: menu resources unavailable — dropping {} popup(s)",
-                text_ids.len()
+                popups.len()
             );
             return;
         }
-        for text_id in text_ids {
+        for kind in popups {
+            let engine_player_command::ModalKind::PopupText { text_id } = kind else {
+                unreachable!("popup phase contains popup texts");
+            };
             // Always show a parchment body — when the level
             // resource, text table, or popup-text id can't be
             // resolved, substitute one of the fixed placeholder
@@ -1273,7 +1277,6 @@ pub(super) async fn drain_pending_popup_scroll(
                 .as_mut()
                 .expect("checked above")
                 .picture_from(ctx.renderer, text_res, picture_id);
-            let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host.transport.net().map(|net| {
                 ModalNet::new(
@@ -1383,20 +1386,30 @@ pub(super) async fn drain_pending_debriefings(
     // into a lose phase and a win phase and iterating each
     // independently.
     if host.effects.debriefing_count() != 0 {
-        let ids: Vec<DebriefingTextId> = host.effects.take_debriefings();
+        let requests = host
+            .effects
+            .take_modals(robin_engine::engine::HostModalPhase::Debriefing);
         if let Some(descriptors) = level_descriptors
             && ctx.menu_resources.is_some()
         {
-            let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
-                .into_iter()
-                .partition(|text_id| matches!(text_id, DebriefingTextId::Lose { .. }));
+            let (lose_requests, win_requests): (Vec<_>, Vec<_>) =
+                requests.into_iter().partition(|kind| {
+                    matches!(
+                        kind,
+                        engine_player_command::ModalKind::Debriefing {
+                            text_id: DebriefingTextId::Lose { .. }
+                        }
+                    )
+                });
 
             // Lose phase: one pass over the queued lose texts.
-            for text_id in lose_ids {
+            for kind in lose_requests {
+                let engine_player_command::ModalKind::Debriefing { text_id } = kind else {
+                    unreachable!("debriefing phase contains debriefings");
+                };
                 let DebriefingTextId::Lose { index } = text_id else {
                     unreachable!("lose_ids was partitioned from DebriefingTextId::Lose");
                 };
-                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 let table_id = descriptors.debriefing.lose_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
@@ -1455,11 +1468,13 @@ pub(super) async fn drain_pending_debriefings(
             }
 
             // Win phase: a fresh pass over the queued win texts.
-            for text_id in win_ids {
+            for kind in win_requests {
+                let engine_player_command::ModalKind::Debriefing { text_id } = kind else {
+                    unreachable!("debriefing phase contains debriefings");
+                };
                 let DebriefingTextId::Win { index } = text_id else {
                     unreachable!("win_ids was partitioned from DebriefingTextId::Win");
                 };
-                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 let table_id = descriptors.debriefing.win_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
@@ -1512,7 +1527,7 @@ pub(super) async fn drain_pending_debriefings(
             tracing::warn!(
                 "DisplayDebriefing: level descriptors or menu resources unavailable — \
                  dropping {} debriefing(s)",
-                ids.len()
+                requests.len()
             );
         }
     }

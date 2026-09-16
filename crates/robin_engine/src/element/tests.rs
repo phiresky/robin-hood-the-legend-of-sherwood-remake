@@ -1,58 +1,6 @@
 use super::*;
 
 #[test]
-fn optional_actor_payloads_preserve_wire_format_and_hashes() {
-    use robin_util::state_hash::StateHash;
-    use std::hash::Hasher;
-
-    let flight = ActiveFlight {
-        frames_remaining: 17,
-        increment_x: 1.25,
-        ..Default::default()
-    };
-    let shield = crate::bow_shot::compute_shield_obstacle(
-        MapPoint::new(13.0, 27.0),
-        4.0,
-        3,
-        &crate::bow_shot::shield_params_for_pc(false),
-    );
-    let unboxed = vec![(None, None), (Some(flight), Some(shield))];
-    let boxed = unboxed
-        .iter()
-        .cloned()
-        .map(|(flight, shield)| (flight.map(Box::new), shield.map(Box::new)))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        serde_json::to_value(&unboxed).unwrap(),
-        serde_json::to_value(&boxed).unwrap()
-    );
-    let bytes = bitcode::encode(&unboxed);
-    assert_eq!(bytes, bitcode::encode(&boxed));
-    let decoded: Vec<(
-        Option<Box<ActiveFlight>>,
-        Option<Box<crate::sight_obstacle::SightObstacle>>,
-    )> = bitcode::decode(&bytes).unwrap();
-    assert_eq!(
-        serde_json::to_value(&decoded).unwrap(),
-        serde_json::to_value(&unboxed).unwrap()
-    );
-    let mut before = std::hash::DefaultHasher::new();
-    let mut after = std::hash::DefaultHasher::new();
-    unboxed.state_hash(&mut before);
-    boxed.state_hash(&mut after);
-    assert_eq!(before.finish(), after.finish());
-
-    let actor = ActorData {
-        active_flight: boxed[1].0.clone(),
-        shield_obstacle: boxed[1].1.clone(),
-        ..Default::default()
-    };
-    let mut snapshot = actor.clone();
-    snapshot.active_flight.as_mut().unwrap().frames_remaining = 0;
-    assert_eq!(actor.active_flight.as_ref().unwrap().frames_remaining, 17);
-}
-
-#[test]
 fn entity_slots_fit_within_two_kibibytes() {
     assert!(std::mem::size_of::<Option<Entity>>() <= 2048);
 }
@@ -61,10 +9,24 @@ fn entity_slots_fit_within_two_kibibytes() {
 fn frozen_actor_execute_selection_keeps_independent_installed_identity() {
     let previous = std::num::NonZeroU32::new(10).unwrap();
     let selected = std::num::NonZeroU32::new(11).unwrap();
-    let installed = InstalledActorOrder {
-        order_id: previous,
-        order_type: crate::order::OrderType::WaitingUpright,
-    };
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let owner = EntityId::Pc(crate::entity_id::PcId(0));
+    let mut element = crate::sequence::SequenceElement::new(1, Command::Wait, Some(owner));
+    element.push_order(crate::order::Order::new(
+        crate::order::OrderType::WaitingUpright,
+        0.0,
+        0.0,
+        previous,
+    ));
+    let sequence = sequences.insert_element(element);
+    let installed = InstalledActorOrder::new(
+        crate::sequence::SequenceElementRef::new(sequence, 0),
+        sequences
+            .get_element(sequence, 0)
+            .unwrap()
+            .current_order()
+            .unwrap(),
+    );
     let mut actor = ActorData {
         execution_frozen: true,
         installed_order: Some(installed),
@@ -1494,7 +1456,7 @@ fn golden_human_fixture() -> HumanData {
 #[test]
 fn human_data_encodings_match_golden_digests() {
     const GOLDEN: [&str; 3] = [
-        "a345fdbeef1bcbcb73438cea08f98ac7a1e3ff2854d4d6cd536fcd9c02ec7a5b",
+        "600900248360d89deceec299dea428d63b258544b9b4ae20ca4ba9b025a68582",
         "eeda54a748e35f4dd3e7832493ef4ea7dbef53349ac5c5ebc01648a33e206e98",
         "5573d930aa658f93bfc0723ccfd4db8920912011d9ee7bc98129338b7ea8a551",
     ];
@@ -1503,7 +1465,9 @@ fn human_data_encodings_match_golden_digests() {
     assert_eq!(human_golden_digests(&human), GOLDEN);
 
     human.sorting_distance = 1234.5;
-    assert_eq!(human_golden_digests(&human), GOLDEN);
+    let runtime_digests = human_golden_digests(&human);
+    assert_ne!(runtime_digests[0], GOLDEN[0]);
+    assert_eq!(runtime_digests[1..], GOLDEN[1..]);
 
     let json = serde_json::to_string(&human).unwrap();
     let from_json: HumanData = serde_json::from_str(&json).unwrap();
@@ -1512,8 +1476,8 @@ fn human_data_encodings_match_golden_digests() {
     assert_eq!(human_golden_digests(&from_json), GOLDEN);
 
     let from_bitcode: HumanData = bitcode::decode(&bitcode::encode(&human)).unwrap();
-    assert_eq!(from_bitcode.sorting_distance, 0.0);
-    assert_eq!(human_golden_digests(&from_bitcode), GOLDEN);
+    assert_eq!(from_bitcode.sorting_distance, 1234.5);
+    assert_eq!(human_golden_digests(&from_bitcode), runtime_digests);
 }
 
 /// SHA-256 digests of the entity table's bitcode bytes, the world save JSON

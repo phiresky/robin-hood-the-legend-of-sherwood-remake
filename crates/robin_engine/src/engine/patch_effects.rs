@@ -280,29 +280,13 @@ impl EngineInner {
                         pathfinder_sector, pathfinder_layer
                     )
                 });
-            let mut appeared = Vec::new();
-            let mut line_toggles = Vec::new();
-            let mut sector_toggles = Vec::new();
-            self.world.pathfinder.toggle_obstacle_state(
+            let appeared = self.world.pathfinder.toggle_obstacle_state(
                 assets.navigation.pathfinder_graph.as_ref(),
+                std::sync::Arc::make_mut(&mut self.world.fast_grid),
                 pathfinder_layer as usize,
                 area as usize,
                 pathfinder_changing_obstacles as u16,
-                &mut appeared,
-                &mut line_toggles,
-                &mut sector_toggles,
             );
-
-            // Apply grid-line toggles from motion-obstacle activation
-            // changes.
-            for (line_idx, active) in line_toggles {
-                self.world.fast_grid_mut().set_line_active(line_idx, active);
-            }
-            for (sector_idx, active) in sector_toggles {
-                self.world
-                    .fast_grid_mut()
-                    .set_sector_active(u32::from(sector_idx), active);
-            }
 
             if !forced_reset {
                 self.invalidate_paths_and_kill_crushed(
@@ -340,15 +324,15 @@ impl EngineInner {
     ///
     /// The two-stage test is intentional: a cheap bbox-vs-bbox
     /// pre-filter, followed by a polygon-vs-bbox narrow test against
-    /// the obstacle's polygon vertices (carried through the
-    /// `AppearedObstacle` payload).
+    /// the obstacle's live sector geometry. Only appeared membership is
+    /// retained across movement retranslation and damage callbacks.
     fn invalidate_paths_and_kill_crushed(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         layer: u16,
         sector: u16,
-        appeared: &[crate::pathfinder::AppearedObstacle],
+        appeared: &[crate::fast_find_grid::SectorIndex],
     ) {
         let actor_slots = self.world.entities.len();
         for slot in 0..actor_slots {
@@ -426,11 +410,9 @@ impl EngineInner {
                         .try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action)
                     {
                         MovePathOutcome::Success | MovePathOutcome::Pending => {
-                            // Corrected original-game movement invalidation refreshes
-                            // actor order from the retranslated selected element. The
-                            // old order storage has been deleted, so retaining the
-                            // previous installed snapshot would reproduce its
-                            // former dangling-pointer allocator dependence.
+                            // Retranslation replaces order storage. Install the
+                            // new current order only if this element still owns
+                            // the actor after its callbacks.
                             let installed_order = self
                                 .orders
                                 .sequence_manager
@@ -438,14 +420,16 @@ impl EngineInner {
                                 .filter(|(live_seq, live_idx, _)| {
                                     *live_seq == seq_id && *live_idx == elem_idx
                                 })
-                                .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                                    order_id: order.order_id,
-                                    order_type: order.order_type,
+                                .map(|(sequence_id, element_index, order)| {
+                                    crate::element::InstalledActorOrder::new(
+                                        crate::sequence::SequenceElementRef::new(
+                                            sequence_id,
+                                            element_index,
+                                        ),
+                                        order,
+                                    )
                                 });
-                            self.get_entity_mut(id)
-                                .and_then(crate::element::Entity::actor_data_mut)
-                                .expect("retranslated movement owner lost actor data")
-                                .installed_order = installed_order;
+                            self.install_actor_order(id, installed_order);
                         }
                         MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
@@ -463,17 +447,12 @@ impl EngineInner {
                 continue;
             };
             let move_box = *entity.position_iface().get_move_box_map();
-            let move_box_geo = move_box.to_geo();
-            for obstacle in appeared {
-                let polygon: Vec<_> = obstacle
-                    .polygon
-                    .iter()
-                    .map(|point| point.to_geo())
-                    .collect();
+            for sector_index in appeared {
+                let obstacle = &self.world.fast_grid.level.sectors[sector_index.get() as usize];
                 if move_box.is_somewhere()
                     && obstacle.bounding_box.is_somewhere()
                     && obstacle.bounding_box.intersects_bbox(&move_box)
-                    && crate::geo2d::polygon_vertices_intersect_bbox(&polygon, &move_box_geo)
+                    && obstacle.intersects_bbox(&move_box)
                 {
                     if let Some(entity) = self.get_entity_mut(id) {
                         entity.element_data_mut().unreachable = true;
@@ -546,7 +525,8 @@ impl EngineInner {
         let decal = self.snapshot_patch_transition_decal(entity_id);
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: false,
@@ -559,7 +539,8 @@ impl EngineInner {
     pub(crate) fn queue_restore_fx_bg(&mut self, entity_id: crate::element::EntityId) {
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: true,
@@ -1002,23 +983,38 @@ mod tests {
         );
         let expected = expected_box.center();
 
-        let obstacle = crate::pathfinder::AppearedObstacle {
+        let obstacle = crate::fast_find_grid::GridSector {
             bounding_box: crate::coordinates::MapBBox::from_coords(120.0, 124.0, 140.0, 128.0),
-            polygon: vec![
+            points: vec![
                 MapPoint::new(120.0, 124.0),
                 MapPoint::new(140.0, 124.0),
                 MapPoint::new(140.0, 128.0),
                 MapPoint::new(120.0, 128.0),
             ],
+            sector_type: crate::sector::SectorType::MOTION,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(2),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
         };
         assert!(obstacle.bounding_box.intersects_bbox(&move_box));
         assert!(!obstacle.bounding_box.intersects_bbox(&expected_box));
+        let obstacle_index = engine.world.fast_grid_mut().add_sector(obstacle, 0);
         engine.invalidate_paths_and_kill_crushed(
             &crate::sim_rng::test_context(),
             &LevelAssets::default(),
             0,
             1,
-            &[obstacle],
+            &[crate::fast_find_grid::SectorIndex::new(obstacle_index).unwrap()],
         );
 
         let corrected = engine

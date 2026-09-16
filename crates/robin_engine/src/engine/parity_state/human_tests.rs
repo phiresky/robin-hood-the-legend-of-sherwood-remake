@@ -196,7 +196,7 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
                     crate::macro_store::QuickActionSlot::retained(
                         (slot == 0).then(crate::sequence::Sequence::new),
                         (slot == 2).then(crate::sequence::Sequence::new),
-                        crate::macro_store::LegacyQuickito {
+                        crate::macro_store::Quickito {
                             kind: crate::element_kinds::QuickAction::None,
                             button: if slot == 1 { 19 } else { 0 },
                             interactor: (slot == 2).then_some(opponent),

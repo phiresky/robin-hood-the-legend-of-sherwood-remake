@@ -218,6 +218,7 @@ impl EngineInner {
 
                 if let Some(entity) = self.world.entities.get_mut(owner) {
                     entity.element_data_mut().set_sector(final_sector_handle);
+                    entity.sprite_mut().compute_display_depth();
                 }
 
                 // Landing in a lift sector snaps posture

@@ -787,13 +787,7 @@ impl EngineInner {
             if let Some(carried) = carried {
                 if order_is_initialising {
                     self.actor_freeze_execution(sim, assets, carried);
-                    self.world
-                        .entities
-                        .get_mut(carried)
-                        .expect("shoulder rider disappeared")
-                        .actor_data_mut()
-                        .expect("shoulder rider must be actor")
-                        .installed_order = None;
+                    self.install_actor_order(carried, None);
                 }
                 let direction = (self
                     .expect_entity(entity_id, "shoulder helper")
@@ -1439,6 +1433,15 @@ impl EngineInner {
                 }
             }
         };
+        let motion = motion.map(|state| {
+            if uses_perform_flight(anim_type) {
+                self.perform_combat_flight_position(entity_id, state)
+            } else if anim_type == OrderType::FallingLadderWall {
+                self.execute_ladder_fall_position(sim, assets, entity_id, state)
+            } else {
+                state
+            }
+        });
         if let Some(speech_id) = special_speech_id.filter(|id| *id == SPEECH_ID_HELBARDMAN) {
             self.execute_special_remark_at_sprite_point(sim, assets, entity_id, speech_id);
         }
@@ -1513,6 +1516,10 @@ impl EngineInner {
                         .human_data()
                         .and_then(|human| human.carrier)
                         .expect("waiting rider has no carrier");
+                    let depth = self
+                        .expect_entity(carrier, "waiting rider carrier")
+                        .sprite()
+                        .display_depth;
                     let sprite = &mut self
                         .world
                         .entities
@@ -1520,8 +1527,7 @@ impl EngineInner {
                         .expect("waiting rider disappeared")
                         .element_data_mut()
                         .sprite;
-                    sprite.display_order_ref = Some(carrier);
-                    sprite.behind_display_order_ref = false;
+                    sprite.compute_display_depth_relative_to(depth, false);
                 }
                 _ => {}
             }
@@ -1730,6 +1736,17 @@ impl EngineInner {
             apply_falling_completion_side_effect(entity, anim_type, motion_state);
             apply_dying_start_side_effect(entity, anim_type, motion_state);
             apply_being_dead_start_side_effect(entity, anim_type, motion_state);
+            if uses_perform_flight(anim_type) {
+                self.finish_combat_flight(sim, assets, entity_id, motion_state);
+                finish_flight_action_state(
+                    self.world
+                        .entities
+                        .get_mut(entity_id)
+                        .expect("flight owner disappeared"),
+                    anim_type,
+                    motion_state,
+                );
+            }
             apply_combat_injury_side_effect(self, sim, assets, anim_type, motion_state, entity_id);
             if motion_state == MotionState::Done {
                 let strike = match anim_type {

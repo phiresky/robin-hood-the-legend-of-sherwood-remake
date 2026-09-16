@@ -22,15 +22,7 @@ impl EngineInner {
         goal_sector_index_override: &Option<crate::fast_find_grid::SectorIndex>,
         recorded_gate_path: &Option<crate::gate::RecordedGatePath>,
     ) {
-        if self.players.qa_recording_for.contains(actor) {
-            // The original game's ale input handling gives the constructed
-            // Seek→DropAle sequence to quick-action assignment, sends
-            // STOP_RECORDING_MACRO, and does not launch it live. The
-            // parent dispatcher's shared recording hook has already retained the
-            // complete resolved route and installed its titbit.
-            self.stop_recording_macro();
-            return;
-        }
+        let recording = self.players.qa_recording_for.contains(actor);
         self.apply_drop_ale_at(
             sim,
             assets,
@@ -42,6 +34,9 @@ impl EngineInner {
             *goal_sector_index_override,
             recorded_gate_path.clone(),
         );
+        if recording {
+            self.stop_recording_macro();
+        }
     }
 
     pub(super) fn dispatch_drop_ammo(
@@ -105,10 +100,12 @@ impl EngineInner {
                     .get_or_insert(*actor)
                     .set_slot_titbit(slot as usize, tb);
             }
-            self.stop_recording_macro();
-            return;
         }
+        let recording = self.players.qa_recording_for.contains(actor);
         self.apply_scroll_read_with_seek(sim, assets, *actor, *target, *running);
+        if recording {
+            self.stop_recording_macro();
+        }
     }
 
     pub(super) fn dispatch_self_ability(
@@ -118,14 +115,8 @@ impl EngineInner {
         actor: &EntityId,
         command: &Command,
     ) {
-        if self.players.qa_recording_for.contains(actor) {
-            // The shared recorder already captured the step. Manual
-            // QA recording stores this ability instead of applying it
-            // to the live PC.
-            self.stop_recording_macro();
-            return;
-        }
-        if *command == Command::EnterCloak {
+        let recording = self.players.qa_recording_for.contains(actor);
+        if *command == Command::EnterCloak && !recording {
             self.try_enter_reusable_cloak(sim, assets, *actor);
             return;
         }
@@ -137,7 +128,10 @@ impl EngineInner {
         // order before that final Execute tick.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_sequence(sim, assets, seq);
+        self.launch_or_record_quick_action_sequence(sim, assets, *actor, seq);
+        if recording {
+            self.stop_recording_macro();
+        }
     }
 
     /// Is `target` an object-class entity whose click routes through
@@ -493,7 +487,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(move_elem);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
     }
 }
 

@@ -1121,7 +1121,7 @@ fn rewind_from_recent_timeline_history(
     late_input_count: usize,
 ) -> Option<(Engine, MultiplayerRollbackTelemetry)> {
     let restore_start = web_time::Instant::now();
-    let mut snapshot = rewind_buffer.restore_recent(start_frame, RestorePolicy::Exact)?;
+    let mut snapshot = rewind_buffer.restore_recent(assets, start_frame, RestorePolicy::Exact)?;
     let restore = restore_start.elapsed();
 
     // Rebuild corrected checkpoints transactionally. A missing command (or
@@ -1650,7 +1650,11 @@ mod tests {
             "old peer hashes must not cross sessions"
         );
         assert_eq!(rewind.oldest_reachable_frame(), Some(30));
-        assert!(rewind.restore_recent(30, RestorePolicy::Exact).is_some());
+        assert!(
+            rewind
+                .restore_recent(&assets, 30, RestorePolicy::Exact)
+                .is_some()
+        );
         assert!(matches!(
             outgoing
                 .recv()
@@ -1747,6 +1751,9 @@ mod tests {
 
     fn rewind_with_horizon(manager: &EngineManager, start: u32, end: u32) -> RewindBuffer {
         let mut rewind = RewindBuffer::new();
+        // Model a snapshot-adopted history: an arbitrary start frame needs
+        // an anchor before its inputs can form a replayable journal.
+        rewind.seed_initial_anchor(start, &manager.engine);
         for frame in start..end {
             rewind.begin_frame(frame, &manager.engine);
             rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
@@ -1901,7 +1908,15 @@ mod tests {
         // Frame 2 has no command entry, so reconstruction from frame 1 to 3
         // must fail after doing some work without truncating frames 2 and 3.
         assert!(rewind_from_recent_timeline_history(3, &assets, &mut rewind, 1, 1).is_none());
-        assert!(rewind.restore_recent(2, RestorePolicy::Exact).is_some());
-        assert!(rewind.restore_recent(3, RestorePolicy::Exact).is_some());
+        assert!(
+            rewind
+                .restore_recent(&assets, 2, RestorePolicy::Exact)
+                .is_some()
+        );
+        assert!(
+            rewind
+                .restore_recent(&assets, 3, RestorePolicy::Exact)
+                .is_some()
+        );
     }
 }

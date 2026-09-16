@@ -49,6 +49,9 @@ pub enum WorkerRunError {
 /// Run one job and write its result document.
 pub fn run_one_job(paths: &WorkerPaths) -> Result<(), WorkerRunError> {
     truncate_output(&paths.result)?;
+    if let Some(path) = &paths.checkpoints {
+        truncate_output(path)?;
+    }
     let job_artifact =
         stream_file(&paths.job, MAX_VERIFIER_JOB_BYTES_V2).map_err(WorkerRunError::JobRead)?;
     let job_bytes = job_artifact
@@ -59,11 +62,15 @@ pub fn run_one_job(paths: &WorkerPaths) -> Result<(), WorkerRunError> {
     job.validate()
         .map_err(|error| WorkerRunError::InvalidJob(error.to_string()))?;
 
-    let (replay_sha256, input_provenance, status) =
-        match verify(&job, &paths.replay, &paths.content_root) {
-            Ok(verified) => verified,
-            Err(failure) => (failure.replay_sha256, failure.provenance, failure.status),
-        };
+    let (replay_sha256, input_provenance, status) = match verify(
+        &job,
+        &paths.replay,
+        &paths.content_root,
+        paths.checkpoints.as_deref(),
+    ) {
+        Ok(verified) => verified,
+        Err(failure) => (failure.replay_sha256, failure.provenance, failure.status),
+    };
     let output = VerifierOutputV2 {
         schema_version: SCHEMA_VERSION_V2,
         job_sha256: job_artifact.sha256,
@@ -116,6 +123,7 @@ fn verify(
     job: &VerifierJobV2,
     replay_path: &Path,
     content_root: &Path,
+    checkpoints_path: Option<&Path>,
 ) -> Result<
     (
         Digest32,
@@ -308,13 +316,26 @@ fn verify(
     let starting_campaign_score = preparation.starting_campaign_score();
     let (approved_engine, assets) = preparation.into_engine_and_assets();
     let (engine, _, _, _) = approved_engine.into_parts();
-    let resimulation =
-        robin_engine::ranked_resim::resimulate_canonical_ranked_replay(engine, &assets, &data)
-            .map_err(|error| {
-                tracing::info!(%error, "ranked resimulation rejected the replay");
-                let (code, detail) = ranked_resimulation_failure(&error);
-                stage.reject(code, detail)
-            })?;
+    let execution = robin_engine::ranked_resim::RankedExecutionContext::new(policy);
+    let mut sidecar = checkpoints_path.map(|_| {
+        robin_replay_format::seek::ReplaySeekSidecar::new(*stage.replay_sha256.as_bytes(), &data)
+    });
+    let resimulation = robin_engine::ranked_resim::resimulate_canonical_ranked_replay_observed(
+        engine,
+        &assets,
+        &data,
+        &execution,
+        |ordinal, engine, output| {
+            if let Some(sidecar) = &mut sidecar {
+                sidecar.observe(&data, ordinal, engine, output);
+            }
+        },
+    )
+    .map_err(|error| {
+        tracing::info!(%error, "ranked resimulation rejected the replay");
+        let (code, detail) = ranked_resimulation_failure(&error);
+        stage.reject(code, detail)
+    })?;
     if resimulation.outcome != robin_engine::game_operation::GameCode::LevelSucceeded {
         return Err(stage.reject(
             VerificationRejectionCodeV1::TerminalInvalid,
@@ -361,6 +382,22 @@ fn verify(
             VerificationRejectionCodeV1::ResultInvariantMismatch,
             "verified_result_invariant_mismatch",
         ));
+    }
+    if let (Some(path), Some(sidecar)) = (checkpoints_path, sidecar) {
+        match sidecar.encode() {
+            Ok(bytes) => {
+                write_truncated_output(path, &bytes, robin_replay_format::seek::MAX_BYTES)
+                    .map_err(|_| {
+                        stage.infrastructure(
+                            VerificationInfrastructureFailureCodeV1::ArtifactIoFailure,
+                            "seek_sidecar_write",
+                        )
+                    })?;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "seek cache unavailable; verified replay will use local seeking")
+            }
+        }
     }
     Ok((
         stage.replay_sha256,

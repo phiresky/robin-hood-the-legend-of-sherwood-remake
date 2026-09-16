@@ -144,15 +144,18 @@ fn pending_moves(
     engine
         .orders
         .sequence_manager
-        .pending_elements_for_owner(owner)
-        .into_iter()
+        .deferred_elements_to_go()
+        .iter()
+        .copied()
         .filter(|&(id, index)| {
             engine
                 .orders
                 .sequence_manager
                 .get_element(id, index)
                 .is_some_and(|element| {
-                    matches!(element.command, Command::Move | Command::MoveWaiting)
+                    element.owner == Some(owner)
+                        && element.state != crate::sequence::SequenceState::Interrupted
+                        && matches!(element.command, Command::Move | Command::MoveWaiting)
                 })
         })
         .collect()

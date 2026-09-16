@@ -129,7 +129,6 @@ pub struct Patch {
     /// save, rollback, or state-hash data because each multiplayer peer owns
     /// its own cursor and selection presentation.
     #[state_hash(skip)]
-    #[bitcode(skip)]
     #[serde(skip)]
     pub display_doors: bool,
     /// Actors currently inside this patch's sector.

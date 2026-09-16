@@ -1,11 +1,13 @@
 //! Replay attempt ownership. Live writers and playback snapshots never escape
 //! through mutable getters: lifecycle transitions retire all related state.
 
+mod seek;
+
 use super::{
     BootstrapSaveBoundary, MissionFrame, RecorderFrameState, ReplayFrameOrdinal, TimelineFrame,
 };
 use crate::game_session::MissionError;
-use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
+use crate::save_file::{CompressedGameRuntimeSnapshot, ReplaySaveIdentity};
 use robin_engine::engine::Engine;
 use robin_engine::player_command::PlayerCommand;
 #[cfg(test)]
@@ -98,13 +100,14 @@ pub(in crate::game_session) struct ReplayLifecycle {
     // restart identity cannot be reopened by a later process.
     saved_frames: BTreeMap<ReplaySaveIdentity, (ReplayFrameOrdinal, TimelineFrame)>,
     player: Option<ReplayPlayer>,
-    pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,
+    pinned_saves: BTreeMap<u32, CompressedGameRuntimeSnapshot>,
     control: crate::replay_service::ReplayRecordingControl,
     initial_state: Option<(
-        robin_engine::engine::Engine,
-        GameRuntimeSnapshot,
+        robin_engine::engine::CompressedEngineSnapshot,
+        CompressedGameRuntimeSnapshot,
         super::super::session_policy::SessionModalScheduler,
     )>,
+    seek_cache: seek::ReplaySeekCache,
 }
 
 impl ReplayLifecycle {
@@ -126,6 +129,7 @@ impl ReplayLifecycle {
             pinned_saves: BTreeMap::new(),
             control,
             initial_state: None,
+            seek_cache: Default::default(),
         }
     }
 
@@ -558,6 +562,7 @@ impl ReplayLifecycle {
         manager: &mut robin_engine::engine_manager::EngineManager,
         assets: &robin_engine::engine::LevelAssets,
     ) -> Result<Option<TimelineFrame>, MissionError> {
+        self.prepare_seek_cache(host, game, manager)?;
         let ordinal = self.ordinal;
         let Some(player) = self.player.as_ref().filter(|player| !player.is_finished()) else {
             return Ok(None);
@@ -568,17 +573,6 @@ impl ReplayLifecycle {
                 player.current_frame(),
                 ordinal.number()
             )));
-        }
-        if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
-            let mut modals = super::super::session_policy::SessionModalScheduler::default();
-            modals.checkpoint(0, &host.effects);
-            self.initial_state = Some((
-                manager.engine.clone(),
-                GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
-                    MissionError::replay(format!("capture replay start: {error:#}"))
-                })?,
-                modals,
-            ));
         }
         super::apply_replay_timeline_events_with_hash_policy(
             player,
@@ -591,6 +585,40 @@ impl ReplayLifecycle {
             assets,
             !self.recompute_marker_hashes,
         )
+    }
+
+    pub(super) fn prepare_seek_cache(
+        &mut self,
+        host: &crate::host::Host,
+        game: &crate::game::Game,
+        manager: &robin_engine::engine_manager::EngineManager,
+    ) -> Result<(), MissionError> {
+        let ordinal = self.ordinal;
+        let Some(player) = self.player.as_ref() else {
+            return Ok(());
+        };
+        if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
+            let mut modals = super::super::session_policy::SessionModalScheduler::default();
+            modals.checkpoint(0, &host.effects);
+            self.initial_state = Some((
+                robin_engine::engine::CompressedEngineSnapshot::capture(&manager.engine).map_err(
+                    |error| MissionError::replay(format!("compress replay start: {error}")),
+                )?,
+                CompressedGameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(
+                    |error| MissionError::replay(format!("capture replay start: {error:#}")),
+                )?,
+                modals,
+            ));
+            if let Some(sidecar) = crate::replay_seek::take(player.data()) {
+                match seek::ReplaySeekCache::import(sidecar, player.data(), host, game) {
+                    Ok(cache) => self.seek_cache = cache,
+                    Err(error) => {
+                        tracing::warn!(%error, "replay seek sidecar rejected; using local checkpoints")
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn restore_initial(
@@ -610,7 +638,9 @@ impl ReplayLifecycle {
             .map_err(|error| MissionError::replay(format!("restore replay start: {error}")))?;
         // Seeking is rollback, not a save load: retain the exact pre-frame-zero
         // engine, including runtime queues that persisted-load reconciliation changes.
-        manager.engine = engine.clone();
+        manager.engine = engine
+            .restore(assets)
+            .map_err(|error| MissionError::replay(format!("decode replay start: {error}")))?;
         game.apply_post_load_sync(false);
         game.post_load_resolution_resync();
         modals.restore(0, &mut host.effects);

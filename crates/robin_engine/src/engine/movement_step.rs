@@ -1400,6 +1400,7 @@ impl EngineInner {
                             );
                             if should_snap {
                                 entity.element_data_mut().set_position_map(goal);
+                                entity.sprite_mut().compute_display_depth();
                             }
                             if next_destination_same_action.is_some() {
                                 raw_motion_state = MotionState::Terminated;

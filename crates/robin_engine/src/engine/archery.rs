@@ -4230,8 +4230,9 @@ mod tests {
             helper_position
         );
         assert_eq!(climber_entity.element_data().direction(), 14);
-        assert_eq!(climber_entity.sprite().display_order_ref, None);
-        assert!(!climber_entity.sprite().behind_display_order_ref);
+        assert_eq!(climber_entity.sprite().display_order_ref, Some(helper));
+        assert!(climber_entity.sprite().behind_display_order_ref);
+        assert_eq!(climber_entity.sprite().display_depth, 0.0);
         let helper_entity = engine.get_entity(helper).unwrap();
         assert_eq!(helper_entity.posture(), Posture::HelpingToClimb);
         assert_eq!(helper_entity.pc_data().unwrap().carried, None);

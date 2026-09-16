@@ -14,8 +14,7 @@ use robin_engine::coordinates::{
 use robin_engine::element::EntityId;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{
-    DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
-    SoundCommand,
+    DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, SideEffects, SoundCommand,
 };
 use robin_engine::game_operation::GameCode;
 use robin_engine::markers as engine_markers;
@@ -45,9 +44,7 @@ mod effects;
 mod transport;
 mod viewport;
 pub(crate) use effects::SherwoodTradingAccess;
-pub use effects::{
-    DeferredAudioRequest, HostAudio, HostEffectBatches, HostModalRequest, HostSignal,
-};
+pub use effects::{DeferredAudioRequest, HostAudio, HostEffectBatches, HostSignal};
 pub(crate) use transport::CommittedSnapshotTransition;
 pub use transport::{
     HostTransport, PendingSnapshotTransition, PendingSnapshotTransitionPayload, SnapshotSave,

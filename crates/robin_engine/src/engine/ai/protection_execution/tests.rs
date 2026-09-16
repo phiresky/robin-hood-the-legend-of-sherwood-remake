@@ -919,16 +919,7 @@ fn periodic_phalanx_fixture(
         selected,
         0,
     );
-    engine
-        .world
-        .entities
-        .expect_entity_mut(owner, format_args!("periodic selected animation"))
-        .actor_data_mut()
-        .unwrap()
-        .installed_order = Some(crate::element::InstalledActorOrder {
-        order_id: std::num::NonZeroU32::new(1).unwrap(),
-        order_type: crate::order::OrderType::WaitingUpright,
-    });
+    engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
     (engine, assets, owner)
 }
 

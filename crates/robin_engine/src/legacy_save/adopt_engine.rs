@@ -279,18 +279,11 @@ impl LegacyKnownAdoptionPlan {
         self.sequences.apply(engine);
         self.actor_ownership.apply(engine);
         self.pc_human.apply(engine);
-        let restored_combat_flights = engine.restore_loaded_combat_flights();
-        if restored_combat_flights != 0 {
-            tracing::debug!(
-                restored_combat_flights,
-                "restored in-progress combat flights from v48 position state"
-            );
-        }
         retire_loaded_replaced_pcs(engine);
         let trajectory = self.hiking_tail.apply_engine(engine);
         self.tail_runtime.apply(engine);
         self.vm_arena.apply(engine);
-        self.paths.apply(engine);
+        self.paths.apply(engine, assets);
         let host = self.simple.apply(engine);
         self.tail_basic.apply(engine);
         let post_load = self.post_load.apply(engine, assets);

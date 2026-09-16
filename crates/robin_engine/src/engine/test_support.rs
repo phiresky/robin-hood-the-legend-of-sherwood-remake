@@ -13,6 +13,30 @@ pub(crate) fn unmapped_conversion() -> Vec<u16> {
 }
 
 impl EngineInner {
+    /// Author an owned order for tests that enter an actor execution directly.
+    /// Selection remains independent from the installed execution order.
+    pub(crate) fn install_test_order(
+        &mut self,
+        owner: crate::element::EntityId,
+        action: crate::order::OrderType,
+    ) -> crate::element::InstalledActorOrder {
+        let element =
+            crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(owner));
+        let sequence = self.orders.sequence_manager.insert_element(element);
+        self.push_new_order(sequence, 0, action, 0.0, 0.0);
+        let installed = crate::element::InstalledActorOrder::new(
+            crate::sequence::SequenceElementRef::new(sequence, 0),
+            self.orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .unwrap()
+                .current_order()
+                .unwrap(),
+        );
+        self.install_actor_order(owner, Some(installed));
+        installed
+    }
+
     /// Default [`LevelAssets`] completed by
     /// [`super::complete_test_runtime_fixture`] for the entities added so far.
     ///

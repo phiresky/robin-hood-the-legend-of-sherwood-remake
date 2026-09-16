@@ -28,13 +28,18 @@ impl EngineInner {
         // mission popup) and disable the quit-mission widget once the
         // player has reached a guarded exit AND no PC is currently
         // being guarded (guarded PCs can't lead everyone out yet).
-        // We signal both via `SideEffects.pending_mission_state_notice`;
+        // We emit separate notice and popup signals;
         // the host flips the widget-enable flag and shows the popup.
         if self.mission_domain.state.mission_won_first_time && !pc_guarded {
             self.mission_domain.state.mission_won_first_time = false;
             self.feedback
                 .pending_side_effects
-                .pending_mission_state_notice = true;
+                .host_effects
+                .request_signal(crate::engine::HostSignal::MissionStateNotice);
+            self.feedback
+                .pending_side_effects
+                .host_effects
+                .request_signal(crate::engine::HostSignal::MissionStatePopup);
         }
 
         // ── Check quit conditions ────────────────────────────────
@@ -516,11 +521,14 @@ impl EngineInner {
             // pressed-key edges queued during the modal.  The
             // Rust equivalents live host-side across two
             // InputState groups: ThreadedInput pressed-key
-            // cache (`pending_reset_input`) and the
+            // cache (the ResetInput signal) and the
             // rubber-band / click-suppression flags
             // (`reset_input`).
             MessageType::Simple(crate::messenger::SimpleMessage::ResetInput) => {
-                self.feedback.pending_side_effects.pending_reset_input = true;
+                self.feedback
+                    .pending_side_effects
+                    .host_effects
+                    .request_signal(crate::engine::HostSignal::ResetInput);
                 self.feedback.pending_side_effects.reset_input = true;
                 // Clear the alt-lock latch along with the
                 // modifier cache; without this, an alt-lock
@@ -576,14 +584,17 @@ impl EngineInner {
             // keeps any non-script producer in sync with the
             // engine-side flag that gates mouse events in
             // `handle_mouse_input`.  Unlock also raises the
-            // `pending_reset_input` side-effect so held-key
+            // ResetInput signal so held-key
             // edges from the locked period are dropped.
             MessageType::Simple(crate::messenger::SimpleMessage::LockUser) => {
                 self.players.user_locked = true;
             }
             MessageType::Simple(crate::messenger::SimpleMessage::UnlockUser) => {
                 self.players.user_locked = false;
-                self.feedback.pending_side_effects.pending_reset_input = true;
+                self.feedback
+                    .pending_side_effects
+                    .host_effects
+                    .request_signal(crate::engine::HostSignal::ResetInput);
             }
             // After hiding the console or switching task,
             // emit `MSG_RESET_INPUT` so the held-key edges
@@ -693,24 +704,33 @@ impl EngineInner {
             // The human shoot list stores raw sequence-element references. A
             // retail save can retain a terminal pointer past Friday cleanup;
             // the allocation then remains readable as stale legacy state.
-            // Keep the Rust backing sequence alive while that explicit pointer
-            // emulation exists, rather than turning the next shoot-list update
-            // call into a missing-element panic.
-            let retained_shoot_sequences = self
+            // Keep backing storage alive while a shoot-list reference or an
+            // actor installation still owns it.
+            let retained_sequences = self
                 .world
                 .entities
                 .occupied()
-                .filter_map(|(_, entity)| entity.human_data())
-                .flat_map(|human| {
-                    human
-                        .pending_shoots
-                        .iter()
-                        .map(|element_ref| element_ref.sequence_id)
+                .flat_map(|(_, entity)| {
+                    entity
+                        .human_data()
+                        .into_iter()
+                        .flat_map(|human| {
+                            human
+                                .pending_shoots
+                                .iter()
+                                .map(|element_ref| element_ref.sequence_id)
+                        })
+                        .chain(
+                            entity
+                                .actor_data()
+                                .and_then(|actor| actor.installed_order)
+                                .map(|installed| installed.element.sequence_id),
+                        )
                 })
                 .collect::<std::collections::BTreeSet<_>>();
             self.orders
                 .sequence_manager
-                .friday_evening_cleanup_preserving(&retained_shoot_sequences);
+                .friday_evening_cleanup_preserving(&retained_sequences);
         }
 
         // ── Process pending AI orders ─────────────────────────────
@@ -749,7 +769,13 @@ mod direct_message_tests {
         );
         assert!(!engine.players.seats[0].is_lock_alt);
         assert!(engine.feedback.pending_side_effects.reset_input);
-        assert!(engine.feedback.pending_side_effects.pending_reset_input);
+        assert!(
+            engine
+                .feedback
+                .pending_side_effects
+                .host_effects
+                .has_signal(crate::engine::HostSignal::ResetInput)
+        );
         engine.forward_message(
             &sim,
             &assets,

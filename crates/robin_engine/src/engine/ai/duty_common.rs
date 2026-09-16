@@ -59,6 +59,96 @@ mod tests {
     }
 
     #[test]
+    fn arrival_during_owner_notification_reads_the_removed_installed_order() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let installed = engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders
+            .clear();
+        let destination = engine.live_ai_position(owner);
+
+        engine.duty_go_to_speed(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            destination,
+            GotoFlags::empty(),
+            1.0,
+        );
+
+        assert!(enemy(&engine, owner).base.already_on_point);
+        assert_eq!(
+            engine.actor_installed_order(owner).unwrap().order_type,
+            crate::order::OrderType::WaitingUpright
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn distant_destination_does_not_read_an_order_retired_during_owner_notification() {
+        let (mut engine, assets, ids) = fixture(1);
+        let owner = ids[0];
+        let installed = engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
+        let orders = &mut engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders;
+        // Deliberately invalidate this fixture's handle to test the guard's
+        // short circuit independently of the normal installed-order lifetime.
+        orders.release_slot(installed.slot);
+        orders.clear();
+
+        engine.duty_go_to_speed(
+            &crate::sim_rng::test_context(),
+            &assets,
+            owner,
+            Position {
+                x: 500.0,
+                y: 100.0,
+                sector: None,
+                level: 0,
+            },
+            GotoFlags::empty(),
+            1.0,
+        );
+
+        assert!(enemy(&engine, owner).base.couldnt_reachpoint);
+        assert_eq!(
+            engine
+                .get_entity(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .installed_order,
+            Some(installed)
+        );
+    }
+
+    #[test]
     fn facing_a_fractionally_elevated_target_registers_the_integral_direction() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
@@ -1088,10 +1178,7 @@ impl EngineInner {
         let layer = element.layer();
         let sector = element.sector();
         let actor = entity.actor_data().expect("duty movement requires actor");
-        let animation = actor
-            .installed_order
-            .map(|order| order.order_type)
-            .unwrap_or(crate::order::OrderType::NonanimationEnd);
+        let installed_order = actor.installed_order;
         let civilian = entity.is_civilian();
         let ai = entity
             .ai_controller_mut()
@@ -1107,7 +1194,9 @@ impl EngineInner {
                 && !ai.likes_to_sit_around
                 && !ai.special_action
                 && matches!(
-                    animation,
+                    installed_order
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type)
+                        .unwrap_or(crate::order::OrderType::NonanimationEnd),
                     crate::order::OrderType::WaitingUpright
                         | crate::order::OrderType::WaitingAlerted
                         | crate::order::OrderType::NonanimationEnd

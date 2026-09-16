@@ -177,7 +177,10 @@ fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
             engine.tick_actor_owner_envelopes(&sim, &assets);
             let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
             assert_eq!(actor.continuation.motion_state, expected, "{action:?}");
-            assert_eq!(actor.installed_order.unwrap().order_id, order_id);
+            assert_eq!(
+                engine.actor_installed_order(owner).unwrap().order_id,
+                order_id
+            );
         }
         assert!(
             engine

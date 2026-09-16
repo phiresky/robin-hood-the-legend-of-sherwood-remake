@@ -321,6 +321,7 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
         .route("/api/v1/latest-runs", get(latest_runs))
         .route("/api/v1/runs/{run_id}", get(run_detail))
         .route("/api/v1/runs/{run_id}/replay", get(run_replay))
+        .route("/api/v1/runs/{run_id}/checkpoints", get(run_checkpoints))
         .route("/api/v1/players/{public_key}", get(player_profile))
         .route("/api/v1/players/{public_key}/runs", get(player_run_history))
         .layer(DefaultBodyLimit::max(state.config.max_metadata_bytes))
@@ -1279,6 +1280,45 @@ async fn run_replay(
         .replay_for_run(&run_id, &state.config.board_ids())
         .await?;
     replay_response(&state, digest, bytes).await
+}
+
+async fn run_checkpoints(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let (digest, _) = state
+        .database
+        .replay_for_run(&run_id, &state.config.board_ids())
+        .await?;
+    let file = state
+        .replay_store
+        .open_checkpoints(&digest)
+        .await
+        .map_err(|error| match error {
+            crate::replay_store::StoreError::Io(ref io)
+                if io.kind() == std::io::ErrorKind::NotFound =>
+            {
+                ApiError::NotFound
+            }
+            error => ApiError::from(error),
+        })?;
+    let bytes = file.metadata().await.map_err(|_| ApiError::Internal)?.len();
+    let mut response = Body::from_stream(ReaderStream::new(file)).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(robin_replay_format::seek::MEDIA_TYPE),
+    );
+    response.headers_mut().insert(
+        CONTENT_LENGTH,
+        HeaderValue::from_str(&bytes.to_string()).map_err(|_| ApiError::Internal)?,
+    );
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    Ok(response)
 }
 
 async fn replay_response(

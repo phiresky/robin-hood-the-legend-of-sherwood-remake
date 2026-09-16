@@ -386,10 +386,19 @@ impl FixedTickRender<'_, '_> {
                 frame.started_at_ms,
                 interpolation_enabled,
             );
+            if interpolation_enabled {
+                render_ctx.renderer.prepare_presentation();
+            }
+            let sample_time_us = crate::window::process_uptime_us() / 1_000 * 1_000;
             let sampled_camera = native_refresh_interpolation
-                .sample(crate::window::process_uptime_ms())
+                .sample((sample_time_us / 1_000) as u32)
                 .unwrap_or(saved_camera);
             sampled_camera.apply(host.frontend);
+            let camera_sample = crate::presentation_timing::CameraSample::capture(
+                sample_time_us,
+                &host.frontend.viewport,
+                true,
+            );
             let render_engine = native_refresh_interpolation
                 .engine()
                 .unwrap_or_else(|| engine.presentation_view());
@@ -417,6 +426,7 @@ impl FixedTickRender<'_, '_> {
             }
 
             let presented = render_ctx.present();
+            crate::presentation_timing::camera(camera_sample, presented);
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             if startup_audio_pause.take().is_some() {
                 // Actual playback bypasses this reservation. A failed surface
@@ -622,6 +632,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             timer.step("post initialize");
         }
 
+        let phase_start = super::frame_perf::start(profiling);
         if history_commit_pending {
             runtime.commit_simulation_history(
                 manager,
@@ -631,6 +642,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 },
             );
         }
+
+        super::frame_perf::record(super::frame_perf::Phase::History, phase_start);
 
         // Finalize only after the authoritative history transition. Full-frame
         // replay records can now persist the explicit cursor before/after
@@ -682,7 +695,12 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
-        pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
+        pace_interactive_frame(host, target, presentation_deadline_ms, |host, _| {
+            if native_refresh_interpolation.engine().is_some() {
+                presentation.renderer.prepare_presentation();
+            }
+            let now_us = crate::window::process_uptime_us();
+            let now_ms = (now_us / 1_000) as u32;
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();
             };
@@ -692,6 +710,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.presentation.draw_order.clone();
             sampled_camera.apply(host.frontend);
+            let camera_sample = crate::presentation_timing::CameraSample::capture(
+                now_us / 1_000 * 1_000,
+                &host.frontend.viewport,
+                false,
+            );
             host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             let mut render_ctx =
@@ -707,7 +730,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 dev,
                 &mut render_ctx,
             );
-            render_ctx.present();
+            let presented = render_ctx.present();
+            crate::presentation_timing::camera(camera_sample, presented);
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
@@ -826,6 +850,7 @@ impl InteractiveMission {
                     ..
                 } = &mut self.runtime;
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
+                let phase_start = super::frame_perf::start(profiling);
                 InteractiveFrameSimulation::drive_manual_steps(
                     http,
                     timeline,
@@ -842,6 +867,7 @@ impl InteractiveMission {
                         ),
                     },
                 );
+                super::frame_perf::record(super::frame_perf::Phase::ManualSteps, phase_start);
                 FrameControl::Continue
             }
         };
@@ -949,26 +975,37 @@ fn run_interactive_post_initialize(
 /// time visibly advancing. This guard permits up to 10 kHz, well beyond real
 /// displays, and scales with slow-motion's larger presentation budget.
 const MIN_GUARD_PRESENT_COST_US: u64 = 100;
+// Retry a rejected cost estimate at most four times a second. Otherwise one
+// compositor stall can suppress the samples needed to observe its recovery.
+const REFRESH_RETRY_INTERVAL_US: u64 = 250_000;
 
 /// Deadline guard for display-rate presentation samples between fixed
-/// simulation steps. The observed cost comes from actual
-/// `get_current_texture`/present back-pressure, so 90/120/144 Hz displays need
-/// no hard-coded refresh list.
+/// simulation steps. The observed cost includes interpolation, rendering and
+/// FIFO presentation back-pressure, so displays need no hard-coded refresh list.
+/// A periodic retry may exceed the deadline when the renderer is still slow;
+/// without retries a stale estimate can prevent every future measurement.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct RefreshPresentationSchedule {
     started_at_us: u64,
     budget_us: u64,
     observed_present_cost_us: u64,
+    last_present_us: u64,
     presents: u32,
     max_presents: u32,
 }
 
 impl RefreshPresentationSchedule {
-    fn new(started_at_us: u64, budget_us: u64, observed_present_cost_us: u64) -> Self {
+    fn new(
+        started_at_us: u64,
+        budget_us: u64,
+        observed_present_cost_us: u64,
+        last_present_us: u64,
+    ) -> Self {
         Self {
             started_at_us,
             budget_us,
             observed_present_cost_us,
+            last_present_us,
             presents: 0,
             max_presents: budget_us
                 .div_ceil(MIN_GUARD_PRESENT_COST_US)
@@ -981,12 +1018,15 @@ impl RefreshPresentationSchedule {
             return false;
         }
         let elapsed_us = now_us.saturating_sub(self.started_at_us);
-        elapsed_us < self.budget_us
-            && elapsed_us.saturating_add(self.observed_present_cost_us) <= self.budget_us
+        let cost_fits = elapsed_us.saturating_add(self.observed_present_cost_us) <= self.budget_us;
+        let retry_due = self.presents == 0
+            && now_us.saturating_sub(self.last_present_us) >= REFRESH_RETRY_INTERVAL_US;
+        elapsed_us < self.budget_us && (cost_fits || retry_due)
     }
 
     fn record_present(&mut self, started_at_us: u64, finished_at_us: u64) {
         self.presents = self.presents.saturating_add(1);
+        self.last_present_us = finished_at_us;
         let cost_us = finished_at_us.saturating_sub(started_at_us);
         if cost_us > 0 {
             self.observed_present_cost_us = cost_us;
@@ -1107,7 +1147,7 @@ async fn pace_interactive_frame(
     host: &mut crate::host::HostPresentation<'_>,
     target: u32,
     presentation_deadline_ms: u64,
-    mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u32) -> bool,
+    mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u64) -> bool,
 ) {
     let remaining_wait_ms =
         presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
@@ -1126,19 +1166,21 @@ async fn pace_interactive_frame(
                 presentation_start_us,
                 remaining_wait_ms * 1_000,
                 host.frontend.diagnostics().native_refresh_present_cost_us(),
+                host.frontend.diagnostics().native_refresh_last_present_us(),
             );
             while schedule.should_present(crate::window::process_uptime_us()) {
                 let present_start_us = crate::window::process_uptime_us();
-                if !present_refresh_sample(host, crate::window::process_uptime_ms()) {
+                if !present_refresh_sample(host, crate::window::process_uptime_us()) {
                     break;
                 }
                 crate::window::yield_to_display_refresh().await;
                 let present_end_us = crate::window::process_uptime_us();
                 schedule.record_present(present_start_us, present_end_us);
             }
-            host.frontend
-                .diagnostics_mut()
-                .observe_present_cost(schedule.observed_present_cost_us());
+            host.frontend.diagnostics_mut().observe_present_cost(
+                schedule.observed_present_cost_us(),
+                schedule.last_present_us,
+            );
             let residual_us = schedule.remaining_us(crate::window::process_uptime_us());
             if residual_us > 0 {
                 crate::window::sleep_ms(residual_us.div_ceil(1_000)).await;
@@ -1195,7 +1237,7 @@ mod tests {
 
     fn simulate_refresh(refresh_millihertz: u64) -> (u32, u64, u64) {
         let period_us = 1_000_000_000 / refresh_millihertz;
-        let mut schedule = RefreshPresentationSchedule::new(0, 40_000, period_us);
+        let mut schedule = RefreshPresentationSchedule::new(0, 40_000, period_us, 0);
         let mut now_us = 0;
         while schedule.should_present(now_us) {
             let started_at_us = now_us;
@@ -1225,8 +1267,55 @@ mod tests {
     }
 
     #[test]
+    fn refresh_present_scheduler_recovers_after_a_stall() {
+        let mut previous = RefreshPresentationSchedule::new(0, 40_000, 0, 0);
+        previous.record_present(0, 50_000);
+        // Each subsequent tick has less spare time than the stalled sample.
+        // A recovered 5 ms renderer must eventually get another opportunity.
+        let mut recovered = false;
+        for now in (80_000..=360_000).step_by(40_000) {
+            let mut schedule = RefreshPresentationSchedule::new(
+                now,
+                10_000,
+                previous.observed_present_cost_us(),
+                previous.last_present_us,
+            );
+            if schedule.should_present(now) {
+                schedule.record_present(now, now + 5_000);
+                assert!(schedule.should_present(now + 5_000));
+                recovered = true;
+                break;
+            }
+            previous = schedule;
+        }
+        assert!(
+            recovered,
+            "a stale cost must not suppress interpolation forever"
+        );
+    }
+
+    #[test]
+    fn refresh_present_scheduler_limits_expensive_retries_and_respects_deadlines() {
+        let mut schedule = RefreshPresentationSchedule::new(300_000, 10_000, 50_000, 0);
+        assert!(schedule.should_present(300_000));
+        schedule.record_present(300_000, 350_000);
+        assert!(!schedule.should_present(350_000));
+        for now in (360_000..600_000).step_by(40_000) {
+            let next = RefreshPresentationSchedule::new(now, 10_000, 50_000, 350_000);
+            assert!(
+                !next.should_present(now),
+                "expensive probes need a cooldown"
+            );
+        }
+        assert!(!RefreshPresentationSchedule::new(600_000, 0, 50_000, 0).should_present(600_000));
+        assert!(
+            !RefreshPresentationSchedule::new(600_000, 10_000, 50_000, 0).should_present(610_000)
+        );
+    }
+
+    #[test]
     fn refresh_present_scheduler_caps_non_blocking_surfaces() {
-        let mut schedule = RefreshPresentationSchedule::new(10, 40_000, 0);
+        let mut schedule = RefreshPresentationSchedule::new(10, 40_000, 0, 0);
         while schedule.should_present(10) {
             schedule.record_present(10, 10);
         }
@@ -1238,7 +1327,7 @@ mod tests {
     #[test]
     fn slow_motion_budget_does_not_cap_240_hz_presentation() {
         let period_us = 1_000_000 / 240;
-        let mut schedule = RefreshPresentationSchedule::new(0, 400_000, period_us);
+        let mut schedule = RefreshPresentationSchedule::new(0, 400_000, period_us, 0);
         let mut now_us = 0;
         while schedule.should_present(now_us) {
             let started_at_us = now_us;

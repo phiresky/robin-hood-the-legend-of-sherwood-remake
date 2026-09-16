@@ -80,7 +80,121 @@ fn verify_loading_dissolve_pixels(gpu: GpuContext) {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
+    use robin_engine::coordinates::MapPoint;
+
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 16, 16, TextureScaleMode::Nearest);
+    let pixels: Vec<u16> = (0..32 * 32)
+        .map(|i| {
+            if (i % 32 + i / 32) % 2 == 0 {
+                0xF800
+            } else {
+                0x07E0
+            }
+        })
+        .collect();
+    renderer.upload_background_texture(32, 32, &pixels);
+    let mut patch = Vec::new();
+    for y in 8..15 {
+        for x in 8..17 {
+            let (r, g, b) = robin_util::color::rgb565_to_rgb8(pixels[y * 32 + x]);
+            patch.extend_from_slice(&[r, g, b, 255]);
+        }
+    }
+    if oversized_atlas {
+        // Large building frames allocate wider atlas layers. The following
+        // patch then occupies a nonzero offset in that larger layer.
+        renderer.resources.sprite_atlas.insert(
+            &renderer.gpu,
+            &renderer.resources.bgl_tex,
+            &renderer.resources.sampler,
+            1025,
+            1,
+            &vec![0; 1025 * 4],
+        );
+    }
+    let slot = renderer.resources.sprite_atlas.insert(
+        &renderer.gpu,
+        &renderer.resources.bgl_tex,
+        &renderer.resources.sampler,
+        9,
+        7,
+        &patch,
+    );
+    renderer.resources.sprite_cache.entries.insert(
+        SpriteCacheKey {
+            bank_id: 123,
+            variant: SpriteVariant::Day,
+            shadow_color: 0,
+            shadow_alpha: 0,
+        },
+        SpriteResidency(slot),
+    );
+    let mut frontend = crate::host::HostFrontend::default();
+    frontend.resources.background_decals.insert(
+        robin_engine::element::EntityId::Fx(robin_engine::element::FxId(123)),
+        crate::bg_cache::BackgroundDecal {
+            bank_id: 123,
+            dst_x: 8,
+            dst_y: 8,
+            width: 9,
+            height: 7,
+            shadow_color: 0,
+            shadow_level: 0,
+        },
+    );
+    let mut viewport =
+        crate::host::ViewportState::new(16.0, 16.0 + robin_engine::engine::PANNEL_HEIGHT);
+    for zoom in [0.5, 1.0, 1.25, 1.5, 2.0] {
+        for camera in [6.125, 6.375, 6.625, 6.875, 10.125, 10.625] {
+            let view = MapPoint::new(camera, camera + 0.125);
+            viewport.view_position = view;
+            viewport.zoom_factor = zoom;
+            renderer.begin_gpu_frame_clear();
+            crate::level_loading_host::draw_background(&viewport, &mut renderer);
+            let expected = renderer.try_capture_frame_rgba().unwrap();
+            renderer.begin_gpu_frame_clear();
+            crate::level_loading_host::draw_background(&viewport, &mut renderer);
+            crate::blit_to_map::render_background_decals(&frontend, &viewport, &mut renderer);
+            let actual = renderer.try_capture_frame_rgba().unwrap();
+            assert_eq!((actual.0, actual.1), (expected.0, expected.1));
+            let displaced_pixels = actual
+                .2
+                .chunks_exact(4)
+                .zip(expected.2.chunks_exact(4))
+                .filter(|(actual, expected)| actual != expected)
+                .count();
+            assert_eq!(
+                displaced_pixels, 0,
+                "patch displaced at camera {view:?}, zoom {zoom}"
+            );
+            // Also require the patch itself to cover the expected pixels;
+            // a skipped draw or transparent atlas region must not pass.
+            renderer.begin_gpu_frame_clear();
+            crate::blit_to_map::render_background_decals(&frontend, &viewport, &mut renderer);
+            let isolated = renderer.try_capture_frame_rgba().unwrap();
+            for (i, pixel) in isolated.2.chunks_exact(4).enumerate() {
+                let x = (((i % 16) as f32 + 0.5) / zoom + view.x).floor() as i32;
+                let y = (((i / 16) as f32 + 0.5) / zoom + view.y).floor() as i32;
+                let expected_pixel = if (8..17).contains(&x) && (8..15).contains(&y) {
+                    &expected.2[i * 4..i * 4 + 4]
+                } else {
+                    &[0, 0, 0, 255]
+                };
+                assert_eq!(
+                    pixel, expected_pixel,
+                    "patch coverage at ({x}, {y}), zoom {zoom}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    verify_map_patch_camera_alignment(gpu.clone(), false);
+    verify_map_patch_camera_alignment(gpu.clone(), true);
     verify_mouse_trail_pixels(gpu.clone());
     verify_loading_dissolve_pixels(gpu.clone());
     verify_mask_atlas_pixels(gpu.clone());

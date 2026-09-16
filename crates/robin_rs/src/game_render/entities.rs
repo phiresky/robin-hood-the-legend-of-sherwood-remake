@@ -152,10 +152,14 @@ pub(crate) fn render_entities_gpu(
         // they render back-to-front with the entity list (projectile /
         // dust / stars sit between actors at the correct depth instead
         // of piled on top at the end).
-        if entity.is_human()
-            && let Some(entity_depth) = host.frontend.presentation.draw_order.depth(entity_id)
-        {
-            titbit_renderer.render_up_to(host, engine, assets, renderer, entity_depth);
+        if entity.is_human() {
+            titbit_renderer.render_up_to(
+                host,
+                engine,
+                assets,
+                renderer,
+                entity.sprite().display_depth,
+            );
         }
 
         let elem = entity.element_data();
@@ -367,6 +371,16 @@ fn render_cached_entity_sprite(
             shadow_level,
             dst_rect,
             128,
+        );
+    } else if uses_pixel_fog_visibility(entity) {
+        renderer.render_cached_map_sprite(
+            bank_id,
+            variant,
+            shadow_color,
+            shadow_level,
+            placement.world_origin,
+            view,
+            zoom,
         );
     } else {
         renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
@@ -640,7 +654,8 @@ pub(super) fn transition_crenel_climb_up_mask_position(
         return None;
     }
     let actor = entity.actor_data()?;
-    if actor.installed_order?.order_type != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+    if engine.installed_order_type(actor.installed_order?)
+        != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
     {
         return None;
     }
@@ -1051,7 +1066,25 @@ pub(super) fn render_fx_entities_gpu<I>(
             let (dst_x, dst_y) = placement.screen_origin;
 
             let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
-            renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
+            if uses_pixel_fog_visibility(entity) {
+                renderer.render_cached_map_sprite(
+                    bank_id,
+                    variant,
+                    shadow_color,
+                    shadow_level,
+                    placement.world_origin,
+                    view,
+                    zoom,
+                );
+            } else {
+                renderer.render_cached_sprite(
+                    bank_id,
+                    variant,
+                    shadow_color,
+                    shadow_level,
+                    dst_rect,
+                );
+            }
         }
     }
 }

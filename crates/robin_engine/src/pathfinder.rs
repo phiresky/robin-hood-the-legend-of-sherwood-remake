@@ -358,9 +358,9 @@ pub struct PathGraphNode {
     /// Per half-diagonal: bitmask of valid docking places.
     pub configurations: Vec<u8>,
 
-    /// Indices of active links from this node.
+    /// Authored initial active links from this node.
     pub link_indices: Vec<LinkIdx>,
-    /// Indices of inactive (alternative-state) links from this node.
+    /// Authored initial inactive links from this node.
     pub alternative_link_indices: Vec<LinkIdx>,
 
     // ── Historical initial A* values retained for exact asset encoding ──
@@ -384,8 +384,8 @@ pub struct PathGraphNode {
 /// One motion obstacle within an area — a polygon that blocks movement
 /// when the path-graph state has its bit set.
 ///
-/// The `active` flag swaps between active and alternative as
-/// `set_state_area` is called; the polygon itself is fixed.
+/// Geometry and initial activation are level data. Runtime membership belongs
+/// to the pathfinder's ordered active and alternative lists.
 #[derive(
     Debug,
     Clone,
@@ -399,8 +399,7 @@ pub struct MotionObstacle {
     /// Required-state bits. The obstacle is active when
     /// `(state_id & current_state) == state_id`.
     pub state_id: u32,
-    /// Current active flag — `true` means the obstacle is blocking
-    /// movement.
+    /// Initial activation before pathfinder state initialization.
     pub active: bool,
     /// Axis-aligned bounding box of `polygon` for fast intersection.
     pub bounding_box: MapBBox,
@@ -415,23 +414,6 @@ pub struct MotionObstacle {
     /// transitions can flip the grid's `line_active` flags without a
     /// linear scan over every motion line in the layer.
     pub grid_line_indices: Vec<crate::fast_find_grid::LineIndex>,
-}
-
-/// Output payload for `set_state_area_with_appeared` / `toggle_obstacle_state`:
-/// a motion obstacle that just transitioned inactive → active, carrying both
-/// its axis-aligned bounding box and its polygon vertices.
-///
-/// Used by the pathfinder-state-change handler to kill actors whose
-/// move-box overlaps the newly-active obstacle. The bbox is the cheap
-/// pre-filter; the polygon narrows the kill decision to actors whose
-/// move box actually overlaps the obstacle footprint (not just its
-/// aabb).
-#[derive(Debug, Clone)]
-pub struct AppearedObstacle {
-    /// Bounding box of the obstacle polygon (cheap pre-filter).
-    pub bounding_box: MapBBox,
-    /// Polygon vertices of the obstacle footprint.
-    pub polygon: Vec<MapPoint>,
 }
 
 /// A motion area within a layer — the walkable polygon and its skeleton.
@@ -488,8 +470,6 @@ pub struct PathGraphStatic {
     pub link_configs: Vec<PathGraphLinkConfig>,
     /// Motion areas: `move_layers[layer][area]`.
     pub move_layers: Vec<Vec<MotionArea>>,
-    /// Alternative motion areas.
-    pub alternative_move_layers: Vec<Vec<MotionArea>>,
     /// Half-diagonal vectors for each unit size.
     pub half_diagonals: Vec<MoveBoxHalfDiagonal>,
     /// Sector-to-area conversion table.
@@ -914,51 +894,157 @@ impl PathGraph {
 
 // ─── PathFinder ──────────────────────────────────────────────────
 
-/// The pathfinding engine. Holds the graph and performs A* searches.
-///
-/// Plain struct with synchronous methods.
-#[derive(Debug, Clone)]
-pub struct PathFinderRuntime {
-    /// The pathfinding graph.
-    pub graph: PathGraph,
-
-    /// Number of attempts for the A* (higher = more likely to find shortest path).
-    pub number_of_attempts: u16,
-
-    /// Query-local values indexed by `NodeIdx`. The graph's historical search
-    /// fields remain in the asset wire representation, but queries never mutate
-    /// them. This keeps level geometry independent of earlier query outcomes.
-    search_nodes: Vec<NodeSearchState>,
-
-    // ── Search state (reset per search) ──
-    /// Sorted open node list (ascending by score).
-    open_nodes: std::collections::VecDeque<NodeIdx>,
-
-    /// Best f-score found so far for a complete path.
-    shortest_distance_found: f32,
-
-    /// Current layer being searched.
-    current_layer: u16,
-
-    /// Current half-diagonal index being used.
-    current_half_diagonal_idx: u16,
-
-    /// Current half-diagonal vector.
-    current_half_diagonal: MoveBoxHalfDiagonal,
-
-    /// Current motion area indices (layer, area).
-    current_motion_area: (usize, usize),
-
-    /// Current path graph area indices (layer, area).
-    current_graph_area: (usize, usize),
+/// Ordered runtime memberships. Geometry remains in the immutable level graph.
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+struct PathPartition {
+    layers: Vec<Vec<Vec<Vec<NodeIdx>>>>,
+    alternative_layers: Vec<Vec<Vec<Vec<NodeIdx>>>>,
+    links: Vec<Vec<LinkIdx>>,
+    alternative_links: Vec<Vec<LinkIdx>>,
+    motion: Vec<Vec<Vec<usize>>>,
+    alternative_motion: Vec<Vec<Vec<usize>>>,
 }
 
-/// Serializable pathfinder simulation state.
-///
-/// The graph geometry is level data. Pending requests live in the
-/// deterministic engine movement queues, so the remaining pathfinder
-/// snapshot is just the attempt count plus per-area obstacle state
-/// table.
+impl PathPartition {
+    fn from_graph(graph: &PathGraph) -> Self {
+        let mut motion = Vec::new();
+        let mut alternative_motion = Vec::new();
+        for layer in &graph.static_data.move_layers {
+            let mut active_layer = Vec::new();
+            let mut inactive_layer = Vec::new();
+            for area in layer {
+                let (active, inactive) = (0..area.motion_obstacles.len())
+                    .partition(|&index| area.motion_obstacles[index].active);
+                active_layer.push(active);
+                inactive_layer.push(inactive);
+            }
+            motion.push(active_layer);
+            alternative_motion.push(inactive_layer);
+        }
+        Self {
+            layers: graph.layers.clone(),
+            alternative_layers: graph.alternative_layers.clone(),
+            links: graph
+                .nodes
+                .iter()
+                .map(|node| node.link_indices.clone())
+                .collect(),
+            alternative_links: graph
+                .nodes
+                .iter()
+                .map(|node| node.alternative_link_indices.clone())
+                .collect(),
+            motion,
+            alternative_motion,
+        }
+    }
+
+    fn update_links(&mut self, graph: &PathGraph, node: NodeIdx, state: u32) {
+        let active = &mut self.links[node.0 as usize];
+        let inactive = &mut self.alternative_links[node.0 as usize];
+        let mut index = 0;
+        while index < active.len() {
+            let link = active[index];
+            let required = graph.static_data.links[link.0 as usize].required_state;
+            if required & state != required {
+                inactive.push(active.remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        let mut index = 0;
+        while index < inactive.len() {
+            let link = inactive[index];
+            let required = graph.static_data.links[link.0 as usize].required_state;
+            if required & state == required {
+                active.push(inactive.remove(index));
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    /// Retain the history of append/remove operations; final state bits alone
+    /// do not determine the ordering used by subsequent path searches.
+    fn set_state_area(
+        &mut self,
+        graph: &PathGraph,
+        layer: usize,
+        area: usize,
+        state: u32,
+        mut set_obstacle_active: impl FnMut(&MotionObstacle, bool),
+    ) -> Vec<usize> {
+        for obstacle in 0..self.layers[layer][area].len() {
+            for index in (0..self.layers[layer][area][obstacle].len()).rev() {
+                let node = self.layers[layer][area][obstacle][index];
+                let required = graph.nodes[node.0 as usize].required_state;
+                if required & state != required {
+                    self.layers[layer][area][obstacle].remove(index);
+                    self.alternative_layers[layer][area][obstacle].push(node);
+                } else {
+                    self.update_links(graph, node, state);
+                }
+            }
+        }
+        for obstacle in 0..self.alternative_layers[layer][area].len() {
+            for index in (0..self.alternative_layers[layer][area][obstacle].len()).rev() {
+                let node = self.alternative_layers[layer][area][obstacle][index];
+                let required = graph.nodes[node.0 as usize].required_state;
+                if required & state == required {
+                    self.alternative_layers[layer][area][obstacle].remove(index);
+                    self.layers[layer][area][obstacle].push(node);
+                    self.update_links(graph, node, state);
+                }
+            }
+        }
+        let Some(obstacles) = graph
+            .static_data
+            .move_layers
+            .get(layer)
+            .and_then(|areas| areas.get(area))
+            .map(|area| &area.motion_obstacles)
+        else {
+            return Vec::new();
+        };
+        let active = &mut self.motion[layer][area];
+        let inactive = &mut self.alternative_motion[layer][area];
+        let mut index = 0;
+        while index < active.len() {
+            let required = obstacles[active[index]].state_id;
+            if required & state != required {
+                set_obstacle_active(&obstacles[active[index]], false);
+                inactive.push(active.remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        let mut appeared = Vec::new();
+        let mut index = 0;
+        while index < inactive.len() {
+            let required = obstacles[inactive[index]].state_id;
+            if required & state == required {
+                let obstacle = inactive.remove(index);
+                set_obstacle_active(&obstacles[obstacle], true);
+                active.push(obstacle);
+                appeared.push(obstacle);
+            } else {
+                index += 1;
+            }
+        }
+        appeared
+    }
+}
+
+/// Mutable navigation state; ordered partitions survive cloning and rollback.
 #[derive(
     Debug,
     Serialize,
@@ -970,66 +1056,42 @@ pub struct PathFinderRuntime {
 pub struct PathFinder {
     pub number_of_attempts: u16,
     pub states: Vec<Vec<u32>>,
-    /// Memoized query workspace: the runtime graph partitioned for the
-    /// current `states`, rebuilt from the level graph whenever `states`
-    /// changes. Pure memoization of `runtime_from_graph`, so it never
-    /// affects results — it only avoids re-cloning and re-partitioning
-    /// the whole graph on every `find_path` call. Excluded from
-    /// snapshots, hashing, and clones; a restored `PathFinder` simply
-    /// rebuilds it on the next query.
+    /// Rollback snapshots share memberships until a state transition changes them.
+    partition: std::sync::Arc<PathPartition>,
     #[bitcode(skip)]
     #[state_hash(skip)]
     #[serde(skip)]
-    cache: Option<Box<PathFinderCache>>,
-}
-
-/// See [`PathFinder::cache`].
-#[derive(Debug)]
-struct PathFinderCache {
-    /// The reusable A* workspace, including the partitioned graph.
-    runtime: PathFinderRuntime,
-    /// `PathFinder::states` value the partition was derived from.
-    states_key: Vec<Vec<u32>>,
-}
-
-/// Query-local A* values initialized from the graph's exact authored fields.
-/// Geometry is read independently from `PathGraphNode` and never mutated by
-/// the query, including when a memoized runtime serves repeated requests.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct NodeSearchState {
-    visited: bool,
-    distance_from_source: f32,
-    distance_to_goal: f32,
-    score: f32,
-    previous_link_on_path: Option<LinkIdx>,
-    leave_place: u8,
-    enter_place: u8,
-}
-
-impl NodeSearchState {
-    fn capture(node: &PathGraphNode) -> Self {
-        Self {
-            visited: node.visited,
-            distance_from_source: node.distance_from_source,
-            distance_to_goal: node.distance_to_goal,
-            score: node.score,
-            previous_link_on_path: node.previous_link_on_path,
-            leave_place: node.leave_place,
-            enter_place: node.enter_place,
-        }
-    }
+    scratch: PathSearchScratch,
 }
 
 impl Clone for PathFinder {
     fn clone(&self) -> Self {
-        // The memo cache is per-instance scratch; a clone (rollback
-        // snapshot) rebuilds it lazily on its first query.
         Self {
             number_of_attempts: self.number_of_attempts,
             states: self.states.clone(),
-            cache: None,
+            partition: self.partition.clone(),
+            scratch: PathSearchScratch::default(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct PathSearchScratch {
+    search_nodes: Vec<NodeSearchState>,
+    open_nodes: std::collections::VecDeque<NodeIdx>,
+    shortest_distance_found: f32,
+    current_layer: u16,
+    current_half_diagonal_idx: u16,
+    current_half_diagonal: MoveBoxHalfDiagonal,
+    current_motion_area: (usize, usize),
+    current_graph_area: (usize, usize),
+}
+
+struct PathSearch<'a> {
+    graph: &'a PathGraph,
+    partition: &'a PathPartition,
+    number_of_attempts: u16,
+    scratch: &'a mut PathSearchScratch,
 }
 
 impl Default for PathFinder {
@@ -1043,98 +1105,217 @@ impl PathFinder {
         Self {
             number_of_attempts: 1,
             states: Vec::new(),
-            cache: None,
+            partition: std::sync::Arc::new(PathPartition::default()),
+            scratch: PathSearchScratch::default(),
         }
     }
 
-    fn runtime_from_graph(&self, graph: &PathGraph) -> PathFinderRuntime {
-        let mut runtime = PathFinderRuntime::new();
-        runtime.number_of_attempts = self.number_of_attempts;
-        runtime.graph = graph.clone();
-        if self.states.len() != runtime.graph.states.len() {
-            panic!(
-                "pathfinder state layer count {} does not match level graph layer count {}",
-                self.states.len(),
-                runtime.graph.states.len()
-            );
-        }
-        for (layer_idx, (state_layer, graph_layer)) in
-            self.states.iter().zip(&runtime.graph.states).enumerate()
-        {
-            if state_layer.len() != graph_layer.len() {
-                panic!(
-                    "pathfinder state area count for layer {} is {} but level graph has {}",
-                    layer_idx,
-                    state_layer.len(),
-                    graph_layer.len()
-                );
-            }
-        }
-        runtime.graph.states = self.states.clone();
-        runtime.set_states_all();
-        runtime
-    }
-
-    /// Initialize the default changing-obstacle state and synchronize the
-    /// corresponding fast-grid perimeter lines.
-    ///
-    /// Original-game pathfinder initialization delegates to a full state reset, whose
-    /// implementation sets motion-sector line activity for every motion
-    /// obstacle moved to or from the alternative list. Keeping only the state
-    /// words leaves all load-time obstacle lines active even when their
-    /// default state is absent, so otherwise-valid patrol and move segments
-    /// are rejected by the fast grid.
     pub fn initialize_from_graph(&mut self, graph: &PathGraph, grid: &mut FastFindGrid) {
-        // The memoized query workspace belongs to the previous level graph;
-        // a fresh level with coincidentally equal `states` must not reuse it.
-        self.cache = None;
-        // Only the default words and perimeter flags survive initialization.
-        // Partitioning a temporary runtime copied every node/link/geometry
-        // array and immediately discarded it. Build the query partition lazily
-        // in runtime_from_graph, exactly as the first query already does.
-        const DEFAULT_STATE: u32 = 0x5555_5555;
+        self.partition = std::sync::Arc::new(PathPartition::from_graph(graph));
+        self.scratch = PathSearchScratch::default();
         self.states = graph
             .states
             .iter()
-            .map(|layer| vec![DEFAULT_STATE; layer.len()])
+            .map(|areas| vec![0x5555_5555; areas.len()])
             .collect();
         self.number_of_attempts = 1;
-        for (layer_index, layer) in graph.layers.iter().enumerate() {
-            assert!(
-                self.states
-                    .get(layer_index)
-                    .is_some_and(|states| states.len() >= layer.len()),
-                "pathfinder graph hierarchy has no corresponding area state"
+        for layer in 0..graph.layers.len() {
+            for area in 0..graph.layers[layer].len() {
+                std::sync::Arc::make_mut(&mut self.partition).set_state_area(
+                    graph,
+                    layer,
+                    area,
+                    self.states[layer][area],
+                    |_, _| {},
+                );
+            }
+        }
+        self.synchronize_grid(graph, grid, false);
+    }
+
+    /// Native loads apply saved words after initialization and patch restoration.
+    /// Keep the ordering established by those earlier restoration transitions.
+    pub(crate) fn restore_states(
+        &mut self,
+        graph: &PathGraph,
+        grid: &mut FastFindGrid,
+        states: Vec<Vec<u32>>,
+    ) {
+        assert_eq!(
+            states.len(),
+            graph.states.len(),
+            "saved pathfinder layer count differs"
+        );
+        for (saved, authored) in states.iter().zip(&graph.states) {
+            assert_eq!(
+                saved.len(),
+                authored.len(),
+                "saved pathfinder area count differs"
             );
         }
-        for (layer_index, layer) in graph.static_data.move_layers.iter().enumerate() {
-            for (area_index, area) in layer.iter().enumerate() {
-                // The runtime partitions only areas present in its hierarchy;
-                // geometry without a graph area retains its authored activity.
-                let partitioned = graph
-                    .layers
-                    .get(layer_index)
-                    .is_some_and(|areas| area_index < areas.len());
-                for obstacle in &area.motion_obstacles {
-                    let active = if partitioned {
-                        obstacle.state_id & DEFAULT_STATE == obstacle.state_id
-                    } else {
-                        obstacle.active
-                    };
-                    if active != obstacle.active {
-                        assert!(
-                            obstacle.grid_sector_index.is_some(),
-                            "pathfinder motion obstacle on layer {layer_index}, area {area_index} has no fast-grid sector binding"
-                        );
+        assert_eq!(
+            self.partition.layers.len(),
+            graph.layers.len(),
+            "pathfinder restore requires initialized membership"
+        );
+        self.scratch = PathSearchScratch::default();
+        self.states = states;
+        for layer in 0..graph.layers.len() {
+            for area in 0..graph.layers[layer].len() {
+                std::sync::Arc::make_mut(&mut self.partition).set_state_area(
+                    graph,
+                    layer,
+                    area,
+                    self.states[layer][area],
+                    |_, _| {},
+                );
+            }
+        }
+        self.synchronize_grid(graph, grid, true);
+    }
+
+    fn synchronize_grid(
+        &self,
+        graph: &PathGraph,
+        grid: &mut FastFindGrid,
+        sectors_registered: bool,
+    ) {
+        for (layer, areas) in graph.static_data.move_layers.iter().enumerate() {
+            for (area, motion_area) in areas.iter().enumerate() {
+                for (index, obstacle) in motion_area.motion_obstacles.iter().enumerate() {
+                    let active = self.partition.motion[layer][area].contains(&index);
+                    for &line in &obstacle.grid_line_indices {
+                        grid.set_line_active(line, active);
                     }
-                    for &line_idx in &obstacle.grid_line_indices {
-                        grid.set_line_active(line_idx, active);
+                    if sectors_registered {
+                        let sector = obstacle
+                            .grid_sector_index
+                            .expect("motion obstacle lacks sector binding");
+                        grid.set_sector_active(u32::from(sector), active);
                     }
                 }
             }
         }
     }
 
+    pub fn toggle_obstacle_state(
+        &mut self,
+        graph: &PathGraph,
+        grid: &mut FastFindGrid,
+        layer: usize,
+        area: usize,
+        changing_obstacle: u16,
+    ) -> Vec<crate::fast_find_grid::SectorIndex> {
+        let bit = 1u32 << (u32::from(changing_obstacle) << 1);
+        let current = self.states[layer][area];
+        let state = if current & bit != 0 {
+            current.wrapping_add(bit)
+        } else {
+            current.wrapping_sub(bit)
+        };
+        self.states[layer][area] = state;
+        let appeared = std::sync::Arc::make_mut(&mut self.partition).set_state_area(
+            graph,
+            layer,
+            area,
+            state,
+            |obstacle, active| {
+                for &line in &obstacle.grid_line_indices {
+                    grid.set_line_active(line, active);
+                }
+                let sector = obstacle
+                    .grid_sector_index
+                    .expect("motion obstacle lacks sector binding");
+                grid.set_sector_active(u32::from(sector), active);
+            },
+        );
+        let Some(motion_area) = graph
+            .static_data
+            .move_layers
+            .get(layer)
+            .and_then(|areas| areas.get(area))
+        else {
+            assert!(
+                appeared.is_empty(),
+                "appeared obstacles require a motion area"
+            );
+            return Vec::new();
+        };
+        appeared
+            .into_iter()
+            .map(|index| {
+                motion_area.motion_obstacles[index]
+                    .grid_sector_index
+                    .expect("appeared motion obstacle lacks sector binding")
+            })
+            .collect()
+    }
+
+    pub fn find_path(
+        &mut self,
+        graph: &PathGraph,
+        grid: &FastFindGrid,
+        layer: u16,
+        sector: u16,
+        half_diagonal_idx: u16,
+        source: MapPoint,
+        goal: MapPoint,
+        use_first_point: bool,
+    ) -> Option<Vec<MapPoint>> {
+        assert_eq!(
+            self.partition.layers.len(),
+            graph.layers.len(),
+            "pathfinder is not initialized for this graph"
+        );
+        PathSearch {
+            graph,
+            partition: &self.partition,
+            number_of_attempts: self.number_of_attempts,
+            scratch: &mut self.scratch,
+        }
+        .find_path(
+            grid,
+            layer,
+            sector,
+            half_diagonal_idx,
+            source,
+            goal,
+            use_first_point,
+        )
+    }
+
+    pub fn draw_graph<F: FnMut(MapPoint, MapPoint, u16)>(
+        &self,
+        graph: &PathGraph,
+        view: MapBBox,
+        half_diagonal_idx: u16,
+        draw: F,
+    ) {
+        let mut scratch = PathSearchScratch::default();
+        PathSearch {
+            graph,
+            partition: &self.partition,
+            number_of_attempts: self.number_of_attempts,
+            scratch: &mut scratch,
+        }
+        .draw_graph(view, half_diagonal_idx, draw);
+    }
+    pub fn draw_nodes<F: FnMut(MapPoint, MapPoint, u16)>(
+        &self,
+        graph: &PathGraph,
+        view: MapBBox,
+        half_diagonal_idx: u16,
+        draw: F,
+    ) {
+        let mut scratch = PathSearchScratch::default();
+        PathSearch {
+            graph,
+            partition: &self.partition,
+            number_of_attempts: self.number_of_attempts,
+            scratch: &mut scratch,
+        }
+        .draw_nodes(view, half_diagonal_idx, draw);
+    }
     pub fn try_convert_sector(&self, graph: &PathGraph, sector: u16) -> Option<u16> {
         graph.try_convert_sector(sector)
     }
@@ -1190,135 +1371,37 @@ impl PathFinder {
             }
         }
     }
-
-    pub fn cancel_requests_for(&mut self, _actor_id: EntityId) {}
-
-    pub fn toggle_obstacle_state(
-        &mut self,
-        graph: &PathGraph,
-        layer: usize,
-        area: usize,
-        changing_obstacle: u16,
-        appeared: &mut Vec<AppearedObstacle>,
-        line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
-        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
-    ) -> bool {
-        let mut runtime = self.runtime_from_graph(graph);
-        let changed = runtime.toggle_obstacle_state(
-            layer,
-            area,
-            changing_obstacle,
-            appeared,
-            line_toggles,
-            sector_toggles,
-        );
-        self.states = runtime.graph.states;
-        changed
-    }
-
-    pub fn find_path(
-        &mut self,
-        graph: &PathGraph,
-        grid: &FastFindGrid,
-        layer: u16,
-        sector: u16,
-        half_diagonal_idx: u16,
-        source: MapPoint,
-        goal: MapPoint,
-        use_first_point: bool,
-    ) -> Option<Vec<MapPoint>> {
-        // Memoize the partitioned runtime graph across queries: rebuilding
-        // it is a pure function of (level graph, `self.states`), and
-        // `initialize_from_graph` drops the memo when the level graph
-        // itself is replaced.
-        let cache_valid = self
-            .cache
-            .as_ref()
-            .is_some_and(|cache| cache.states_key == self.states);
-        if !cache_valid {
-            let runtime = self.runtime_from_graph(graph);
-            self.cache = Some(Box::new(PathFinderCache {
-                runtime,
-                states_key: self.states.clone(),
-            }));
-        }
-        let cache = self
-            .cache
-            .as_mut()
-            .expect("pathfinder query cache was just ensured above");
-        cache.runtime.number_of_attempts = self.number_of_attempts;
-        cache.runtime.find_path(
-            grid,
-            layer,
-            sector,
-            half_diagonal_idx,
-            source,
-            goal,
-            use_first_point,
-        )
-    }
-
-    pub fn draw_graph<F>(&self, graph: &PathGraph, view: MapBBox, half_diagonal_idx: u16, draw: F)
-    where
-        F: FnMut(MapPoint, MapPoint, u16),
-    {
-        self.runtime_from_graph(graph)
-            .draw_graph(view, half_diagonal_idx, draw);
-    }
-
-    pub fn draw_nodes<F>(&self, graph: &PathGraph, view: MapBBox, half_diagonal_idx: u16, draw: F)
-    where
-        F: FnMut(MapPoint, MapPoint, u16),
-    {
-        self.runtime_from_graph(graph)
-            .draw_nodes(view, half_diagonal_idx, draw);
-    }
 }
 
-impl Default for PathFinderRuntime {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Query-local A* values initialized from the graph's exact authored fields.
+/// Geometry is read independently from `PathGraphNode` and never mutated by
+/// the query, including when its scratch storage serves repeated requests.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct NodeSearchState {
+    visited: bool,
+    distance_from_source: f32,
+    distance_to_goal: f32,
+    score: f32,
+    previous_link_on_path: Option<LinkIdx>,
+    leave_place: u8,
+    enter_place: u8,
 }
 
-impl PathFinderRuntime {
-    pub fn new() -> Self {
+impl NodeSearchState {
+    fn capture(node: &PathGraphNode) -> Self {
         Self {
-            graph: PathGraph::new(),
-            number_of_attempts: 1,
-            search_nodes: Vec::new(),
-            open_nodes: std::collections::VecDeque::new(),
-            shortest_distance_found: 2e10,
-            current_layer: 0,
-            current_half_diagonal_idx: 0,
-            current_half_diagonal: MoveBoxHalfDiagonal::ZERO,
-            current_motion_area: (0, 0),
-            current_graph_area: (0, 0),
+            visited: node.visited,
+            distance_from_source: node.distance_from_source,
+            distance_to_goal: node.distance_to_goal,
+            score: node.score,
+            previous_link_on_path: node.previous_link_on_path,
+            leave_place: node.leave_place,
+            enter_place: node.enter_place,
         }
     }
+}
 
-    // ── Request queue (retained for cancel-only after refactor) ───
-    //
-    // `add_request` / `process_requests` + the `pending_requests`
-    // queue were deleted during the order-queue refactor.  Movement
-    // now takes the synchronous `find_path` path via Move sequence
-    // elements (see `engine::tick::perform_hourglass_inner`'s Move
-    // dispatch), so nothing ever enqueues.  `cancel_requests_for` is
-    // kept as a no-op for call-site compatibility (the former callers
-    // tore down any in-flight request on actor-state resets;
-    // post-refactor the teardown is handled by sequence-element
-    // interruption instead).
-    pub fn cancel_requests_for(&mut self, _actor_id: EntityId) {
-        // no-op: no queue to drain
-    }
-
-    // `make_fast` / `make_slow` / `make_upright` / `make_crouched`
-    // / `process_requests` were deleted along with the
-    // `pending_requests` queue — they only rewrote in-flight queued
-    // requests, and no producer remains.  Mid-path speed/posture
-    // changes now rewrite the Move element's orders directly (see
-    // `posture_transitions.rs::reapply_drunken_deviation`).
-
+impl PathSearch<'_> {
     // ── Core A* ──────────────────────────────────────────────────
 
     /// Find a path from `source` to `goal` within a given layer/area
@@ -1344,14 +1427,14 @@ impl PathFinderRuntime {
             use_first_point,
             "find_path: entry",
         );
-        self.current_layer = layer;
+        self.scratch.current_layer = layer;
         let right_area = self.graph.convert_sector(area) as usize;
 
-        self.current_graph_area = (layer as usize, right_area);
-        self.current_motion_area = (layer as usize, right_area);
+        self.scratch.current_graph_area = (layer as usize, right_area);
+        self.scratch.current_motion_area = (layer as usize, right_area);
 
-        self.current_half_diagonal_idx = half_diagonal_idx;
-        self.current_half_diagonal = self
+        self.scratch.current_half_diagonal_idx = half_diagonal_idx;
+        self.scratch.current_half_diagonal = self
             .graph
             .static_data
             .half_diagonals
@@ -1366,7 +1449,7 @@ impl PathFinderRuntime {
             });
 
         let has_authored_graph_nodes = self
-            .graph
+            .partition
             .layers
             .get(layer as usize)
             .and_then(|areas| areas.get(right_area))
@@ -1436,8 +1519,9 @@ impl PathFinderRuntime {
             path.push(goal);
 
             let mut current_node = end_node_idx;
-            let mut leave_places = self.search_nodes[current_node.0 as usize].leave_place;
-            let mut current_link = self.search_nodes[current_node.0 as usize].previous_link_on_path;
+            let mut leave_places = self.scratch.search_nodes[current_node.0 as usize].leave_place;
+            let mut current_link =
+                self.scratch.search_nodes[current_node.0 as usize].previous_link_on_path;
 
             // Trace back through the path, building waypoints around each node.
             // Loop until the node has no previous link, then fall through to
@@ -1447,10 +1531,11 @@ impl PathFinderRuntime {
             while let Some(link_idx) = current_link {
                 leave_places = self.pass_around_node(link_idx, leave_places, &mut path);
                 current_node = self.graph.static_data.links[link_idx.0 as usize].prev_node;
-                current_link = self.search_nodes[current_node.0 as usize].previous_link_on_path;
+                current_link =
+                    self.scratch.search_nodes[current_node.0 as usize].previous_link_on_path;
             }
 
-            let enter_places = self.search_nodes[current_node.0 as usize].enter_place;
+            let enter_places = self.scratch.search_nodes[current_node.0 as usize].enter_place;
             self.pass_around_last_node(current_node, enter_places, leave_places, &mut path);
 
             path.push(source);
@@ -1492,7 +1577,7 @@ impl PathFinderRuntime {
             });
         }
 
-        let (layer, area) = self.current_motion_area;
+        let (layer, area) = self.scratch.current_motion_area;
         let motion_area = self
             .graph
             .static_data
@@ -1501,16 +1586,14 @@ impl PathFinderRuntime {
             .and_then(|areas| areas.get(area))
             .unwrap_or_else(|| panic!("visibility fallback has no motion area {layer}:{area}"));
         let clearance = self
+            .scratch
             .current_half_diagonal
             .x
-            .max(self.current_half_diagonal.y)
+            .max(self.scratch.current_half_diagonal.y)
             + 6.0;
         let mut points = vec![source, goal];
-        for obstacle in motion_area
-            .motion_obstacles
-            .iter()
-            .filter(|obstacle| obstacle.active)
-        {
+        for &obstacle_index in &self.partition.motion[layer][area] {
+            let obstacle = &motion_area.motion_obstacles[obstacle_index];
             for &corner in &obstacle.polygon {
                 for (dx, dy) in [
                     (-clearance, -clearance),
@@ -1596,11 +1679,11 @@ impl PathFinderRuntime {
         let mut attempts_left = self.number_of_attempts;
 
         // Pop the node with the lowest score, preserving Original insertion order.
-        while let Some(current_idx) = self.open_nodes.pop_front() {
+        while let Some(current_idx) = self.scratch.open_nodes.pop_front() {
             let current_pos = self.graph.nodes[current_idx.0 as usize].position;
             let node_config = self.graph.nodes[current_idx.0 as usize]
                 .configurations
-                .get(self.current_half_diagonal_idx as usize)
+                .get(self.scratch.current_half_diagonal_idx as usize)
                 .copied()
                 .expect("half-diagonal index outside docking configurations");
 
@@ -1614,22 +1697,25 @@ impl PathFinderRuntime {
                             goal,
                             current_idx,
                             dp,
-                            self.current_half_diagonal,
+                            self.scratch.current_half_diagonal,
                             true,
                         );
                         let is_good_indirect = self.is_good_docking_place(
                             goal,
                             current_idx,
                             dp,
-                            self.current_half_diagonal,
+                            self.scratch.current_half_diagonal,
                             false,
                         );
 
                         if is_good_direct || is_good_indirect {
                             // Skip if node has opposing-diagonal-only config (5 or 10)
                             if node_config != 5 && node_config != 10 {
-                                let dock_pt =
-                                    self.docking_point(current_idx, dp, self.current_half_diagonal);
+                                let dock_pt = self.docking_point(
+                                    current_idx,
+                                    dp,
+                                    self.scratch.current_half_diagonal,
+                                );
                                 if self.is_reachable_grid(grid, goal, dock_pt) {
                                     end_place |= dp;
                                 }
@@ -1641,10 +1727,10 @@ impl PathFinderRuntime {
             }
 
             if end_place != 0 {
-                let current_score = self.search_nodes[current_idx.0 as usize].score;
-                if self.shortest_distance_found > current_score {
-                    self.shortest_distance_found = current_score;
-                    self.search_nodes[current_idx.0 as usize].leave_place = end_place;
+                let current_score = self.scratch.search_nodes[current_idx.0 as usize].score;
+                if self.scratch.shortest_distance_found > current_score {
+                    self.scratch.shortest_distance_found = current_score;
+                    self.scratch.search_nodes[current_idx.0 as usize].leave_place = end_place;
                     best_node = Some(current_idx);
                     // Decrement-before-check, with unsigned wraparound:
                     // parity with the original engine, where an attempt
@@ -1660,31 +1746,32 @@ impl PathFinderRuntime {
             }
 
             // Expand neighbors
-            let num_links = self.graph.nodes[current_idx.0 as usize].link_indices.len();
+            let num_links = self.partition.links[current_idx.0 as usize].len();
             for link_i in 0..num_links {
-                let link_idx = self.graph.nodes[current_idx.0 as usize].link_indices[link_i];
+                let link_idx = self.partition.links[current_idx.0 as usize][link_i];
                 let link = &self.graph.static_data.links[link_idx.0 as usize];
                 let next_node_idx = link.next_node;
 
                 let config = link
                     .config_indices
-                    .get(self.current_half_diagonal_idx as usize)
+                    .get(self.scratch.current_half_diagonal_idx as usize)
                     .copied()
                     .flatten();
 
                 if config.is_some() {
                     // Only expand if node config allows free passage between docking places
                     if node_config != 5 && node_config != 10 {
-                        let new_dist = self.search_nodes[current_idx.0 as usize]
+                        let new_dist = self.scratch.search_nodes[current_idx.0 as usize]
                             .distance_from_source
                             + link.distance;
 
                         if new_dist
-                            < self.search_nodes[next_node_idx.0 as usize].distance_from_source
-                            && new_dist < self.shortest_distance_found
+                            < self.scratch.search_nodes[next_node_idx.0 as usize]
+                                .distance_from_source
+                            && new_dist < self.scratch.shortest_distance_found
                         {
                             let next_position = self.graph.nodes[next_node_idx.0 as usize].position;
-                            let next = &mut self.search_nodes[next_node_idx.0 as usize];
+                            let next = &mut self.scratch.search_nodes[next_node_idx.0 as usize];
                             next.previous_link_on_path = Some(link_idx);
                             next.distance_from_source = new_dist;
 
@@ -1709,16 +1796,16 @@ impl PathFinderRuntime {
     /// Add a node to the sorted open list.
     /// Maintains ascending order by score. Skips if already present.
     fn add_to_open_nodes(&mut self, node: NodeIdx) {
-        let score = self.search_nodes[node.0 as usize].score;
+        let score = self.scratch.search_nodes[node.0 as usize].score;
 
-        if self.open_nodes.is_empty() {
-            self.open_nodes.push_back(node);
+        if self.scratch.open_nodes.is_empty() {
+            self.scratch.open_nodes.push_back(node);
             return;
         }
 
         let mut insert_pos = 0;
-        while insert_pos < self.open_nodes.len() {
-            let existing = self.open_nodes[insert_pos];
+        while insert_pos < self.scratch.open_nodes.len() {
+            let existing = self.scratch.open_nodes[insert_pos];
             // Dedupe only fires for advanced positions (insert_pos > 0):
             // the equality check is inside the loop after the first
             // increment, so a duplicate at index 0 is tolerated. This
@@ -1727,13 +1814,13 @@ impl PathFinderRuntime {
             if insert_pos > 0 && existing == node {
                 return; // Already in list
             }
-            if self.search_nodes[existing.0 as usize].score >= score {
+            if self.scratch.search_nodes[existing.0 as usize].score >= score {
                 break;
             }
             insert_pos += 1;
         }
 
-        self.open_nodes.insert(insert_pos, node);
+        self.scratch.open_nodes.insert(insert_pos, node);
     }
 
     /// Link the source point to reachable graph nodes, populating the open list.
@@ -1778,15 +1865,15 @@ impl PathFinderRuntime {
         goal: MapPoint,
         box_link: &MapBBox,
     ) {
-        let (layer, area) = self.current_graph_area;
-        let hd_idx = self.current_half_diagonal_idx as usize;
-        let hd = self.current_half_diagonal;
+        let (layer, area) = self.scratch.current_graph_area;
+        let hd_idx = self.scratch.current_half_diagonal_idx as usize;
+        let hd = self.scratch.current_half_diagonal;
 
-        let num_obstacles = self.graph.layers[layer][area].len();
+        let num_obstacles = self.partition.layers[layer][area].len();
         for obs_idx in 0..num_obstacles {
-            let num_nodes = self.graph.layers[layer][area][obs_idx].len();
+            let num_nodes = self.partition.layers[layer][area][obs_idx].len();
             for node_i in 0..num_nodes {
-                let node_idx = self.graph.layers[layer][area][obs_idx][node_i];
+                let node_idx = self.partition.layers[layer][area][obs_idx][node_i];
                 let node = &self.graph.nodes[node_idx.0 as usize];
                 let node_config = node
                     .configurations
@@ -1830,7 +1917,7 @@ impl PathFinderRuntime {
                 }
 
                 if start_config != 0 {
-                    let node = &mut self.search_nodes[node_idx.0 as usize];
+                    let node = &mut self.scratch.search_nodes[node_idx.0 as usize];
                     node.enter_place = start_config;
                     node.distance_from_source =
                         MapVec::new(node_position.x - source.x, node_position.y - source.y)
@@ -1851,16 +1938,17 @@ impl PathFinderRuntime {
         // Preserve authored initial docking values and the existing active-area
         // reset exactly, while reusing the query allocation. In particular,
         // inactive nodes must not inherit values from another area's search.
-        self.search_nodes.clear();
-        self.search_nodes
+        self.scratch.search_nodes.clear();
+        self.scratch
+            .search_nodes
             .extend(self.graph.nodes.iter().map(NodeSearchState::capture));
-        self.open_nodes.clear();
-        self.shortest_distance_found = 2e10;
+        self.scratch.open_nodes.clear();
+        self.scratch.shortest_distance_found = 2e10;
 
-        let (layer, area) = self.current_graph_area;
-        for obstacle in &self.graph.layers[layer][area] {
+        let (layer, area) = self.scratch.current_graph_area;
+        for obstacle in &self.partition.layers[layer][area] {
             for &node_idx in obstacle {
-                let node = &mut self.search_nodes[node_idx.0 as usize];
+                let node = &mut self.scratch.search_nodes[node_idx.0 as usize];
                 node.visited = false;
                 node.distance_from_source = 1e10;
                 node.distance_to_goal = 1e10;
@@ -1938,8 +2026,8 @@ impl PathFinderRuntime {
 
         let link_data = &self.graph.static_data.links[link.0 as usize];
         let current_node = link_data.next_node;
-        let hd_idx = self.current_half_diagonal_idx as usize;
-        let hd = self.current_half_diagonal;
+        let hd_idx = self.scratch.current_half_diagonal_idx as usize;
+        let hd = self.scratch.current_half_diagonal;
 
         let config_idx = link_data.config_indices.get(hd_idx).copied().flatten();
         let link_config = match config_idx {
@@ -1983,8 +2071,8 @@ impl PathFinderRuntime {
             return;
         }
 
-        let hd_idx = self.current_half_diagonal_idx as usize;
-        let hd = self.current_half_diagonal;
+        let hd_idx = self.scratch.current_half_diagonal_idx as usize;
+        let hd = self.scratch.current_half_diagonal;
         let common = enter_places & leave_places;
 
         // Fast path: exactly one common docking place
@@ -2148,7 +2236,7 @@ impl PathFinderRuntime {
     /// skeleton line.
     pub fn is_reachable_fast(&self, p1: MapPoint, p2: MapPoint) -> bool {
         let move_seg = geo2d::segment(p1.to_geo(), p2.to_geo());
-        let (layer, area) = self.current_motion_area;
+        let (layer, area) = self.scratch.current_motion_area;
         // Callers must call `set_current_motion_area` before any
         // reachability probe — assert strictly rather than falling back
         // defensively, since returning `true` would silently mark
@@ -2172,14 +2260,14 @@ impl PathFinderRuntime {
     /// Grid-based thick reachability check using motion lines.
     /// Builds a movement corridor and checks for intersecting motion lines.
     pub fn is_reachable_grid(&self, grid: &FastFindGrid, p1: MapPoint, p2: MapPoint) -> bool {
-        let hd = self.current_half_diagonal;
+        let hd = self.scratch.current_half_diagonal;
         let corridor = match FastFindGrid::build_thick_move_corridor(p1, p2, hd) {
             Some(c) => c,
             None => return true, // Zero movement
         };
 
         let line_indices = grid.get_active_motion_lines_for_segments(
-            self.current_layer,
+            self.scratch.current_layer,
             corridor.seg1,
             corridor.seg2,
             &corridor.bbox,
@@ -2196,7 +2284,7 @@ impl PathFinderRuntime {
             tracing::trace!(
                 ?p1,
                 ?p2,
-                layer = self.current_layer,
+                layer = self.scratch.current_layer,
                 seg1 = ?corridor.seg1,
                 seg2 = ?corridor.seg2,
                 bbox = ?corridor.bbox,
@@ -2231,8 +2319,8 @@ impl PathFinderRuntime {
     /// Check if a unit at `point` does not collide with any motion line.
     pub fn object_position_authorized(&self, grid: &FastFindGrid, point: MapPoint) -> bool {
         let hd = MapVec::new(
-            self.current_half_diagonal.x - 1.0,
-            self.current_half_diagonal.y - 1.0,
+            self.scratch.current_half_diagonal.x - 1.0,
+            self.scratch.current_half_diagonal.y - 1.0,
         );
         let bbox = MapBBox::from_corners(
             MapPoint::new(point.x - hd.x, point.y - hd.y),
@@ -2255,14 +2343,14 @@ impl PathFinderRuntime {
             }
         }
 
-        grid.is_position_authorized(&bbox, self.current_layer)
+        grid.is_position_authorized(&bbox, self.scratch.current_layer)
     }
 
     /// Check if it is useful to visit a node from a given point.
     /// Tests whether any docking point is "visible" from the node's perspective.
     fn is_useful_link(&self, point: MapPoint, node: NodeIdx) -> bool {
         let n = &self.graph.nodes[node.0 as usize];
-        let hd = self.current_half_diagonal;
+        let hd = self.scratch.current_half_diagonal;
 
         // Test all four docking positions
         let offsets = [
@@ -2293,205 +2381,6 @@ impl PathFinderRuntime {
         MapVec::new(p2.x - p1.x, p2.y - p1.y).length()
     }
 
-    // ── State management ─────────────────────────────────────────
-
-    /// Change the state of an area, activating/deactivating nodes and links
-    /// based on the new state bitmask.
-    ///
-    /// Returns `true` if any motion obstacles changed activation.
-    ///
-    /// The appeared-obstacles list and grid-line toggle list are
-    /// exposed through [`Self::set_state_area_with_appeared`]; this
-    /// wrapper discards them.
-    pub fn set_state_area(&mut self, layer: usize, area: usize, new_state: u32) -> bool {
-        let mut appeared = Vec::new();
-        let mut line_toggles = Vec::new();
-        let mut sector_toggles = Vec::new();
-        self.set_state_area_with_appeared(
-            layer,
-            area,
-            new_state,
-            &mut appeared,
-            &mut line_toggles,
-            &mut sector_toggles,
-        )
-    }
-
-    /// Like [`Self::set_state_area`] but pushes the bounding boxes of
-    /// motion obstacles that went from inactive → active into
-    /// `appeared` (used downstream to kill actors standing on cells
-    /// that just became blocked) and the grid-line
-    /// `(LineIndex, active)` toggles implied by each obstacle's state
-    /// change into `line_toggles` (so the grid's `line_active` flags
-    /// stay in sync with the motion-obstacle active list).
-    pub fn set_state_area_with_appeared(
-        &mut self,
-        layer: usize,
-        area: usize,
-        new_state: u32,
-        appeared: &mut Vec<AppearedObstacle>,
-        line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
-        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
-    ) -> bool {
-        self.graph.states[layer][area] = new_state;
-        let mut changed = false;
-
-        // Move nodes that don't match new state: active → alternative.
-        // Reverse iteration + `Vec::remove(i)` preserves surviving
-        // element order so deterministic A* tiebreaks stay stable
-        // across state changes.
-        let num_obstacles = self.graph.layers[layer][area].len();
-        for obs_idx in 0..num_obstacles {
-            for node_i in (0..self.graph.layers[layer][area][obs_idx].len()).rev() {
-                let node_idx = self.graph.layers[layer][area][obs_idx][node_i];
-                let required = self.graph.nodes[node_idx.0 as usize].required_state;
-
-                if (required & new_state) != required {
-                    // Move to alternative
-                    self.graph.layers[layer][area][obs_idx].remove(node_i);
-                    self.graph.alternative_layers[layer][area][obs_idx].push(node_idx);
-                    // Move non-matching links to alternative
-                    Self::update_node_links_for_state_static(
-                        &mut self.graph.nodes,
-                        &self.graph.static_data.links,
-                        node_idx,
-                        new_state,
-                    );
-                } else {
-                    // Keep active, update links
-                    Self::update_node_links_for_state_static(
-                        &mut self.graph.nodes,
-                        &self.graph.static_data.links,
-                        node_idx,
-                        new_state,
-                    );
-                }
-            }
-        }
-
-        // Move nodes that now match: alternative → active.
-        // Same reverse-iter + `Vec::remove(i)` pattern as the
-        // active→alternative pass.
-        // Note: neither node-move branch touches `changed`; that flag
-        // tracks only motion-obstacle transitions further down.
-        let num_alt_obstacles = self.graph.alternative_layers[layer][area].len();
-        for obs_idx in 0..num_alt_obstacles {
-            for node_i in (0..self.graph.alternative_layers[layer][area][obs_idx].len()).rev() {
-                let node_idx = self.graph.alternative_layers[layer][area][obs_idx][node_i];
-                let required = self.graph.nodes[node_idx.0 as usize].required_state;
-
-                if (required & new_state) == required {
-                    // Move to active
-                    self.graph.alternative_layers[layer][area][obs_idx].remove(node_i);
-                    self.graph.layers[layer][area][obs_idx].push(node_idx);
-                    Self::update_node_links_for_state_static(
-                        &mut self.graph.nodes,
-                        &self.graph.static_data.links,
-                        node_idx,
-                        new_state,
-                    );
-                }
-            }
-        }
-
-        // Motion-obstacle activation swap: flip each obstacle's
-        // `active` flag and record freshly-active obstacles into
-        // `appeared`.
-        if let Some(area_ref) = self
-            .graph
-            .static_mut()
-            .move_layers
-            .get_mut(layer)
-            .and_then(|l| l.get_mut(area))
-        {
-            for obs in &mut area_ref.motion_obstacles {
-                let should_be_active = (obs.state_id & new_state) == obs.state_id;
-                if obs.active != should_be_active {
-                    obs.active = should_be_active;
-                    changed = true;
-                    if should_be_active {
-                        appeared.push(AppearedObstacle {
-                            bounding_box: obs.bounding_box,
-                            polygon: obs.polygon.clone(),
-                        });
-                    }
-                    // Grid-line sync: keep the fast-find grid's
-                    // `line_active` flags in sync with the obstacle's
-                    // active state.
-                    for &line_idx in &obs.grid_line_indices {
-                        line_toggles.push((line_idx, should_be_active));
-                    }
-                    let sector_index = obs.grid_sector_index.unwrap_or_else(|| {
-                        panic!(
-                            "pathfinder motion obstacle on layer {layer}, area {area} has no fast-grid sector binding"
-                        )
-                    });
-                    sector_toggles.push((sector_index, should_be_active));
-                }
-            }
-        }
-
-        changed
-    }
-
-    /// Toggle a specific obstacle's state bit.
-    ///
-    /// Pushes bounding boxes of motion obstacles that transitioned from
-    /// inactive → active into `appeared` (used downstream for actor
-    /// kills on cells that just became blocked).
-    pub fn toggle_obstacle_state(
-        &mut self,
-        layer: usize,
-        area: usize,
-        changing_obstacle: u16,
-        appeared: &mut Vec<AppearedObstacle>,
-        line_toggles: &mut Vec<(crate::fast_find_grid::LineIndex, bool)>,
-        sector_toggles: &mut Vec<(crate::fast_find_grid::SectorIndex, bool)>,
-    ) -> bool {
-        let bit = 1u32 << ((changing_obstacle as u32) << 1);
-        let current = self.graph.states[layer][area];
-        let new_state = if (current & bit) != 0 {
-            current + bit
-        } else {
-            current.wrapping_sub(bit)
-        };
-        self.set_state_area_with_appeared(
-            layer,
-            area,
-            new_state,
-            appeared,
-            line_toggles,
-            sector_toggles,
-        )
-    }
-
-    /// Initialize all area states to the given value.
-    pub fn initialize_all_states(&mut self, state: u32) {
-        for layer_states in &mut self.graph.states {
-            for area_state in layer_states.iter_mut() {
-                *area_state = state;
-            }
-        }
-    }
-
-    /// Apply all current states (move nodes/links accordingly).
-    pub fn set_states_all(&mut self) {
-        let num_layers = self.graph.layers.len();
-        for layer in 0..num_layers {
-            let num_areas = self.graph.layers[layer].len();
-            for area in 0..num_areas {
-                let state = self.graph.states[layer][area];
-                self.set_state_area(layer, area, state);
-            }
-        }
-    }
-
-    /// Initialize to the default state (alternating bits = 0x55555555).
-    pub fn initialize(&mut self) {
-        self.initialize_all_states(0x5555_5555); // 1010101010... in binary
-        self.set_states_all();
-    }
-
     // ── Debug visualisation ──────────────────────────────────────
 
     /// Iterate every drawable graph link segment for the motion-graph
@@ -2515,12 +2404,11 @@ impl PathFinderRuntime {
             return;
         };
 
-        for layer in &self.graph.layers {
+        for layer in &self.partition.layers {
             for area in layer {
                 for obstacle in area {
                     for &node_idx in obstacle {
-                        let node = &self.graph.nodes[node_idx.0 as usize];
-                        for &link_idx in &node.link_indices {
+                        for &link_idx in &self.partition.links[node_idx.0 as usize] {
                             let link = &static_data.links[link_idx.0 as usize];
                             // Skip dead-config sentinel
                             // (`start_configurations == 255`), stored
@@ -2581,7 +2469,7 @@ impl PathFinderRuntime {
             (BOTTOM_RIGHT, 10.0, 10.0),
         ];
 
-        for layer in &self.graph.layers {
+        for layer in &self.partition.layers {
             for area in layer {
                 for obstacle in area {
                     for &node_idx in obstacle {
@@ -2600,50 +2488,6 @@ impl PathFinderRuntime {
                         }
                     }
                 }
-            }
-        }
-    }
-
-    // ── Link state helpers ───────────────────────────────────────
-
-    /// Update a node's links: move matching alternatives to active and vice versa.
-    /// Static version to avoid borrow checker issues when graph layers are also borrowed.
-    ///
-    /// Uses `Vec::remove(i)` (not `swap_remove(i)`) so surviving link
-    /// order is preserved. The open-list heap still picks shortest
-    /// paths, but deterministic A* tiebreaks between equal-cost edges
-    /// depend on stable per-node link iteration order.
-    fn update_node_links_for_state_static(
-        nodes: &mut [PathGraphNode],
-        links: &[PathGraphLink],
-        node_idx: NodeIdx,
-        state: u32,
-    ) {
-        let node = &mut nodes[node_idx.0 as usize];
-
-        // Active → alternative
-        let mut i = 0;
-        while i < node.link_indices.len() {
-            let link_idx = node.link_indices[i];
-            let link = &links[link_idx.0 as usize];
-            if (link.required_state & state) != link.required_state {
-                node.alternative_link_indices.push(link_idx);
-                node.link_indices.remove(i);
-            } else {
-                i += 1;
-            }
-        }
-
-        // Alternative → active
-        let mut i = 0;
-        while i < node.alternative_link_indices.len() {
-            let link_idx = node.alternative_link_indices[i];
-            let link = &links[link_idx.0 as usize];
-            if (link.required_state & state) == link.required_state {
-                node.link_indices.push(link_idx);
-                node.alternative_link_indices.remove(i);
-            } else {
-                i += 1;
             }
         }
     }
@@ -2679,40 +2523,33 @@ mod tests {
         let mut grid = FastFindGrid::new();
         grid.size_map(4, 4);
         grid.allocate_layers(1);
-
-        let build_runtime = |attempts: u16| {
-            let mut runtime = PathFinderRuntime::new();
-            runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
-                polygon: Vec::new(),
-                skeleton: Vec::new(),
-                motion_obstacles: Vec::new(),
-            }]];
-            runtime.graph.nodes = vec![
-                goal_reachable_test_node(MapPoint::new(100.0, 100.0), 42.0),
-                goal_reachable_test_node(MapPoint::new(120.0, 100.0), 10.0),
-            ];
-            runtime.search_nodes = runtime
-                .graph
-                .nodes
-                .iter()
-                .map(NodeSearchState::capture)
-                .collect();
-            runtime.open_nodes = [NodeIdx(0), NodeIdx(1)].into();
-            runtime.number_of_attempts = attempts;
-            runtime
-        };
-        let goal = MapPoint::new(200.0, 150.0);
-
-        // A budget of 1 stops at the first node that can dock the goal.
-        let mut runtime = build_runtime(1);
-        assert_eq!(runtime.find_path_nodes(&grid, goal), Some(NodeIdx(0)));
-
-        // A budget of 0 wraps on the first hit (matching the original
-        // engine's unsigned counter) and behaves as effectively
-        // unlimited: the search keeps going, exhausts the open list,
-        // and returns the better-scored node.
-        let mut runtime = build_runtime(0);
-        assert_eq!(runtime.find_path_nodes(&grid, goal), Some(NodeIdx(1)));
+        let mut graph = PathGraph::new();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]];
+        graph.nodes = vec![
+            goal_reachable_test_node(MapPoint::new(100.0, 100.0), 42.0),
+            goal_reachable_test_node(MapPoint::new(120.0, 100.0), 10.0),
+        ];
+        let partition = PathPartition::from_graph(&graph);
+        for (attempts, expected) in [(1, NodeIdx(0)), (0, NodeIdx(1))] {
+            let mut scratch = PathSearchScratch::default();
+            scratch.shortest_distance_found = 2e10;
+            scratch.search_nodes = graph.nodes.iter().map(NodeSearchState::capture).collect();
+            scratch.open_nodes = [NodeIdx(0), NodeIdx(1)].into();
+            let mut search = PathSearch {
+                graph: &graph,
+                partition: &partition,
+                number_of_attempts: attempts,
+                scratch: &mut scratch,
+            };
+            assert_eq!(
+                search.find_path_nodes(&grid, MapPoint::new(200.0, 150.0)),
+                Some(expected)
+            );
+        }
     }
 
     #[test]
@@ -2793,81 +2630,49 @@ mod tests {
     }
 
     #[test]
-    fn default_initialization_matches_runtime_partition_and_retires_query_cache() {
+    fn default_initialization_partitions_nodes_and_preserves_authored_geometry() {
         let masks = [0, 1, 2, 3, 0x4000_0000, 0x8000_0000, u32::MAX];
         let mut graph = PathGraph::new();
-        let mut grid = FastFindGrid::new();
-        grid.line_active = vec![false; masks.len()];
         graph.states = vec![vec![u32::MAX]];
         graph.layers = vec![vec![vec![Vec::new()]]];
         graph.alternative_layers = graph.layers.clone();
-        let mut obstacles = Vec::new();
-        for (index, state_id) in masks.into_iter().enumerate() {
-            let mut node = goal_reachable_test_node(MapPoint::new(index as f32, 0.0), 0.0);
-            node.required_state = state_id;
-            graph.nodes.push(node);
-            graph.layers[0][0][0].push(NodeIdx(index as u32));
-            obstacles.push(MotionObstacle {
-                state_id,
-                active: index % 2 == 0,
-                bounding_box: MapBBox::default(),
-                polygon: Vec::new(),
-                grid_sector_index: crate::fast_find_grid::SectorIndex::new(index as u32),
-                grid_line_indices: vec![
-                    crate::fast_find_grid::LineIndex::new(index as u32).unwrap(),
-                ],
-            });
-        }
         graph.static_mut().move_layers = vec![vec![MotionArea {
             polygon: Vec::new(),
             skeleton: Vec::new(),
-            motion_obstacles: obstacles,
+            motion_obstacles: Vec::new(),
         }]];
-        let original = serde_json::to_value(&graph).unwrap();
-        // Independent reference: the previous initializer fully partitions a
-        // temporary runtime graph before retaining only states and line flags.
-        let mut reference = PathFinderRuntime::new();
-        reference.graph = graph.clone();
-        reference.initialize();
-        let expected_lines: Vec<_> = reference.graph.static_data.move_layers[0][0]
-            .motion_obstacles
-            .iter()
-            .map(|obstacle| obstacle.active)
-            .collect();
+        for (index, mask) in masks.into_iter().enumerate() {
+            let mut node = goal_reachable_test_node(MapPoint::new(index as f32, 0.0), 0.0);
+            node.required_state = mask;
+            graph.nodes.push(node);
+            graph.layers[0][0][0].push(NodeIdx(index as u32));
+        }
+        let authored = serde_json::to_value(&graph).unwrap();
         let mut pathfinder = PathFinder::new();
-        pathfinder.number_of_attempts = 99;
-        pathfinder.states = vec![vec![0]];
-        pathfinder.cache = Some(Box::new(PathFinderCache {
-            runtime: reference.clone(),
-            states_key: vec![vec![0]],
-        }));
-        pathfinder.initialize_from_graph(&graph, &mut grid);
-        assert!(
-            pathfinder.cache.is_none(),
-            "a new level must retire its query workspace"
-        );
-        assert_eq!(pathfinder.number_of_attempts, reference.number_of_attempts);
-        assert_eq!(pathfinder.states, reference.graph.states);
-        assert_eq!(grid.line_active, expected_lines);
-        assert_eq!(serde_json::to_value(&graph).unwrap(), original);
+        pathfinder.initialize_from_graph(&graph, &mut FastFindGrid::new());
+        assert_eq!(pathfinder.states, vec![vec![0x5555_5555]]);
         assert_eq!(
-            serde_json::to_value(&pathfinder.runtime_from_graph(&graph).graph).unwrap(),
-            serde_json::to_value(&reference.graph).unwrap(),
-            "lazy query partitioning must preserve node ordering and state exactly"
+            pathfinder.partition.layers[0][0][0],
+            vec![NodeIdx(0), NodeIdx(1), NodeIdx(4)]
         );
+        assert_eq!(
+            pathfinder.partition.alternative_layers[0][0][0],
+            vec![NodeIdx(6), NodeIdx(5), NodeIdx(3), NodeIdx(2)]
+        );
+        assert_eq!(serde_json::to_value(&graph).unwrap(), authored);
     }
 
     #[test]
-    fn motion_obstacle_state_change_emits_matching_sector_and_line_toggles() {
+    fn motion_obstacle_state_changes_update_grid_and_return_appeared_membership() {
         let line = crate::fast_find_grid::LineIndex::new(0).unwrap();
         let sector = crate::fast_find_grid::SectorIndex::new(0).unwrap();
-        let mut runtime = PathFinderRuntime::new();
-        runtime.graph.states = vec![vec![0]];
-        runtime.graph.layers = vec![vec![vec![Vec::new()]]];
-        runtime.graph.alternative_layers = runtime.graph.layers.clone();
-        runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
-            skeleton: Vec::new(),
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![1]];
+        graph.layers = vec![vec![vec![Vec::new()]]];
+        graph.alternative_layers = graph.layers.clone();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
             polygon: Vec::new(),
+            skeleton: Vec::new(),
             motion_obstacles: vec![MotionObstacle {
                 state_id: 2,
                 active: false,
@@ -2877,80 +2682,37 @@ mod tests {
                 grid_line_indices: vec![line],
             }],
         }]];
-
-        let mut appeared = Vec::new();
-        let mut line_toggles = Vec::new();
-        let mut sector_toggles = Vec::new();
-        assert!(runtime.set_state_area_with_appeared(
-            0,
-            0,
-            2,
-            &mut appeared,
-            &mut line_toggles,
-            &mut sector_toggles,
-        ));
-
-        assert_eq!(line_toggles, vec![(line, true)]);
-        assert_eq!(sector_toggles, vec![(sector, true)]);
-
         let mut grid = FastFindGrid::new();
         grid.line_active = vec![false];
         grid.sector_active = vec![false];
-        for &(line, active) in &line_toggles {
-            grid.set_line_active(line, active);
-        }
-        for &(sector, active) in &sector_toggles {
-            grid.set_sector_active(u32::from(sector), active);
-        }
+        let mut pathfinder = PathFinder::new();
+        pathfinder.initialize_from_graph(&graph, &mut grid);
+        pathfinder.restore_states(&graph, &mut grid, vec![vec![1]]);
+        assert_eq!(
+            pathfinder.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0),
+            vec![sector]
+        );
         assert_eq!(grid.line_active, [true]);
         assert_eq!(grid.sector_active, [true]);
-
-        line_toggles.clear();
-        sector_toggles.clear();
-        assert!(runtime.set_state_area_with_appeared(
-            0,
-            0,
-            0,
-            &mut appeared,
-            &mut line_toggles,
-            &mut sector_toggles,
-        ));
-        for &(line, active) in &line_toggles {
-            grid.set_line_active(line, active);
-        }
-        for &(sector, active) in &sector_toggles {
-            grid.set_sector_active(u32::from(sector), active);
-        }
-        assert_eq!(line_toggles, vec![(line, false)]);
-        assert_eq!(sector_toggles, vec![(sector, false)]);
+        assert!(
+            pathfinder
+                .toggle_obstacle_state(&graph, &mut grid, 0, 0, 0)
+                .is_empty()
+        );
         assert_eq!(grid.line_active, [false]);
         assert_eq!(grid.sector_active, [false]);
     }
 
     #[test]
-    fn motion_obstacle_legacy_serde_defaults_missing_sector_binding() {
-        let obstacle: MotionObstacle = serde_json::from_value(serde_json::json!({
-            "state_id": 1,
-            "active": true,
-            "bounding_box": null,
-            "polygon": [],
-            "grid_line_indices": []
-        }))
-        .expect("legacy motion obstacle shape remains readable");
-
-        assert_eq!(obstacle.grid_sector_index, None);
-    }
-
-    #[test]
-    #[should_panic(expected = "has no fast-grid sector binding")]
+    #[should_panic(expected = "motion obstacle lacks sector binding")]
     fn motion_obstacle_state_change_rejects_missing_sector_binding() {
-        let mut runtime = PathFinderRuntime::new();
-        runtime.graph.states = vec![vec![0]];
-        runtime.graph.layers = vec![vec![vec![Vec::new()]]];
-        runtime.graph.alternative_layers = runtime.graph.layers.clone();
-        runtime.graph.static_mut().move_layers = vec![vec![MotionArea {
-            skeleton: Vec::new(),
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![1]];
+        graph.layers = vec![vec![vec![Vec::new()]]];
+        graph.alternative_layers = graph.layers.clone();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
             polygon: Vec::new(),
+            skeleton: Vec::new(),
             motion_obstacles: vec![MotionObstacle {
                 state_id: 2,
                 active: false,
@@ -2960,15 +2722,10 @@ mod tests {
                 grid_line_indices: Vec::new(),
             }],
         }]];
-
-        runtime.set_state_area_with_appeared(
-            0,
-            0,
-            2,
-            &mut Vec::new(),
-            &mut Vec::new(),
-            &mut Vec::new(),
-        );
+        let mut finder = PathFinder::new();
+        finder.states = graph.states.clone();
+        finder.partition = std::sync::Arc::new(PathPartition::from_graph(&graph));
+        finder.toggle_obstacle_state(&graph, &mut FastFindGrid::new(), 0, 0, 0);
     }
 
     #[test]
@@ -3001,8 +2758,8 @@ mod tests {
 
     #[test]
     fn test_docking_point_positions() {
-        let mut runtime = PathFinderRuntime::new();
-        runtime.graph.nodes.push(PathGraphNode {
+        let mut graph = PathGraph::new();
+        graph.nodes.push(PathGraphNode {
             position: MapPoint::new(100.0, 100.0),
             vector_to_node: MapVec::ZERO,
             vector_from_node: MapVec::ZERO,
@@ -3021,6 +2778,14 @@ mod tests {
 
         let node = NodeIdx(0);
         let hd = MoveBoxHalfDiagonal::new(10.0, 8.0);
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        let runtime = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
 
         assert_eq!(
             runtime.docking_point(node, TOP_LEFT, hd),
@@ -3042,43 +2807,48 @@ mod tests {
 
     #[test]
     fn test_estimate_distance() {
-        let d =
-            PathFinderRuntime::estimate_distance(MapPoint::new(0.0, 0.0), MapPoint::new(3.0, 4.0));
+        let d = PathSearch::estimate_distance(MapPoint::new(0.0, 0.0), MapPoint::new(3.0, 4.0));
         assert!((d - 5.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_is_reachable_fast_no_skeleton() {
-        let mut runtime = PathFinderRuntime::new();
+        let mut graph = PathGraph::new();
         // Empty motion area — everything is reachable
-        runtime
-            .graph
-            .static_mut()
-            .move_layers
-            .push(vec![MotionArea {
-                polygon: Vec::new(),
-                skeleton: Vec::new(),
-                motion_obstacles: Vec::new(),
-            }]);
-        runtime.current_motion_area = (0, 0);
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]);
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        let runtime = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
 
         assert!(runtime.is_reachable_fast(MapPoint::new(0.0, 0.0), MapPoint::new(100.0, 100.0)));
     }
 
     #[test]
     fn test_is_reachable_fast_with_skeleton() {
-        let mut runtime = PathFinderRuntime::new();
+        let mut graph = PathGraph::new();
         // Horizontal skeleton line at y=50
-        runtime
-            .graph
-            .static_mut()
-            .move_layers
-            .push(vec![MotionArea {
-                polygon: Vec::new(),
-                skeleton: vec![geo2d::segment(geo2d::pt(0.0, 50.0), geo2d::pt(200.0, 50.0))],
-                motion_obstacles: Vec::new(),
-            }]);
-        runtime.current_motion_area = (0, 0);
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: vec![geo2d::segment(geo2d::pt(0.0, 50.0), geo2d::pt(200.0, 50.0))],
+            motion_obstacles: Vec::new(),
+        }]);
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        let runtime = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
 
         // Movement that crosses the skeleton
         assert!(!runtime.is_reachable_fast(MapPoint::new(50.0, 30.0), MapPoint::new(50.0, 70.0)));
@@ -3189,7 +2959,10 @@ mod tests {
         graph.alternative_layers =
             vec![vec![vec![Vec::new(), Vec::new()], vec![Vec::new()], vec![]]];
         graph.states = vec![vec![0, 0, 0]];
-        pf.states = graph.states.clone();
+        let mut grid = FastFindGrid::new();
+        grid.sector_active = vec![false];
+        pf.initialize_from_graph(&graph, &mut grid);
+        pf.restore_states(&graph, &mut grid, graph.states.clone());
 
         // A patch whose stream-deserialised `pathfinder_sector` is 3
         // targets area 1. If `toggle_obstacle_state` were called with
@@ -3200,18 +2973,7 @@ mod tests {
         let area = graph.try_convert_sector(sector).unwrap() as usize;
         assert_eq!(area, 1);
 
-        let mut appeared = Vec::new();
-        let mut line_toggles = Vec::new();
-        let mut sector_toggles = Vec::new();
-        pf.toggle_obstacle_state(
-            &graph,
-            0,
-            area,
-            0,
-            &mut appeared,
-            &mut line_toggles,
-            &mut sector_toggles,
-        );
+        pf.toggle_obstacle_state(&graph, &mut grid, 0, area, 0);
         assert_ne!(
             pf.states[0][1], 0,
             "toggling obstacle 0 in converted area 1 must mutate its state"
@@ -3227,94 +2989,174 @@ mod tests {
     }
 
     #[test]
-    fn test_state_management_basics() {
-        let mut runtime = PathFinderRuntime::new();
+    fn state_transition_history_survives_clone_and_serialization() {
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![1]];
+        graph.layers = vec![vec![vec![vec![NodeIdx(0), NodeIdx(1), NodeIdx(2)]]]];
+        graph.alternative_layers = vec![vec![vec![Vec::new()]]];
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]];
+        for (index, mask) in [1, 0, 1].into_iter().enumerate() {
+            let mut node = goal_reachable_test_node(MapPoint::new(index as f32, 0.0), 0.0);
+            node.required_state = mask;
+            graph.nodes.push(node);
+        }
+        let mut finder = PathFinder::new();
+        let mut grid = FastFindGrid::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+        finder.restore_states(&graph, &mut grid, vec![vec![1]]);
+        finder.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0);
+        assert_eq!(finder.partition.layers[0][0][0], vec![NodeIdx(1)]);
+        assert_eq!(
+            finder.partition.alternative_layers[0][0][0],
+            vec![NodeIdx(2), NodeIdx(0)]
+        );
+        finder.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0);
+        let expected = vec![NodeIdx(1), NodeIdx(0), NodeIdx(2)];
+        assert_eq!(finder.partition.layers[0][0][0], expected);
+        let mut branch = finder.clone();
+        branch.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0);
+        assert_eq!(branch.partition.layers[0][0][0], vec![NodeIdx(1)]);
+        assert_eq!(finder.partition.layers[0][0][0], expected);
+        let cloned = finder.clone();
+        let decoded: PathFinder = bitcode::decode(&bitcode::encode(&finder)).unwrap();
+        let json: PathFinder =
+            serde_json::from_value(serde_json::to_value(&finder).unwrap()).unwrap();
+        for restored in [cloned, decoded, json] {
+            assert_eq!(restored.partition.layers[0][0][0], expected);
+            assert_eq!(restored.states, vec![vec![1]]);
+        }
+        finder.restore_states(&graph, &mut grid, vec![vec![1]]);
+        assert_eq!(finder.partition.layers[0][0][0], expected);
+        let mut native = PathFinder::new();
+        native.initialize_from_graph(&graph, &mut grid);
+        native.restore_states(&graph, &mut grid, vec![vec![1]]);
+        assert_eq!(
+            native.partition.layers[0][0][0],
+            vec![NodeIdx(0), NodeIdx(1), NodeIdx(2)]
+        );
+    }
 
-        // Set up a minimal graph with one layer, one area, one obstacle, two nodes
-        runtime.graph.nodes.push(PathGraphNode {
-            position: MapPoint::new(10.0, 10.0),
-            vector_to_node: MapVec::ZERO,
-            vector_from_node: MapVec::ZERO,
-            required_state: 0, // Always active (matches any state)
-            configurations: vec![15],
-            link_indices: Vec::new(),
-            alternative_link_indices: Vec::new(),
-            visited: false,
-            distance_from_source: 0.0,
-            distance_to_goal: 0.0,
-            score: 0.0,
-            previous_link_on_path: None,
-            leave_place: 0,
-            enter_place: 0,
-        });
-        runtime.graph.nodes.push(PathGraphNode {
-            position: MapPoint::new(50.0, 50.0),
-            vector_to_node: MapVec::ZERO,
-            vector_from_node: MapVec::ZERO,
-            required_state: 1, // Only active when bit 0 is set
-            configurations: vec![15],
-            link_indices: Vec::new(),
-            alternative_link_indices: Vec::new(),
-            visited: false,
-            distance_from_source: 0.0,
-            distance_to_goal: 0.0,
-            score: 0.0,
-            previous_link_on_path: None,
-            leave_place: 0,
-            enter_place: 0,
-        });
+    #[test]
+    fn obstacle_toggle_leaves_unchanged_members_grid_flags_untouched() {
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![0]];
+        graph.layers = vec![vec![Vec::new()]];
+        graph.alternative_layers = graph.layers.clone();
+        let sector_a = crate::fast_find_grid::SectorIndex::new(0).unwrap();
+        let line_a = crate::fast_find_grid::LineIndex::new(0).unwrap();
+        let line_b = crate::fast_find_grid::LineIndex::new(1).unwrap();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: [1, 0]
+                .into_iter()
+                .enumerate()
+                .map(|(index, state_id)| MotionObstacle {
+                    state_id,
+                    active: true,
+                    bounding_box: MapBBox::default(),
+                    polygon: Vec::new(),
+                    grid_sector_index: crate::fast_find_grid::SectorIndex::new(index as u32),
+                    grid_line_indices: vec![
+                        crate::fast_find_grid::LineIndex::new(index as u32).unwrap(),
+                    ],
+                })
+                .collect(),
+        }]];
+        let mut grid = FastFindGrid::new();
+        grid.line_active = vec![true, true];
+        grid.sector_active = vec![true, true];
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+        finder.synchronize_motion_obstacle_sectors(&graph, &mut grid);
 
-        runtime.graph.layers = vec![vec![vec![vec![NodeIdx(0), NodeIdx(1)]]]];
-        runtime.graph.alternative_layers = vec![vec![vec![Vec::new()]]];
-        runtime.graph.states = vec![vec![1]]; // State = 1 (bit 0 set)
+        grid.set_line_active(line_b, false);
+        grid.set_sector_active(1, false);
+        assert!(
+            finder
+                .toggle_obstacle_state(&graph, &mut grid, 0, 0, 0)
+                .is_empty()
+        );
+        assert!(!grid.is_line_active(line_a));
+        assert_eq!(grid.line_active, [false, false]);
+        assert_eq!(grid.sector_active, [false, false]);
 
-        // Both nodes should be active with state=1
-        assert_eq!(runtime.graph.layers[0][0][0].len(), 2);
+        assert_eq!(
+            finder.toggle_obstacle_state(&graph, &mut grid, 0, 0, 0),
+            vec![sector_a]
+        );
+        assert_eq!(grid.line_active, [true, false]);
+        assert_eq!(grid.sector_active, [true, false]);
+    }
 
-        // Change state to 0 — node 1 (required_state=1) should move to alternative
-        runtime.set_state_area(0, 0, 0);
-        assert_eq!(runtime.graph.layers[0][0][0].len(), 1);
-        assert_eq!(runtime.graph.alternative_layers[0][0][0].len(), 1);
-
-        // Change state back to 1 — node 1 should return
-        runtime.set_state_area(0, 0, 1);
-        assert_eq!(runtime.graph.layers[0][0][0].len(), 2);
-        assert_eq!(runtime.graph.alternative_layers[0][0][0].len(), 0);
+    #[test]
+    fn restored_state_words_wrap_when_toggling_obstacles() {
+        let mut graph = PathGraph::new();
+        graph.states = vec![vec![0]];
+        graph.layers = vec![vec![Vec::new()]];
+        graph.alternative_layers = graph.layers.clone();
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]];
+        let mut grid = FastFindGrid::new();
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+        finder.restore_states(&graph, &mut grid, vec![vec![u32::MAX]]);
+        assert!(
+            finder
+                .toggle_obstacle_state(&graph, &mut grid, 0, 0, 0)
+                .is_empty()
+        );
+        assert_eq!(finder.states, vec![vec![0]]);
+        assert!(
+            finder
+                .toggle_obstacle_state(&graph, &mut grid, 0, 0, 0)
+                .is_empty()
+        );
+        assert_eq!(finder.states, vec![vec![u32::MAX]]);
     }
 
     #[test]
     fn test_find_path_direct() {
         // Test that when source and goal are directly reachable, we get a single-point path
-        let mut runtime = PathFinderRuntime::new();
+        let mut graph = PathGraph::new();
         let mut grid = FastFindGrid::new();
         grid.size_map(4, 4);
         grid.allocate_layers(1);
 
         // Set up minimal motion area with no skeleton (everything reachable)
-        runtime
-            .graph
-            .static_mut()
-            .move_layers
-            .push(vec![MotionArea {
-                polygon: Vec::new(),
-                skeleton: Vec::new(),
-                motion_obstacles: Vec::new(),
-            }]);
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]);
 
-        runtime
-            .graph
+        graph
             .static_mut()
             .half_diagonals
             .push(MoveBoxHalfDiagonal::new(5.0, 5.0));
-        runtime.graph.layers.push(vec![Vec::new()]); // One layer, one area, no obstacles
-        runtime.graph.alternative_layers.push(vec![Vec::new()]);
-        runtime.graph.states.push(vec![0]);
-        runtime
-            .graph
+        graph.layers.push(vec![Vec::new()]); // One layer, one area, no obstacles
+        graph.alternative_layers.push(vec![Vec::new()]);
+        graph.states.push(vec![0]);
+        graph
             .static_mut()
             .sector_conversion
             .push(SectorToArea { sector: 0, area: 0 });
 
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        let mut runtime = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
         let path = runtime.find_path(
             &grid,
             0,
@@ -3328,6 +3170,29 @@ mod tests {
         let path = path.unwrap();
         // Direct path: just source and goal
         assert_eq!(path.len(), 1); // Only goal (source is at front after reverse, but direct path returns just goal)
+    }
+
+    #[test]
+    fn repeated_searches_reset_query_scratch_without_mutating_partition() {
+        let (graph, mut grid, source, goal) = node_routed_query_fixture();
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+        let before = bitcode::encode(&finder);
+        let path = finder
+            .find_path(&graph, &grid, 0, 0, 0, source, goal, false)
+            .unwrap();
+        assert!(path.len() > 1);
+        assert_eq!(path.last(), Some(&goal));
+        assert!(
+            finder
+                .find_path(&graph, &grid, 0, 0, 0, goal, goal, false)
+                .is_some()
+        );
+        assert_eq!(
+            finder.find_path(&graph, &grid, 0, 0, 0, source, goal, false),
+            Some(path)
+        );
+        assert_eq!(bitcode::encode(&finder), before);
     }
 
     fn node_routed_query_fixture() -> (PathGraph, FastFindGrid, MapPoint, MapPoint) {
@@ -3380,111 +3245,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual query-workspace measurement; run with --ignored --nocapture"]
-    fn node_routed_query_workspace_measurement() {
-        let (graph, grid, source, goal) = node_routed_query_fixture();
-        const QUERIES: usize = 10_000;
-        let mut cached = PathFinder::new();
-        cached.states = graph.states.clone();
-        let expected = cached.find_path(&graph, &grid, 0, 0, 0, source, goal, false);
-        assert!(expected.as_ref().is_some_and(|path| path.len() > 1));
-        let started = std::time::Instant::now();
-        for _ in 0..QUERIES {
-            assert_eq!(
-                cached.find_path(&graph, &grid, 0, 0, 0, source, goal, false),
-                expected
-            );
-        }
-        let cached_ns = started.elapsed().as_nanos();
-        let started = std::time::Instant::now();
-        for _ in 0..QUERIES {
-            let mut fresh = PathFinder::new();
-            fresh.states = graph.states.clone();
-            assert_eq!(
-                fresh.find_path(&graph, &grid, 0, 0, 0, source, goal, false),
-                expected
-            );
-        }
-        eprintln!(
-            "path_workspace_measurement queries={QUERIES} nodes={} cached_ns={cached_ns} fresh_ns={} debug_assertions={}",
-            graph.nodes.len(),
-            started.elapsed().as_nanos(),
-            cfg!(debug_assertions)
-        );
-    }
-
-    #[test]
-    fn memoized_find_path_matches_fresh_pathfinder_across_repeats_and_toggles() {
-        // Repeated queries must match a fresh pathfinder after node-routed A*
-        // and after a state change forces the cached graph to rebuild.
-        let (graph, grid, source, goal) = node_routed_query_fixture();
-        // `use_first_point = false` forbids the direct fast-return, forcing
-        // the query through link_source + A* node expansion every time.
-        let run = |pf: &mut PathFinder| pf.find_path(&graph, &grid, 0, 0, 0, source, goal, false);
-
-        let mut memoized = PathFinder::new();
-        memoized.states = graph.states.clone();
-        let first = run(&mut memoized);
-        assert!(
-            first.as_ref().is_some_and(|path| path.len() > 1),
-            "fixture must produce a node-routed path, got {first:?}"
-        );
-        // A query may change its workspace, never the encoded graph geometry
-        // or historical initial search values embedded in the asset format.
-        let mut isolated = memoized.runtime_from_graph(&graph);
-        let graph_before_query = serde_json::to_vec(&isolated.graph).unwrap();
-        assert_eq!(
-            isolated.find_path(&grid, 0, 0, 0, source, goal, false),
-            first
-        );
-        assert_eq!(
-            serde_json::to_vec(&isolated.graph).unwrap(),
-            graph_before_query
-        );
-
-        // A rejected goal must not poison the next successful search.
-        assert_eq!(
-            memoized.find_path(
-                &graph,
-                &grid,
-                0,
-                0,
-                0,
-                source,
-                MapPoint::new(-100.0, -100.0),
-                false
-            ),
-            None
-        );
-        assert_eq!(run(&mut memoized), first);
-        for _ in 0..3 {
-            let mut fresh = PathFinder::new();
-            fresh.states = graph.states.clone();
-            assert_eq!(run(&mut memoized), run(&mut fresh));
-        }
-
-        // A state change must invalidate the memo (and stay equivalent to a
-        // fresh pathfinder that starts from the same states).
-        let mut appeared = Vec::new();
-        let mut line_toggles = Vec::new();
-        let mut sector_toggles = Vec::new();
-        memoized.toggle_obstacle_state(
-            &graph,
-            0,
-            0,
-            0,
-            &mut appeared,
-            &mut line_toggles,
-            &mut sector_toggles,
-        );
-        let mut fresh = PathFinder::new();
-        fresh.states = memoized.states.clone();
-        assert_eq!(run(&mut memoized), run(&mut fresh));
-    }
-
-    #[test]
     fn link_source_does_not_bypass_blocked_docking_corridor() {
-        let mut runtime = PathFinderRuntime::new();
+        let mut graph = PathGraph::new();
         let mut grid = FastFindGrid::new();
         grid.size_map(4, 4);
         grid.allocate_layers(1);
@@ -3503,16 +3265,12 @@ mod tests {
             0,
         );
 
-        runtime
-            .graph
-            .static_mut()
-            .move_layers
-            .push(vec![MotionArea {
-                polygon: Vec::new(),
-                skeleton: Vec::new(),
-                motion_obstacles: Vec::new(),
-            }]);
-        runtime.graph.nodes.push(PathGraphNode {
+        graph.static_mut().move_layers.push(vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: Vec::new(),
+        }]);
+        graph.nodes.push(PathGraphNode {
             position: MapPoint::new(100.0, 100.0),
             vector_to_node: MapVec::new(0.0, 1.0),
             vector_from_node: MapVec::new(0.0, -1.0),
@@ -3528,24 +3286,30 @@ mod tests {
             leave_place: 0,
             enter_place: 0,
         });
-        runtime.graph.layers = vec![vec![vec![vec![NodeIdx(0)]]]];
-        runtime.current_layer = 0;
-        runtime.current_graph_area = (0, 0);
-        runtime.current_motion_area = (0, 0);
-        runtime.current_half_diagonal_idx = 0;
-        runtime.current_half_diagonal = MoveBoxHalfDiagonal::new(10.0, 10.0);
+        graph.layers = vec![vec![vec![vec![NodeIdx(0)]]]];
+        graph.alternative_layers = vec![vec![vec![Vec::new()]]];
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        scratch.current_half_diagonal = MoveBoxHalfDiagonal::new(10.0, 10.0);
+        let mut runtime = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
 
         let source = MapPoint::new(50.0, 100.0);
         let goal = MapPoint::new(120.0, 100.0);
-        let docking = runtime.docking_point(NodeIdx(0), TOP_LEFT, runtime.current_half_diagonal);
+        let docking =
+            runtime.docking_point(NodeIdx(0), TOP_LEFT, runtime.scratch.current_half_diagonal);
         assert!(runtime.object_position_authorized(&grid, source));
         assert!(!runtime.is_reachable_grid(&grid, source, docking));
 
         runtime.reset_graph();
         runtime.link_source(&grid, source, goal);
 
-        assert!(runtime.open_nodes.is_empty());
-        assert!(!runtime.search_nodes[0].visited);
+        assert!(runtime.scratch.open_nodes.is_empty());
+        assert!(!runtime.scratch.search_nodes[0].visited);
     }
 
     #[test]

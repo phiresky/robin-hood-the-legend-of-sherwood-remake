@@ -299,6 +299,7 @@ impl EngineInner {
                 .set_position_map(crate::coordinates::MapPoint::from_world_xyz(
                     pos.x, pos.y, pos.z,
                 ));
+            p.element.sprite.compute_display_depth();
         }
 
         // ── Sting commit: when a non-stinging wasp with a victim

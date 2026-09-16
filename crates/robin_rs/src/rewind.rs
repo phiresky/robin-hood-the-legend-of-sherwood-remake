@@ -1,11 +1,10 @@
 //! Hold-to-rewind debug feature.
 //!
-//! Periodically clones rollback sim state (`Engine`) every
-//! [`SNAPSHOT_INTERVAL`] frames and
-//! retains them with exponential spacing per [`BUCKET_GROWTH`]
-//! (≈25, 33, 42, 55, 72, 93, 121, 157, 204, 265, … frames back).  While the rewind key is held, the main loop asks the
+//! Periodically captures rollback sim state (`Engine`) every
+//! [`SNAPSHOT_INTERVAL`] frames (10 seconds), retaining every checkpoint
+//! for the mission. While the rewind key is held, the main loop asks the
 //! buffer for the state at `sim_frame - 1`; the buffer locates the
-//! nearest snapshot at or before the target frame, clones it, and
+//! nearest snapshot at or before the target frame, restores it, and
 //! replays complete authoritative frames to reconstruct the exact pre-tick state at
 //! the target frame.
 //!
@@ -13,8 +12,7 @@
 //! primitive used by [`crate::rollback_checker::RollbackChecker`]. It remains
 //! independent of [`robin_engine::replay::ReplayRecorder`] (which writes JSONL
 //! to disk), and has to cover the full span from the oldest retained snapshot
-//! to "now", so it grows with how far back the oldest bucket reaches — bounded
-//! by the exponential retention.
+//! to "now", so checkpoints and the journal grow with mission duration.
 //!
 //! This is a dev / debug feature; bypasses the replay recorder and the
 //! rollback checker while active (both would see the time-reversal as
@@ -22,9 +20,10 @@
 //!
 //! Inspired by the "time rewind" feature in *Braid*.
 //!
-//! Memory cost: ~16 full state clones plus one `Vec<PlayerCommand>`
-//! per tracked frame.  The Engine already clones cheaply enough that
-//! the rollback checker does it on every frame, so this is fine.
+//! Older sparse checkpoints use bitcode + zstd, retaining one live engine.
+//! All 50 dense recent checkpoints remain uncompressed. Active rewind sessions
+//! separately cache up to 25 live states for consecutive backward steps.
+//! Inputs share one command journal.
 
 use std::collections::BTreeMap;
 
@@ -35,29 +34,20 @@ use robin_engine::sim_timeline::{
     TimelineHistory, replay_authoritative_frame,
 };
 
-/// How often (in sim frames) to take a snapshot.  Matches the cadence
-/// of the replay state-hash check so the two systems have similar
-/// memory pressure.
-pub const SNAPSHOT_INTERVAL: u32 = 25;
+/// Ten seconds at the simulation rate of 25 frames per second.
+pub const SNAPSHOT_INTERVAL: u32 = 250;
 
-/// Growth factor between consecutive retained snapshots (measured as
-/// multiples of `SNAPSHOT_INTERVAL` frames).  Each older bucket
-/// targets `interval × BUCKET_GROWTH^i` frames back, so retained
-/// distances become roughly 25, 33, 42, 55, 72, 93, 121, 157, 204,
-/// 265, … frames.  A value of 2.0 would yield only 25, 50, 100, 200,
-/// … — coarser history; 1.3 is dense enough to give smooth rewind
-/// across multi-second spans without blowing up snapshot count
-/// (still ~log1.3(span) snapshots total).
-const BUCKET_GROWTH: f32 = 1.3;
+/// Bound live reconstruction memory independently of checkpoint spacing.
+const SESSION_CACHE_FRAMES: u32 = 25;
 
 /// Mission-owned canonical in-memory timeline: one per-frame command journal
-/// plus dense multiplayer/checker and exponential interactive-rewind
+/// plus dense multiplayer/checker and fixed-interval interactive-rewind
 /// checkpoint tiers. The historical type name is retained because most of
 /// its public operations are rewind-oriented, but no other live subsystem may
 /// own a parallel command history.
 pub struct RewindBuffer {
     /// Shared checkpoint + command-journal lifecycle. Rewind adds only its
-    /// interactive seek cache and exponential-retention policy around this
+    /// interactive seek cache and whole-mission retention policy around this
     /// reusable timeline primitive.
     history: TimelineHistory,
     /// Dense short-horizon checkpoint tier used by multiplayer correction
@@ -72,9 +62,8 @@ pub struct RewindBuffer {
     ///
     /// Pruned on every [`Self::rewind_to`] call to drop entries past
     /// the current target (rewind walks monotonically backward within
-    /// a session), so the cache size stays bounded by one
-    /// [`SNAPSHOT_INTERVAL`] of states — plenty small even at its
-    /// worst case.  Cleared entirely by [`Self::end_session`].
+    /// a session). Only the last [`SESSION_CACHE_FRAMES`] reconstructed
+    /// states are cached. Cleared entirely by [`Self::end_session`].
     session: Option<BTreeMap<u32, Snapshot>>,
 }
 
@@ -85,10 +74,7 @@ impl RewindBuffer {
                 CheckpointPolicy::EveryNthFrame {
                     interval: SNAPSHOT_INTERVAL,
                 },
-                RetentionPolicy::Exponential {
-                    interval: SNAPSHOT_INTERVAL,
-                    growth: BUCKET_GROWTH,
-                },
+                RetentionPolicy::All,
             ),
             recent_checkpoints: SnapshotHistory::new(
                 CheckpointPolicy::EveryFrame,
@@ -102,7 +88,7 @@ impl RewindBuffer {
     }
 
     /// Start a rewind session: subsequent [`Self::rewind_to`] calls
-    /// will cache every reconstructed state so walking backward
+    /// will cache the most recent reconstructed states so walking backward
     /// across consecutive frames hits the cache instead of re-ticking
     /// from a snapshot.  Idempotent — safe to call while a session is
     /// already open.
@@ -141,8 +127,7 @@ impl RewindBuffer {
     }
 
     /// Finalize the frame: commit the pending snapshot (if any), push
-    /// the frame's commands onto the log, and prune the snapshot ring
-    /// to exponential spacing.
+    /// the frame's commands onto the log, and retain periodic checkpoints.
     pub fn end_frame_input(&mut self, input: robin_engine::engine::SimulationFrameInput) {
         if self.history.commit_frame_input(input)
             && let Some(snapshot) = self.pending_recent.take()
@@ -164,8 +149,8 @@ impl RewindBuffer {
     /// explicitly discarded, so reconstruction neither mutates live host state
     /// nor invents a second host/input/display owner.
     ///
-    /// When a session is open (see [`Self::begin_session`]) every
-    /// intermediate state produced by the replay loop is cached so
+    /// When a session is open (see [`Self::begin_session`]) the last 25
+    /// intermediate states produced by the replay loop are cached so
     /// the next backward step (target_frame - 1) reuses the work.
     /// Entries past the current target are pruned here because
     /// rewind walks monotonically backward within a session.
@@ -187,7 +172,7 @@ impl RewindBuffer {
         // state beats a retained snapshot when both are available.
         let mut snapshot = self
             .history
-            .restore(target_frame, RestorePolicy::LatestAtOrBefore)
+            .restore(assets, target_frame, RestorePolicy::LatestAtOrBefore)
             .ok()?;
         if let Some(cache) = &self.session
             && let Some((&cached_frame, cached)) = cache.range(..=target_frame).next_back()
@@ -202,8 +187,13 @@ impl RewindBuffer {
                 replay_authoritative_frame(&mut snapshot, assets, frame).output;
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.
-            if let Some(cache) = &mut self.session {
+            if let Some(cache) = &mut self.session
+                && target_frame - snapshot.frame < SESSION_CACHE_FRAMES
+            {
                 cache.insert(snapshot.frame, snapshot.clone());
+                while cache.len() > SESSION_CACHE_FRAMES as usize {
+                    cache.pop_first();
+                }
             }
         }
 
@@ -249,8 +239,13 @@ impl RewindBuffer {
         self.recent_checkpoints.checkpoint(frame, engine);
     }
 
-    pub fn restore_recent(&self, frame: u32, policy: RestorePolicy) -> Option<Snapshot> {
-        self.recent_checkpoints.restore(frame, policy).ok()
+    pub fn restore_recent(
+        &self,
+        assets: &LevelAssets,
+        frame: u32,
+        policy: RestorePolicy,
+    ) -> Option<Snapshot> {
+        self.recent_checkpoints.restore(assets, frame, policy).ok()
     }
 
     pub fn recent_checkpoints(&self) -> &SnapshotHistory {
@@ -332,6 +327,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn checkpoints_keep_ten_second_cadence_and_the_mission_start() {
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
+            .expect("fixture engine");
+        let mut buffer = RewindBuffer::new();
+        assert_eq!(SNAPSHOT_INTERVAL, 250);
+        for frame in 0..=1000 {
+            buffer.history.begin_frame(frame, &engine);
+            buffer.history.commit_frame_input(Default::default());
+        }
+        for frame in [0, 250, 500, 750, 1000] {
+            assert!(
+                buffer
+                    .history
+                    .restore(&assets, frame, RestorePolicy::Exact)
+                    .is_ok()
+            );
+        }
+        for frame in [25, 249, 251, 999] {
+            assert!(
+                buffer
+                    .history
+                    .restore(&assets, frame, RestorePolicy::Exact)
+                    .is_err()
+            );
+        }
+        buffer.begin_session();
+        assert!(buffer.rewind_to(&assets, 249).is_some());
+        let cache = buffer.session.as_ref().unwrap();
+        assert_eq!(cache.len(), SESSION_CACHE_FRAMES as usize);
+        assert_eq!(cache.first_key_value().unwrap().0, &225);
+    }
+
+    #[test]
     fn session_pruning_keeps_the_target_and_handles_the_maximum_frame() {
         let mut assets = LevelAssets::default();
         let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
@@ -388,7 +417,11 @@ mod tests {
         assert!(buffer.frame_for(frame).is_some());
         assert_eq!(buffer.oldest_cmd_frame(), frame);
         assert!(buffer.rewind_to(&assets, frame).is_some());
-        assert!(buffer.restore_recent(frame, RestorePolicy::Exact).is_some());
+        assert!(
+            buffer
+                .restore_recent(&assets, frame, RestorePolicy::Exact)
+                .is_some()
+        );
     }
 
     #[test]
@@ -542,26 +575,35 @@ mod tests {
         }
         assert!(
             buf.history
-                .restore(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+                .restore(&assets, SNAPSHOT_INTERVAL, RestorePolicy::Exact)
                 .is_ok()
         );
         assert!(
-            buf.restore_recent(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+            buf.restore_recent(&assets, SNAPSHOT_INTERVAL, RestorePolicy::Exact)
                 .is_some()
         );
         buf.begin_session();
         let input = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
 
-        assert!(buf.splice_late_input(1, input));
+        let edited_frame = SNAPSHOT_INTERVAL - 1;
+        assert!(buf.splice_late_input(edited_frame, input));
         assert!(buf.session.is_none());
         assert!(matches!(
-            buf.history.restore(SNAPSHOT_INTERVAL, RestorePolicy::Exact),
+            buf.history
+                .restore(&assets, SNAPSHOT_INTERVAL, RestorePolicy::Exact),
             Err(RestoreError::CheckpointUnavailable { .. })
         ));
-        assert!(buf.history.restore(0, RestorePolicy::Exact).is_ok());
-        assert!(buf.restore_recent(1, RestorePolicy::Exact).is_some());
         assert!(
-            buf.restore_recent(SNAPSHOT_INTERVAL, RestorePolicy::Exact)
+            buf.history
+                .restore(&assets, 0, RestorePolicy::Exact)
+                .is_ok()
+        );
+        assert!(
+            buf.restore_recent(&assets, edited_frame, RestorePolicy::Exact)
+                .is_some()
+        );
+        assert!(
+            buf.restore_recent(&assets, SNAPSHOT_INTERVAL, RestorePolicy::Exact)
                 .is_none(),
             "dense checkpoints derived after the edit must be reconstructed"
         );

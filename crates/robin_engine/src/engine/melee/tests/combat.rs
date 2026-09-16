@@ -98,6 +98,7 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
         },
         None,
     ));
+    engine.install_test_order(target, OrderType::WalkingWithSword);
     {
         let actor = engine
             .get_entity_mut(target)
@@ -105,10 +106,6 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
             .actor_data_mut()
             .unwrap();
         actor.action_state = ActionState::MovingSword;
-        actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: OrderType::WalkingWithSword,
-        });
     }
     let assets = assets_with_sword_profile(0, base_max_distance);
     let collect = |engine: &EngineInner, max_distance| {
@@ -131,40 +128,16 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
 
     // Running shares the port's coarse MovingSword state with walking,
     // but Original's exact animation predicate does not extend it.
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .installed_order
-        .as_mut()
-        .unwrap()
-        .order_type = OrderType::RunningWithSword;
+    engine.install_test_order(target, OrderType::RunningWithSword);
     assert!(collect(&engine, base_max_distance).is_empty());
 
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .installed_order
-        .as_mut()
-        .unwrap()
-        .order_type = OrderType::WaitingSword;
+    engine.install_test_order(target, OrderType::WaitingSword);
     assert!(collect(&engine, base_max_distance).is_empty());
 
     // The ordinary case above admits at 60 + 15 = 75. The 16-bit compound
     // assignment instead wraps 65530 + 15 to 9, excluding the same
     // target rather than comparing against an unbounded float sum.
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .installed_order
-        .as_mut()
-        .unwrap()
-        .order_type = OrderType::WalkingWithSword;
+    engine.install_test_order(target, OrderType::WalkingWithSword);
     assert!(collect(&engine, u16::MAX - 5).is_empty());
 }
 
@@ -368,7 +341,7 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(victim_entity.element_data().direction(), 5);
     assert_eq!(victim_entity.position_iface().layer_goal().get(), 0);
-    assert!(victim_entity.actor_data().unwrap().active_flight.is_none());
+    assert!(!victim_entity.position_iface().is_increment_3d_computed());
 
     engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
 
@@ -833,16 +806,13 @@ fn sword_strike_honour_reads_live_animation_not_action_change_history() {
     let mut assets = assets_with_sword_profile(7, 30);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.rng = SimulationRng::with_original_replay(Vec::new());
+    engine.install_test_order(target, OrderType::BeingHitSword);
     {
         let target = engine.get_entity_mut(target).unwrap();
         let actor = target.actor_data_mut().unwrap();
         actor.old_action = OrderType::Invalid;
         // Recovery admission reads the installed animation while the
         // action-change history can still be invalid.
-        actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: OrderType::BeingHitSword,
-        });
         target.element_data_mut().sprite.last_action = OrderType::BeingHitSword;
     }
     assert!(engine.actor_is_in_sword_recovery(target));
@@ -2898,12 +2868,8 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     let flight = engine
         .get_entity(victim)
         .unwrap()
-        .actor_data()
-        .unwrap()
-        .active_flight
-        .as_deref()
-        .copied()
-        .expect("elevated landing plane must author a hit flight");
+        .position_iface()
+        .get_increment();
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -2924,16 +2890,18 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
         "hit-induced falling must retain takeoff preparation's cached starting 3D point"
     );
 
-    engine.tick_push_flights(&sim, &assets);
+    let motion =
+        engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
+    engine.finish_combat_flight(&sim, &assets, victim, motion);
     let position = engine
         .get_entity(victim)
         .unwrap()
         .position_iface()
         .get_position();
-    assert_eq!(position.z.to_bits(), flight.increment_z.to_bits());
+    assert_eq!(position.z.to_bits(), flight.z.to_bits());
     assert_eq!(
         position.y.to_bits(),
-        (100.0_f32 + flight.increment_y).to_bits(),
+        (100.0_f32 + flight.y).to_bits(),
         "FallingHit accumulates the authored world-space Y increment"
     );
 }
@@ -3173,7 +3141,7 @@ fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
             .actor_data()
             .unwrap()
             .installed_order
-            .map(|order| order.order_type),
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(crate::order::OrderType::DyingSword),
         "the second damage card replaces the first while retaining Original's dying-sword lifecycle"
     );
@@ -4121,14 +4089,19 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     let (enter_sequence, enter_index) = engine
         .orders
         .sequence_manager
-        .pending_elements_for_owner(attacker)
-        .into_iter()
+        .deferred_elements_to_go()
+        .iter()
+        .copied()
         .find(|(sequence, index)| {
             engine
                 .orders
                 .sequence_manager
                 .get_element(*sequence, *index)
-                .is_some_and(|element| element.command == Command::EnterSwordfight)
+                .is_some_and(|element| {
+                    element.owner == Some(attacker)
+                        && element.state != crate::sequence::SequenceState::Interrupted
+                        && element.command == Command::EnterSwordfight
+                })
         })
         .expect("the reciprocal ENTER_SWORDFIGHT must be attacker-owned");
     let enter = engine

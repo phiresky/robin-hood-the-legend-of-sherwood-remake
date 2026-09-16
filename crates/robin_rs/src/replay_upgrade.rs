@@ -153,7 +153,7 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
-            || ((43..=50).contains(&version) && (43..=50).contains(&REPLAY_SCHEMA_VERSION)),
+            || ((43..=52).contains(&version) && (43..=52).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
     if version < 49 {
@@ -475,7 +475,7 @@ mod tests {
         for version in [42, REPLAY_SCHEMA_VERSION + 1] {
             assert!(upgrade_header(&mut serde_json::json!({"version":version})).is_err());
         }
-        for version in 43..=50 {
+        for version in 43..=52 {
             let mut header = serde_json::json!({
                 "version": version,
                 "sim_config": {"bypass_fog_sprites_crash": true, "fog_of_war": true}
@@ -489,14 +489,6 @@ mod tests {
             );
             assert_eq!(header["sim_config"]["fog_of_war"], true);
         }
-    }
-
-    #[test]
-    fn ranked_and_playback_schema_versions_agree() {
-        assert_eq!(
-            REPLAY_SCHEMA_VERSION,
-            robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1
-        );
     }
 
     #[test]

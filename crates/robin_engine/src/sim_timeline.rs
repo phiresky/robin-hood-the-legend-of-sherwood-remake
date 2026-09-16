@@ -22,6 +22,9 @@ use crate::player_command::PlayerInput;
 /// Dense recent rollback snapshots retained for multiplayer correction.
 /// Two seconds at the fixed 25 Hz sim rate.
 pub const RECENT_TIMELINE_HISTORY_FRAMES: usize = 50;
+/// Keep the entire recent rollback window live to avoid per-tick compression
+/// on the game thread. Sparse long-term history still compresses older states.
+pub const UNCOMPRESSED_RECENT_CHECKPOINTS: usize = RECENT_TIMELINE_HISTORY_FRAMES;
 
 /// Decide which pre-tick frames are eligible to become checkpoints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,13 +51,21 @@ impl CheckpointPolicy {
 /// Decide which eligible checkpoints remain in memory.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum RetentionPolicy {
-    Latest { capacity: usize },
-    Exponential { interval: u32, growth: f32 },
+    /// Keep every eligible checkpoint until the timeline is reset or branched.
+    All,
+    Latest {
+        capacity: usize,
+    },
+    Exponential {
+        interval: u32,
+        growth: f32,
+    },
 }
 
 impl RetentionPolicy {
     fn validate(self) {
         match self {
+            Self::All => {}
             Self::Latest { capacity } => {
                 assert!(capacity > 0, "timeline retention capacity must be non-zero");
             }
@@ -290,9 +301,30 @@ impl CommandJournal {
 /// Policy-driven collection of pre-tick simulation checkpoints.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SnapshotHistory {
-    snapshots: VecDeque<SimSnapshot>,
+    snapshots: VecDeque<StoredSnapshot>,
     checkpoint_policy: CheckpointPolicy,
     retention_policy: RetentionPolicy,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct StoredSnapshot {
+    frame: u32,
+    engine: StoredEngine,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum StoredEngine {
+    Live(Engine),
+    Compressed(crate::engine::CompressedEngineSnapshot),
+}
+
+impl From<SimSnapshot> for StoredSnapshot {
+    fn from(snapshot: SimSnapshot) -> Self {
+        Self {
+            frame: snapshot.frame,
+            engine: StoredEngine::Live(snapshot.engine),
+        }
+    }
 }
 
 impl SnapshotHistory {
@@ -333,7 +365,8 @@ impl SnapshotHistory {
     /// nearest periodic frame and the adopted state.
     pub fn replace_with_anchor(&mut self, frame: u32, engine: &Engine) {
         self.snapshots.clear();
-        self.snapshots.push_back(SimSnapshot::new(frame, engine));
+        self.snapshots
+            .push_back(SimSnapshot::new(frame, engine).into());
     }
 
     /// Retain an already-cloned eligible checkpoint.
@@ -355,16 +388,30 @@ impl SnapshotHistory {
                 self.snapshots.pop_back();
             }
         }
-        self.snapshots.push_back(snapshot);
+        self.snapshots.push_back(snapshot.into());
         prune_by_policy(
             &mut self.snapshots,
             |snapshot| snapshot.frame,
             self.retention_policy,
         );
+        let hot = match self.retention_policy {
+            RetentionPolicy::Latest { .. } => UNCOMPRESSED_RECENT_CHECKPOINTS,
+            RetentionPolicy::All | RetentionPolicy::Exponential { .. } => 1,
+        };
+        let cold = self.snapshots.len().saturating_sub(hot);
+        for snapshot in self.snapshots.iter_mut().take(cold) {
+            if let StoredEngine::Live(engine) = &snapshot.engine {
+                snapshot.engine = StoredEngine::Compressed(
+                    crate::engine::CompressedEngineSnapshot::capture(engine)
+                        .expect("compress authoritative timeline checkpoint"),
+                );
+            }
+        }
     }
 
     pub fn restore(
         &self,
+        assets: &LevelAssets,
         target_frame: u32,
         policy: RestorePolicy,
     ) -> Result<SimSnapshot, RestoreError> {
@@ -379,7 +426,16 @@ impl SnapshotHistory {
                 policy,
             });
         };
-        Ok(self.snapshots[index].clone())
+        let stored = &self.snapshots[index];
+        Ok(SimSnapshot {
+            frame: stored.frame,
+            engine: match &stored.engine {
+                StoredEngine::Live(engine) => engine.clone(),
+                StoredEngine::Compressed(snapshot) => snapshot
+                    .restore(assets)
+                    .expect("restore authoritative timeline checkpoint"),
+            },
+        })
     }
 
     pub fn oldest_frame(&self) -> Option<u32> {
@@ -488,10 +544,11 @@ impl TimelineHistory {
 
     pub fn restore(
         &self,
+        assets: &LevelAssets,
         target_frame: u32,
         policy: RestorePolicy,
     ) -> Result<SimSnapshot, RestoreError> {
-        self.checkpoints.restore(target_frame, policy)
+        self.checkpoints.restore(assets, target_frame, policy)
     }
 
     pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
@@ -580,6 +637,7 @@ fn prune_by_policy<T>(
     policy: RetentionPolicy,
 ) {
     match policy {
+        RetentionPolicy::All => {}
         RetentionPolicy::Latest { capacity } => {
             while snapshots.len() > capacity {
                 snapshots.pop_front();
@@ -729,6 +787,85 @@ mod tests {
     }
 
     #[test]
+    fn recent_checkpoints_stay_uncompressed_and_restore_after_branching() {
+        let mut assets = LevelAssets::default();
+        let mut engine =
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let mut history = SnapshotHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 50 },
+        );
+        let mut hashes = Vec::new();
+        for frame in 0..60 {
+            hashes.push(crate::replay::state_hash(&engine));
+            history.checkpoint(frame, &engine);
+            engine.advance_frame(&assets, Default::default()).unwrap();
+        }
+        assert_eq!(history.snapshots.len(), 50);
+        assert_eq!(
+            history
+                .snapshots
+                .iter()
+                .filter(|s| matches!(s.engine, StoredEngine::Live(_)))
+                .count(),
+            50,
+            "all retained recent checkpoints must stay uncompressed"
+        );
+        for frame in [10, 30, 51, 52, 59] {
+            let restored = history
+                .restore(&assets, frame, RestorePolicy::Exact)
+                .unwrap();
+            assert_eq!(
+                crate::replay::state_hash(&restored.engine),
+                hashes[frame as usize]
+            );
+        }
+        history.truncate_after(30);
+        assert!(history.restore(&assets, 31, RestorePolicy::Exact).is_err());
+        let branch = history.restore(&assets, 30, RestorePolicy::Exact).unwrap();
+        history.checkpoint(31, &branch.engine);
+        assert_eq!(
+            crate::replay::state_hash(
+                &history
+                    .restore(&assets, 31, RestorePolicy::Exact)
+                    .unwrap()
+                    .engine
+            ),
+            hashes[30]
+        );
+    }
+
+    #[test]
+    fn long_term_history_still_compresses_and_restores_older_checkpoints() {
+        let mut assets = LevelAssets::default();
+        let mut engine =
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let mut history = SnapshotHistory::new(CheckpointPolicy::EveryFrame, RetentionPolicy::All);
+        let mut hashes = Vec::new();
+        for frame in 0..3 {
+            hashes.push(crate::replay::state_hash(&engine));
+            history.checkpoint(frame, &engine);
+            engine.advance_frame(&assets, Default::default()).unwrap();
+        }
+        assert_eq!(history.snapshots.len(), 3);
+        assert!(matches!(
+            history.snapshots[0].engine,
+            StoredEngine::Compressed(_)
+        ));
+        assert!(matches!(
+            history.snapshots[1].engine,
+            StoredEngine::Compressed(_)
+        ));
+        assert!(matches!(history.snapshots[2].engine, StoredEngine::Live(_)));
+        for (frame, hash) in hashes.into_iter().enumerate() {
+            let restored = history
+                .restore(&assets, frame as u32, RestorePolicy::Exact)
+                .unwrap();
+            assert_eq!(crate::replay::state_hash(&restored.engine), hash);
+        }
+    }
+
+    #[test]
     fn exponential_retention_keeps_old_horizon_bounded() {
         let policy = RetentionPolicy::Exponential {
             interval: 25,
@@ -863,7 +1000,7 @@ mod tests {
         assert_eq!(recorded[0].player_id, command.player_id);
         assert_eq!(
             history
-                .restore(12, RestorePolicy::Exact)
+                .restore(&assets, 12, RestorePolicy::Exact)
                 .expect("frame-12 checkpoint")
                 .frame,
             12
@@ -901,7 +1038,7 @@ mod tests {
         assert_eq!(history.next_record_frame(), 14);
         assert_eq!(
             history
-                .restore(13, RestorePolicy::Exact)
+                .restore(&assets, 13, RestorePolicy::Exact)
                 .expect("branch-point checkpoint")
                 .frame,
             13
@@ -930,14 +1067,14 @@ mod tests {
                 expected: 8,
             })
         );
-        assert!(history.restore(9, RestorePolicy::Exact).is_err());
+        assert!(history.restore(&assets, 9, RestorePolicy::Exact).is_err());
         assert!(history.commands_for(9).is_none());
 
         // The rejected capture was never consumed or published; a caller can
         // replace it with the correct contiguous frame.
         history.begin_frame(8, &engine);
         assert!(history.commit_fixture_commands(Vec::new()));
-        assert!(history.restore(8, RestorePolicy::Exact).is_ok());
+        assert!(history.restore(&assets, 8, RestorePolicy::Exact).is_ok());
     }
 
     #[test]
@@ -960,9 +1097,9 @@ mod tests {
         assert!(
             history.append_input(21, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),)
         );
-        assert!(history.restore(21, RestorePolicy::Exact).is_ok());
-        assert!(history.restore(22, RestorePolicy::Exact).is_err());
-        assert!(history.restore(23, RestorePolicy::Exact).is_err());
+        assert!(history.restore(&assets, 21, RestorePolicy::Exact).is_ok());
+        assert!(history.restore(&assets, 22, RestorePolicy::Exact).is_err());
+        assert!(history.restore(&assets, 23, RestorePolicy::Exact).is_err());
         assert_eq!(history.next_record_frame(), 24);
         assert!(history.commands_for(23).is_some());
     }

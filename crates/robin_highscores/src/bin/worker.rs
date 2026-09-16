@@ -478,12 +478,17 @@ async fn process_job(
         .run(&job_bytes, replay, job.replay_bytes, content_root)
         .await?;
     let output = decode_output(
-        &result_bytes,
+        &result_bytes.result,
         &job_bytes,
         Digest32::from_bytes(job.replay_sha256),
     )?;
     match &output.status {
         VerificationStatusV2::Verified(_) => {
+            if !result_bytes.checkpoints.is_empty() {
+                replay_store
+                    .store_checkpoints(&job.replay_sha256, result_bytes.checkpoints)
+                    .await?;
+            }
             let run_id = database
                 .accept_job(
                     &job.submission_id,

@@ -419,7 +419,8 @@ impl EngineInner {
             .orders
             .sequence_manager
             .deferred_elements_to_go()
-            .into_iter()
+            .iter()
+            .copied()
             .filter_map(|(sequence_id, element_index)| {
                 self.orders
                     .sequence_manager

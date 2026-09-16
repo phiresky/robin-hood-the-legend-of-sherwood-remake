@@ -22,6 +22,7 @@ impl EngineInner {
             .expect("door transition owner is not an actor")
             .installed_order
             .expect("door transition has no installed order")
+            .resolve(&self.orders.sequence_manager)
             .order_type;
         let is_pc = entity.is_pc();
         let state = match action {
@@ -228,10 +229,12 @@ impl EngineInner {
             .get_entity(entity_id)
             .and_then(|entity| {
                 let door = entity.position_iface().get_door()?;
-                entity
-                    .actor_data()?
-                    .installed_order
-                    .map(|order| (door, order.order_type))
+                entity.actor_data()?.installed_order.map(|handle| {
+                    (
+                        door,
+                        handle.resolve(&self.orders.sequence_manager).order_type,
+                    )
+                })
             })
             .unwrap_or_else(|| {
                 panic!(

@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[test]
-    fn sorting_keys_survive_runtime_clones_but_not_saved_frames_or_hashes() {
+    fn sorting_keys_survive_native_rollback_but_not_persisted_saves_or_hashes() {
         use robin_util::state_hash::StateHash;
         use std::hash::Hasher;
         let mut human = crate::element::HumanData::default();
@@ -152,7 +152,13 @@ mod tests {
         assert_eq!(before.finish(), after.finish());
         assert_eq!(human.clone().sorting_distance, 160_000.0);
         assert_eq!(serde_json::to_string(&human).unwrap(), json);
-        assert_eq!(bitcode::encode(&human), binary);
+        assert_ne!(bitcode::encode(&human), binary);
+        assert_eq!(
+            bitcode::decode::<crate::element::HumanData>(&bitcode::encode(&human))
+                .unwrap()
+                .sorting_distance,
+            160_000.0
+        );
         assert_eq!(
             serde_json::from_str::<crate::element::HumanData>(&json)
                 .unwrap()

@@ -591,8 +591,18 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         engine
             .orders
             .sequence_manager
-            .pending_elements_for_owner(owner)
+            .deferred_elements_to_go()
             .iter()
+            .filter(|&&(sequence, index)| {
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, index)
+                    .is_some_and(|element| {
+                        element.owner == Some(owner)
+                            && element.state != crate::sequence::SequenceState::Interrupted
+                    })
+            })
             .all(|(sequence_id, _)| *sequence_id == waiting_sequence),
         "the post-construction movement tail must cancel the replacement before instruction; only the old waiter's stop transition may remain"
     );
@@ -642,9 +652,14 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
         )
         .unwrap();
     assert_ne!(first_sequence, second_sequence);
-    assert_eq!(
-        engine.orders.sequence_manager.deferred_elements_to_go(),
-        vec![(first_sequence, 0), (second_sequence, 0)],
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .iter()
+            .copied()
+            .eq([(first_sequence, 0), (second_sequence, 0)]),
         "both same-owner movements register in call order before manager instruction"
     );
     assert!(

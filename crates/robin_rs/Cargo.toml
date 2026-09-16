@@ -135,6 +135,9 @@ rustls = { version = "0.23.44", default-features = false, features = ["ring", "s
 
 # Compile only the GPU backends usable on each native target. In particular,
 # Linux builds do not need the DX12/Metal/WebGPU feature graph.
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = "0.38"
+
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 wgpu = { workspace = true, default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl", "glsl"] }
 

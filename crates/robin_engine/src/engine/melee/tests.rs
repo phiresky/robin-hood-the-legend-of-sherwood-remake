@@ -1,7 +1,6 @@
 use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
-use crate::element::ActiveFlight;
 use crate::engine::test_support::actors::TestActor;
 
 /// Ground-level (`z == 0`) test position.
@@ -73,8 +72,7 @@ fn make_civilian(pos: WorldPoint3D) -> Entity {
     entity
 }
 
-/// Set up a live falling-hit Execute flight on `flyer` so the per-frame
-/// `tick_push_flights` sweep fires `apply_domino_effect`.
+/// Set up a live falling-hit order and its authored flight geometry.
 fn give_flight(
     engine: &mut EngineInner,
     flyer: EntityId,
@@ -92,16 +90,10 @@ fn give_flight(
         frame_ids: vec![0, 1],
         ..Default::default()
     }]);
-    let flyer_pos = engine
-        .get_entity(flyer)
-        .unwrap()
-        .element_data()
-        .position_map();
+    let flyer_pos = engine.get_entity(flyer).unwrap().element_data().position();
 
     // Combat flight belongs to the live falling order's execution
-    // arm. Mirror that lifecycle instead of manufacturing an orphaned
-    // `active_flight`, which production correctly holds until the order is
-    // current and its START edge has changed posture to Flying.
+    // arm after its START edge has changed posture to Flying.
     let damage = crate::sequence::SequenceElement::new_damage(
         1,
         Command::ReceiveHitDamage,
@@ -115,13 +107,22 @@ fn give_flight(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    let order_id = engine.push_new_order(
+    engine.push_new_order(
         sequence,
         0,
         crate::order::OrderType::FallingHitUpright,
         0.0,
         0.0,
     );
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(sequence, 0)
+        .unwrap()
+        .orders
+        .front_mut()
+        .unwrap()
+        .antagonist = Some(antagonist);
     engine.select_sequence_element(flyer, Some((sequence, 0)));
     engine.element_in_progress(
         &crate::sim_rng::test_context(),
@@ -130,25 +131,24 @@ fn give_flight(
         sequence,
         0,
     );
+    engine.publish_selected_order_as_installed(flyer);
 
     if let Some(entity) = engine.world.entities.get_mut(flyer) {
         entity.set_posture(Posture::Flying);
-        let actor = entity
-            .actor_data_mut()
-            .expect("combat flight owner must be an actor");
-        actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: crate::order::OrderType::FallingHitUpright,
-        });
-        actor.active_flight = Some(Box::new(ActiveFlight {
-            increment_x: inc_x,
-            increment_y: inc_y,
-            goal_x: flyer_pos.x + inc_x * frames as f32,
-            goal_y: flyer_pos.y + inc_y * frames as f32,
-            frames_remaining: frames,
-            antagonist: Some(antagonist),
-            ..Default::default()
-        }));
+        entity.position_iface_mut().set_flight_goal_and_increment(
+            WorldPoint3D {
+                x: flyer_pos.x + inc_x * frames as f32,
+                y: flyer_pos.y + inc_y * frames as f32,
+                z: flyer_pos.z,
+            },
+            crate::coordinates::WorldVec3D {
+                x: inc_x,
+                y: inc_y,
+                z: 0.0,
+            },
+            None,
+            None,
+        );
     }
 }
 
@@ -185,14 +185,9 @@ fn initialized_hit_flight_delta(
     victim: EntityId,
 ) -> crate::coordinates::MapPoint {
     let victim = engine.get_entity(victim).unwrap();
-    let flight = victim
-        .actor_data()
-        .unwrap()
-        .active_flight
-        .as_ref()
-        .expect("unobstructed falling hit must initialize a flight");
+    let goal = victim.position_iface().world_goal();
     let position = victim.element_data().position_map();
-    crate::coordinates::MapPoint::new(flight.goal_x - position.x, flight.goal_y - position.y)
+    crate::coordinates::MapPoint::new(goal.x - position.x, goal.y - goal.z - position.y)
 }
 
 fn authorize_test_hit_flight(engine: &mut EngineInner, victim: EntityId) {

@@ -974,10 +974,15 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         simulation_body_allowed: bool,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> super::SideEffects {
         let mut display = std::mem::take(&mut self.feedback.cutscene_camera.display);
-        let effects =
-            self.perform_hourglass_authoritative(&mut display, assets, simulation_body_allowed);
+        let effects = self.perform_hourglass_authoritative(
+            &mut display,
+            assets,
+            simulation_body_allowed,
+            execution,
+        );
         self.feedback.cutscene_camera.display = display;
         effects
     }
@@ -1067,7 +1072,7 @@ impl EngineInner {
         dev: &mut DevState,
     ) -> super::SideEffects {
         let mut camera = self.feedback.cutscene_camera.display.clone();
-        let effects = self.perform_hourglass_authoritative(&mut camera, assets, true);
+        let effects = self.perform_hourglass_authoritative(&mut camera, assets, true, None);
         self.feedback.cutscene_camera.display = camera;
         for event in effects.host_events.iter().cloned() {
             display.apply_host_event(input, event);
@@ -1089,6 +1094,7 @@ impl EngineInner {
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
         simulation_body_allowed: bool,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> super::SideEffects {
         let _hourglass_timer = HourglassTimer::start();
 
@@ -1116,7 +1122,8 @@ impl EngineInner {
             return fx;
         }
 
-        let code = self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed);
+        let code =
+            self.perform_hourglass_inner(sim, display, assets, simulation_body_allowed, execution);
         self.refresh_achievement_progress(assets);
         self.advance_auto_quick_action_queues(sim, display, assets);
         self.refresh_fog_of_war(assets, false);
@@ -1415,9 +1422,10 @@ impl EngineInner {
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
         simulation_body_allowed: bool,
+        execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> GameCode {
         let pc_guarded = time_hourglass_phase(HourglassPhase::DeferredEffectsStart, || {
-            self.hourglass_phase_deferred_effects_start(sim, assets)
+            self.hourglass_phase_deferred_effects_start(sim, assets, execution)
         });
 
         if let Some(code) = time_hourglass_phase(HourglassPhase::MissionAndMessages, || {
@@ -1462,75 +1470,6 @@ impl EngineInner {
         });
 
         GameCode::LevelInProgress
-    }
-
-    /// Prove that a live host speech completion came from the sealed timing
-    /// catalog admitted before ranked engine construction. The concrete audio
-    /// sample is presentation-only; the duration is the only selected value
-    /// that enters simulation state. Explicit variants therefore bind one
-    /// exact ordered catalog entry; random playback uses the group's longest
-    /// English duration, independent of the local audio variant.
-    fn validate_ranked_speech_resolution(
-        assets: &LevelAssets,
-        pending: &crate::sound::PendingExclamation,
-        resolution: &crate::sound::ResolvedExclamation,
-    ) -> Result<(), String> {
-        let identifier = (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id);
-        let group = assets
-            .audio
-            .speech_timing_catalog
-            .groups
-            .get(&identifier)
-            .ok_or_else(|| {
-                format!("ranked sound resolution {identifier:#010x} has no sealed timing group")
-            })?;
-        if group.variants.is_empty() {
-            return Err(format!(
-                "ranked sound timing group {identifier:#010x} has no authored variants"
-            ));
-        }
-
-        let duration_matches = match pending.variant {
-            -1 => {
-                group
-                    .variants
-                    .iter()
-                    .filter_map(|variant| variant.duration_frames)
-                    .max()
-                    == Some(resolution.duration_frames)
-            }
-            explicit if explicit >= 0 => {
-                let variant_index = usize::try_from(explicit).map_err(|_| {
-                    format!(
-                        "ranked sound variant {explicit} for {identifier:#010x} is not representable"
-                    )
-                })?;
-                let variant = group.variants.get(variant_index).ok_or_else(|| {
-                    format!(
-                        "ranked sound variant {variant_index} is outside the {} authored variants for {identifier:#010x}",
-                        group.variants.len()
-                    )
-                })?;
-                let expected = variant.duration_frames.ok_or_else(|| {
-                    format!(
-                        "ranked sound variant {variant_index} for {identifier:#010x} has no authoritative duration"
-                    )
-                })?;
-                expected == resolution.duration_frames
-            }
-            invalid => {
-                return Err(format!(
-                    "ranked sound request {identifier:#010x} has invalid variant {invalid}"
-                ));
-            }
-        };
-        if !duration_matches {
-            return Err(format!(
-                "ranked sound resolution {identifier:#010x} supplied unauthoritative duration {}",
-                resolution.duration_frames
-            ));
-        }
-        Ok(())
     }
 
     /// Construct the path scheduler from exact leaf borrows of its two
@@ -1801,6 +1740,7 @@ impl EngineInner {
                         fx.element
                             .set_position_map(fx.element.position_map() + motion.movement);
                     }
+                    fx.element.sprite.compute_display_depth();
                     fx.fx.animation_speed = movement_animation_speed;
                 }
 
@@ -2411,21 +2351,10 @@ impl EngineInner {
                     .get(owner)
                     .and_then(Entity::actor_data)
                     .and_then(|actor| actor.installed_order);
-                if let Some(installed) = installed
-                    && let Some((seq_id, elem_idx)) =
-                        self.world.entities.current_element_for_actor(owner)
-                    && let Some(order) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(seq_id, elem_idx)
-                        .and_then(|element| {
-                            element
-                                .orders
-                                .iter_mut()
-                                .find(|order| order.order_id == installed.order_id)
-                        })
-                {
-                    order.done = true;
+                if let Some(installed) = installed {
+                    installed
+                        .resolve_mut(&mut self.orders.sequence_manager)
+                        .done = true;
                 }
             }
             MotionState::Start | MotionState::InProgress => {}
@@ -2471,6 +2400,7 @@ impl EngineInner {
         };
         let helper_frame = helper.sprite().current_frame;
         let helper_frame_count = helper.sprite().frame_count;
+        let helper_depth = helper.sprite().display_depth;
         let carried = self
             .get_entity_mut(carried_id)
             .expect("shoulder rider disappeared before synchronization");
@@ -2482,8 +2412,7 @@ impl EngineInner {
             carried_sprite_direction,
         );
         sprite.synchronize_anim(helper_frame, helper_frame_count);
-        sprite.display_order_ref = Some(helper_id);
-        sprite.behind_display_order_ref = false;
+        sprite.compute_display_depth_relative_to(helper_depth, false);
 
         if motion == MotionState::Done {
             carried.set_posture(Posture::Upright);

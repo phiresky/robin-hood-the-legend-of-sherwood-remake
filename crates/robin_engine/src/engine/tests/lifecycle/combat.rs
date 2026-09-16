@@ -95,6 +95,45 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
     let mut engine = EngineInner::new();
     let victim = engine.add_test_entity(make_test_pc(Posture::OnLadder));
     attach_test_campaign_identities(&mut engine);
+    let assets = super::super::scenarios::assets_with_test_pc_profile();
+
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "ladder_damage.scs",
+    ));
+    let mut ladder = crate::engine::test_support::square_sector(
+        1,
+        0,
+        MapPoint::new(0.0, 0.0),
+        MapPoint::new(20.0, 20.0),
+    );
+    ladder.sector_type = crate::sector::SectorType::LIFT;
+    ladder.lift_type = Some(crate::sector::LiftType::Ladder);
+    ladder.lowest_door_index = Some(0);
+    let ground = crate::engine::test_support::square_sector(
+        2,
+        0,
+        MapPoint::new(20.0, 0.0),
+        MapPoint::new(100.0, 100.0),
+    );
+    let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
+    level.sector_number_map.insert(ladder.sector_number, 0);
+    level.sector_number_map.insert(ground.sector_number, 1);
+    level.sectors.extend([ladder, ground]);
+    engine
+        .script_domains
+        .interactables
+        .doors
+        .push(crate::gate::Door {
+            point_out: MapPoint::new(30.0, 10.0),
+            sector_out: crate::sector::SectorNumber::new(2),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(1),
+            ..Default::default()
+        });
+    engine
+        .get_entity_mut(victim)
+        .unwrap()
+        .position_iface_mut()
+        .set_sector(crate::position_interface::SectorHandle::new(1));
 
     let damage =
         SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
@@ -106,7 +145,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
 
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        &assets,
         &mut Vec::new(),
         victim,
         sequence,
@@ -176,7 +215,7 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
             .actor_data()
             .unwrap()
             .installed_order
-            .map(|order| order.order_type),
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(OrderType::TransitionRaisingSword),
         "order advancement must publish the successor in the same owner boundary"
     );

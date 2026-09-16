@@ -154,7 +154,9 @@ pub struct ReplayHeader {
 /// Version 48 stores canonical sequence links and ordinary door-route orders.
 /// Version 49 removes the retired fog-sprite bypass from simulation configuration.
 /// Version 50 consolidates quick-action storage and actor execution state.
-pub const REPLAY_SCHEMA_VERSION: u32 = 50;
+/// Version 51 stores ordered pathfinder state and canonical action payloads.
+/// Version 52 stores canonical order ownership, sequence links, and host effects.
+pub const REPLAY_SCHEMA_VERSION: u32 = 52;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
