@@ -752,44 +752,6 @@ impl EngineInner {
         waiter_seq: crate::sequence::SequenceId,
         waiter_idx: usize,
     ) {
-        // Postponing a movement element restores a
-        // translated movement element to its untranslated command before the
-        // common sequence-state transition runs. A resumed element is sent
-        // through instruction/translation again, so retaining MoveWaiting or MoveOk
-        // here would either strand the old pathfinder state or bypass path
-        // translation entirely.
-        //
-        // Preserve the original game's postponed-movement behavior.
-        let postponed_movement = self
-            .orders
-            .sequence_manager
-            .get_element(waiter_seq, waiter_idx)
-            .and_then(|element| {
-                matches!(
-                    element.command,
-                    crate::element::Command::MoveWaiting | crate::element::Command::MoveOk
-                )
-                .then_some((element.owner, element.command))
-            });
-        if let Some((owner, command)) = postponed_movement {
-            if command == crate::element::Command::MoveWaiting {
-                let owner = owner.unwrap_or_else(|| {
-                panic!(
-                    "MoveWaiting element {waiter_seq:?}[{waiter_idx}] has no actor owner while being postponed"
-                )
-            });
-                self.orders.pending_path_requests.cancel_for_owner(owner);
-                self.orders
-                    .failed_path_requests
-                    .retain(|request| request.owner != owner);
-            }
-            self.orders
-                .sequence_manager
-                .get_element_mut(waiter_seq, waiter_idx)
-                .expect("postponed movement element disappeared")
-                .command = crate::element::Command::Move;
-        }
-
         if let Some(w) = self
             .orders
             .sequence_manager

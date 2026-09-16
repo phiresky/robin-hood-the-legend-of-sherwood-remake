@@ -1158,11 +1158,7 @@ impl EngineInner {
                 is_harder_hit,
             } => (
                 *origin,
-                projectile.or_else(|| {
-                    elem.legacy_v48
-                        .as_ref()
-                        .and_then(|legacy| legacy.damage_arrow)
-                }),
+                *projectile,
                 *damage,
                 *concussion,
                 *sword_strike,

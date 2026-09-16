@@ -2060,12 +2060,9 @@ fn only_building_and_lift_passes_write_passing_door_directly() {
 fn loaded_v48_pass_state(order_state: Vec<LegacyV48OrderState>) -> LegacyV48SequenceElementState {
     LegacyV48SequenceElementState {
         deleted: false,
-        script_driven: false,
         raw_dormant_posture_after_transition: None,
         raw_dormant_action_state_after_transition: None,
         mummy: None,
-        linked_seek: Some(None),
-        damage_arrow: None,
         raw_sword_strike: None,
         raw_dormant_movement_action: None,
         order_state,

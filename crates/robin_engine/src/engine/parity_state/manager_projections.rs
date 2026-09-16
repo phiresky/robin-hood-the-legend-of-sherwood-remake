@@ -422,13 +422,10 @@ impl Engine {
                         direction,
                         action,
                         speed_factor,
+                        linked_seek,
                         ..
                     } => {
-                        let linked_seek = element_state
-                            .legacy_v48
-                            .as_ref()
-                            .and_then(|legacy| legacy.linked_seek)
-                            .flatten()
+                        let linked_seek = linked_seek
                             .map(|linked| reference(linked.sequence_id, linked.element_index));
                         SequenceSubtype::Movement {
                             destination: point(destination.x, destination.y),

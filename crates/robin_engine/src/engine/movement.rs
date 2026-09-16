@@ -2309,6 +2309,7 @@ pub(crate) fn build_line_jump_click_tail(
         direction: 0,
         action,
         speed_factor,
+        linked_seek: None,
         post_seek_sequence: None,
     };
     vec![jump, final_move]

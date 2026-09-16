@@ -248,6 +248,7 @@ impl EngineInner {
             direction: 0,
             action,
             speed_factor: 1.0,
+            linked_seek: None,
             post_seek_sequence: None,
         };
         seq.append_element(pass);
@@ -297,6 +298,7 @@ impl EngineInner {
                 direction: 0,
                 action,
                 speed_factor: 1.0,
+                linked_seek: None,
                 post_seek_sequence: None,
             };
             seq.append_element(mv);

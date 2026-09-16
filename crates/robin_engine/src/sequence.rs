@@ -769,6 +769,8 @@ pub enum SequenceElementData<P: robin_util::state_hash::StateHash = Option<PostS
         direction: i16,
         action: OrderType,
         speed_factor: f32,
+        /// Seek element interrupted together with this movement.
+        linked_seek: Option<SequenceElementRef>,
         /// Post-seek sequence: launched by the actor when the SEEK
         /// command completes (target lost/reached or self-seek
         /// collapsed).  When the SEEK is dispatched, the actor copies
@@ -852,6 +854,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElementData<P> {
                 direction,
                 action,
                 speed_factor,
+                linked_seek,
                 post_seek_sequence,
             } => SequenceElementData::Movement {
                 destination,
@@ -865,6 +868,7 @@ impl<P: robin_util::state_hash::StateHash> SequenceElementData<P> {
                 direction,
                 action,
                 speed_factor,
+                linked_seek,
                 post_seek_sequence: map(post_seek_sequence)?,
             },
             Self::Generic { properties } => SequenceElementData::Generic { properties },
@@ -950,6 +954,7 @@ impl SequenceElementData {
             direction: 0,
             action,
             speed_factor: 1.0,
+            linked_seek: None,
             post_seek_sequence: None,
         }
     }
@@ -1136,7 +1141,6 @@ pub(crate) struct LegacyV48OrderState {
 )]
 pub(crate) struct LegacyV48SequenceElementState {
     pub deleted: bool,
-    pub script_driven: bool,
     /// Exact constructor storage from an old v48 save when
     /// `posture_after_transition` was not yet semantically live.
     ///
@@ -1150,10 +1154,7 @@ pub(crate) struct LegacyV48SequenceElementState {
     /// [`Self::raw_dormant_posture_after_transition`].
     pub raw_dormant_action_state_after_transition: Option<i32>,
     pub mummy: Option<SequenceId>,
-    /// `None` means this is not a movement element; `Some(None)` is a
-    /// movement element with a serialized null linked-seek pointer.
-    pub linked_seek: Option<Option<SequenceElementRef>>,
-    pub damage_arrow: Option<EntityId>,
+    /// Exact non-strike sentinel from imported damage storage.
     pub raw_sword_strike: Option<i32>,
     /// Exact movement-action storage when the raw word is
     /// not a serialized animation and the original game cannot consume it in this command/
@@ -2222,42 +2223,6 @@ pub(crate) fn take_goal_owner_terminal_provenance(
     GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| records.borrow_mut().remove(&(seq_id, elem_idx)))
 }
 
-/// Result of a state change on a sequence element.
-/// The caller (SequenceManager) must process these effects.
-#[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
-)]
-pub struct StateChangeEffects {
-    /// Source element whose following link is read after its removal callback.
-    pub cascade_after_card: Option<(usize, SequenceState, CascadeFlags)>,
-    /// Whether `Sequence::element_ready()` should be called.
-    pub signal_ready: bool,
-    /// Source element whose current postponed link is read at startup.
-    /// Impossible starts it before clearing orders; Terminated starts it
-    /// after the removal callback and sequence Ready call.
-    pub start_postponed: Option<usize>,
-    /// Impossible clears its orders and reads its owner only after postponed startup.
-    pub impossible_notification: Option<usize>,
-    /// Owner entity to notify when the element is removed.
-    pub notify_owner: Option<EntityId>,
-    /// The completion callback's arguments, consumed by the live Engine transition.
-    pub condolation: Option<CondolationCard>,
-    /// Whether elements_in_progress should be incremented.
-    pub increment_in_progress: bool,
-    /// Whether elements_in_progress should be decremented.
-    pub decrement_in_progress: bool,
-    /// Element state transition for the actor-live index.  Live here
-    /// means Todo / InProgress / Postponed: any element that should
-    /// prevent the engine from synthesizing an idle Wait for the owner.
-    pub actor_live_transition: Option<(usize, EntityId, SequenceState, SequenceState)>,
-}
-
 /// The current node's branch in the synchronous Stop call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum StopElementAction {
@@ -2268,162 +2233,6 @@ pub(crate) enum StopElementAction {
 }
 
 impl Sequence {
-    /// Change the state of element at `elem_idx`, returning effects that
-    /// the caller must process synchronously. Movement cancellation and linked
-    /// Seek interruption must already have finished before entering this base transition.
-    pub fn set_element_state(
-        &mut self,
-        elem_idx: usize,
-        new_state: SequenceState,
-        flags: CascadeFlags,
-    ) -> StateChangeEffects {
-        let mut effects = StateChangeEffects {
-            cascade_after_card: None,
-            signal_ready: false,
-            start_postponed: None,
-            impossible_notification: None,
-            notify_owner: None,
-            condolation: None,
-            increment_in_progress: false,
-            decrement_in_progress: false,
-            actor_live_transition: None,
-        };
-
-        let old_state = self.elements[elem_idx].state;
-        if old_state == new_state {
-            return effects;
-        }
-
-        // The most important line: actually change the state
-        self.elements[elem_idx].state = new_state;
-
-        if let Some(owner) = self.elements[elem_idx].owner {
-            effects.actor_live_transition = Some((elem_idx, owner, old_state, new_state));
-        }
-
-        // Track the sequence's count of running elements.
-        if new_state == SequenceState::InProgress {
-            effects.increment_in_progress = true;
-        } else if old_state == SequenceState::InProgress {
-            effects.decrement_in_progress = true;
-        }
-
-        match new_state {
-            SequenceState::InProgress => {
-                debug_assert!(
-                    old_state == SequenceState::Todo || old_state == SequenceState::Postponed,
-                    "InProgress from {:?}",
-                    old_state
-                );
-            }
-
-            SequenceState::Impossible => {
-                effects.start_postponed = Some(elem_idx);
-                effects.impossible_notification = Some(elem_idx);
-                effects.cascade_after_card = Some((elem_idx, new_state, flags));
-            }
-
-            SequenceState::Interrupted => {
-                // The original game's transition to interrupted deliberately does not
-                // start postponed elements. Instruction arbitration
-                // transfers the postponed pointer to the replacement before
-                // interrupting the old element; a generic interruption must
-                // neither start nor detach either representation here.
-                // Clear orders
-                self.elements[elem_idx].orders.clear();
-                // Notify owner
-                effects.notify_owner = self.elements[elem_idx].owner;
-                if let Some(owner) = self.elements[elem_idx].owner {
-                    effects.condolation = Some(CondolationCard {
-                        owner,
-                        command: self.elements[elem_idx].command,
-                        terminal_state: new_state,
-                        seq_id: self.id,
-                        elem_idx: elem_idx as u16,
-                        from_halt: false,
-                    });
-                }
-                // Cascade
-                effects.cascade_after_card = Some((elem_idx, new_state, flags));
-            }
-
-            SequenceState::Terminated => {
-                match old_state {
-                    SequenceState::Todo | SequenceState::InProgress | SequenceState::Postponed => {
-                        // Notify owner
-                        effects.notify_owner = self.elements[elem_idx].owner;
-                        if let Some(owner) = self.elements[elem_idx].owner {
-                            effects.condolation = Some(CondolationCard {
-                                owner,
-                                command: self.elements[elem_idx].command,
-                                terminal_state: new_state,
-                                seq_id: self.id,
-                                elem_idx: elem_idx as u16,
-                                from_halt: false,
-                            });
-                        }
-                        // Tell the sequence this element is done
-                        effects.signal_ready = true;
-                        effects.start_postponed = Some(elem_idx);
-                    }
-                    _ => {
-                        // Assign the new state before dispatching its effects.
-                        // Its assertion is compiled out in the shipping build,
-                        // leaving an already-interrupted/impossible element
-                        // Terminated without repeating owner/sequence effects.
-                        // Loaded games can legitimately resume at this
-                        // release-build edge, so retain the state transition
-                        // and make the diagnostic non-fatal.
-                        tracing::warn!(
-                            sequence_id = self.id.0,
-                            element_index = elem_idx,
-                            ?old_state,
-                            "sequence element terminated from a shipping-only state"
-                        );
-                    }
-                }
-            }
-
-            SequenceState::Postponed => {
-                // Demote `MoveOk` back to `Move` on movement elements.
-                // The path-cancel half is handled by the engine-side
-                // `stop_owner_active_mechanics`, but the command
-                // demotion belongs on the state transition itself.
-                if self.elements[elem_idx].data.is_movement()
-                    && self.elements[elem_idx].command == Command::MoveOk
-                {
-                    self.elements[elem_idx].command = Command::Move;
-                }
-            }
-
-            SequenceState::Done | SequenceState::Todo => {
-                // Not typically set externally
-            }
-        }
-
-        effects
-    }
-
-    /// Finish Impossible after its synchronous postponed-element startup.
-    pub(crate) fn complete_impossible_notification(
-        &mut self,
-        elem_idx: usize,
-    ) -> Option<CondolationCard> {
-        let element = self
-            .elements
-            .get_mut(elem_idx)
-            .expect("impossible element missing");
-        element.orders.clear();
-        element.owner.map(|owner| CondolationCard {
-            owner,
-            command: element.command,
-            terminal_state: SequenceState::Impossible,
-            seq_id: self.id,
-            elem_idx: elem_idx as u16,
-            from_halt: false,
-        })
-    }
-
     pub(crate) fn live_following_ref(&self, elem_idx: usize) -> Option<SequenceElementRef> {
         self.elements
             .get(elem_idx)

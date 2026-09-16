@@ -627,14 +627,12 @@ fn convert_element(
     preserve_translated_turn_direction(command, &mut orders);
     let mut generic_raw_unions = Vec::new();
     let mut raw_dormant_movement_action = None;
-    let (data, linked_seek, damage_arrow, raw_sword_strike) = match saved {
-        LegacyInlineSequenceElement::Simple(_) => (SequenceElementData::Simple, None, None, None),
+    let (data, raw_sword_strike) = match saved {
+        LegacyInlineSequenceElement::Simple(_) => (SequenceElementData::Simple, None),
         LegacyInlineSequenceElement::Interaction(interaction) => (
             SequenceElementData::Interaction {
                 antagonist: resolve_entity("interaction.element", interaction.element, entities)?,
             },
-            None,
-            None,
             None,
         ),
         LegacyInlineSequenceElement::Damage(damage) => {
@@ -663,19 +661,14 @@ fn convert_element(
             (
                 SequenceElementData::Damage {
                     origin: resolve_entity("damage.origin", damage.origin, entities)?,
-                    // Keep this in the legacy sidecar below as well: old
-                    // adopted elements preserve the exact decoded payload,
-                    // while live runtime elements use this typed field.
-                    projectile: None,
+                    projectile: resolve_entity("damage.arrow", damage.arrow, entities)?,
                     damage: damage.damage,
                     concussion: damage.concussion,
                     sword_strike,
                     sword_profile_idx,
                     is_harder_hit: damage.harder_hit,
                 },
-                None,
-                resolve_entity("damage.arrow", damage.arrow, entities)?,
-                Some(raw_strike),
+                sword_strike.is_none().then_some(raw_strike),
             )
         }
         LegacyInlineSequenceElement::Generic(generic) => {
@@ -749,12 +742,7 @@ fn convert_element(
                     generic_raw_unions.push((kind, raw));
                 }
             }
-            (
-                SequenceElementData::Generic { properties },
-                None,
-                None,
-                None,
-            )
+            (SequenceElementData::Generic { properties }, None)
         }
         LegacyInlineSequenceElement::Movement(movement) => {
             let flags = MoveFlags::from_bits(movement.flags).ok_or_else(|| {
@@ -779,7 +767,7 @@ fn convert_element(
                 })
                 .transpose()?;
             let linked_seek = if manager_owned {
-                Some(resolve_element_ref(
+                resolve_element_ref(
                     "movement.linked_seek",
                     movement
                         .manager_linked_seek_fixup
@@ -787,7 +775,7 @@ fn convert_element(
                         .expect("decoder requires manager movement fixup")
                         .0,
                     element_refs,
-                )?)
+                )?
             } else {
                 None
             };
@@ -807,10 +795,9 @@ fn convert_element(
                     direction: movement.direction,
                     action,
                     speed_factor: movement.speed_factor,
+                    linked_seek,
                     post_seek_sequence,
                 },
-                linked_seek,
-                None,
                 None,
             )
         }
@@ -843,12 +830,9 @@ fn convert_element(
     element.postponed = postponed;
     element.legacy_v48 = Some(LegacyV48SequenceElementState {
         deleted: base.deleted,
-        script_driven: base.script_driven,
         raw_dormant_posture_after_transition,
         raw_dormant_action_state_after_transition,
         mummy,
-        linked_seek,
-        damage_arrow,
         raw_sword_strike,
         raw_dormant_movement_action,
         order_state,
@@ -1663,6 +1647,50 @@ mod tests {
     }
 
     #[test]
+    fn imported_damage_uses_the_same_projectile_storage_as_authored_damage() {
+        let (entities, owner, projectile) = entities();
+        for raw_strike in [0, 10, 11, 12, 13, 14] {
+            let mut damage_base = base(100, 1, 3, fixups(None, None, 44));
+            damage_base.command = Command::ReceiveArrowDamage as i32;
+            damage_base.orders.clear();
+            damage_base.manager_fixups = None;
+            let damage = LegacyInlineSequenceElement::Damage(
+                crate::legacy_save::payload_sequences::LegacySequenceElementDamage {
+                    base: damage_base,
+                    harder_hit: false,
+                    sword_strike: raw_strike,
+                    concussion: 7,
+                    damage: 19,
+                    origin: LegacyElementRef(Some(40)),
+                    sword: None,
+                    arrow: LegacyElementRef(Some(90)),
+                },
+            );
+            let saved = sequence(44, vec![damage], 0, 0).body;
+            let imported = convert_owner_local_sequence(&saved, &entities, &topology()).unwrap();
+            let element = &imported.elements[0];
+            let expected_strike = (raw_strike == 0).then_some(crate::weapons::SwordStrike::A);
+            let authored = SequenceElementData::<Option<crate::sequence::PostSeekSequence>>::Damage {
+                origin: Some(owner),
+                projectile: Some(projectile),
+                damage: 19,
+                concussion: 7,
+                sword_strike: expected_strike,
+                sword_profile_idx: None,
+                is_harder_hit: false,
+            };
+            assert_eq!(
+                serde_json::to_value(&element.data).unwrap(),
+                serde_json::to_value(&authored).unwrap(),
+            );
+            assert_eq!(
+                element.legacy_v48.as_ref().unwrap().raw_sword_strike,
+                (raw_strike >= 10).then_some(raw_strike),
+            );
+        }
+    }
+
+    #[test]
     fn owner_local_import_links_append_order_and_launch_remaps_identity() {
         let (entities, _, _) = entities();
         let saved_elements = (0..3)
@@ -1742,7 +1770,6 @@ mod tests {
             SectorHandle::new(4),
             "saved movement sectors use the sparse Original slot mapping"
         );
-        let retained = movement.legacy_v48.as_ref().unwrap();
         assert_eq!(
             movement.next,
             Some(SequenceElementRef::new(SequenceId(10), 1))
@@ -1752,10 +1779,13 @@ mod tests {
             Some(SequenceElementRef::new(SequenceId(20), 0))
         );
         assert_eq!(
-            retained.linked_seek,
-            Some(Some(SequenceElementRef::new(SequenceId(10), 1)))
+            match movement.data {
+                SequenceElementData::Movement { linked_seek, .. } => linked_seek,
+                _ => panic!("fixture is not movement"),
+            },
+            Some(SequenceElementRef::new(SequenceId(10), 1))
         );
-        assert!(retained.script_driven);
+        assert!(movement.script_driven);
         assert_eq!(movement.orders[0].destination_3d, [7.0, 8.0, 9.0]);
         assert_eq!(
             manager

@@ -201,6 +201,7 @@ impl EngineInner {
                 direction: 0,
                 action: base_action,
                 speed_factor,
+                linked_seek: None,
                 post_seek_sequence: None,
             };
             seq.append_element(leading_ap);
@@ -445,6 +446,7 @@ impl EngineInner {
                     direction: dir,
                     action: entry_action,
                     speed_factor,
+                    linked_seek: None,
                     post_seek_sequence: None,
                 };
                 seq.append_element(cp);
@@ -477,6 +479,7 @@ impl EngineInner {
                     direction: 0,
                     action: entry_action,
                     speed_factor,
+                    linked_seek: None,
                     post_seek_sequence: None,
                 };
                 seq.append_element(m);
@@ -502,6 +505,7 @@ impl EngineInner {
                     direction: 0,
                     action: entry_action,
                     speed_factor,
+                    linked_seek: None,
                     post_seek_sequence: None,
                 };
                 seq.append_element(ap);
@@ -593,6 +597,7 @@ impl EngineInner {
                     direction: 0,
                     action: door_action,
                     speed_factor,
+                    linked_seek: None,
                     post_seek_sequence: None,
                 };
                 seq.append_element(wait);
@@ -625,6 +630,7 @@ impl EngineInner {
                 direction: i16::from(shot.direct),
                 action: door_action,
                 speed_factor,
+                linked_seek: None,
                 post_seek_sequence: None,
             };
             seq.append_element(pass);
@@ -649,6 +655,7 @@ impl EngineInner {
                 direction: 0,
                 action: door_action,
                 speed_factor,
+                linked_seek: None,
                 post_seek_sequence: None,
             };
             seq.append_element(ap);
@@ -741,6 +748,7 @@ impl EngineInner {
                             direction: 0,
                             action: base_action,
                             speed_factor,
+                            linked_seek: None,
                             post_seek_sequence: None,
                         };
                         seq.append_element(final_move);
@@ -799,6 +807,7 @@ impl EngineInner {
                             direction: 0,
                             action: base_action,
                             speed_factor,
+                            linked_seek: None,
                             post_seek_sequence: None,
                         };
                         seq.append_element(seek_move);
@@ -832,6 +841,7 @@ impl EngineInner {
                             direction: 0,
                             action: base_action,
                             speed_factor,
+                            linked_seek: None,
                             post_seek_sequence: None,
                         };
                         seq.append_element(final_move);
@@ -926,6 +936,7 @@ impl EngineInner {
                             direction: dir,
                             action: base_action,
                             speed_factor,
+                            linked_seek: None,
                             post_seek_sequence: None,
                         };
                         seq.append_element(cp);
@@ -956,6 +967,7 @@ impl EngineInner {
                             direction: 0,
                             action: base_action,
                             speed_factor,
+                            linked_seek: None,
                             post_seek_sequence: None,
                         };
                         seq.append_element(final_move);
