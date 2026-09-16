@@ -1059,6 +1059,7 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright,
         );
         elem.data = crate::sequence::SequenceElementData::Movement {
+            linked_seek: None,
             destination,
             layer,
             sector: None,
@@ -1554,6 +1555,7 @@ impl EngineInner {
             crate::order::OrderType::WalkingUpright,
         );
         element.data = crate::sequence::SequenceElementData::Movement {
+            linked_seek: None,
             destination,
             layer,
             sector: None,
