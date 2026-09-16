@@ -896,6 +896,12 @@ impl Renderer {
         let _ = self.try_present();
     }
 
+    /// Reserve the next surface before sampling time-dependent scene state.
+    /// The subsequent present consumes it; resize/mode changes release it.
+    pub(crate) fn prepare_presentation(&mut self) {
+        self.frame.prepare_presentation(&self.gpu);
+    }
+
     /// True only when a swapchain texture was acquired and submitted.
     /// This is not a physical display presentation timestamp.
     pub fn try_present(&mut self) -> bool {

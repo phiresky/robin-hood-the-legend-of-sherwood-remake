@@ -279,6 +279,7 @@ pub mod pc_info_overlay;
 pub mod player_profile_store;
 pub mod portrait_bar;
 pub mod presentation;
+pub mod presentation_timing;
 pub mod process_asset_cache;
 pub mod profiler;
 pub mod recon_report;

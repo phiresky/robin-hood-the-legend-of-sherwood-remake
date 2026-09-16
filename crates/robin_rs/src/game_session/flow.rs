@@ -386,10 +386,19 @@ impl FixedTickRender<'_, '_> {
                 frame.started_at_ms,
                 interpolation_enabled,
             );
+            if interpolation_enabled {
+                render_ctx.renderer.prepare_presentation();
+            }
+            let sample_time_us = crate::window::process_uptime_us() / 1_000 * 1_000;
             let sampled_camera = native_refresh_interpolation
-                .sample(crate::window::process_uptime_ms())
+                .sample((sample_time_us / 1_000) as u32)
                 .unwrap_or(saved_camera);
             sampled_camera.apply(host.frontend);
+            let camera_sample = crate::presentation_timing::CameraSample::capture(
+                sample_time_us,
+                &host.frontend.viewport,
+                true,
+            );
             let render_engine = native_refresh_interpolation
                 .engine()
                 .unwrap_or_else(|| engine.presentation_view());
@@ -417,6 +426,7 @@ impl FixedTickRender<'_, '_> {
             }
 
             let presented = render_ctx.present();
+            crate::presentation_timing::camera(camera_sample, presented);
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             if startup_audio_pause.take().is_some() {
                 // Actual playback bypasses this reservation. A failed surface
@@ -685,7 +695,12 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
-        pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
+        pace_interactive_frame(host, target, presentation_deadline_ms, |host, _| {
+            if native_refresh_interpolation.engine().is_some() {
+                presentation.renderer.prepare_presentation();
+            }
+            let now_us = crate::window::process_uptime_us();
+            let now_ms = (now_us / 1_000) as u32;
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();
             };
@@ -695,6 +710,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.presentation.draw_order.clone();
             sampled_camera.apply(host.frontend);
+            let camera_sample = crate::presentation_timing::CameraSample::capture(
+                now_us / 1_000 * 1_000,
+                &host.frontend.viewport,
+                false,
+            );
             host.frontend.presentation.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
             let mut render_ctx =
@@ -710,7 +730,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 dev,
                 &mut render_ctx,
             );
-            render_ctx.present();
+            let presented = render_ctx.present();
+            crate::presentation_timing::camera(camera_sample, presented);
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
@@ -1126,7 +1147,7 @@ async fn pace_interactive_frame(
     host: &mut crate::host::HostPresentation<'_>,
     target: u32,
     presentation_deadline_ms: u64,
-    mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u32) -> bool,
+    mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u64) -> bool,
 ) {
     let remaining_wait_ms =
         presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
@@ -1149,7 +1170,7 @@ async fn pace_interactive_frame(
             );
             while schedule.should_present(crate::window::process_uptime_us()) {
                 let present_start_us = crate::window::process_uptime_us();
-                if !present_refresh_sample(host, crate::window::process_uptime_ms()) {
+                if !present_refresh_sample(host, crate::window::process_uptime_us()) {
                     break;
                 }
                 crate::window::yield_to_display_refresh().await;

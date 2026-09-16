@@ -119,6 +119,9 @@ pub(super) struct FrameState {
     /// Absent only for explicit offscreen rendering; presentation requires it.
     surface: Option<SharedSurface>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    // Acquisition can block on FIFO. Gameplay reserves the surface before
+    // sampling interpolation so the queued camera pose does not age in that wait.
+    acquired_surface: Option<Result<(wgpu::SurfaceTexture, bool, u128), ()>>,
     pub(super) render_target_texture: wgpu::Texture,
     render_target_view: wgpu::TextureView,
     ui_target_texture: wgpu::Texture,
@@ -196,6 +199,38 @@ impl FrameState {
         )
     }
 
+    pub(super) fn prepare_presentation(&mut self, gpu: &GpuContext) {
+        if self.acquired_surface.is_none() {
+            self.acquired_surface = Some(self.acquire_surface(gpu));
+        }
+    }
+
+    fn acquire_surface(
+        &mut self,
+        gpu: &GpuContext,
+    ) -> Result<(wgpu::SurfaceTexture, bool, u128), ()> {
+        let start = web_time::Instant::now();
+        let (frame, suboptimal) = match self
+            .surface
+            .as_ref()
+            .expect("offscreen renderer cannot present to a surface")
+            .get_current_texture()
+        {
+            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
+            // Reconfigure only after this acquired texture has been presented.
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.reconfigure_surface(gpu);
+                return Err(());
+            }
+            status => {
+                tracing::warn!("get_current_texture: {status:?}");
+                return Err(());
+            }
+        };
+        Ok((frame, suboptimal, start.elapsed().as_micros()))
+    }
+
     pub(super) fn present(
         &mut self,
         gpu: &GpuContext,
@@ -225,6 +260,12 @@ impl FrameState {
         compose_logical_frame: bool,
     ) -> bool {
         let present_start = web_time::Instant::now();
+        // Keep presentation cost comparable when acquisition precedes sampling.
+        let early_acquire_us = self
+            .acquired_surface
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+            .map_or(0, |(_, _, elapsed_us)| *elapsed_us);
         if !compose_logical_frame
             && (!self.native_refresh_presentation || self.cached_present.is_none())
         {
@@ -236,39 +277,19 @@ impl FrameState {
             self.upload_queue_geometry(gpu);
         }
 
-        // Acquire swapchain frame. A suboptimal frame is still presented
-        // this cycle; the reconfigure must wait until the acquired texture
-        // has been handed back via `present` — configuring with an
-        // outstanding surface texture is a wgpu validation error.
-        let mut reconfigure_after_present = false;
-        let acquire_start = web_time::Instant::now();
-        let frame = match self
-            .surface
-            .as_ref()
-            .expect("offscreen renderer cannot present to a surface")
-            .get_current_texture()
+        let (frame, reconfigure_after_present, acquire_us) = match self
+            .acquired_surface
+            .take()
+            .unwrap_or_else(|| self.acquire_surface(gpu))
         {
-            wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                reconfigure_after_present = true;
-                f
-            }
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.reconfigure_surface(gpu);
-                if compose_logical_frame {
-                    self.clear_recording();
-                }
-                return false;
-            }
-            status => {
-                tracing::warn!("get_current_texture: {status:?}");
+            Ok(acquired) => acquired,
+            Err(()) => {
                 if compose_logical_frame {
                     self.clear_recording();
                 }
                 return false;
             }
         };
-        let acquire_us = acquire_start.elapsed().as_micros();
         let swap_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -343,9 +364,17 @@ impl FrameState {
         let submit_us = submit_start.elapsed().as_micros();
         let swap_start = web_time::Instant::now();
         gpu.queue.present(frame);
+        if crate::presentation_timing::enabled() {
+            crate::presentation_timing::swapchain(
+                crate::window::process_uptime_us(),
+                acquire_us as u64,
+                submit_us as u64,
+                swap_start.elapsed().as_micros() as u64,
+            );
+        }
         tracing::trace!(target: "present_perf", acquire_us, submit_us,
             swap_us = swap_start.elapsed().as_micros(),
-            total_us = present_start.elapsed().as_micros(), "present phases");
+            total_us = present_start.elapsed().as_micros() + early_acquire_us, "present phases");
         self.presentation_frame_count = self.presentation_frame_count.wrapping_add(1);
         if reconfigure_after_present {
             self.reconfigure_surface(gpu);
@@ -354,7 +383,7 @@ impl FrameState {
         // Frame done — clear queues and reset GPU phase for next frame.
         if compose_logical_frame {
             let draws_this_frame = self.queued.len();
-            let present_us = present_start.elapsed().as_micros() as u64;
+            let present_us = (present_start.elapsed().as_micros() + early_acquire_us) as u64;
             self.clear_recording();
             self.diagnostics
                 .log_fps(draws_this_frame, present_us, resources);
@@ -859,6 +888,7 @@ impl FrameState {
             ui_only_frame: false,
             surface,
             surface_config,
+            acquired_surface: None,
             render_target_texture,
             render_target_view,
             ui_target_texture,
@@ -1023,7 +1053,9 @@ impl FrameState {
         self.ui_only_frame = false;
     }
 
-    fn reconfigure_surface(&self, gpu: &GpuContext) {
+    fn reconfigure_surface(&mut self, gpu: &GpuContext) {
+        // Resize/mode changes must release an unpresented acquired texture first.
+        self.acquired_surface = None;
         if let Some(config) = &self.surface_config {
             self.surface
                 .as_ref()
