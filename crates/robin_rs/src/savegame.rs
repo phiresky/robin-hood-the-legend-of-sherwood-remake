@@ -291,12 +291,13 @@ impl SaveGame {
             self.special == SpecialSlot::from_filename(&self.filename),
             "save slot special kind disagrees with filename"
         );
-        if self.version != save_file::SAVE_FORMAT_VERSION {
+        // Catalog metadata remains usable across payload schema changes.
+        // Check payload compatibility when loading a slot so one incompatible
+        // save cannot prevent opening or publishing the entire store.
+        if self.version == 0 {
             anyhow::bail!(
-                "save index entry {:?} uses obsolete Rust schema {}; expected {}",
+                "save index entry {:?} has invalid schema version zero",
                 self.filename,
-                self.version,
-                save_file::SAVE_FORMAT_VERSION
             );
         }
         if self.mission_id == 0 {
