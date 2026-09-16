@@ -276,6 +276,10 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
 #[test]
 fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
     let mut engine = make_engine();
+    let mut assets = LevelAssets::default();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "melee_test.scs",
     ));
@@ -326,7 +330,7 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
 
     engine.translate_ladder_wall_fall(
         &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        &assets,
         victim,
         (sequence, 0),
     );
@@ -2575,13 +2579,12 @@ fn parried_true_circle_still_queues_push_fall() {
         parry_sequence_id,
         0,
     );
-    assert_eq!(
-        engine
+    assert!(
+        !engine
             .get_entity(victim)
             .unwrap()
             .position_iface()
-            .get_increment(),
-        crate::coordinates::WorldVec3D::default(),
+            .is_increment_3d_computed(),
         "push-damage translation must not prepare takeoff eagerly"
     );
 

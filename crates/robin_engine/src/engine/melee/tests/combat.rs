@@ -368,10 +368,7 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
     let victim_entity = engine.get_entity(victim).unwrap();
     assert_eq!(victim_entity.element_data().direction(), 5);
     assert_eq!(victim_entity.position_iface().layer_goal().get(), 0);
-    assert_eq!(
-        victim_entity.position_iface().get_increment(),
-        crate::coordinates::WorldVec3D::default()
-    );
+    assert!(!victim_entity.position_iface().is_increment_3d_computed());
 
     engine.initialize_hit_flight(&LevelAssets::default(), victim, Some(attacker), queued_type);
 

@@ -95,6 +95,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
     let mut engine = EngineInner::new();
     let victim = engine.add_test_entity(make_test_pc(Posture::OnLadder));
     attach_test_campaign_identities(&mut engine);
+    let assets = super::super::scenarios::assets_with_test_pc_profile();
 
     let damage =
         SequenceElement::new_damage(1, Command::ReceiveArrowDamage, Some(victim), None, 20, 0);
@@ -106,7 +107,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
 
     engine.dispatch_receive_damage(
         &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
+        &assets,
         &mut Vec::new(),
         victim,
         sequence,

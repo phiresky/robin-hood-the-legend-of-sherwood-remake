@@ -191,9 +191,9 @@ fn initialized_hit_flight_delta(
     victim: EntityId,
 ) -> crate::coordinates::MapPoint {
     let victim = engine.get_entity(victim).unwrap();
-    let goal = victim.position_iface().map_goal();
+    let goal = victim.position_iface().world_goal();
     let position = victim.element_data().position_map();
-    crate::coordinates::MapPoint::new(goal.x - position.x, goal.y - position.y)
+    crate::coordinates::MapPoint::new(goal.x - position.x, goal.y - goal.z - position.y)
 }
 
 fn authorize_test_hit_flight(engine: &mut EngineInner, victim: EntityId) {
