@@ -4,6 +4,19 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Vulkan presentation feedback profiling (Linux).** With
+  `ROBIN_GAMEPLAY_PROFILE=1`, supported Vulkan devices collect asynchronous
+  `VK_EXT_present_timing` feedback for actual display presentation. INFO logs
+  report measured display gaps, missed fixed-refresh slots when known, and
+  120-interval summaries; add
+  `RUST_LOG=info,presentation_perf=debug` for per-present IDs, display-stage
+  timestamps, GPU-ready timestamps and time-domain identifiers. The selected
+  stage is explicitly logged (`first_pixel_out` or `first_pixel_visible`).
+  Unknown timestamps are not classified as discarded frames; VRR/unknown
+  refresh timing does not produce missed-refresh counts. Resize resets tracking.
+  Unsupported devices retain CPU presentation diagnostics, which are estimates.
+  Local wgpu-hal hook provenance is in `vendor/wgpu-hal/ROBIN_PATCHES.md`.
+
 - **In-game leaderboard registration.** Every submission checks the uploader's
   server profile first: Previous Plays, mission-end buttons, retries, and
   automatic uploads share one registration gate on native and browser builds.

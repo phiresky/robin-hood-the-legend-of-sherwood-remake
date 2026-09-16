@@ -363,7 +363,10 @@ impl FrameState {
         gpu.queue.submit(Some(encoder.finish()));
         let submit_us = submit_start.elapsed().as_micros();
         let swap_start = web_time::Instant::now();
-        gpu.queue.present(frame);
+        self.surface
+            .as_ref()
+            .expect("presentation requires surface")
+            .present(&gpu.device, &gpu.queue, frame);
         if crate::presentation_timing::enabled() {
             crate::presentation_timing::swapchain(
                 crate::window::process_uptime_us(),

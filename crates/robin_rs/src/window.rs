@@ -274,20 +274,46 @@ pub struct GpuContext {
 #[derive(Clone)]
 pub struct SharedSurface {
     inner: Arc<std::sync::Mutex<Option<wgpu::Surface<'static>>>>,
+    #[cfg(target_os = "linux")]
+    feedback: Arc<std::sync::Mutex<crate::vulkan_presentation::Feedback>>,
 }
 
 impl SharedSurface {
     fn new(surface: wgpu::Surface<'static>) -> Self {
         Self {
             inner: Arc::new(std::sync::Mutex::new(Some(surface))),
+            #[cfg(target_os = "linux")]
+            feedback: Default::default(),
         }
     }
 
     pub fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
-        lock(&self.inner)
-            .as_ref()
-            .expect("surface missing")
-            .configure(device, config);
+        let guard = lock(&self.inner);
+        let surface = guard.as_ref().expect("surface missing");
+        #[cfg(target_os = "linux")]
+        {
+            lock(&self.feedback).reset();
+            crate::vulkan_presentation::configure(surface, device, config);
+        }
+        #[cfg(not(target_os = "linux"))]
+        surface.configure(device, config);
+    }
+
+    pub(crate) fn present(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: wgpu::SurfaceTexture,
+    ) {
+        let guard = lock(&self.inner);
+        let surface = guard.as_ref().expect("surface missing");
+        #[cfg(target_os = "linux")]
+        lock(&self.feedback).present(surface, device, queue, frame);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (device, surface);
+            queue.present(frame);
+        }
     }
 
     pub fn get_current_texture(&self) -> wgpu::CurrentSurfaceTexture {
@@ -308,6 +334,8 @@ impl SharedSurface {
             // that is safe after winit's suspended/resumed window churn.
             std::mem::forget(old_surface);
         }
+        #[cfg(target_os = "linux")]
+        lock(&self.feedback).reset();
         *guard = Some(surface);
     }
 }

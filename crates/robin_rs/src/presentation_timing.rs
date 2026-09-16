@@ -95,7 +95,7 @@ impl Timings {
                     interval_us = interval, fixed_tick = sample.fixed_tick,
                     acquire_us = swap.acquire_us, submit_us = swap.submit_us, swap_us = swap.swap_us,
                     sample_age_us = age, camera_step_px = camera_step,
-                    "dropped frames (estimated from CPU presentation interval)");
+                    "late CPU presentation (60 fps estimate)");
             }
             self.intervals.push(interval);
             self.sample_ages.push(age);
