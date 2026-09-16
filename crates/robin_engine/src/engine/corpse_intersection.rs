@@ -20,7 +20,7 @@ impl EngineInner {
     ///
     /// The human callback compares the previous actual posture with the requested
     /// posture, even when the dead-body guard rejects the underlying write.
-    pub fn set_entity_posture(&mut self, id: EntityId, posture: crate::element::Posture) {
+    pub(crate) fn set_entity_posture(&mut self, id: EntityId, posture: crate::element::Posture) {
         let entity = self
             .get_entity_mut(id)
             .expect("posture transition owner disappeared");
