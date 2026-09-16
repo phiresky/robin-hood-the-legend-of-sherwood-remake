@@ -210,196 +210,34 @@ impl EngineInner {
         self.is_pc_guarded()
     }
 
-    /// Capture fighter state before the live owner walk. Runtime slot order,
-    /// Original creation identity, and portrait priority are distinct; the
-    /// subsequent owner coordinator preserves its explicit slot contract.
+    /// Capture selection state and advance presentation counters before owners run.
     pub(super) fn hourglass_phase_entities(&mut self) -> bool {
-        // Snapshot pre-hourglass swordfight state so we can detect a
-        // swordfight→non-swordfight transition across this tick and
-        // raise the ignore-mouse-event bracket on the falling edge.
-        // The per-element / sequence-manager hourglass passes below may
-        // flip the selected PC out of `Swordfighting`; when that
-        // happens mid-drag the in-flight drag must be suppressed so it
-        // doesn't bleed into the next click-release action.
+        // Detect a swordfight ending during owner or sequence execution so an
+        // in-flight drag cannot leak into the next click-release action.
         let was_swordfighting = self.is_selected_pc_swordfighting();
-
-        // The soldier update performs its specialized prelude before the NPC
-        // update: apple smell,
-        // primary-target tracking, and the reaction-time nearby-enemy test.
-        // In particular, keep the target snap introduced by 24c43efde ahead
-        // of view refresh without moving it into the base NPC phases.
-        observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
-        // Work runs at each soldier's live owner slot below.
-
-        // First base-NPC update phase. Patrol history observes the actor before
-        // the human-actor update
-        // executes its movement/order work.
-        observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
-        // Work runs before the Human/Actor slices of each NPC owner below.
-
-        // ── Element hourglass (per-element update) ───────────────
-        observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
-        // Human concussion healing runs synchronously in each owner's
-        // pre-Actor hook below.
-        // Concrete entity updates and their retain/remove results
-        // execute in the live owner walk below; there is no legacy base pass.
-
-        // ── PC selection outline fade ────────────────────────────
-        // The hulk state-machine block runs during the per-element
-        // refresh pass.
         self.refresh_pc_selection_hulk();
         self.refresh_tactical_selection_hulks();
-
-        // Tick the cheat-teleport hulk-rebuild fade counter on every
-        // PC.  Decrementing here (rather than from the per-PC render
-        // path) lets rollback / replay see bit-identical state (the
-        // counter is serde'd `PcData`).
         self.tick_pc_teleport_fades();
-
         was_swordfighting
     }
 
-    /// Advance movement, animations, scripts, and the NPC-facing state that
-    /// must be refreshed before the main AI pass.
-    ///
-    /// These responsibilities are distributed across
-    /// individual entity updates inside the original creation-ordered loop.
+    /// Execute each live owner completely before advancing to the next slot.
     pub(super) fn hourglass_phase_entity_systems(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
     ) {
-        // ── Per-frame movement tick ─────────────────────────────
-        // Actor movement runs later, inside the live legacy-slot owner walk.
-
-        // `quit_swordfight_with_far_opponents` is called ONLY during
-        // walking-with-sword movement, NOT for stationary entities.
-        // Only check entities actively moving in sword state.
-        // Owned by the selected sword-movement Execute arm in
-        // `tick_entity_movement_owner`.
-
-        // ── PC sword-walk pinch abort ───────────────────────────
-        // During `WalkingWithSword` / `RunningWithSword`, after the
-        // per-frame sprite motion the PC checks whether two opponents
-        // are pinching its forward corridor and, if so, marks the
-        // current sequence element `Impossible`.  Runs only on PCs in
-        // sword movement with an active movement element and an
-        // in-flight position delta (`is_moving_map()`).
-        // `element_impossible` itself silently no-ops when the
-        // element is `NonInterruptable`, which is the desired
-        // behaviour.
-        // Owned by the selected PC sword-movement Execute arm too.
-
-        // ── Dispatch EventReachPoint to NPCs that just finished walking ──
-        // Fires `Think(EVENT_REACHPOINT)` when a MOVE sequence
-        // element terminates.
-
-        // Separate Rust reconciliation boundary: the cited Original actor
-        // Execute arms do not establish zone occupancy as owner-local work.
-        // Fires EnterZone/ExitZone on zone scripts when occupancy changes.
-
-        // ── Per-frame animation tick ────────────────────────────
-        // Advance sprite animations for idle actors, FX, and other entities.
-        // Supported moving actors are animated inside their live owner Execute arm.
-        // Line-jump step advance runs inside each actor's own owner
-        // envelope below, not as a batch ahead of the walk.
-
-        // Every supported nonactor update now runs below at its
-        // live legacy slot: mobile boundary first, then static owners, then
-        // projectile/net dispatch.
         self.tick_actor_owner_envelopes(sim, assets);
-        // ── Corpse-intersection repulsion hook ────────────────────
-        // Scan for lying↔non-lying posture transitions and fire
-        // `update_intersecting_corpses` so stacked corpses get the
-        // smaller repulsive radius and don't shove each other out
-        // of their hitboxes.  Runs after animations have had a
-        // chance to change postures this frame and before the next
-        // frame's movement (which reads `small_repulsive_radius`
-        // via `compute_repulsive_force`).
+
+        // Close posture writes made outside an actor's own update. Owner-local
+        // posture transitions already publish before the next owner runs.
         {
             let _detail = entity_system_detail_guard(EntitySystemDetail::CorpseUpdates);
             self.process_corpse_intersection_updates();
         }
-
-        // TODO(original-parity): the followed-target position oracle below
-        // proves one movement/NPC-refresh interleaving, but the rest of this
-        // system-oriented pass still lacks per-entity dispatch boundaries.
-        // Keep those responsibilities batched until each consumer has the
-        // mixed pre/post inputs required at an individual creation slot.
-
         finish_entity_system_detail_frame();
-    }
 
-    /// Preserve the coarse NPC observations, validate closed owner boundaries,
-    /// and decay screen remarks after the live owner pass. Position-snapshot
-    /// reads stay inside `hourglass_phase_entity_systems`.
-    pub(super) fn hourglass_phase_npcs(&mut self) {
-        // Listen/object reveal and Target Heard are actor-owned Execute work.
-        // ── Creation-ordered pre-detection boundary ──────────────
-        // These observations remain coarse labels for the original nested
-        // order. The coordinator below interleaves the actual operations per
-        // NPC: own synchronous FITAGAIN + resurrection/eye apply, own body
-        // broadcast, own view refresh, then that same NPC's detection refresh.
-        observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
-
-        observe_npc_hourglass_phase(NpcHourglassPhase::View);
-
-        observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
-        // Production work already ran inside the live actor-owner walk in the
-        // preceding EntitySystems phase. Keep these coarse observations for
-        // the PA-016 tick-spine contract only.
-
-        // The phase observations below retain the coarse PA-016 ordering
-        // contract. Production work no longer runs here: PA-013 executes the
-        // complete post-detection tail inside each NPC's creation slot before
-        // the next NPC enters detection refresh.
-        observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
-
-        // ── Per-tick AILOCK_BUSY edge detector ─────────────────
-        // Lock or unlock AILOCK_BUSY based on the live
-        // `is_very_very_busy` predicate (posture or active PassDoor /
-        // Fall element).  Runs after the view refresh.
-        observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
-
-        // ── Stuck-on-ladder emergency counter ──────────────────
-        // Bump per frame for non-script-locked NPCs on outdoor
-        // ladders idling in CMD_WAIT/CMD_MOVE_WAITING; after 25
-        // frames force a return to duty so the actor can self-recover.
-        // Runs after the BUSY edge detector.
-        observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
-
-        // ── Locked-frame timer bumps ───────────────────────────
-        // When any lock is held the entire update tail
-        // short-circuits while the three timer ring-frames
-        // (`when_does_timer_ring`, `when_does_macro_timer_ring`,
-        // `emoticon_expiration_date`) tick forward by +1.  This both
-        // keeps the relative timer offset stable across the lock
-        // window and acts as the "skip the fire" gate for the
-        // downstream macro-timer / EVENT_TIMER fire checks (which
-        // compare against the live `frame_counter`).
-        observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
-
-        // The unlocked tail follows the original game's exact order:
-        // Every-16-frame tasks, normal EVENT_TIMER, macro timer, then stimuli held
-        // by a prior AI/script lock.
-        observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
-
-        observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
-
-        // ── Macro-timer hourglass ──────────────────────────────
-        // Poll the macro-specific timer each frame and, when it
-        // rings, call `execute_next_macro_command` directly —
-        // bypassing the stimulus queue so CMD_WAIT / CMD_BEND
-        // resume cleanly. Any resulting movement-order / substate change
-        // is visible to the queued-stimulus drain in the same frame.
-        observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
-
-        observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
-
-        // ── HUD speech-log decay ────────────────────────────────
-        // Decrement the per-remark display timer and evict expired
-        // entries every frame regardless of `speech_display` so the
-        // Vec does not grow unbounded when the overlay is off.
+        // Remarks decay once after all owners, including while hidden.
         self.tick_screen_remarks();
     }
 

@@ -48,47 +48,6 @@ pub(super) fn capture_projectile_derived_tails<T>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum NpcHourglassPhase {
-    SoldierPrelude,
-    Patrol,
-    BaseHuman,
-    Broadcasts,
-    View,
-    Detection,
-    Ambush,
-    Busy,
-    Ladder,
-    LockGate,
-    SixteenthFrame,
-    NormalTimer,
-    MacroTimer,
-    QueuedStimuli,
-}
-
-#[cfg(test)]
-thread_local! {
-    static NPC_HOURGLASS_PHASE_TRACE: super::test_support::Probe<NpcHourglassPhase> =
-        const { super::test_support::Probe::new() };
-}
-
-fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
-    tracing::trace!(
-        target: "robin_engine::engine::tick::npc_phases",
-        ?phase,
-        "npc hourglass phase"
-    );
-    #[cfg(test)]
-    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.record(phase));
-}
-
-#[cfg(test)]
-pub(super) fn capture_npc_hourglass_phases<T>(
-    f: impl FnOnce() -> T,
-) -> (T, Vec<NpcHourglassPhase>) {
-    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.capture(f))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActorAnimationBoundaryPhase {
     WaitReady(EntityId),
     GenericExecute(EntityId),
@@ -664,11 +623,10 @@ const HOURGLASS_LOG_INTERVAL: u32 = 100;
 pub(super) enum HourglassPhase {
     DeferredEffectsStart,
     MissionAndMessages,
-    NpcOrders,
+    ControlAndCleanup,
     Paths,
     Entities,
     EntitySystems,
-    Npcs,
     GameplaySystems,
     Sequences,
     DeferredEffectsEnd,
@@ -677,7 +635,7 @@ pub(super) enum HourglassPhase {
 #[derive(Default)]
 struct HourglassPhaseStats {
     count: u32,
-    total_us: [u128; 10],
+    total_us: [u128; 9],
 }
 
 /// Opt-in detail inside the otherwise broad `EntitySystems` phase.
@@ -796,14 +754,13 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
                         count = stats.count,
                         deferred_start_us = stats.total_us[0] / stats.count as u128,
                         mission_us = stats.total_us[1] / stats.count as u128,
-                        npc_orders_us = stats.total_us[2] / stats.count as u128,
+                        control_and_cleanup_us = stats.total_us[2] / stats.count as u128,
                         paths_us = stats.total_us[3] / stats.count as u128,
                         entities_us = stats.total_us[4] / stats.count as u128,
                         entity_systems_us = stats.total_us[5] / stats.count as u128,
-                        npcs_us = stats.total_us[6] / stats.count as u128,
-                        gameplay_us = stats.total_us[7] / stats.count as u128,
-                        sequences_us = stats.total_us[8] / stats.count as u128,
-                        deferred_end_us = stats.total_us[9] / stats.count as u128,
+                        gameplay_us = stats.total_us[6] / stats.count as u128,
+                        sequences_us = stats.total_us[7] / stats.count as u128,
+                        deferred_end_us = stats.total_us[8] / stats.count as u128,
                         "perform_hourglass phase timing"
                     );
                     *stats = HourglassPhaseStats::default();
@@ -1440,8 +1397,8 @@ impl EngineInner {
             return code;
         }
 
-        time_hourglass_phase(HourglassPhase::NpcOrders, || {
-            self.hourglass_phase_npc_orders(sim, assets)
+        time_hourglass_phase(HourglassPhase::ControlAndCleanup, || {
+            self.hourglass_phase_control_and_cleanup(sim, assets)
         });
 
         time_hourglass_phase(HourglassPhase::Paths, || {
@@ -1454,8 +1411,6 @@ impl EngineInner {
         time_hourglass_phase(HourglassPhase::EntitySystems, || {
             self.hourglass_phase_entity_systems(sim, assets)
         });
-
-        time_hourglass_phase(HourglassPhase::Npcs, || self.hourglass_phase_npcs());
 
         time_hourglass_phase(HourglassPhase::GameplaySystems, || {
             self.hourglass_phase_gameplay_systems(sim, display, assets)

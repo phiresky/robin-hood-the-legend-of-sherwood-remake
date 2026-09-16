@@ -691,7 +691,7 @@ impl EngineInner {
     /// NPC AI is primarily reached through each NPC's
     /// the per-entity update in the original entity loop. The Rust pre-pass is an
     /// architectural split; its exact parity remains audited separately.
-    pub(super) fn hourglass_phase_npc_orders(
+    pub(super) fn hourglass_phase_control_and_cleanup(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -699,7 +699,7 @@ impl EngineInner {
         self.tick_tactical_control(sim, assets);
 
         // ── Sequence manager cleanup ─────────────────────────────
-        // Run every 256 frames (or every frame in debug).
+        // Run every 256 simulation frames.
         if self.control.frame_counter.is_multiple_of(256) {
             // The human shoot list stores raw sequence-element references. A
             // retail save can retain a terminal pointer past Friday cleanup;
@@ -732,13 +732,6 @@ impl EngineInner {
                 .sequence_manager
                 .friday_evening_cleanup_preserving(&retained_sequences);
         }
-
-        // ── Process pending AI orders ─────────────────────────────
-        //
-        // Register AI orders before the frame-paced path-request phase.
-
-        // TODO(original-parity): determine which queued NPC-order effects must
-        // remain inside an individual NPC's creation-ordered update.
     }
 
     pub(super) fn advance_mission_clock(&mut self) {

@@ -142,40 +142,6 @@ fn primary_target_tracking_precedes_view_refresh() {
 }
 
 #[test]
-fn npc_hourglass_observes_exact_original_phase_order() {
-    use super::super::tick::{NpcHourglassPhase as Phase, capture_npc_hourglass_phases};
-
-    let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
-    let mut display = HostDisplayState::default();
-    let mut dev = DevState::default();
-
-    let (_, phases) = capture_npc_hourglass_phases(|| {
-        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
-    });
-
-    assert_eq!(
-        phases,
-        vec![
-            Phase::SoldierPrelude,
-            Phase::Patrol,
-            Phase::BaseHuman,
-            Phase::Broadcasts,
-            Phase::View,
-            Phase::Detection,
-            Phase::Ambush,
-            Phase::Busy,
-            Phase::Ladder,
-            Phase::LockGate,
-            Phase::SixteenthFrame,
-            Phase::NormalTimer,
-            Phase::MacroTimer,
-            Phase::QueuedStimuli,
-        ]
-    );
-}
-
-#[test]
 fn periodic_bored_roll_reads_installed_order_after_detection_boundary() {
     use crate::order::OrderType;
     use crate::sim_rng::{RngSite, with_draw_trace};

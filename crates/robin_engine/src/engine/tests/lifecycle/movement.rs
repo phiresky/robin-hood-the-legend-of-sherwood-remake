@@ -90,11 +90,10 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
         vec![
             HourglassPhase::DeferredEffectsStart,
             HourglassPhase::MissionAndMessages,
-            HourglassPhase::NpcOrders,
+            HourglassPhase::ControlAndCleanup,
             HourglassPhase::Paths,
             HourglassPhase::Entities,
             HourglassPhase::EntitySystems,
-            HourglassPhase::Npcs,
             HourglassPhase::GameplaySystems,
             HourglassPhase::Sequences,
             HourglassPhase::DeferredEffectsEnd,
