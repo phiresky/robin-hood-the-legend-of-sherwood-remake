@@ -52,6 +52,10 @@ import {
 import { parsePlayerProfile } from './account-contract.js';
 
 export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec';
+// Older public records remain readable even though playback now requires binary replays.
+export function isReplayMediaType(value: unknown): value is string {
+    return value === RANKED_REPLAY_MEDIA_TYPE || value === `${RANKED_REPLAY_MEDIA_TYPE}+compact`;
+}
 
 export function parseBoardMetadata(value: unknown): BoardMetadata {
     const obj = versionedObjectV2(value, 'metadata', ['tick_duration', 'boards']);
@@ -439,14 +443,14 @@ export function parsePlayerRunHistoryPage(value: unknown): PlayerRunHistoryPage 
 export function parseReplayArtifact(value: unknown, path: string): ReplayArtifact {
     const obj = strictObject(value, path, ['artifact', 'replay_schema_version']);
     const artifact = strictObject(obj.artifact, `${path}.artifact`, ['sha256', 'byte_length', 'media_type']);
-    if (artifact.media_type !== RANKED_REPLAY_MEDIA_TYPE) {
+    if (!isReplayMediaType(artifact.media_type)) {
         throw new Error(`${path}.artifact.media_type must be ${RANKED_REPLAY_MEDIA_TYPE}`);
     }
     return {
         artifact: {
             sha256: nonzeroSha256(artifact.sha256, `${path}.artifact.sha256`),
             byteLength: positiveInteger(artifact.byte_length, `${path}.artifact.byte_length`),
-            mediaType: RANKED_REPLAY_MEDIA_TYPE,
+            mediaType: artifact.media_type,
         },
         replaySchemaVersion: positiveInteger(obj.replay_schema_version, `${path}.replay_schema_version`),
     };

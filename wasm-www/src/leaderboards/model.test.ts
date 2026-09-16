@@ -290,3 +290,12 @@ test('optional leaderboard metrics preserve older responses and bind both metric
     entries[0]!.metrics = { original_score_delta: 501, active_simulation_ticks: 1501, ransom_collected: 4 };
     assert.throws(() => parseBoardPage(document), /does not match its ranked value/u);
 });
+
+test('run details accept the published compact media type without accepting arbitrary suffixes', () => {
+    const doc = runDetail();
+    const artifact = (doc.replay as Record<string, unknown>).artifact as Record<string, unknown>;
+    artifact.media_type = 'application/x-robin-rhrec+compact';
+    assert.equal(parseRunDetail(doc).replay.artifact.mediaType, artifact.media_type);
+    artifact.media_type = 'application/x-robin-rhrec+unknown';
+    assert.throws(() => parseRunDetail(doc), /media_type/u);
+});

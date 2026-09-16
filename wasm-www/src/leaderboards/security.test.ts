@@ -1,3 +1,4 @@
+import { achievementRules } from './achievements.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -92,4 +93,39 @@ test('game-shell CSP confines executable sources and permits verified blob modul
     ]));
     assert.deepEqual(policy.get('frame-src'), new Set(['https://identity.robinhood.phiresky.xyz']));
     assert.deepEqual(policy.get('object-src'), new Set(["'none'"]));
+});
+
+test('badge details use the game names and rules, including names that differ from their IDs', t => {
+    const document = browser(t);
+    appendAchievements(document.body, [
+        { id: 'not-a-scratch', label: 'not-a-scratch', evaluation: 'earned' },
+        { id: 'charity', label: 'charity', evaluation: 'earned' },
+    ]);
+    const details = [...document.querySelectorAll('details')];
+    assert.equal(details.length, 2);
+    assert.equal(details[0]?.querySelector('summary')?.textContent, 'Not a Scratch');
+    assert.match(details[0]?.querySelector('p')?.textContent ?? '', /without any party member losing health/u);
+    assert.equal(details[1]?.querySelector('summary')?.textContent, 'Nothing in Return');
+    const source = readFileSync('../crates/robin_engine/src/achievement.rs', 'utf8');
+    assert.equal(Object.keys(achievementRules).length, 24);
+    for (const [id, rules] of Object.entries(achievementRules)) {
+        for (const value of [id, rules.name, rules.description]) assert.ok(source.includes(JSON.stringify(value)), value);
+    }
+});
+
+test('personal bests pair score and time without combining different rules or player counts', t => {
+    const document = browser(t);
+    const page = parsePlayerRunHistoryPage(playerHistoryPage());
+    const first = page.personalBests[0]!;
+    const score = { ...first, filter: { ...first.filter, metric: 'original_score' as const }, metricValue: { metric: 'original_score' as const, points: 42 } };
+    const time = { ...first, runId: 'fastest-run', filter: { ...first.filter, metric: 'fastest_success' as const }, metricValue: { metric: 'fastest_success' as const, activeSimulationTicks: 101 } };
+    const otherPlayers = { ...score, filter: { ...score.filter, maxConcurrentPlayers: 4 } };
+    const tables = playerTables((id, label) => link(label, '?run=' + id), () => element('nav'), parseBoardMetadata(metadataDocument()));
+    document.body.append(tables.renderPlayerPersonalBests([score, time, otherPlayers]));
+    assert.equal(document.querySelectorAll('tbody tr').length, 2);
+    const paired = document.querySelector('tbody tr')!;
+    assert.match(paired.textContent ?? '', /42/u);
+    assert.match(paired.textContent ?? '', /0:05\.05/u);
+    assert.equal(paired.querySelectorAll('a').length, 2);
+    assert.equal(paired.querySelectorAll('a')[1]?.getAttribute('href'), '?run=fastest-run');
 });

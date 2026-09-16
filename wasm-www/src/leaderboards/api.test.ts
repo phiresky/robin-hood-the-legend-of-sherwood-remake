@@ -188,22 +188,24 @@ test('API deadline cancels a response which stalls between body chunks', async (
     }
 });
 
-test('standalone replay fetch accepts only the canonical CompactRhrec media type', async () => {
+test('standalone replay fetch accepts current and published compact replay media types', async () => {
     const originalFetch = globalThis.fetch;
     try {
-        let accepted: string | null = null;
-        globalThis.fetch = (async (_input, init) => {
-            accepted = new Headers(init?.headers).get('accept');
-            return new Response(new Uint8Array([1, 2, 3]), {
-                status: 200,
-                headers: { 'content-type': 'application/x-robin-rhrec' },
-            });
-        }) as typeof fetch;
-        assert.deepEqual(
-            await new HighscoreApi('https://scores.example/api/v1').replayBytes('run-1'),
-            new Uint8Array([1, 2, 3]),
-        );
-        assert.equal(accepted, null);
+        for (const mediaType of ['application/x-robin-rhrec', 'application/x-robin-rhrec+compact']) {
+            let accepted: string | null = null;
+            globalThis.fetch = (async (_input, init) => {
+                accepted = new Headers(init?.headers).get('accept');
+                return new Response(new Uint8Array([1, 2, 3]), {
+                    status: 200,
+                    headers: { 'content-type': mediaType },
+                });
+            }) as typeof fetch;
+            assert.deepEqual(
+                await new HighscoreApi('https://scores.example/api/v1').replayBytes('run-1'),
+                new Uint8Array([1, 2, 3]),
+            );
+            assert.equal(accepted, null);
+        }
     } finally {
         globalThis.fetch = originalFetch;
     }

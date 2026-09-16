@@ -139,10 +139,7 @@ async function renderLeaderboard(
     const browse = element('button', { className: 'button secondary', text: 'Browse mission rankings', attrs: { type: 'button' } });
     browse.addEventListener('click', () => document.getElementById('mission-rankings')?.scrollIntoView({ block: 'start' }));
     const actions = element('div', { className: 'actions' }, [browse]);
-    const join = element('button', { className: 'button', text: 'Get on the leaderboard', attrs: { type: 'button', 'aria-controls': 'how-to-submit', 'aria-expanded': 'false' } });
-    join.addEventListener('click', () => { help.open = !help.open; if (help.open) help.scrollIntoView({ block: 'nearest' }); });
-    help.addEventListener('toggle', () => join.setAttribute('aria-expanded', String(help.open)));
-    actions.append(join);
+    actions.append(help);
     heading.append(actions);
     const rankings = element('section', { attrs: { id: 'mission-rankings', 'aria-label': 'Mission rankings' } });
     rankings.append(element('h2', { text: 'Mission rankings' }), renderFilters(metadata, filters));
@@ -160,10 +157,22 @@ async function renderLeaderboard(
         }));
         emptyActions.append(internalLink(`Browse ${runLabels(metadata, other.run.boardId, other.run.missionId).missionLabel}`, url));
     }) : null;
-    replace(app, heading, help, ...(latest === null ? [] : [latest]), rankings);
+    replace(app, heading, ...(latest === null ? [] : [latest]), rankings);
     if (page.entries.length === 0) {
-        const empty = statePanel('Be the first to set a record',
-            'No runs match these choices yet. Win this mission, then choose “Submit this run” on the results screen.');
+        const filtered = filters.maxConcurrentPlayers !== null || filters.board.presetId !== 'any';
+        const title = filters.maxConcurrentPlayers === null ? 'No runs with these rules yet'
+            : filters.maxConcurrentPlayers === 1 ? 'No solo runs yet' : `No ${filters.maxConcurrentPlayers}-player runs yet`;
+        const empty = statePanel(filtered ? title : 'Be the first to set a record', filtered
+            ? 'Try broader filters, or submit a run with these settings.'
+            : 'Win this mission, then choose “Submit this run” on the results screen.');
+        const allRules = metadata.boards.find(board => board.edition === filters.board.edition && board.presetId === 'any');
+        if (filters.maxConcurrentPlayers !== null || (allRules !== undefined && allRules.boardId !== filters.boardId)) {
+            const reset = element('button', { className: 'button secondary', text: allRules === undefined ? 'Show all player counts' : 'Show all runs', attrs: { type: 'button' } });
+            reset.addEventListener('click', () => navigateFilters({
+                ...filtersForBoard(allRules ?? filters.board, filters), maxConcurrentPlayers: null,
+            }));
+            emptyActions.prepend(reset);
+        }
         empty.append(emptyActions);
         rankings.append(empty);
         return;
@@ -201,7 +210,7 @@ function submissionHelp(): HTMLDetailsElement {
         'Your replay is checked automatically. Once it passes, your score and time appear here.',
     ]) steps.append(element('li', { text }));
     return element('details', { className: 'panel submission-help', attrs: { id: 'how-to-submit' } }, [
-        element('summary', { text: 'How to get on the leaderboard' }), steps,
+        element('summary', { text: 'How to submit a run' }), steps,
         link('Play Robin Hood', '../', 'button'),
     ]);
 }
@@ -400,9 +409,7 @@ async function renderPlayer(
     );
     const ownerBridge = await bridgeForKeys([profile.publicKey]);
     signal.throwIfAborted();
-    panel.append(ownerBridge === null
-        ? signerUnavailableNotice('To change your name, open this page in the browser you use to play.')
-        : renderUsernameForm(api, profile, ownerBridge, signal));
+    if (ownerBridge !== null) panel.append(renderUsernameForm(api, profile, ownerBridge, signal));
     const { renderPlayerPersonalBests, renderPlayerRunHistory } = playerTables(runLink, renderPlayerPagination, metadata);
     replace(
         app,
@@ -414,6 +421,7 @@ async function renderPlayer(
 }
 
 function renderPlayerPagination(page: PlayerRunHistoryPage, cursor: string | null): HTMLElement {
+    if (page.nextCursor === null && cursor === null) return element('div');
     const pagination = element('nav', {
         className: 'pagination',
         attrs: { 'aria-label': 'Player run-history pages' },
@@ -467,15 +475,12 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     const mainPanel = element('section', { className: 'panel detail-section' });
     mainPanel.append(
         element('span', { className: 'badge verified', text: '✓ Verified run' }),
-        element('div', { className: 'metric-hero', text: `${formatInteger(run.metrics.originalScoreDelta)} points` }),
         definitionList([
             ['Player', uploaderView(run.uploader, playerLink)],
             ['Players', participationLabel(run.maxConcurrentPlayers, run.participantInstanceCount)],
             ['Rules', labels.board === null ? labels.boardLabel : boardPolicyLabel(labels.board)],
             ['Mission', labels.missionLabel],
             ['Edition', editionLabel(run.edition)],
-            ['Score', formatInteger(run.metrics.originalScoreDelta)],
-            ['Time', formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration)],
             ['Net money', formatInteger(run.metrics.ransomCollected)],
             ['Campaign score', `${run.startingCampaignScore} → ${run.finalCampaignScore}`],
             ['Verified', formatDate(run.verifiedAtUnixMs)],
@@ -492,12 +497,14 @@ async function renderRun(api: HighscoreApi, id: string, signal: AbortSignal): Pr
     ]), renderSimConfig(run));
     appendAchievements(record, run.achievements);
     record.append(technical);
-    record.append(ownerBridge === null
-        ? signerUnavailableNotice('To delete your run, open this page in the browser you used to submit it.')
-        : renderDeletionForm(api, ownerBridge, { kind: 'run', run_id: run.runId }, signal));
+    if (ownerBridge !== null) record.append(renderDeletionForm(api, ownerBridge, { kind: 'run', run_id: run.runId }, signal));
     replace(
         app,
         pageHeading(title, 'Watch the replay and explore the result.'),
+        element('section', { className: 'panel run-result', attrs: { 'aria-label': 'Run result' } }, [
+            element('div', {}, [element('span', { text: 'Score' }), element('strong', { text: `${formatInteger(run.metrics.originalScoreDelta)} points` })]),
+            element('div', {}, [element('span', { text: 'Time' }), element('strong', { text: formatActiveTime(run.metrics.activeSimulationTicks, metadata.tickDuration) })]),
+        ]),
         element('section', { className: 'panel replay-section' }, [renderReplayActions(api, run)]),
         element('div', { className: 'detail-grid' }, [mainPanel, record]),
     );
@@ -511,7 +518,9 @@ function renderReplayActions(api: HighscoreApi, run: RunDetail): HTMLElement {
     download.rel = 'noopener';
     actions.append(download);
     wrapper.append(actions);
-    if (run.viewer.availability.status === 'unavailable') {
+    if (run.replay.artifact.mediaType !== 'application/x-robin-rhrec') {
+        wrapper.append(element('p', { className: 'notice', text: 'Replay playback is unavailable for this older recording. You can still view the result and download the original replay.' }));
+    } else if (run.viewer.availability.status === 'unavailable') {
         wrapper.append(element('p', { className: 'notice', text: run.viewer.availability.safeReason }));
     } else {
         const viewerUrl = new URL('../', window.location.href);
@@ -559,13 +568,6 @@ async function connectedOwnerBridge(): Promise<LeaderboardSigningBridge | null> 
     const connection = await connectedSigningBridge();
     if (connection === null) return null;
     return connection.bridge;
-}
-
-function signerUnavailableNotice(message: string): HTMLElement {
-    return element('section', { className: 'notice' }, [element('p', {
-        className: 'notice',
-        text: message,
-    })]);
 }
 
 function definitionList(rows: readonly (readonly [string, string | Node])[]): HTMLDListElement {
@@ -626,12 +628,18 @@ function internalLink(label: string, url: URL): HTMLAnchorElement {
     return anchor;
 }
 
-function navigateFilters(filters: BoardFilters): void { navigate(urlWithFilters(window.location.href, filters)); }
+function navigateFilters(filters: BoardFilters): void {
+    navigate(urlWithFilters(window.location.href, filters), 'rankings');
+}
 
-function navigate(url: string): void {
+function navigate(url: string, destination: 'top' | 'rankings' = 'top'): void {
     window.history.pushState(null, '', url);
-    window.scrollTo({ top: 0, behavior: 'instant' });
-    void renderCurrentRoute();
+    if (destination === 'top') window.scrollTo({ top: 0, behavior: 'instant' });
+    void renderCurrentRoute().then(() => {
+        if (destination === 'rankings' && window.location.href === url) {
+            document.getElementById('mission-rankings')?.scrollIntoView({ block: 'start' });
+        }
+    });
 }
 
 function rememberedBoard(): string | null {

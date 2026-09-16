@@ -6,7 +6,7 @@ import { parsePublicSubmissionStatus, type PublicSubmissionStatus } from './subm
 import { apiUrl } from './config.js';
 import { DEFAULT_NETWORK_DEADLINE_MS, NetworkDeadline } from '../network_deadline.js';
 import {
-    RANKED_REPLAY_MEDIA_TYPE,
+    isReplayMediaType,
     parseBoardMetadata,
     parseBoardPage,
     parsePlayerRunHistoryPage,
@@ -182,7 +182,10 @@ export class HighscoreApi {
         try {
             const response = await deadline.race(fetch(this.replayUrl(id), requestInit(deadline.signal)));
             await requireSuccess(response, deadline);
-            requireExactMediaType(response, RANKED_REPLAY_MEDIA_TYPE, 'Replay', deadline);
+            if (!isReplayMediaType(response.headers.get('content-type'))) {
+                deadline.cancelBody(response.body);
+                throw new PublicApiError(0, 'unexpected_media_type', 'Replay response did not use its expected media type.');
+            }
             return await readBounded(response, MAX_REPLAY_BYTES, 'Replay', deadline);
         } catch (error) {
             throw publicDeadlineError(deadline, error);
@@ -252,21 +255,6 @@ function requireHistoryCursor(value: string | null): void {
         || /\p{Cc}|\p{Bidi_Control}/u.test(value)) {
         throw new PublicApiError(0, 'invalid_player_history_cursor', 'Player history cursor is invalid.');
     }
-}
-
-function requireExactMediaType(
-    response: Response,
-    expected: string,
-    label: string,
-    deadline: NetworkDeadline,
-): void {
-    if (response.headers.get('content-type') === expected) return;
-    deadline.cancelBody(response.body);
-    throw new PublicApiError(
-        0,
-        'unexpected_media_type',
-        `${label} response did not use its expected media type.`,
-    );
 }
 
 function requestInit(signal: AbortSignal | undefined, accept?: string): RequestInit {

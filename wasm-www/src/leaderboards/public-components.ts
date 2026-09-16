@@ -1,4 +1,5 @@
-import { formatActiveTime, formatDate, formatInteger, formatMetricValue, metricLabel } from './format.js';
+import { achievementRules } from './achievements.js';
+import { formatActiveTime, formatDate, formatInteger, formatMetricValue } from './format.js';
 import type {
     Achievement,
     BoardMetadata,
@@ -38,15 +39,19 @@ export function appendAchievements(target: HTMLElement, achievements: readonly A
     if (earnedAchievements.length > 0) {
         target.append(element('h2', { text: 'Achievements' }));
         const badges = element('div', { className: 'badges' });
-        for (const achievement of earnedAchievements) badges.append(element('span', {
-            className: 'badge', text: achievement.label,
-        }));
+        for (const achievement of earnedAchievements) {
+            const rules = achievementRules[achievement.id];
+            badges.append(element('details', { className: 'achievement' }, [
+                element('summary', { className: 'badge', text: rules?.name ?? achievement.label }),
+                element('p', { text: rules?.description ?? 'Rules for this badge are unavailable in this version of the site.' }),
+            ]));
+        }
         target.append(badges);
     }
     if (unverifiableAchievements.length > 0) target.append(element('p', {
         className: 'notice',
         text: `Not awarded because verification was unavailable: ${unverifiableAchievements
-            .map(achievement => achievement.label).join(', ')}.`,
+            .map(achievement => achievementRules[achievement.id]?.name ?? achievement.label).join(', ')}.`,
     }));
 }
 
@@ -74,35 +79,43 @@ export function playerTables(
             'This player has not set a record yet.',
         );
         const section = element('section', {
-            className: 'panel table-panel player-results',
+            className: 'panel table-panel player-results profile-results',
             attrs: { 'aria-labelledby': 'player-bests-heading' },
         });
         section.append(element('h2', { text: 'Personal bests', attrs: { id: 'player-bests-heading' } }));
         const scroll = element('div', { className: 'table-scroll' });
         const table = element('table');
         table.append(element('caption', {
-            text: `${formatInteger(personalBests.length)} personal best${personalBests.length === 1 ? '' : 's'}`,
+            text: 'Best score and fastest time for each mission and set of rules.',
         }));
         const head = element('thead');
         const header = element('tr');
         for (const [label, className] of [
-            ['Board', ''], ['Best', ''], ['Players', 'hide-small'], ['Replay', ''],
+            ['Mission', ''], ['Best score', ''], ['Fastest time', ''],
         ] as const) header.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
         head.append(header);
         const body = element('tbody');
+        const groups = new Map<string, PlayerPersonalBest[]>();
         for (const best of personalBests) {
+            const key = JSON.stringify([best.filter.boardId, best.filter.missionId, best.filter.maxConcurrentPlayers]);
+            const group = groups.get(key) ?? [];
+            group.push(best);
+            groups.set(key, group);
+        }
+        for (const group of groups.values()) {
+            const first = group[0]!;
+            const players = first.filter.maxConcurrentPlayers;
             const row = element('tr');
-            row.append(
-                subjectCell(best.filter.boardId, best.filter.missionId, metricLabel(best.filter.metric)),
-                element('td', { className: 'primary-metric', text: formatMetricValue(best.metricValue, metadata.tickDuration) }),
-                element('td', {
-                    className: 'hide-small',
-                    text: best.filter.maxConcurrentPlayers === null
-                        ? 'Any player count'
-                        : `${formatInteger(best.filter.maxConcurrentPlayers)} players`,
-                }),
-                element('td', {}, [runLink(best.runId, 'Watch replay')]),
-            );
+            row.append(subjectCell(first.filter.boardId, first.filter.missionId,
+                players === null ? 'Any player count' : participationLabel(players, players)));
+            for (const metric of ['original_score', 'fastest_success'] as const) {
+                const best = group.find(item => item.filter.metric === metric);
+                const cell = element('td', { attrs: { 'data-label': metric === 'original_score' ? 'Best score' : 'Fastest time' } });
+                if (best === undefined) cell.textContent = 'No record yet';
+                else cell.append(element('strong', { className: 'primary-metric', text: formatMetricValue(best.metricValue, metadata.tickDuration) }),
+                    runLink(best.runId, 'Watch replay'));
+                row.append(cell);
+            }
             body.append(row);
         }
         table.append(head, body);
@@ -123,7 +136,7 @@ export function playerTables(
             return empty;
         }
         const section = element('section', {
-            className: 'panel table-panel player-results',
+            className: 'panel table-panel player-results profile-results',
             attrs: { 'aria-labelledby': 'player-history-heading' },
         });
         section.append(element('h2', { text: 'Recent runs', attrs: { id: 'player-history-heading' } }));
@@ -135,7 +148,7 @@ export function playerTables(
         const head = element('thead');
         const header = element('tr');
         for (const [label, className] of [
-            ['Run', ''], ['Result', ''], ['Players', 'hide-small'], ['Added', 'hide-small'], ['Replay', ''],
+            ['Mission', ''], ['Score', ''], ['Time', ''], ['Added', 'hide-small'], ['Replay', ''],
         ] as const) header.append(element('th', { text: label, className, attrs: { scope: 'col' } }));
         head.append(header);
         const body = element('tbody');
@@ -150,22 +163,8 @@ export function playerTables(
         const row = element('tr');
         row.append(
             subjectCell(entry.run.boardId, entry.run.missionId, participationLabel(entry.run.maxConcurrentPlayers, entry.run.participantInstanceCount)),
-            element('td', {}, [
-                element('div', { className: 'player' }, [
-                    element('span', {
-                        className: 'primary-metric',
-                        text: `${formatInteger(entry.run.metrics.originalScoreDelta)} points`,
-                    }),
-                    element('span', {
-                        className: 'fingerprint',
-                        text: `${formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration)} · ${formatInteger(entry.run.metrics.ransomCollected)} net money`,
-                    }),
-                ]),
-            ]),
-            element('td', {
-                className: 'hide-small',
-                text: participationLabel(entry.run.maxConcurrentPlayers, entry.run.participantInstanceCount),
-            }),
+            element('td', { className: 'primary-metric', attrs: { 'data-label': 'Score' }, text: formatInteger(entry.run.metrics.originalScoreDelta) }),
+            element('td', { attrs: { 'data-label': 'Time' }, text: formatActiveTime(entry.run.metrics.activeSimulationTicks, metadata.tickDuration) }),
             element('td', { className: 'hide-small', text: formatDate(entry.verifiedAtUnixMs) }),
             element('td', {}, [runLink(entry.run.runId, 'Watch replay')]),
         );

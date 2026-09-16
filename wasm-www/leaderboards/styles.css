@@ -269,7 +269,7 @@ footer {
 }
 
 .replay-section { margin-bottom: 1.5rem; padding: 1rem; }
-.replay-player { display: block; width: 100%; height: min(76vh, 760px); min-height: 360px; border: 0; background: #111; border-radius: 6px; margin-bottom: 1rem; }
+.replay-player { display: block; width: 100%; aspect-ratio: 16 / 9; height: auto; max-height: 70vh; border: 0; background: #111; border-radius: 6px; margin-bottom: 1rem; }
 
 .filter-panel .tabs { margin: 1.25rem 0 0; }
 .section-intro { margin: 0; padding: 0 1rem 1rem; color: var(--muted); }
@@ -292,8 +292,9 @@ summary { cursor: pointer; color: var(--muted); }
     .latest-submissions .fingerprint { display: block; margin-top: .2rem; }
 }
 
-.submission-help { margin-bottom: 1.25rem; padding: 1rem; }
-.submission-help summary { font-weight: 700; }
+.submission-help { padding: .55rem .9rem; box-shadow: none; }
+.submission-help[open] { flex-basis: 100%; }
+.submission-help summary { color: var(--text); }
 .submission-help li { margin-block: .75rem; line-height: 1.6; }
 .latest-submissions { margin-bottom: 2rem; }
 #mission-rankings { scroll-margin-top: 1rem; }
@@ -316,4 +317,31 @@ th[aria-sort="ascending"]::after { content: ' ↑'; }
     .ranking-table td[data-label="Score"] { grid-column: 2; }
     .ranking-table td[data-label="Time"] { grid-column: 3; }
     .ranking-table td[data-label]::before { content: attr(data-label); display: block; color: var(--muted); font-size: .7rem; font-weight: 400; }
+}
+
+.run-result { display: flex; flex-wrap: wrap; gap: 1.25rem 3rem; padding: 1rem 1.15rem; margin-bottom: 1rem; }
+.run-result > div { display: grid; gap: .3rem; }
+.run-result span { color: var(--muted); font-size: .85rem; }
+.run-result strong { color: var(--gold); font: 700 clamp(1.5rem, 4vw, 2.5rem)/1.15 Georgia, serif; font-variant-numeric: tabular-nums; }
+.achievement summary { min-height: 2.5rem; padding: .5rem .8rem; font-size: .85rem; }
+.achievement summary::after { content: ' +'; margin-left: .5rem; }
+.achievement[open] { flex-basis: 100%; }
+.achievement[open] summary::after { content: ' −'; }
+.achievement p { margin: .6rem 0 1rem; color: var(--muted); line-height: 1.6; }
+.profile-results td[data-label] > a { display: block; margin-top: .4rem; font-size: .85rem; }
+@media (max-width: 480px) {
+    .page-heading { margin-bottom: 1rem; }
+    .page-heading p { font-size: .9rem; }
+    .page-heading .actions { gap: .5rem; }
+    .page-heading .actions > * { font-size: .85rem; }
+    .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .filters .filter-wide { grid-column: 1 / -1; }
+    .replay-section { padding: .5rem; }
+    .replay-player { aspect-ratio: 4 / 3; }
+    .profile-results table, .profile-results tbody, .profile-results caption { display: block; width: 100%; }
+    .profile-results thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .profile-results tr { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; padding: .75rem; border-top: 1px solid var(--border); }
+    .profile-results td { border: 0; padding: .3rem; }
+    .profile-results td:first-child, .profile-results td:last-child:not([data-label]) { grid-column: 1 / -1; }
+    .profile-results td[data-label]::before { content: attr(data-label); display: block; color: var(--muted); font-size: .75rem; font-weight: 400; margin-bottom: .3rem; }
 }
