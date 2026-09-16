@@ -1132,97 +1132,26 @@ fn swordfight_opponents_standalone_serde_is_an_ordered_record_sequence() {
 }
 
 #[test]
-fn human_opponents_serde_retains_legacy_fields_and_normalizes_short_lines() {
+fn human_opponents_round_trip_preserves_ordered_pairs() {
     let first = EntityId::Pc(crate::entity_id::PcId(31));
     let second = EntityId::Soldier(crate::entity_id::SoldierId(32));
     let line = JumpLineIndex::new(41).unwrap();
     let human = HumanData {
+        sorting_distance: 123.0,
         opponents: SwordfightOpponents::from_pairs([(first, Some(line)), (second, None)]),
         ..HumanData::default()
     };
-
-    let mut value = serde_json::to_value(&human).unwrap();
+    let value = serde_json::to_value(&human).unwrap();
     assert_eq!(
-        value.get("opponents"),
-        Some(&serde_json::to_value(vec![first, second]).unwrap())
+        value["opponents"],
+        serde_json::to_value(&human.opponents).unwrap()
     );
-    assert_eq!(
-        value.get("opponent_jump_lines"),
-        Some(&serde_json::to_value(vec![Some(line), None]).unwrap())
-    );
-    assert!(value.get("entries").is_none());
-
-    let json = serde_json::to_string(&human).unwrap();
-    let hollow = json.find("\"hollow_man\"").unwrap();
-    let opponents = json.find("\"opponents\"").unwrap();
-    let jump_lines = json.find("\"opponent_jump_lines\"").unwrap();
-    let smalltalk = json.find("\"smalltalk_initiative\"").unwrap();
-    assert!(hollow < opponents && opponents < jump_lines && jump_lines < smalltalk);
-
-    let round_trip: HumanData = serde_json::from_value(value.clone()).unwrap();
+    let round_trip: HumanData = serde_json::from_value(value).unwrap();
     assert_eq!(round_trip.opponents, human.opponents);
-
-    let mut predating_jump_lines = value.clone();
-    predating_jump_lines
-        .as_object_mut()
-        .unwrap()
-        .remove("opponent_jump_lines");
-    let normalized: HumanData = serde_json::from_value(predating_jump_lines).unwrap();
-    assert_eq!(normalized.opponents.ids(), vec![first, second]);
-    assert_eq!(
-        normalized
-            .opponents
-            .iter_with_jump_lines()
-            .collect::<Vec<_>>(),
-        vec![(first, None), (second, None)]
-    );
-
+    assert_eq!(round_trip.sorting_distance, 0.0);
     let binary = bitcode::encode(&human);
     let binary_round_trip: HumanData = bitcode::decode(&binary).unwrap();
     assert_eq!(binary_round_trip.opponents, human.opponents);
-
-    value["opponent_jump_lines"] = serde_json::json!([]);
-    let normalized: HumanData = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(normalized.opponents.ids(), vec![first, second]);
-    assert_eq!(
-        normalized
-            .opponents
-            .iter_with_jump_lines()
-            .collect::<Vec<_>>(),
-        vec![(first, None), (second, None)]
-    );
-
-    value["opponent_jump_lines"] =
-        serde_json::to_value(vec![None::<JumpLineIndex>, None, None]).unwrap();
-    let error = serde_json::from_value::<HumanData>(value).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("opponent_jump_lines has 3 entries for 2 opponents")
-    );
-}
-
-#[test]
-fn swordfight_opponents_state_hash_matches_legacy_parallel_vectors() {
-    use robin_util::state_hash::StateHash;
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::Hasher as _;
-
-    let opponents = vec![
-        EntityId::Pc(crate::entity_id::PcId(51)),
-        EntityId::Soldier(crate::entity_id::SoldierId(52)),
-    ];
-    let jump_lines = vec![Some(JumpLineIndex::new(61).unwrap()), None];
-    let aggregate =
-        SwordfightOpponents::from_pairs(opponents.iter().copied().zip(jump_lines.iter().copied()));
-
-    let mut legacy_hasher = DefaultHasher::new();
-    opponents.state_hash(&mut legacy_hasher);
-    jump_lines.state_hash(&mut legacy_hasher);
-    let mut aggregate_hasher = DefaultHasher::new();
-    aggregate.state_hash(&mut aggregate_hasher);
-
-    assert_eq!(legacy_hasher.finish(), aggregate_hasher.finish());
 }
 
 #[test]

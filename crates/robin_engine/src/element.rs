@@ -30,7 +30,6 @@
 //! - **[`EntityId`]**: Cross-entity references use IDs, not pointers.
 
 use std::fmt;
-use std::hash::Hasher;
 
 use serde::{Deserialize, Serialize};
 
@@ -938,13 +937,22 @@ pub struct HumanSwordSweepState {
     pub final_angle: f32,
 }
 
-/// One entry in the original game's ordered swordfight-opponent list.
+/// One entry in the ordered swordfight-opponent list.
 ///
 /// The jump line belongs to this human's side of a table swordfight. Keeping
 /// it in the same record as the opponent prevents principal promotion,
 /// removal, and insertion from desynchronizing the two values.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct SwordfightOpponent {
     opponent: EntityId,
@@ -954,8 +962,7 @@ pub struct SwordfightOpponent {
 impl SwordfightOpponent {
     /// Build one paired opponent record.
     ///
-    /// The jump line is the line on this human's side of the fight, matching
-    /// Original-game swordfight-opponent jump line.
+    /// The jump line is the line on this human's side of the fight.
     pub fn new(opponent: EntityId, jump_line: Option<JumpLineIndex>) -> Self {
         Self {
             opponent,
@@ -973,15 +980,16 @@ impl SwordfightOpponent {
 }
 
 /// Ordered swordfight opponents; the first entry is the principal opponent.
-///
-/// The original game stores a single swordfight-opponent list. Older Rust
-/// snapshots exposed the two record fields as parallel `opponents` and
-/// `opponent_jump_lines` vectors. [`HumanData`]'s compatibility view and this
-/// type's `StateHash` implementation retain that wire shape and hash byte
-/// order while the live representation enforces the Original's one-record
-/// invariant.
 #[derive(
-    Clone, Default, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 #[serde(transparent)]
 pub struct SwordfightOpponents {
@@ -1015,35 +1023,6 @@ impl SwordfightOpponents {
                 .into_iter()
                 .map(|(opponent, jump_line)| SwordfightOpponent::new(opponent, jump_line)),
         )
-    }
-
-    fn try_from_parts(
-        opponents: Vec<EntityId>,
-        mut jump_lines: Vec<Option<JumpLineIndex>>,
-    ) -> Result<Self, String> {
-        if jump_lines.len() > opponents.len() {
-            return Err(format!(
-                "opponent_jump_lines has {} entries for {} opponents",
-                jump_lines.len(),
-                opponents.len()
-            ));
-        }
-
-        // Historical Rust snapshots could have a short parallel vector. Its
-        // read behavior was `get(index).flatten()`, i.e. missing meant no
-        // jump line; normalize that representation at the boundary.
-        jump_lines.resize(opponents.len(), None);
-        Ok(Self::from_pairs(opponents.into_iter().zip(jump_lines)))
-    }
-
-    fn into_parts(self) -> (Vec<EntityId>, Vec<Option<JumpLineIndex>>) {
-        let mut opponents = Vec::with_capacity(self.entries.len());
-        let mut jump_lines = Vec::with_capacity(self.entries.len());
-        for entry in self.entries {
-            opponents.push(entry.opponent);
-            jump_lines.push(entry.jump_line);
-        }
-        (opponents, jump_lines)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1224,19 +1203,6 @@ impl PartialEq<SwordfightOpponents> for Vec<EntityId> {
     }
 }
 
-impl robin_util::state_hash::StateHash for SwordfightOpponents {
-    fn state_hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u64(self.entries.len() as u64);
-        for entry in &self.entries {
-            robin_util::state_hash::StateHash::state_hash(&entry.opponent, state);
-        }
-        state.write_u64(self.entries.len() as u64);
-        for entry in &self.entries {
-            robin_util::state_hash::StateHash::state_hash(&entry.jump_line, state);
-        }
-    }
-}
-
 /// Human-level data.
 #[derive(
     Debug,
@@ -1247,13 +1213,13 @@ impl robin_util::state_hash::StateHash for SwordfightOpponents {
     bitcode::Encode,
     bitcode::Decode,
 )]
-#[serde(into = "HumanDataWire", try_from = "HumanDataWire")]
 pub struct HumanData {
     pub carrier: Option<EntityId>,
     /// Shared sorting key for nested coordination and target-selection calls.
     /// Every owning operation writes its keys before reading them; a saved
     /// frame never depends on values left by the preceding operation.
     #[state_hash(skip)]
+    #[serde(skip)]
     pub sorting_distance: f32,
 
     // Health & combat
@@ -1273,7 +1239,7 @@ pub struct HumanData {
     // Visibility
     pub hollow_man: bool,
 
-    // Swordfight — the Original's ordered opponent records.
+    // Ordered swordfight opponent records.
     pub opponents: SwordfightOpponents,
 
     pub smalltalk_initiative: bool,
@@ -1316,135 +1282,6 @@ pub struct HumanData {
     pub shield: HumanShieldState,
     pub sword_sweep: HumanSwordSweepState,
     pub pending_shoots: Vec<crate::sequence::SequenceElementRef>,
-}
-
-/// Serde (save) view of [`HumanData`]. The two opponent vectors deliberately
-/// remain adjacent and in their historical order for JSON saves. Bitcode is
-/// derived on `HumanData` directly and does not use this view.
-#[derive(Serialize, Deserialize)]
-struct HumanDataWire {
-    carrier: Option<EntityId>,
-    concussion_of_the_brain: u16,
-    concussion_healing_timeout: u16,
-    tiredness: u16,
-    unconscious: bool,
-    already_detectable_body: bool,
-    detectable_list_index: u16,
-    sword_strike_boredom: Vec<u16>,
-    stuck_under_nets_counter: u16,
-    hollow_man: bool,
-    opponents: Vec<EntityId>,
-    #[serde(default)]
-    opponent_jump_lines: Vec<Option<JumpLineIndex>>,
-    smalltalk_initiative: bool,
-    received_smalltalk_initiative: bool,
-    smalltalk_hint: SmalltalkHint,
-    smalltalk_hint_opponent: Option<EntityId>,
-    relative_fighting_ability: u16,
-    small_repulsive_radius: bool,
-    last_is_lying_for_corpse_intersection: Option<bool>,
-    killed_by_accident: bool,
-    parry_counter: u16,
-    invulnerable: bool,
-    last_motion_was_step_back_in_combat: bool,
-    running_hulk: u32,
-    time_hulk: u32,
-    hulk_level: u16,
-    hulk_direction: bool,
-    hulk_speed: f32,
-    repulsive_point: HumanRepulsivePointState,
-    building_sector: Option<SectorHandle>,
-    produced_noise_first_word: f32,
-    shield: HumanShieldState,
-    sword_sweep: HumanSwordSweepState,
-    pending_shoots: Vec<crate::sequence::SequenceElementRef>,
-}
-
-impl TryFrom<HumanDataWire> for HumanData {
-    type Error = String;
-
-    fn try_from(wire: HumanDataWire) -> Result<Self, Self::Error> {
-        let opponents =
-            SwordfightOpponents::try_from_parts(wire.opponents, wire.opponent_jump_lines)?;
-        Ok(Self {
-            carrier: wire.carrier,
-            sorting_distance: 0.0,
-            concussion_of_the_brain: wire.concussion_of_the_brain,
-            concussion_healing_timeout: wire.concussion_healing_timeout,
-            tiredness: wire.tiredness,
-            unconscious: wire.unconscious,
-            already_detectable_body: wire.already_detectable_body,
-            detectable_list_index: wire.detectable_list_index,
-            sword_strike_boredom: wire.sword_strike_boredom,
-            stuck_under_nets_counter: wire.stuck_under_nets_counter,
-            hollow_man: wire.hollow_man,
-            opponents,
-            smalltalk_initiative: wire.smalltalk_initiative,
-            received_smalltalk_initiative: wire.received_smalltalk_initiative,
-            smalltalk_hint: wire.smalltalk_hint,
-            smalltalk_hint_opponent: wire.smalltalk_hint_opponent,
-            relative_fighting_ability: wire.relative_fighting_ability,
-            small_repulsive_radius: wire.small_repulsive_radius,
-            last_is_lying_for_corpse_intersection: wire.last_is_lying_for_corpse_intersection,
-            killed_by_accident: wire.killed_by_accident,
-            parry_counter: wire.parry_counter,
-            invulnerable: wire.invulnerable,
-            last_motion_was_step_back_in_combat: wire.last_motion_was_step_back_in_combat,
-            running_hulk: wire.running_hulk,
-            time_hulk: wire.time_hulk,
-            hulk_level: wire.hulk_level,
-            hulk_direction: wire.hulk_direction,
-            hulk_speed: wire.hulk_speed,
-            repulsive_point: wire.repulsive_point,
-            building_sector: wire.building_sector,
-            produced_noise_first_word: wire.produced_noise_first_word,
-            shield: wire.shield,
-            sword_sweep: wire.sword_sweep,
-            pending_shoots: wire.pending_shoots,
-        })
-    }
-}
-
-impl From<HumanData> for HumanDataWire {
-    fn from(human: HumanData) -> Self {
-        let (opponents, opponent_jump_lines) = human.opponents.into_parts();
-        Self {
-            carrier: human.carrier,
-            concussion_of_the_brain: human.concussion_of_the_brain,
-            concussion_healing_timeout: human.concussion_healing_timeout,
-            tiredness: human.tiredness,
-            unconscious: human.unconscious,
-            already_detectable_body: human.already_detectable_body,
-            detectable_list_index: human.detectable_list_index,
-            sword_strike_boredom: human.sword_strike_boredom,
-            stuck_under_nets_counter: human.stuck_under_nets_counter,
-            hollow_man: human.hollow_man,
-            opponents,
-            opponent_jump_lines,
-            smalltalk_initiative: human.smalltalk_initiative,
-            received_smalltalk_initiative: human.received_smalltalk_initiative,
-            smalltalk_hint: human.smalltalk_hint,
-            smalltalk_hint_opponent: human.smalltalk_hint_opponent,
-            relative_fighting_ability: human.relative_fighting_ability,
-            small_repulsive_radius: human.small_repulsive_radius,
-            last_is_lying_for_corpse_intersection: human.last_is_lying_for_corpse_intersection,
-            killed_by_accident: human.killed_by_accident,
-            parry_counter: human.parry_counter,
-            invulnerable: human.invulnerable,
-            last_motion_was_step_back_in_combat: human.last_motion_was_step_back_in_combat,
-            running_hulk: human.running_hulk,
-            time_hulk: human.time_hulk,
-            hulk_level: human.hulk_level,
-            hulk_direction: human.hulk_direction,
-            hulk_speed: human.hulk_speed,
-            repulsive_point: human.repulsive_point,
-            building_sector: human.building_sector,
-            produced_noise_first_word: human.produced_noise_first_word,
-            shield: human.shield,
-            sword_sweep: human.sword_sweep,
-            pending_shoots: human.pending_shoots,
-        }
-    }
 }
 
 impl Default for HumanData {

@@ -210,9 +210,8 @@ fn convert_human(
         |kind| kind == EntityIdKind::Pc,
     )?;
     let mut opponents = Vec::with_capacity(saved.opponents.len());
-    let mut opponent_jump_lines = Vec::with_capacity(saved.opponents.len());
     for opponent in &saved.opponents {
-        opponents.push(
+        opponents.push(crate::element::SwordfightOpponent::new(
             checked_ref(
                 entities.resolve_element(opponent.opponent)?,
                 creation_order,
@@ -223,9 +222,8 @@ fn convert_human(
             .ok_or_else(|| {
                 human_site(creation_order).invalid("opponents.opponent", "null", "non-null Human")
             })?,
-        );
-        opponent_jump_lines
-            .push(line_topology.resolve("human.opponents.jump_line", opponent.jump_line)?);
+            line_topology.resolve("human.opponents.jump_line", opponent.jump_line)?,
+        ));
     }
     let sword_victims = saved
         .sword_strike_victims
@@ -259,11 +257,6 @@ fn convert_human(
         }
         pending_shoots.push(element_ref);
     }
-    assert_eq!(
-        opponents.len(),
-        opponent_jump_lines.len(),
-        "converted legacy opponents must retain their jump-line records"
-    );
     Ok(HumanData {
         carrier,
         sorting_distance: 0.0,
@@ -276,9 +269,7 @@ fn convert_human(
         sword_strike_boredom: saved.sword_strike_boredom.to_vec(),
         stuck_under_nets_counter: saved.stuck_under_nets_counter,
         hollow_man: saved.hollow_man,
-        opponents: crate::element::SwordfightOpponents::from_pairs(
-            opponents.into_iter().zip(opponent_jump_lines),
-        ),
+        opponents: crate::element::SwordfightOpponents::from_entries(opponents),
         smalltalk_initiative: saved.smalltalk_initiative,
         received_smalltalk_initiative: saved.received_smalltalk_initiative,
         smalltalk_hint: smalltalk_hint(saved.smalltalk_hint, creation_order)?,
