@@ -451,8 +451,19 @@ fn paused_post_boundary_trade_delivers_its_receipt_in_the_same_transaction() {
         .expect("admit paused modal trade");
 
     assert!(!output.hourglass_ran);
-    assert!(output.events.side_effects().trade_receipts.is_empty());
-    let receipts = &output.post_boundary_events.side_effects().trade_receipts;
+    assert!(
+        output
+            .events
+            .side_effects()
+            .host_effects
+            .trade_receipts
+            .is_empty()
+    );
+    let receipts = &output
+        .post_boundary_events
+        .side_effects()
+        .host_effects
+        .trade_receipts;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].request_id, 77);
     assert!(matches!(
@@ -986,10 +997,6 @@ fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
         assert_eq!(
             format!("{:?}", view.minimap_dot_info(pc, &assets)),
             format!("{:?}", engine.minimap_dot_info(pc, &assets))
-        );
-        assert_eq!(
-            view.compute_display_order().depths,
-            engine.compute_display_order().depths
         );
         assert_eq!(
             serde_json::to_value(view.campaign()).unwrap(),

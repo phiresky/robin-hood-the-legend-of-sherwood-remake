@@ -839,23 +839,20 @@ impl EngineInner {
                 order
             })
             .collect();
-        let first = orders.front().expect("jump translation produced no orders");
-        let installed = crate::element::InstalledActorOrder {
-            order_id: first.order_id,
-            order_type: first.order_type,
-        };
-        self.orders
+        let element = self
+            .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
-            .expect("jump element disappeared during translation")
-            .orders = orders;
-        self.world
-            .entities
-            .get_mut(owner)
-            .expect("jump owner disappeared")
-            .actor_data_mut()
-            .expect("jump owner is not an actor")
-            .installed_order = Some(installed);
+            .expect("jump element disappeared during translation");
+        element.orders.clear();
+        element.orders.extend(orders);
+        let installed = crate::element::InstalledActorOrder::new(
+            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+            element
+                .current_order()
+                .expect("jump translation produced no orders"),
+        );
+        self.install_actor_order(owner, Some(installed));
 
         tracing::debug!(
             entity = ?owner,
@@ -1211,6 +1208,9 @@ impl EngineInner {
             projection_point,
             "jump landing",
         );
+        self.expect_entity_mut(entity_id, "jump landing depth")
+            .sprite_mut()
+            .compute_display_depth();
     }
 }
 
@@ -1406,6 +1406,7 @@ pub(crate) fn perform_jump_ground_motion(
             }
         }
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     // The jump-up flight stops TELEPORT_JUMPING_UP below the platform
@@ -1421,6 +1422,7 @@ pub(crate) fn perform_jump_ground_motion(
         lifted.z += TELEPORT_JUMPING_UP;
         pi.set_position(lifted);
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     state
@@ -1586,6 +1588,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn airborne_jump_retains_takeoff_depth_until_landing_publication() {
+        use crate::engine::test_support::actors::TestActor;
+        let mut entity = TestActor::pc(Posture::Flying)
+            .map_position(MapPoint::new(10.0, 20.0))
+            .build();
+        entity.sprite_mut().display_depth = 17.001;
+        entity.actor_data_mut().unwrap().wait_time = 2;
+        entity
+            .position_iface_mut()
+            .set_projectile_increment(crate::coordinates::WorldVec3D::new(1.0, 4.0, 2.0));
+        let before = entity.element_data().position();
+        advance_airborne_flight(&mut entity);
+        assert_eq!(entity.element_data().position().y, before.y + 4.0);
+        assert_eq!(entity.sprite().display_depth, 17.001);
+        assert_eq!(entity.actor_data().unwrap().wait_time, 1);
+    }
+
+    #[test]
     fn long_jump_reserves_full_order_chain_before_advancing() {
         use crate::engine::test_support::actors::TestActor;
         use crate::sequence::{Field, FieldValue, SequenceElement};
@@ -1659,7 +1679,7 @@ mod tests {
             .unwrap()
             .actor_data()
             .unwrap();
-        let installed = actor.installed_order.as_ref().unwrap();
+        let installed = engine.actor_installed_order(owner).unwrap();
         assert_eq!(installed.order_id, successor);
         assert_eq!(installed.order_type, OrderType::JumpingLong);
         assert_eq!(

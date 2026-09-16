@@ -404,19 +404,14 @@ fn reaction_timer_uses_raw_distance_and_installed_running_order() {
             480.0,
         );
         selected_door_position(&mut engine, target, MapPoint::new(360.0, 750.0));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(crate::element::InstalledActorOrder {
-            order_id: std::num::NonZeroU32::new(1).unwrap(),
-            order_type: if running {
+        engine.install_test_order(
+            target,
+            if running {
                 OrderType::RunningUpright
             } else {
                 OrderType::WaitingUpright
             },
-        });
+        );
         event(&mut engine, &assets, owner, StimulusType::EventDone);
         let ai = engine.combat_event_ai(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);

@@ -64,6 +64,37 @@ const NET_LANDING_NORMAL_Z_THRESHOLD: f32 = 0.87;
 const TEST_RADIUS_NET_CRUMPLED: f32 = 40.0;
 
 impl EngineInner {
+    pub(super) fn compute_net_victim_depth(&mut self, net_id: EntityId, victim_id: EntityId) {
+        let depth = self
+            .expect_entity(net_id, "net display depth")
+            .sprite()
+            .display_depth;
+        let victim = self.expect_entity_mut(victim_id, "net display victim");
+        if victim
+            .human_data()
+            .expect("net victim is human")
+            .stuck_under_nets_counter
+            == 1
+        {
+            victim
+                .sprite_mut()
+                .compute_display_depth_relative_to(depth, true);
+        }
+    }
+
+    fn compute_net_victim_depths(&mut self, net_id: EntityId) {
+        let Entity::Net(net) = self.expect_entity(net_id, "net display victims") else {
+            panic!("display owner is not a net")
+        };
+        let count = net.net.victims.len();
+        for index in 0..count {
+            let Entity::Net(net) = self.expect_entity(net_id, "net display victims") else {
+                unreachable!()
+            };
+            let victim = net.net.victims[index];
+            self.compute_net_victim_depth(net_id, victim);
+        }
+    }
     // ════════════════════════════════════════════════════════════════
     //  Falling-net capture sweep
     // ════════════════════════════════════════════════════════════════
@@ -282,16 +313,6 @@ impl EngineInner {
                 0,
             );
             self.launch_element(sim, assets, elem);
-
-            // Set the victim's sprite to draw behind the net so the
-            // net visually covers them. The display-order pipeline is
-            // sprite-driven and only needs the reference + flag set
-            // once per capture.
-            if let Some(entity) = self.world.entities.get_mut(victim_id) {
-                let sprite = &mut entity.element_data_mut().sprite;
-                sprite.display_order_ref = Some(net_id);
-                sprite.behind_display_order_ref = true;
-            }
         }
 
         tracing::debug!(
@@ -389,12 +410,10 @@ impl EngineInner {
             // ── 3. Park the victim with a Wait element ──────────────
             self.actor_wait(sim, assets, victim_id);
 
-            // Clear the "behind net" sprite reference so the victim
-            // goes back to normal Y-sorting.
+            // Release publishes the victim's own positional depth.
             if let Some(entity) = self.world.entities.get_mut(victim_id) {
                 let sprite = &mut entity.element_data_mut().sprite;
-                sprite.display_order_ref = None;
-                sprite.behind_display_order_ref = false;
+                sprite.compute_display_depth();
             }
 
             // ── 4. NPC-only AI + detectable cleanup ─────────────────
@@ -482,6 +501,7 @@ impl EngineInner {
             Some(Entity::Net(net)) => net.projectile.flying,
             _ => return,
         };
+        let first_grounded = matches!(self.get_entity(net_id), Some(Entity::Net(net)) if !net.projectile.flying && net.net.was_flying);
         // Phase 1: advance trajectory + classify the net into
         // (descending-near-landing, just-landed) and stamp the
         // in-flight animation transitions on it directly.
@@ -541,10 +561,14 @@ impl EngineInner {
                     // can register repulsive points + look up obstacles).
                     apply = true;
                     just_landed = true;
-                    net.net.was_flying = false;
                 }
             } else {
                 // The two transition cases only assign animation and return;
+                if net.net.was_flying {
+                    net.net.was_flying = false;
+                    net.element.sprite.display_depth =
+                        net.element.position().y - if net.net.crumpled { 10.0 } else { 40.0 };
+                }
                 // the newly selected row must not advance until next tick.
                 match net.object.animation {
                     crate::element::Animation::NetUnfolding => {
@@ -570,11 +594,20 @@ impl EngineInner {
         // Phase 2: apply effects (mutable engine borrow released above).
         if apply {
             self.apply_net_falling_effect(sim, assets, net_id);
+            self.compute_net_victim_depths(net_id);
         }
         if just_landed {
             self.apply_projectile_landing_resolution(assets, net_id);
             self.snap_net_to_landing_obstacle(sim, assets, net_id);
             self.register_net_repulsive_points(net_id);
+        }
+        if was_flying {
+            let Entity::Net(net) = self.expect_entity_mut(net_id, "updated net") else {
+                unreachable!()
+            };
+            net.net.was_flying = true;
+        } else if first_grounded {
+            self.compute_net_victim_depths(net_id);
         }
 
         // The net's sprite tail is inside its update. FreezeAll
@@ -1048,6 +1081,7 @@ fn advance_net_trajectory(net: &mut crate::element::ElementNet) {
     net.element.set_position(p);
     net.element
         .set_position_map(MapPoint::from_world_xyz(p.x, p.y, p.z));
+    net.element.sprite.compute_display_depth();
     let vx = proj.velocity_increment.x;
     let vy = proj.velocity_increment.y;
     if vx != 0.0 || vy != 0.0 {

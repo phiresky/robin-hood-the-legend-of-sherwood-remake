@@ -3804,8 +3804,8 @@ impl EngineInner {
                     tracing::debug!("StartDialog({dialog_id}): queued for game session");
                     self.feedback
                         .pending_side_effects
-                        .pending_dialogues
-                        .push(dialog_id);
+                        .host_effects
+                        .extend_dialogues([dialog_id]);
                     // The original game's dialog start is synchronous and its menu-screen
                     // constructor re-enters the game refresh before returning
                     // to the script VM.
@@ -3827,7 +3827,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
-                    self.feedback.pending_side_effects.pending_show_console = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_signal(crate::engine::HostSignal::ShowConsole);
                     self.forward_message(
                         sim,
                         assets,
@@ -3985,8 +3988,8 @@ impl EngineInner {
                     tracing::debug!("DisplayPopupText({text_id}): queued for UI system");
                     self.feedback
                         .pending_side_effects
-                        .pending_popup_texts
-                        .push(text_id);
+                        .host_effects
+                        .extend_popup_texts([text_id]);
                     // Displaying scripted popup text opens the popup scroll synchronously. The first
                     // popup in a universal frame constructs its colorized
                     // background and re-enters game refresh with
@@ -4004,7 +4007,10 @@ impl EngineInner {
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
-                    self.feedback.pending_side_effects.pending_sherwood_report = true;
+                    self.feedback
+                        .pending_side_effects
+                        .host_effects
+                        .request_sherwood_report();
                     self.forward_message(
                         sim,
                         assets,
@@ -4103,6 +4109,9 @@ impl EngineInner {
                             .expect("SetActorLocation entity vanished before grid refresh");
                         entity.element_data_mut().set_position_map(pt);
                         entity.element_data_mut().update_grid_cell();
+                        if spawn_elevation_probe.is_none() {
+                            entity.sprite_mut().compute_display_depth();
+                        }
                         continue;
                     }
                     let entity = self
@@ -4141,13 +4150,6 @@ impl EngineInner {
                         }
                     }
 
-                    // The original game computes display order without a root element here,
-                    // but that method updates only the derived float sort key.
-                    // It does not change the display-order reference, so both the
-                    // reference and its behind/front flag survive a teleport.
-                    // In particular, schema-16 traces can expose a dormant
-                    // `behind=true` while the reference is null.
-
                     // Ordinary SetActorLocation refreshes the projection
                     // obstacle from the destination point. RecordEnterGame
                     // deliberately does not: Original sets its outside 3D
@@ -4170,6 +4172,12 @@ impl EngineInner {
                             let ed = entity.element_data_mut();
                             ed.set_obstacle_index(new_obstacle_handle, plane);
                         }
+                    }
+
+                    if spawn_elevation_probe.is_none() {
+                        self.expect_entity_mut(id, "SetActorLocation display depth")
+                            .sprite_mut()
+                            .compute_display_depth();
                     }
 
                     // Spawn-elevation compose (RecordEnterGame path):

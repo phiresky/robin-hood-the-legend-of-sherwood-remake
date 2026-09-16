@@ -1217,6 +1217,7 @@ fn apply_animation_sprite_placement(
             y: map_position.y + elevation,
             z: elevation,
         });
+    sprite.compute_display_depth();
 }
 
 /// Minimap bitmap metadata produced by the host after GPU upload and
@@ -2034,6 +2035,7 @@ impl EngineInner {
             loaded.mission.soldiers.extend(legendary_soldiers);
         }
         self.finish_mission_identity_stage(&loaded, mission_name, proto_level_name);
+        self.initialize_mission_display_depths();
         self.load_mission_script_stage(
             assets,
             mission_name,
@@ -5410,6 +5412,7 @@ impl EngineInner {
                 if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
                 {
                     pc.element.update_grid_cell();
+                    pc.element.sprite.compute_display_depth();
                 }
 
                 // Set the work icon for the production type.

@@ -410,11 +410,9 @@ impl EngineInner {
                         .try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action)
                     {
                         MovePathOutcome::Success | MovePathOutcome::Pending => {
-                            // Corrected original-game movement invalidation refreshes
-                            // actor order from the retranslated selected element. The
-                            // old order storage has been deleted, so retaining the
-                            // previous installed snapshot would reproduce its
-                            // former dangling-pointer allocator dependence.
+                            // Retranslation replaces order storage. Install the
+                            // new current order only if this element still owns
+                            // the actor after its callbacks.
                             let installed_order = self
                                 .orders
                                 .sequence_manager
@@ -422,14 +420,16 @@ impl EngineInner {
                                 .filter(|(live_seq, live_idx, _)| {
                                     *live_seq == seq_id && *live_idx == elem_idx
                                 })
-                                .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                                    order_id: order.order_id,
-                                    order_type: order.order_type,
+                                .map(|(sequence_id, element_index, order)| {
+                                    crate::element::InstalledActorOrder::new(
+                                        crate::sequence::SequenceElementRef::new(
+                                            sequence_id,
+                                            element_index,
+                                        ),
+                                        order,
+                                    )
                                 });
-                            self.get_entity_mut(id)
-                                .and_then(crate::element::Entity::actor_data_mut)
-                                .expect("retranslated movement owner lost actor data")
-                                .installed_order = installed_order;
+                            self.install_actor_order(id, installed_order);
                         }
                         MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                             self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
@@ -525,7 +525,8 @@ impl EngineInner {
         let decal = self.snapshot_patch_transition_decal(entity_id);
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: false,
@@ -538,7 +539,8 @@ impl EngineInner {
     pub(crate) fn queue_restore_fx_bg(&mut self, entity_id: crate::element::EntityId) {
         self.feedback
             .pending_side_effects
-            .bg_blits
+            .host_effects
+            .background_blits
             .push(super::PendingBgBlit {
                 entity_id,
                 restore_only: true,

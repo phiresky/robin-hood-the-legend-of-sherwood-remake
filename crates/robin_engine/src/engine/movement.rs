@@ -786,6 +786,7 @@ fn refresh_motion_forecast(sprite: &mut crate::sprite::Sprite, speed: f32) {
     }
 
     let wait = sprite.wait_time(sprite.current_row, sprite.current_frame);
+    sprite.compute_display_depth();
     sprite
         .position_iface
         .update_forecasted_movement(speed, wait + 1);
@@ -2309,6 +2310,7 @@ pub(crate) fn build_line_jump_click_tail(
         direction: 0,
         action,
         speed_factor,
+        linked_seek: None,
         post_seek_sequence: None,
     };
     vec![jump, final_move]
@@ -2557,7 +2559,7 @@ impl EngineInner {
                     actor.action_state,
                     actor
                         .installed_order
-                        .as_ref()
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager))
                         .map(|order| (order.order_type, order.order_id)),
                 )
             })
@@ -3014,6 +3016,7 @@ impl EngineInner {
                         .position_iface
                         .update_forecasted_movement(distance, wait + 1);
                     elem.update_grid_cell();
+                    elem.sprite.compute_display_depth();
                 }
             }
             elem.sprite.last_motion_state = Some(state);
@@ -3119,18 +3122,6 @@ impl EngineInner {
                     .expect("validated rider charge order disappeared before rewrite");
                 current.order_type = OrderType::RunningUpright;
                 current.order_id = fresh_id;
-                // Rider execution mutates the order action and assigns a new ID on
-                // the last charge frame; update the explicit pointer mirror
-                // with that same in-place object mutation.
-                self.world.entities[rider_id]
-                    .as_mut()
-                    .expect("rider disappeared before charge order publication")
-                    .actor_data_mut()
-                    .expect("RiderCharging soldier must have actor data")
-                    .installed_order = Some(crate::element::InstalledActorOrder {
-                    order_id: fresh_id,
-                    order_type: OrderType::RunningUpright,
-                });
             }
         }
 
@@ -4355,6 +4346,7 @@ impl EngineInner {
                     x: goal.x,
                     y: goal.y,
                 });
+            entity.sprite_mut().compute_display_depth();
         }
         let eid = entity_id;
 
@@ -5270,28 +5262,6 @@ impl EngineInner {
             is_fast: _,
         } = request;
 
-        let selected_pre_path_tail = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, owner)
-            .and_then(|(selected_seq, selected_idx, current)| {
-                let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
-                let tail_index = element.orders.len().checked_sub(1)?;
-                let tail = element.orders.get(tail_index)?;
-                let installed_matches = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .and_then(Entity::actor_data)
-                    .and_then(|actor| actor.installed_order)
-                    .is_some_and(|installed| installed.order_id == current.order_id);
-                (selected_seq == seq_id
-                    && selected_idx == elem_idx
-                    && current.order_id == tail.order_id
-                    && installed_matches)
-                    .then_some(tail_index)
-            });
-
         // Path-request processing materializes movement orders beginning at
         // the first path index, so an unrequested raw source never becomes an
         // order seen by either actor or soldier path postprocessing.
@@ -5354,7 +5324,7 @@ impl EngineInner {
         //   no-op: `[goal]` stays a single waypoint and the actor
         //   walks straight to goal — anti-collision handles the small
         //   obstacle clip on that first leg.)
-        let mut rewritten_installed_order = None;
+
         {
             if let Some((elem, next_order_id)) =
                 self.orders.element_with_order_ids_mut(seq_id, elem_idx)
@@ -5381,27 +5351,7 @@ impl EngineInner {
                     next_order_id,
                     restored_from_v48,
                 );
-                rewritten_installed_order = selected_pre_path_tail
-                    .and_then(|tail_index| elem.orders.get(tail_index))
-                    .map(|order| crate::element::InstalledActorOrder {
-                        order_id: order.order_id,
-                        order_type: order.order_type,
-                    });
             }
-        }
-
-        if let Some(installed_order) = rewritten_installed_order {
-            // Path-request processing reuses the selected movement's final
-            // pre-path order, assigns a new ID, and changes its action in place.
-            // Keep the explicit order mirror on that rewritten object; a
-            // later path postprocessing may insert other orders ahead of it but
-            // does not repoint the order until the next actor update.
-            self.world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .expect("resolved path owner lost actor data")
-                .installed_order = Some(installed_order);
         }
 
         // Splice startup / end transitions into the order queue

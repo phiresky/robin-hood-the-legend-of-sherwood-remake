@@ -2466,7 +2466,9 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
         .and_then(|entity| entity.actor_data())
         .expect("DropAle owner remains an actor");
     assert_eq!(
-        actor.installed_order.map(|order| order.order_type),
+        actor
+            .installed_order
+            .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(crate::order::OrderType::TransitionWaitingUprightWalkingUpright)
     );
     let (sequence_id, element_index) = engine

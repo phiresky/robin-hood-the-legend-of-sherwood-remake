@@ -690,26 +690,11 @@ impl HostFrontend {
         Self::dispatch_sound_commands(audio, fx.sounds);
         // Accumulate UI-request queues — the host drives the widgets
         // asynchronously so signals outlive a single tick.
-        effects.extend_dialogues(fx.pending_dialogues);
-        effects.extend_popup_texts(fx.pending_popup_texts);
-        effects.extend_debriefings(fx.pending_debriefings);
-        if fx.pending_sherwood_report {
-            effects.request_sherwood_report();
+        let mut requests = fx.host_effects;
+        if local_seat != engine_player_command::PlayerId::HOST {
+            requests.trade_receipts.clear();
         }
-        Self::queue_trade_receipts(effects, fx.trade_receipts, local_seat);
-        if fx.pending_show_console {
-            effects.request_signal(HostSignal::ShowConsole);
-        }
-        if fx.pending_silent_win_widget_swap {
-            effects.request_signal(HostSignal::SilentWinWidgetSwap);
-        }
-        if fx.pending_mission_state_notice {
-            effects.request_signal(HostSignal::MissionStateNotice);
-            effects.request_signal(HostSignal::MissionStatePopup);
-        }
-        if fx.pending_reset_input {
-            effects.request_signal(HostSignal::ResetInput);
-        }
+        effects.append(requests);
         // Per-frame mark requests from sim-side Mark() calls (currently
         // scripted mission-team insertion → `EngineCommand::MarkPc`).
         // Accumulates with host-side mark sources (requirements-bar
@@ -719,9 +704,6 @@ impl HostFrontend {
             .feedback
             .marked_pc_ids
             .extend(fx.pending_mark_pc_ids);
-        // Patch-effect background decal changes are accumulated across
-        // frames until the next render pass drains them.
-        effects.background_blits.extend(fx.bg_blits);
         fx.code
     }
 
@@ -920,21 +902,6 @@ impl HostFrontend {
             audio
                 .deferred
                 .push(DeferredAudioRequest::StopExclamationChannel(actor_index));
-        }
-    }
-
-    fn queue_trade_receipts(
-        effects: &mut HostEffectBatches,
-        trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
-        local_seat: engine_player_command::PlayerId,
-    ) {
-        if local_seat == engine_player_command::PlayerId::HOST {
-            effects.extend_trade_receipts(trade_receipts);
-        } else if !trade_receipts.is_empty() {
-            tracing::trace!(
-                count = trade_receipts.len(),
-                "discarding host-only Sherwood trade receipts on a client"
-            );
         }
     }
 }

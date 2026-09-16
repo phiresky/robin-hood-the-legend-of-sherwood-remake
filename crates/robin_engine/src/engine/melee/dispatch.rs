@@ -1158,11 +1158,7 @@ impl EngineInner {
                 is_harder_hit,
             } => (
                 *origin,
-                projectile.or_else(|| {
-                    elem.legacy_v48
-                        .as_ref()
-                        .and_then(|legacy| legacy.damage_arrow)
-                }),
+                *projectile,
                 *damage,
                 *concussion,
                 *sword_strike,
@@ -1300,6 +1296,11 @@ impl EngineInner {
                 );
             }
             Command::ReceiveNet => {
+                if self.expect_entity(victim_id, "net recipient").posture()
+                    != crate::element::Posture::StuckUnderNet
+                {
+                    self.compute_net_victim_depth(origin.expect("net damage origin"), victim_id);
+                }
                 self.apply_net(sim, assets, victim_id);
             }
             _ => {

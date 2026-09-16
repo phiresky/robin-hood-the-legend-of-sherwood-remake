@@ -75,8 +75,6 @@ struct SpatialPresentationPose {
     posture: crate::element::Posture,
     carrier: Option<EntityId>,
     carried: Option<EntityId>,
-    display_order_ref: Option<EntityId>,
-    behind_display_order_ref: bool,
     mobile_index: Option<u16>,
     delayed_teleport_queued: bool,
     pc_teleport_counter: Option<u16>,
@@ -100,8 +98,6 @@ impl SpatialPresentationPose {
             posture: element.posture(),
             carrier: entity.human_data().and_then(|human| human.carrier),
             carried: entity.pc_data().and_then(|pc| pc.carried),
-            display_order_ref: element.sprite.display_order_ref,
-            behind_display_order_ref: element.sprite.behind_display_order_ref,
             mobile_index: entity.fx_data().and_then(|fx| fx.mobile_index),
             delayed_teleport_queued: element.position_delayed || element.position_map_delayed,
             pc_teleport_counter: entity.pc_data().map(|pc| pc.teleport_counter),
@@ -146,8 +142,6 @@ impl SpatialPresentationPose {
             || self.posture != next.posture
             || self.carrier != next.carrier
             || self.carried != next.carried
-            || self.display_order_ref != next.display_order_ref
-            || self.behind_display_order_ref != next.behind_display_order_ref
             || self.mobile_index != next.mobile_index
             || self.delayed_teleport_queued
             || next.delayed_teleport_queued

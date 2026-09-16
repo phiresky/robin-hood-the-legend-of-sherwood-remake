@@ -371,6 +371,7 @@ impl EngineInner {
                         x: center.x,
                         y: center.y,
                     });
+                entity.sprite_mut().compute_display_depth();
             }
         }
     }
@@ -1751,9 +1752,7 @@ impl EngineInner {
             elem.set_position_map(carrier_pos);
             // direction = (carrier_dir + 12) & 15.
             elem.set_direction_instantly((carrier_dir + 12) & 15);
-            // Stop tracking the carrier's display order.
-            elem.sprite.display_order_ref = None;
-            elem.sprite.behind_display_order_ref = false;
+            elem.sprite.compute_display_depth();
             carried.set_posture(carried_posture);
             // Corpse dropping ends by clearing the body's carrier
             // before clearing the carried relationship, and

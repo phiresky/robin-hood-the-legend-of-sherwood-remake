@@ -348,7 +348,7 @@ impl SequenceManager {
 }
 
 impl crate::engine::EngineInner {
-    pub(crate) fn prepare_live_sequence_state(
+    pub(crate) fn set_sequence_element_state(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
@@ -357,16 +357,20 @@ impl crate::engine::EngineInner {
         elem_idx: usize,
         state: SequenceState,
         flags: CascadeFlags,
-    ) -> StateChangeEffects {
+        terminal_site: &'static str,
+    ) {
         let element = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .expect("sequence transition element missing");
-        let interrupted_movement = element.state != state
-            && state == SequenceState::Interrupted
-            && element.data.is_movement();
-        if interrupted_movement {
+        if element.state == state {
+            return;
+        }
+        let movement_override =
+            matches!(state, SequenceState::Interrupted | SequenceState::Postponed)
+                && element.data.is_movement();
+        if movement_override {
             if element.command == Command::MoveWaiting {
                 let owner = element.owner.expect("waiting movement has no owner");
                 self.orders.pending_path_requests.cancel_for_owner(owner);
@@ -379,13 +383,30 @@ impl crate::engine::EngineInner {
                     .expect("waiting movement disappeared")
                     .command = Command::Move;
             }
-            let linked = self
+            if state == SequenceState::Postponed {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                    .expect("postponed movement disappeared");
+                if element.command == Command::MoveOk {
+                    element.command = Command::Move;
+                }
+            }
+        }
+        if movement_override && state == SequenceState::Interrupted {
+            let movement = self
                 .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .and_then(|element| element.legacy_v48.as_ref())
-                .and_then(|legacy| legacy.linked_seek)
-                .flatten();
+                .expect("interrupted movement disappeared");
+            let SequenceElementData::Movement {
+                linked_seek: linked,
+                ..
+            } = movement.data
+            else {
+                unreachable!("interrupted movement changed subtype");
+            };
             if let Some(linked) = linked {
                 assert!(
                     self.orders
@@ -406,12 +427,127 @@ impl crate::engine::EngineInner {
                 );
             }
         }
-        self.orders
-            .sequence_manager
-            .sequences
-            .get_mut(&seq_id)
-            .expect("sequence disappeared during state transition")
-            .set_element_state(elem_idx, state, flags)
+        // Linked movement callbacks finish before the base transition reads state.
+        let (old_state, owner) = {
+            let sequence = self
+                .orders
+                .sequence_manager
+                .sequences
+                .get_mut(&seq_id)
+                .expect("sequence disappeared during state transition");
+            let element = &mut sequence.elements[elem_idx];
+            let old_state = element.state;
+            if old_state == state {
+                return;
+            }
+            element.state = state;
+            let owner = element.owner;
+            if state == SequenceState::InProgress {
+                sequence.increase_elements_in_progress();
+            } else if old_state == SequenceState::InProgress {
+                sequence.decrease_elements_in_progress();
+            }
+            (old_state, owner)
+        };
+        if let Some(owner) = owner {
+            let element_ref = SequenceElementRef::new(seq_id, elem_idx);
+            match (
+                SequenceManager::is_actor_live_state(old_state),
+                SequenceManager::is_actor_live_state(state),
+            ) {
+                (false, true) => self
+                    .orders
+                    .sequence_manager
+                    .insert_actor_live_ref(owner, element_ref),
+                (true, false) => self
+                    .orders
+                    .sequence_manager
+                    .remove_actor_live_ref(owner, element_ref),
+                _ => {}
+            }
+        }
+        match state {
+            SequenceState::InProgress => {
+                debug_assert!(
+                    matches!(old_state, SequenceState::Todo | SequenceState::Postponed),
+                    "InProgress from {:?}",
+                    old_state
+                );
+            }
+            SequenceState::Impossible | SequenceState::Interrupted => {
+                if state == SequenceState::Impossible {
+                    self.start_postponed_sequence_element(
+                        sim,
+                        assets,
+                        active_scripts,
+                        seq_id,
+                        elem_idx,
+                    );
+                }
+                self.orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                    .expect("terminal element disappeared")
+                    .orders
+                    .clear();
+                self.notify_sequence_element_owner(
+                    sim,
+                    assets,
+                    seq_id,
+                    elem_idx,
+                    state,
+                    terminal_site,
+                );
+                // Owner callbacks can replace the following edge and its command level.
+                if let Some(target) = self
+                    .orders
+                    .sequence_manager
+                    .live_cascade_target(seq_id, elem_idx, flags)
+                {
+                    self.set_sequence_element_state(
+                        sim,
+                        assets,
+                        active_scripts,
+                        target.sequence_id,
+                        target.element_index,
+                        state,
+                        CascadeFlags::FOLLOWING,
+                        "terminal_state_cascade",
+                    );
+                }
+            }
+            SequenceState::Terminated => {
+                if matches!(
+                    old_state,
+                    SequenceState::Todo | SequenceState::InProgress | SequenceState::Postponed
+                ) {
+                    self.notify_sequence_element_owner(
+                        sim,
+                        assets,
+                        seq_id,
+                        elem_idx,
+                        state,
+                        terminal_site,
+                    );
+                    self.sequence_element_ready(sim, assets, active_scripts, seq_id);
+                    self.start_postponed_sequence_element(
+                        sim,
+                        assets,
+                        active_scripts,
+                        seq_id,
+                        elem_idx,
+                    );
+                } else {
+                    tracing::warn!(
+                        sequence_id = seq_id.0,
+                        element_index = elem_idx,
+                        ?old_state,
+                        "sequence element terminated from a shipping-only state"
+                    );
+                }
+            }
+            SequenceState::Postponed | SequenceState::Done | SequenceState::Todo => {}
+        }
     }
 
     /// Called by the engine when an element has finished (terminated).
@@ -437,7 +573,7 @@ impl crate::engine::EngineInner {
             return;
         }
 
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -445,14 +581,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::Terminated,
             CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "element_terminated",
         );
     }
@@ -493,7 +621,7 @@ impl crate::engine::EngineInner {
             return;
         }
 
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -501,14 +629,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::Impossible,
             CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "element_impossible",
         );
     }
@@ -534,7 +654,7 @@ impl crate::engine::EngineInner {
             return;
         }
 
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -542,14 +662,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::Impossible,
             CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "element_impossible_from_execute",
         );
     }
@@ -567,7 +679,7 @@ impl crate::engine::EngineInner {
             return;
         }
 
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -575,14 +687,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::InProgress,
             CascadeFlags::NEXT_LEVEL,
-        );
-
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "element_in_progress",
         );
     }
@@ -601,7 +705,7 @@ impl crate::engine::EngineInner {
             return;
         }
 
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -609,14 +713,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::Interrupted,
             flags,
-        );
-
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "element_interrupted",
         );
     }
@@ -683,7 +779,7 @@ impl crate::engine::EngineInner {
             if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
                 continue;
             }
-            let effects = self.prepare_live_sequence_state(
+            self.set_sequence_element_state(
                 sim,
                 assets,
                 active_scripts,
@@ -691,28 +787,13 @@ impl crate::engine::EngineInner {
                 elem_idx,
                 SequenceState::Interrupted,
                 CascadeFlags::NEXT_LEVEL,
-            );
-            self.complete_sequence_state_change(
-                sim,
-                assets,
-                active_scripts,
-                seq_id,
-                effects,
                 "kill_owner_sequences",
             );
         }
     }
 
-    /// Flip an element to `Postponed` via the normal state-change
-    /// pipeline. Used by the instruction arbitration path. The common
-    /// `set_element_state` prologue still runs (so the in-progress
-    /// counter decrements when the waiter was InProgress), while the
-    /// `Postponed` case body itself does nothing extra — no cascade,
-    /// no signal_ready, no condolation.  `CascadeFlags::empty()`
-    /// reflects that, and `process_effects` keeps
-    /// `elements_in_progress` consistent on the InProgress→Postponed
-    /// transition.  The element's `cross_postponed` / `postponed_by`
-    /// links are set separately by the caller before this call.
+    /// Postpone after arbitration installs the graph links. Movement cancellation
+    /// and progress accounting happen synchronously without notifying the owner.
     pub(crate) fn postpone_element(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -724,7 +805,7 @@ impl crate::engine::EngineInner {
         if !self.orders.sequence_manager.sequences.contains_key(&seq_id) {
             return;
         }
-        let effects = self.prepare_live_sequence_state(
+        self.set_sequence_element_state(
             sim,
             assets,
             active_scripts,
@@ -732,13 +813,6 @@ impl crate::engine::EngineInner {
             elem_idx,
             SequenceState::Postponed,
             CascadeFlags::empty(),
-        );
-        self.complete_sequence_state_change(
-            sim,
-            assets,
-            active_scripts,
-            seq_id,
-            effects,
             "postpone_element",
         );
 
@@ -756,202 +830,102 @@ impl crate::engine::EngineInner {
             .retain(|entry| *entry != target);
     }
 
-    pub(crate) fn complete_sequence_state_change(
+    fn notify_sequence_element_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
-        mut effects: StateChangeEffects,
+        elem_idx: usize,
+        terminal_state: SequenceState,
         terminal_site: &'static str,
     ) {
-        if let Some(card) = effects.condolation.as_mut() {
-            if goal_owner_debug_matches(card.owner) {
-                let provenance = GoalOwnerTerminalProvenance {
-                    site: terminal_site,
-                    selected: self.world.entities.current_element_for_actor(card.owner),
-                };
-                GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
-                    records
-                        .borrow_mut()
-                        .insert((card.seq_id, card.elem_idx), provenance);
-                });
-            }
-            tracing::trace!(
-                target: "parity_owner_handoff",
-                owner = ?card.owner,
-                seq_id = ?card.seq_id,
-                elem_idx = card.elem_idx,
-                command = ?card.command,
-                terminal_state = ?card.terminal_state,
-                selected = ?self.world.entities.current_element_for_actor(card.owner),
-                "removal notification capturing selection at state change"
-            );
-        }
-
-        if let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) {
-            if effects.increment_in_progress {
-                seq.increase_elements_in_progress();
-            }
-            if effects.decrement_in_progress {
-                seq.decrease_elements_in_progress();
-            }
-        }
-
-        if let Some((elem_idx, owner, old_state, new_state)) = effects.actor_live_transition {
-            let elem_ref = SequenceElementRef::new(seq_id, elem_idx);
-            match (
-                SequenceManager::is_actor_live_state(old_state),
-                SequenceManager::is_actor_live_state(new_state),
-            ) {
-                (false, true) => self
-                    .orders
-                    .sequence_manager
-                    .insert_actor_live_ref(owner, elem_ref),
-                (true, false) => self
-                    .orders
-                    .sequence_manager
-                    .remove_actor_live_ref(owner, elem_ref),
-                _ => {}
-            }
-        }
-
-        if let Some(index) = effects.impossible_notification.take() {
-            self.resume_postponed_effects(
-                sim,
-                assets,
-                active_scripts,
-                seq_id,
-                effects.start_postponed.take(),
-            );
-            effects.condolation = self
-                .orders
-                .sequence_manager
-                .sequences
-                .get_mut(&seq_id)
-                .expect("impossible sequence disappeared")
-                .complete_impossible_notification(index);
-            if let Some(card) = effects.condolation.as_mut() {
-                effects.notify_owner = Some(card.owner);
-            }
-        }
-
-        // Complete the owner callback on this call stack before cascading
-        // or calling Ready. Impossible has already started its postponed
-        // element and cleared its orders above.
-        if let Some(mut card) = effects.condolation.take() {
-            // If this sequence tear-down came from an in-flight
-            // halt, mark the notification so the removal callback
-            // handler knows to skip the Think dispatch.
-            if self.orders.sequence_manager.halt_pending {
-                card.from_halt = true;
-            }
-
-            self.send_condolation_card(sim, card, assets);
-        }
-
-        self.complete_sequence_state_tail(sim, assets, active_scripts, seq_id, effects);
-    }
-
-    pub(crate) fn complete_sequence_state_tail(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        seq_id: SequenceId,
-        effects: StateChangeEffects,
-    ) {
-        if let Some((anchor, state, flags)) = effects.cascade_after_card {
-            let target = self
-                .orders
-                .sequence_manager
-                .live_cascade_target(seq_id, anchor, flags);
-            if let Some(target) = target {
-                let nested = self.prepare_live_sequence_state(
-                    sim,
-                    assets,
-                    active_scripts,
-                    target.sequence_id,
-                    target.element_index,
-                    state,
-                    CascadeFlags::FOLLOWING,
-                );
-                self.complete_sequence_state_change(
-                    sim,
-                    assets,
-                    active_scripts,
-                    target.sequence_id,
-                    nested,
-                    "terminal_state_cascade",
-                );
-            }
-        }
-
-        // Signal ready (element finished) — advance to next level
-        if effects.signal_ready {
-            let to_go = {
-                let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
-                    return;
-                };
-                if seq.running_elements == 0 {
-                    let elements: Vec<_> = seq
-                        .elements
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, elem)| {
-                            (
-                                idx,
-                                elem.command,
-                                elem.command_level,
-                                elem.owner,
-                                elem.state,
-                                elem.priority,
-                                elem.orders.len(),
-                            )
-                        })
-                        .collect();
-                    panic!(
-                        "Ready called with no running elements: seq_id={seq_id:?} cursor={} current_level={} elements_in_progress={} elements={elements:?}",
-                        seq.cursor, seq.current_command_level, seq.elements_in_progress
-                    );
-                }
-                if seq.element_ready() {
-                    seq.next_elements_go()
-                } else {
-                    Vec::new()
-                }
-            };
-            self.register_sequence_level(sim, assets, active_scripts, seq_id, to_go)
-                .unwrap_or_else(|error| panic!("sequence Ready failed: {error:?}"));
-        }
-
-        // Start postponed element if requested.  We always re-pathfind
-        // on restart:
-        //
-        //   1. Path rebuild: every re-registered Move/Seek element gets
-        //      a fresh `InstructOwner` → `try_dispatch_move_path` pass,
-        //      and `build_orders_from_path` clears the old orders before
-        //      rebuilding waypoints from the actor's current position.
-        //   2. We never reassign an element's `command` to
-        //      `Command::MoveOk` (see `engine/posture_transitions.rs:281`
-        //      for the rationale — flipping to `MoveOk` breaks
-        //      `element_priority::actor_branch` priority resolution).
-        //      So no element is ever in a `MoveOk` state that would
-        //      need a posture-aware revert; the branch is moot.
-        self.resume_postponed_effects(sim, assets, active_scripts, seq_id, effects.start_postponed);
-    }
-
-    pub(crate) fn resume_postponed_effects(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-        seq_id: SequenceId,
-        anchor: Option<usize>,
-    ) {
-        let Some(anchor) = anchor else {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("owner notification element missing");
+        let Some(owner) = element.owner else {
             return;
         };
+        let card = CondolationCard {
+            owner,
+            command: element.command,
+            terminal_state,
+            seq_id,
+            elem_idx: elem_idx as u16,
+            from_halt: self.orders.sequence_manager.halt_pending,
+        };
+        if goal_owner_debug_matches(owner) {
+            let provenance = GoalOwnerTerminalProvenance {
+                site: terminal_site,
+                selected: self.world.entities.current_element_for_actor(owner),
+            };
+            GOAL_OWNER_TERMINAL_PROVENANCE.with(|records| {
+                records
+                    .borrow_mut()
+                    .insert((seq_id, card.elem_idx), provenance);
+            });
+        }
+        tracing::trace!(
+            target: "parity_owner_handoff", ?owner, ?seq_id, elem_idx,
+            command = ?card.command, ?terminal_state,
+            selected = ?self.world.entities.current_element_for_actor(owner),
+            "removal notification capturing selection at state change"
+        );
+        self.send_condolation_card(sim, card, assets);
+    }
+
+    fn sequence_element_ready(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+    ) {
+        let to_go = {
+            let Some(seq) = self.orders.sequence_manager.sequences.get_mut(&seq_id) else {
+                return;
+            };
+            if seq.running_elements == 0 {
+                let elements: Vec<_> = seq
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, elem)| {
+                        (
+                            idx,
+                            elem.command,
+                            elem.command_level,
+                            elem.owner,
+                            elem.state,
+                            elem.priority,
+                            elem.orders.len(),
+                        )
+                    })
+                    .collect();
+                panic!(
+                    "Ready called with no running elements: seq_id={seq_id:?} cursor={} current_level={} elements_in_progress={} elements={elements:?}",
+                    seq.cursor, seq.current_command_level, seq.elements_in_progress
+                );
+            }
+            if seq.element_ready() {
+                seq.next_elements_go()
+            } else {
+                Vec::new()
+            }
+        };
+        self.register_sequence_level(sim, assets, active_scripts, seq_id, to_go)
+            .unwrap_or_else(|error| panic!("sequence Ready failed: {error:?}"));
+    }
+
+    fn start_postponed_sequence_element(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &crate::engine::LevelAssets,
+        active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
+        seq_id: SequenceId,
+        anchor: usize,
+    ) {
         let target = self
             .orders
             .sequence_manager

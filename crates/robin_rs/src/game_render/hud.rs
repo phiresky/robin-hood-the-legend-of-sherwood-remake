@@ -374,7 +374,11 @@ pub(crate) fn render_listen_ping(
     for entity in engine.entities_iter() {
         let (position, radius) = match entity {
             Entity::Pc(pc) => {
-                let step = match pc.actor.installed_order.map(|order| order.order_type) {
+                let step = match pc
+                    .actor
+                    .installed_order
+                    .map(|order| engine.installed_order_type(order))
+                {
                     Some(robin_engine::order::OrderType::Listening) => LISTEN_STEP_RADIUS,
                     Some(robin_engine::order::OrderType::Whistling) => WHISTLE_STEP_RADIUS,
                     _ => continue,

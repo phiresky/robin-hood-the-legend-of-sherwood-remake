@@ -17,24 +17,7 @@ pub struct HostAudio {
     pub deferred: Vec<DeferredAudioRequest>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostModalRequest {
-    Dialogue(i32),
-    PopupText(i32),
-    Debriefing(engine_player_command::DebriefingTextId),
-    SherwoodReport,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HostSignal {
-    ShowConsole,
-    SilentWinWidgetSwap,
-    MissionStateNotice,
-    MissionStatePopup,
-    ResetInput,
-    PromoteFpsCheat,
-    SherwoodTrading,
-}
+pub use robin_engine::engine::HostSignal;
 
 /// Live presentation facts required to admit a Sherwood trading-panel request.
 ///
@@ -65,89 +48,27 @@ impl SherwoodTradingAccess {
     }
 }
 
-/// Ordered, typed work emitted at the post-tick boundary. Variant-specific
-/// drains preserve the existing host phase priority and simulation timing.
+/// Host-session state surrounding the shared deferred requests.
 #[derive(Default)]
 pub struct HostEffectBatches {
-    modals: Vec<HostModalRequest>,
-    signals: Vec<HostSignal>,
-    trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+    requests: robin_engine::engine::HostEffects,
     next_trade_request_id: u64,
-    pub background_blits: Vec<PendingBgBlit>,
+}
+
+impl std::ops::Deref for HostEffectBatches {
+    type Target = robin_engine::engine::HostEffects;
+    fn deref(&self) -> &Self::Target {
+        &self.requests
+    }
+}
+
+impl std::ops::DerefMut for HostEffectBatches {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.requests
+    }
 }
 
 impl HostEffectBatches {
-    pub fn pending_modal_kinds(&self) -> Vec<engine_player_command::ModalKind> {
-        self.modals
-            .iter()
-            .map(|request| match *request {
-                HostModalRequest::Dialogue(dialog_id) => {
-                    engine_player_command::ModalKind::Dialog { dialog_id }
-                }
-                HostModalRequest::PopupText(text_id) => {
-                    engine_player_command::ModalKind::PopupText { text_id }
-                }
-                HostModalRequest::Debriefing(text_id) => {
-                    engine_player_command::ModalKind::Debriefing { text_id }
-                }
-                HostModalRequest::SherwoodReport => {
-                    engine_player_command::ModalKind::SherwoodReport
-                }
-            })
-            .collect()
-    }
-
-    pub fn extend_dialogues(&mut self, ids: impl IntoIterator<Item = i32>) {
-        self.modals
-            .extend(ids.into_iter().map(HostModalRequest::Dialogue));
-    }
-
-    pub fn extend_popup_texts(&mut self, ids: impl IntoIterator<Item = i32>) {
-        self.modals
-            .extend(ids.into_iter().map(HostModalRequest::PopupText));
-    }
-
-    pub fn extend_debriefings(
-        &mut self,
-        ids: impl IntoIterator<Item = engine_player_command::DebriefingTextId>,
-    ) {
-        self.modals
-            .extend(ids.into_iter().map(HostModalRequest::Debriefing));
-    }
-
-    pub fn request_sherwood_report(&mut self) {
-        if !self.has_sherwood_report() {
-            self.modals.push(HostModalRequest::SherwoodReport);
-        }
-    }
-
-    pub fn has_sherwood_report(&self) -> bool {
-        self.modals.contains(&HostModalRequest::SherwoodReport)
-    }
-
-    pub fn take_sherwood_report(&mut self) -> bool {
-        let Some(index) = self
-            .modals
-            .iter()
-            .position(|request| *request == HostModalRequest::SherwoodReport)
-        else {
-            return false;
-        };
-        self.modals.remove(index);
-        true
-    }
-
-    pub fn extend_trade_receipts(
-        &mut self,
-        receipts: impl IntoIterator<Item = robin_engine::trading::TradeReceipt>,
-    ) {
-        self.trade_receipts.extend(receipts);
-    }
-
-    pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
-        std::mem::take(&mut self.trade_receipts)
-    }
-
     /// Allocate a process-session correlation id for one authoritative sale.
     /// This counter deliberately survives panel close/reopen and effect-queue
     /// clears so a delayed network receipt cannot alias a newer request.
@@ -157,54 +78,6 @@ impl HostEffectBatches {
             .checked_add(1)
             .expect("Sherwood trade request id exhausted");
         self.next_trade_request_id
-    }
-
-    pub fn dialogue_count(&self) -> usize {
-        self.modals
-            .iter()
-            .filter(|request| matches!(request, HostModalRequest::Dialogue(_)))
-            .count()
-    }
-
-    pub fn popup_text_count(&self) -> usize {
-        self.modals
-            .iter()
-            .filter(|request| matches!(request, HostModalRequest::PopupText(_)))
-            .count()
-    }
-
-    pub fn debriefing_count(&self) -> usize {
-        self.modals
-            .iter()
-            .filter(|request| matches!(request, HostModalRequest::Debriefing(_)))
-            .count()
-    }
-
-    pub fn take_dialogues(&mut self) -> Vec<i32> {
-        take_modal_payloads(&mut self.modals, |request| match request {
-            HostModalRequest::Dialogue(id) => Some(id),
-            _ => None,
-        })
-    }
-
-    pub fn take_popup_texts(&mut self) -> Vec<i32> {
-        take_modal_payloads(&mut self.modals, |request| match request {
-            HostModalRequest::PopupText(id) => Some(id),
-            _ => None,
-        })
-    }
-
-    pub fn take_debriefings(&mut self) -> Vec<engine_player_command::DebriefingTextId> {
-        take_modal_payloads(&mut self.modals, |request| match request {
-            HostModalRequest::Debriefing(id) => Some(id),
-            _ => None,
-        })
-    }
-
-    pub fn request_signal(&mut self, signal: HostSignal) {
-        if !self.signals.contains(&signal) {
-            self.signals.push(signal);
-        }
     }
 
     /// Queue a player-facing trading-panel request only after all live access
@@ -231,39 +104,4 @@ impl HostEffectBatches {
         access.validate()?;
         Ok(true)
     }
-
-    pub fn has_signal(&self, signal: HostSignal) -> bool {
-        self.signals.contains(&signal)
-    }
-
-    pub fn take_signal(&mut self, signal: HostSignal) -> bool {
-        let Some(index) = self.signals.iter().position(|queued| *queued == signal) else {
-            return false;
-        };
-        self.signals.remove(index);
-        true
-    }
-
-    pub fn clear(&mut self) {
-        self.modals.clear();
-        self.signals.clear();
-        self.trade_receipts.clear();
-        self.background_blits.clear();
-    }
-}
-
-fn take_modal_payloads<T>(
-    requests: &mut Vec<HostModalRequest>,
-    take: impl Fn(HostModalRequest) -> Option<T>,
-) -> Vec<T> {
-    let mut payloads = Vec::new();
-    requests.retain(|request| {
-        if let Some(payload) = take(*request) {
-            payloads.push(payload);
-            false
-        } else {
-            true
-        }
-    });
-    payloads
 }

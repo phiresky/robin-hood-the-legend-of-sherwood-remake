@@ -35,12 +35,7 @@ impl EngineInner {
             // the delayed position. With no selected order it
             // clears the pointer, then an execution freeze returns
             // before lazy Wait and the second movement snapshot.
-            self.world
-                .entities
-                .get_mut(entity_id)
-                .and_then(Entity::actor_data_mut)
-                .expect("frozen actor disappeared before mpOrder clear")
-                .installed_order = None;
+            self.install_actor_order(entity_id, None);
             self.debug_refresh_view_lifecycle(
                 "derived_tail_frozen_without_order",
                 entity_id,
@@ -92,10 +87,13 @@ impl EngineInner {
         let selected_order_type = entry.map(|(_, _, order)| order.order_type);
         let selected_owner_family = selected_order_type
             .and_then(|order_type| classify_live_actor_execute_arm(entity_id, order_type));
-        let installed_at_entry = entry.map(|(_, _, order)| crate::element::InstalledActorOrder {
-            order_id: order.order_id,
-            order_type: order.order_type,
+        let installed_at_entry = entry.map(|(sequence_id, element_index, order)| {
+            crate::element::InstalledActorOrder::new(
+                crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                order,
+            )
         });
+        self.install_actor_order(entity_id, installed_at_entry);
         {
             let actor = self
                 .world
@@ -103,7 +101,6 @@ impl EngineInner {
                 .get_mut(entity_id)
                 .and_then(Entity::actor_data_mut)
                 .expect("actor disappeared before installing its update order");
-            actor.installed_order = installed_at_entry;
             if let Some((_, _, order_id)) = selected_order {
                 actor.select_execute_order(order_id);
             }
@@ -446,7 +443,7 @@ impl EngineInner {
             .get(entity_id)
             .and_then(Entity::actor_data)
             .and_then(|actor| actor.installed_order)
-            .map(|order| order.order_type)
+            .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type)
             .unwrap_or(crate::order::OrderType::NonanimationEnd);
         self.debug_refresh_view_lifecycle(
             "derived_tail_normal",

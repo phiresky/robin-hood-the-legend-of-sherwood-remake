@@ -72,6 +72,7 @@ mod special_motion;
 pub(crate) mod state;
 #[doc(hidden)]
 pub use state::ScriptDomains;
+mod host_effects;
 #[cfg(test)]
 mod resource_environment_tests;
 pub mod target_interaction;
@@ -87,6 +88,7 @@ mod titbit_sync;
 mod trading;
 mod transitions;
 mod types;
+pub use host_effects::*;
 mod wasp_nest;
 
 pub(crate) use commands::command_action_distance_animation;
@@ -238,7 +240,7 @@ pub struct EngineInner {
 
     /// Deterministic sound, marker, director-camera, and tick-output state.
     pub(crate) feedback: FeedbackRuntime,
-    // (Deferred bg-blits live on `pending_side_effects.bg_blits` now;
+    // (Deferred bg-blits live on `pending_side_effects.host_effects`;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
@@ -295,13 +297,9 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
-/// Resolve the original game's actor-order animation identity from the explicit
-/// installed pointer mirror. A selected SequenceManager element is not a
-/// substitute: selection and instruction/order-advancement reference publication are
-/// observably separate boundaries in the Original.
-fn resolve_actor_order_type(
-    installed: Option<crate::element::InstalledActorOrder>,
-) -> crate::order::OrderType {
+/// Read the installed order's live action. Selection and installation occur at
+/// different boundaries, so a selected element is not a substitute.
+fn resolve_actor_order_type(installed: Option<&crate::order::Order>) -> crate::order::OrderType {
     installed
         .map(|order| order.order_type)
         .unwrap_or(crate::order::OrderType::NonanimationEnd)
@@ -310,16 +308,18 @@ fn resolve_actor_order_type(
 #[cfg(test)]
 mod actor_order_type_tests {
     use super::resolve_actor_order_type;
-    use crate::{element::InstalledActorOrder, order::OrderType};
+    use crate::order::{Order, OrderType};
     use std::num::NonZeroU32;
 
     #[test]
     fn installed_order_is_authoritative() {
         assert_eq!(
-            resolve_actor_order_type(Some(InstalledActorOrder {
-                order_id: NonZeroU32::new(7).unwrap(),
-                order_type: OrderType::TransitionWaitingUprightBoredWaitingUpright,
-            })),
+            resolve_actor_order_type(Some(&Order::new(
+                OrderType::TransitionWaitingUprightBoredWaitingUpright,
+                0.0,
+                0.0,
+                NonZeroU32::new(7).unwrap(),
+            ))),
             OrderType::TransitionWaitingUprightBoredWaitingUpright
         );
     }
@@ -327,6 +327,63 @@ mod actor_order_type_tests {
     #[test]
     fn null_installed_pointer_exposes_original_nonanimation_sentinel() {
         assert_eq!(resolve_actor_order_type(None), OrderType::NonanimationEnd);
+    }
+
+    #[test]
+    fn engine_clone_owns_detached_installation_independently() {
+        let mut engine = super::EngineInner::new();
+        let owner = engine.add_test_entity(super::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let installed = engine.install_test_order(owner, OrderType::WaitingUpright);
+        engine
+            .orders
+            .sequence_manager
+            .get_element_mut(
+                installed.element.sequence_id,
+                installed.element.element_index,
+            )
+            .unwrap()
+            .orders
+            .clear();
+        let mut saved = engine.clone_authoritative_state();
+        engine.install_actor_order(owner, Some(installed));
+        assert_eq!(
+            engine.actor_installed_order(owner).unwrap().order_type,
+            OrderType::WaitingUpright
+        );
+        engine.install_actor_order(owner, None);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .resolve(installed.slot)
+                .is_none()
+        );
+        assert_eq!(
+            saved.actor_installed_order(owner).unwrap().order_type,
+            OrderType::WaitingUpright
+        );
+        saved.remove_entity(owner);
+        assert!(
+            saved
+                .orders
+                .sequence_manager
+                .get_element(
+                    installed.element.sequence_id,
+                    installed.element.element_index
+                )
+                .unwrap()
+                .orders
+                .resolve(installed.slot)
+                .is_none()
+        );
     }
 }
 
@@ -857,7 +914,7 @@ impl EngineInner {
     /// via [`EngineCommand::Win`]) re-toggles `mission_won_first_time`.
     /// When `show_window == false`, the Sherwood start/quit-mission
     /// widgets are flipped via
-    /// [`SideEffects::pending_silent_win_widget_swap`].
+    /// [`HostSignal::SilentWinWidgetSwap`].
     pub(crate) fn win(&mut self, show_window: bool) {
         self.mission_domain.state.mission_won_first_time = show_window;
         self.mission_domain.state.mission_won = true;
@@ -865,7 +922,8 @@ impl EngineInner {
         if !show_window {
             self.feedback
                 .pending_side_effects
-                .pending_silent_win_widget_swap = true;
+                .host_effects
+                .request_signal(crate::engine::HostSignal::SilentWinWidgetSwap);
         }
     }
 
@@ -1527,28 +1585,81 @@ impl EngineInner {
     pub fn actor_order_type(&self, actor: EntityId) -> Option<crate::order::OrderType> {
         self.get_entity(actor)
             .and_then(|entity| entity.actor_data())
-            .map(|actor| resolve_actor_order_type(actor.installed_order))
+            .map(|actor| {
+                resolve_actor_order_type(
+                    actor
+                        .installed_order
+                        .map(|handle| handle.resolve(&self.orders.sequence_manager)),
+                )
+            })
     }
 
-    /// Mirror an original-game boundary that assigns the order from the selected
-    /// sequence element's current order. Callers must invoke this only where
-    /// the original game performs that assignment (update, accepted instruction,
-    /// or corrected movement retranslation), never as a read-time fallback.
+    pub fn actor_installed_order(&self, actor: EntityId) -> Option<&crate::order::Order> {
+        self.get_entity(actor)?
+            .actor_data()?
+            .installed_order
+            .map(|handle| handle.resolve(&self.orders.sequence_manager))
+    }
+
+    /// Change installation ownership without changing sequence selection.
+    pub(crate) fn install_actor_order(
+        &mut self,
+        actor: EntityId,
+        installed: Option<crate::element::InstalledActorOrder>,
+    ) {
+        let previous = self
+            .world
+            .entities
+            .expect_actor_data(actor, format_args!("order installation owner"))
+            .installed_order;
+        if previous == installed {
+            return;
+        }
+        if let Some(previous) = previous {
+            self.orders
+                .sequence_manager
+                .get_element_mut(previous.element.sequence_id, previous.element.element_index)
+                .expect("installed order owner storage disappeared")
+                .orders
+                .release_slot(previous.slot);
+        }
+        if let Some(installed) = installed {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(
+                    installed.element.sequence_id,
+                    installed.element.element_index,
+                )
+                .expect("new installed order storage disappeared");
+            assert_eq!(
+                element.owner,
+                Some(actor),
+                "installed order belongs to a different actor"
+            );
+            element.orders.lease_slot(installed.slot);
+        }
+        self.world
+            .entities
+            .expect_actor_data_mut(actor, format_args!("order installation owner"))
+            .installed_order = installed;
+    }
+
+    /// Install the selected element's current canonical order at an update,
+    /// accepted instruction, or movement retranslation boundary.
     pub(crate) fn publish_selected_order_as_installed(&mut self, actor: EntityId) {
         let installed_order = self
             .orders
             .sequence_manager
             .current_order_for_actor(&self.world.entities, actor)
-            .map(|(_, _, order)| crate::element::InstalledActorOrder {
-                order_id: order.order_id,
-                order_type: order.order_type,
+            .map(|(sequence_id, element_index, order)| {
+                crate::element::InstalledActorOrder::new(
+                    crate::sequence::SequenceElementRef::new(sequence_id, element_index),
+                    order,
+                )
             });
         tracing::trace!(?actor, ?installed_order, "publishing installed order");
-        self.get_entity_mut(actor)
-            .expect("installed order publication owner disappeared")
-            .actor_data_mut()
-            .expect("installed order publication owner lost actor data")
-            .installed_order = installed_order;
+        self.install_actor_order(actor, installed_order);
     }
 
     /// Original-game animation selection: the live sequence order,

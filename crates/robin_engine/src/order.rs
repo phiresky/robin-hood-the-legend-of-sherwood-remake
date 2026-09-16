@@ -2,6 +2,9 @@
 
 use std::num::NonZeroU32;
 
+mod queue;
+pub use queue::OrderQueue;
+
 // ---------------------------------------------------------------------------
 // OrderType
 // ---------------------------------------------------------------------------
@@ -543,6 +546,8 @@ pub enum OrderCompletion {
     bitcode::Decode,
 )]
 pub struct Order {
+    /// Identity within the owning queue, independent of animation restart IDs.
+    pub(crate) storage_slot: u64,
     pub order_type: OrderType,
     /// Target position (2D map coordinates).
     pub target_x: f32,
@@ -609,6 +614,7 @@ pub struct Order {
 impl Order {
     pub fn new(order_type: OrderType, x: f32, y: f32, order_id: NonZeroU32) -> Self {
         Self {
+            storage_slot: 0,
             order_type,
             target_x: x,
             target_y: y,

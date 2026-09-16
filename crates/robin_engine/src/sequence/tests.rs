@@ -760,101 +760,283 @@ fn sequence_has_owner() {
 }
 
 #[test]
-fn state_change_inprogress() {
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-
-    let effects = seq.set_element_state(0, SequenceState::InProgress, CascadeFlags::NEXT_LEVEL);
-    assert!(effects.increment_in_progress);
-    assert!(!effects.decrement_in_progress);
-    assert!(!effects.signal_ready);
-}
-
-#[test]
-fn state_change_terminated_signals_ready() {
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    // Must first go to InProgress
-    seq.set_element_state(0, SequenceState::InProgress, CascadeFlags::NEXT_LEVEL);
-
-    let effects = seq.set_element_state(0, SequenceState::Terminated, CascadeFlags::NEXT_LEVEL);
-    assert!(effects.signal_ready);
-    assert!(effects.decrement_in_progress);
+fn state_change_updates_progress_and_live_membership_synchronously() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let id = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
+    );
+    engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), id, 0);
     assert_eq!(
-        effects.notify_owner,
-        Some(EntityId::Pc(crate::entity_id::PcId(0)))
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(id)
+            .unwrap()
+            .elements_in_progress,
+        1
+    );
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(owner, |_| true)
+    );
+    engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), id, 0);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(id)
+            .unwrap()
+            .elements_in_progress,
+        1
+    );
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            assert_eq!(card.seq_id, id);
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_sequence(id)
+                    .unwrap()
+                    .elements_in_progress,
+                0
+            );
+            assert!(
+                !engine
+                    .orders
+                    .sequence_manager
+                    .has_live_element_for_actor_matching(owner, |_| true)
+            );
+        },
+        || {
+            engine.element_interrupted(
+                &test_context(),
+                &assets,
+                &mut Vec::new(),
+                id,
+                0,
+                CascadeFlags::empty(),
+            )
+        },
     );
 }
 
 #[test]
-fn state_change_interrupted_cascades() {
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        2,
-        Command::PassDoor,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-
-    let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::NEXT_LEVEL);
-
-    assert_eq!(
-        effects.cascade_after_card,
-        Some((0, SequenceState::Interrupted, CascadeFlags::NEXT_LEVEL))
+fn state_change_terminated_calls_owner_before_ready() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let id = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
     );
-    let id = seq.id;
-    let mut manager = SequenceManager::new();
-    manager.sequences.insert(id, seq);
-    assert_eq!(
-        manager.live_cascade_target(id, 0, CascadeFlags::NEXT_LEVEL),
-        Some(SequenceElementRef::new(id, 1))
+    engine.element_in_progress(&test_context(), &assets, &mut Vec::new(), id, 0);
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            assert_eq!(card.seq_id, id);
+            let sequence = engine.orders.sequence_manager.get_sequence(id).unwrap();
+            assert_eq!(sequence.elements_in_progress, 0);
+            assert_eq!(sequence.running_elements, 1);
+        },
+        || engine.element_terminated(&test_context(), &assets, &mut Vec::new(), id, 0),
     );
-    // A completion callback may sever the next link before the cascade resumes.
-    manager
-        .get_sequence_mut(id)
-        .unwrap()
-        .sever_following_link(0);
     assert_eq!(
-        manager.live_cascade_target(id, 0, CascadeFlags::NEXT_LEVEL),
-        None
+        engine
+            .orders
+            .sequence_manager
+            .get_sequence(id)
+            .unwrap()
+            .running_elements,
+        0
     );
 }
 
 #[test]
 fn state_change_interrupted_does_not_resume_postponed_elements() {
-    let mut seq = Sequence::new();
-    seq.append_element(make_simple_element(
-        1,
-        Command::Move,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.append_element(make_simple_element(
-        1,
-        Command::Wait,
-        Some(EntityId::Pc(crate::entity_id::PcId(0))),
-    ));
-    seq.elements[0].postponed = Some(SequenceElementRef::new(seq.id, 1));
-
-    let effects = seq.set_element_state(0, SequenceState::Interrupted, CascadeFlags::empty());
-
-    assert_eq!(effects.start_postponed, None);
-    assert_eq!(
-        seq.elements[0].postponed,
-        Some(SequenceElementRef::new(seq.id, 1))
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let id = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
     );
-    assert_eq!(seq.elements[1].state, SequenceState::Todo);
+    let postponed = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
+    );
+    engine.postpone_element(&test_context(), &assets, &mut Vec::new(), postponed, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(id, 0)
+        .unwrap()
+        .postponed = Some(SequenceElementRef::new(postponed, 0));
+    engine.element_interrupted(
+        &test_context(),
+        &assets,
+        &mut Vec::new(),
+        id,
+        0,
+        CascadeFlags::empty(),
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(id, 0)
+            .unwrap()
+            .postponed,
+        Some(SequenceElementRef::new(postponed, 0))
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(postponed, 0)
+            .unwrap()
+            .state,
+        SequenceState::Postponed
+    );
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(postponed, 0)
+    );
+}
+
+#[test]
+fn impossible_starts_postponed_before_clearing_orders_and_reading_owner() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let root = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
+    );
+    let successor = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
+    );
+    engine.postpone_element(&test_context(), &assets, &mut Vec::new(), successor, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(successor, 0)
+        .unwrap()
+        .command = Command::LockAi;
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(root, 0)
+        .unwrap();
+    element.postponed = Some(SequenceElementRef::new(successor, 0));
+    element.push_order(Order::test_new(OrderType::WaitingUpright, 0.0, 0.0));
+    let callbacks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let captured = callbacks.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            captured.borrow_mut().push(card.seq_id);
+            let root_element = engine
+                .orders
+                .sequence_manager
+                .get_element_mut(root, 0)
+                .unwrap();
+            assert_eq!(root_element.state, SequenceState::Impossible);
+            if card.seq_id == successor {
+                assert_eq!(root_element.orders.len(), 1);
+                assert_eq!(
+                    root_element.postponed,
+                    Some(SequenceElementRef::new(successor, 0))
+                );
+                root_element.command = Command::Wait;
+            } else {
+                assert_eq!(card.seq_id, root);
+                assert_eq!(card.command, Command::Wait);
+                assert!(root_element.orders.is_empty());
+                assert_eq!(root_element.postponed, None);
+            }
+        },
+        || engine.element_impossible(&test_context(), &assets, &mut Vec::new(), root, 0),
+    );
+    assert_eq!(*callbacks.borrow(), vec![successor, root]);
+}
+
+#[test]
+fn nested_peer_completion_advances_level_once_before_postponed_startup() {
+    let (mut engine, assets, owner) = live_sequence_fixture();
+    let assets = std::rc::Rc::new(assets);
+    let mut sequence = Sequence::new();
+    for level in [1, 1, 2] {
+        sequence.append_element(SequenceElement::new(level, Command::Generic, Some(owner)));
+    }
+    let root = engine.launch_sequence(&test_context(), &assets, sequence);
+    let successor = engine.launch_element(
+        &test_context(),
+        &assets,
+        SequenceElement::new(1, Command::Generic, Some(owner)),
+    );
+    engine.postpone_element(&test_context(), &assets, &mut Vec::new(), successor, 0);
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(successor, 0)
+        .unwrap()
+        .command = Command::LockAi;
+    engine
+        .orders
+        .sequence_manager
+        .get_element_mut(root, 0)
+        .unwrap()
+        .postponed = Some(SequenceElementRef::new(successor, 0));
+    let callback_assets = assets.clone();
+    let callbacks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let captured = callbacks.clone();
+    EngineInner::with_condolation_callback(
+        move |engine, card| {
+            captured.borrow_mut().push(card.seq_id);
+            if card.seq_id == root {
+                assert_eq!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .get_sequence(root)
+                        .unwrap()
+                        .running_elements,
+                    2
+                );
+                engine.element_terminated(
+                    &test_context(),
+                    &callback_assets,
+                    &mut Vec::new(),
+                    root,
+                    1,
+                );
+                let sequence = engine.orders.sequence_manager.get_sequence(root).unwrap();
+                assert_eq!(sequence.running_elements, 1);
+                assert_eq!(sequence.current_command_level, 1);
+            } else {
+                assert_eq!(card.seq_id, successor);
+                let sequence = engine.orders.sequence_manager.get_sequence(root).unwrap();
+                assert_eq!(sequence.current_command_level, 2);
+                assert_eq!(sequence.running_elements, 1);
+                assert!(engine.orders.sequence_manager.is_registered_to_go(root, 2));
+            }
+        },
+        || engine.element_terminated(&test_context(), &assets, &mut Vec::new(), root, 0),
+    );
+    assert_eq!(*callbacks.borrow(), vec![root, successor]);
+    let queued = engine
+        .orders
+        .sequence_manager
+        .deferred_elements_to_go()
+        .iter()
+        .filter(|entry| **entry == (root, 2))
+        .count();
+    assert_eq!(queued, 1);
 }
 
 #[test]
@@ -2770,22 +2952,6 @@ fn movement_action(element: &SequenceElement) -> OrderType {
     *action
 }
 
-fn loaded_v48_state() -> LegacyV48SequenceElementState {
-    LegacyV48SequenceElementState {
-        deleted: false,
-        script_driven: false,
-        raw_dormant_posture_after_transition: None,
-        raw_dormant_action_state_after_transition: None,
-        mummy: None,
-        linked_seek: None,
-        damage_arrow: None,
-        raw_sword_strike: None,
-        raw_dormant_movement_action: None,
-        order_state: Vec::new(),
-        generic_raw_unions: Vec::new(),
-    }
-}
-
 #[test]
 fn make_fast_rewrites_walking_orders_to_running() {
     let mut elem = movement_elem(
@@ -3225,7 +3391,7 @@ fn loaded_nonadjacent_next_controls_interruption_cascade() {
 }
 
 #[test]
-fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
+fn copied_authored_movement_interruption_reaches_cross_sequence_linked_seek() {
     let (mut engine, assets, owner) = live_sequence_fixture();
     let linked_id = engine.launch_element(
         &test_context(),
@@ -3234,16 +3400,16 @@ fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
     );
     let mut movement = movement_elem(owner, OrderType::WalkingUpright);
     movement.command = Command::MoveWaiting;
-    let movement_id = engine.launch_element(&test_context(), &assets, movement);
-    engine
-        .orders
-        .sequence_manager
-        .get_element_mut(movement_id, 0)
-        .unwrap()
-        .legacy_v48 = Some(LegacyV48SequenceElementState {
-        linked_seek: Some(Some(SequenceElementRef::new(linked_id, 0))),
-        ..loaded_v48_state()
-    });
+    let SequenceElementData::Movement { linked_seek, .. } = &mut movement.data else {
+        panic!("fixture is not movement");
+    };
+    *linked_seek = Some(SequenceElementRef::new(linked_id, 0));
+    let mut sequence = Sequence::new();
+    sequence.append_element(movement.clone());
+    sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    sequence.append_element(SequenceElement::new(1, Command::Generic, Some(owner)));
+    let movement_id = engine.launch_sequence(&test_context(), &assets, sequence);
+    assert!(movement.legacy_v48.is_none());
     let cards = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let observed = cards.clone();
     EngineInner::with_condolation_callback(
@@ -3261,6 +3427,12 @@ fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
                     SequenceState::Todo,
                     "the linked callback completes before its parent changes state"
                 );
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(movement_id, 0)
+                    .unwrap()
+                    .next = Some(SequenceElementRef::new(movement_id, 2));
             }
         },
         || {
@@ -3270,11 +3442,30 @@ fn loaded_movement_interruption_reaches_cross_sequence_linked_seek() {
                 &mut Vec::new(),
                 movement_id,
                 0,
-                CascadeFlags::NEXT_LEVEL,
+                CascadeFlags::FOLLOWING,
             )
         },
     );
-    assert_eq!(*cards.borrow(), [linked_id, movement_id]);
+    assert_eq!(*cards.borrow(), [linked_id, movement_id, movement_id]);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_id, 1)
+            .unwrap()
+            .state,
+        SequenceState::Todo,
+        "the parent's cascade must observe the callback's replacement link",
+    );
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(movement_id, 2)
+            .unwrap()
+            .state,
+        SequenceState::Interrupted,
+    );
     assert_eq!(
         engine
             .orders

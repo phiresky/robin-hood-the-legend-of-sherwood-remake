@@ -107,7 +107,7 @@ fn give_flight(
         .orders
         .sequence_manager
         .start_sequence_level(sequence);
-    let order_id = engine.push_new_order(
+    engine.push_new_order(
         sequence,
         0,
         crate::order::OrderType::FallingHitUpright,
@@ -131,16 +131,10 @@ fn give_flight(
         sequence,
         0,
     );
+    engine.publish_selected_order_as_installed(flyer);
 
     if let Some(entity) = engine.world.entities.get_mut(flyer) {
         entity.set_posture(Posture::Flying);
-        let actor = entity
-            .actor_data_mut()
-            .expect("combat flight owner must be an actor");
-        actor.installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: crate::order::OrderType::FallingHitUpright,
-        });
         entity.position_iface_mut().set_flight_goal_and_increment(
             WorldPoint3D {
                 x: flyer_pos.x + inc_x * frames as f32,

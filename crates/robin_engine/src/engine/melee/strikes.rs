@@ -1835,7 +1835,10 @@ impl EngineInner {
             _ => {}
         }
         if let Some(before) = before {
-            let installed = entity.actor_data().and_then(|actor| actor.installed_order);
+            let installed = entity
+                .actor_data()
+                .and_then(|actor| actor.installed_order)
+                .map(|handle| handle.resolve(&self.orders.sequence_manager));
             crate::movement_diagnostics::record_parity_flight_step(
                 crate::movement_diagnostics::ParityFlightStep {
                     entity: owner,
@@ -1872,6 +1875,7 @@ impl EngineInner {
             ),
         );
         entity.element_data_mut().update_grid_cell();
+        entity.sprite_mut().compute_display_depth();
     }
 
     /// Human flight callbacks follow the sprite position and posture updates.
@@ -2218,15 +2222,6 @@ impl EngineInner {
             current.target_x = dest.x;
             current.target_y = dest.y;
             current.order_id = fresh_id;
-            self.world.entities[entity_id]
-                .as_mut()
-                .expect("rolling actor disappeared before roll-update publication")
-                .actor_data_mut()
-                .expect("Rolling owner must have actor data")
-                .installed_order = Some(crate::element::InstalledActorOrder {
-                order_id: fresh_id,
-                order_type: OrderType::Rolling,
-            });
 
             let entity = self.world.entities[entity_id]
                 .as_mut()
@@ -2900,8 +2895,7 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        let order_id =
-            engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
+        engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
         engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.element_in_progress(
             &crate::sim_rng::test_context(),
@@ -2910,15 +2904,7 @@ mod tests {
             sequence,
             0,
         );
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: OrderType::FallingPushedUpright,
-        });
+        engine.publish_selected_order_as_installed(victim);
     }
 
     #[test]
@@ -2936,6 +2922,7 @@ mod tests {
                     .sprite;
                 sprite.display_order_ref = display_reference;
                 sprite.behind_display_order_ref = behind;
+                sprite.display_depth = -77.0;
                 for motion in [
                     MotionState::Start,
                     MotionState::InProgress,
@@ -2945,6 +2932,11 @@ mod tests {
                     let sprite = engine.get_entity(victim).unwrap().sprite();
                     assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
                     assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
+                    assert_eq!(
+                        sprite.display_depth,
+                        sprite.position_iface.get_position().y,
+                        "{motion:?}"
+                    );
                 }
             }
         }
@@ -3078,7 +3070,7 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        let order_id = engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
         engine
             .orders
             .sequence_manager
@@ -3096,15 +3088,7 @@ mod tests {
             sequence,
             0,
         );
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .installed_order = Some(crate::element::InstalledActorOrder {
-            order_id,
-            order_type: OrderType::FallingLadderWall,
-        });
+        engine.publish_selected_order_as_installed(victim);
     }
 
     #[test]
@@ -3477,10 +3461,7 @@ mod tests {
             actor.continuation.motion_state,
             crate::sprite::MotionState::Start
         );
-        assert_eq!(
-            actor.installed_order.map(|order| order.order_id),
-            installed.map(|order| order.order_id)
-        );
+        assert_eq!(actor.installed_order, installed);
         assert_eq!(entity.element_data().layer(), 3);
         assert_eq!(entity.element_data().sector(), SectorHandle::new(4));
         assert_eq!(

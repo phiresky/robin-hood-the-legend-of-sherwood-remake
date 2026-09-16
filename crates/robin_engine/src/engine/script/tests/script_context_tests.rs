@@ -1311,6 +1311,7 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         element.set_material(crate::element::GameMaterial::Stone);
         element.sprite.display_order_ref = None;
         element.sprite.behind_display_order_ref = true;
+        element.sprite.display_depth = -77.0;
         engine
             .world
             .entities
@@ -1345,6 +1346,14 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         assert_eq!(entity.position_iface().get_material(), expected_material);
         assert_eq!(entity.sprite().display_order_ref, None);
         assert!(entity.sprite().behind_display_order_ref);
+        assert_eq!(
+            entity.sprite().display_depth,
+            if spawn_elevation_probe.is_some() {
+                -77.0
+            } else {
+                entity.element_data().position().y
+            }
+        );
         if spawn_elevation_probe.is_some() {
             assert_eq!(entity.position_iface().get_position().z, 10.0);
             assert_eq!(entity.position_iface().map_position().y, 2000.0);
@@ -1409,8 +1418,12 @@ fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
     );
     assert_eq!(engine.control.popup_scroll_last_display_frame, Some(48479));
     assert_eq!(
-        engine.feedback.pending_side_effects.pending_popup_texts,
-        vec![11]
+        engine
+            .feedback
+            .pending_side_effects
+            .host_effects
+            .take_modals(crate::engine::HostModalPhase::Popup),
+        vec![crate::player_command::ModalKind::PopupText { text_id: 11 }]
     );
 }
 

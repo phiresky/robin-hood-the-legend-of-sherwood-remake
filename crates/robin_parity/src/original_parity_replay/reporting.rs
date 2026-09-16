@@ -432,7 +432,7 @@ pub(super) fn print_debug_element(
         entity.element_data().posture(),
         actor.action_state,
         engine.actor_order_type(id),
-        actor.installed_order.map(|order| order.order_id),
+        engine.actor_installed_order(id).map(|order| order.order_id),
         sprite.last_processed_order_id,
         actor.continuation.motion_state,
         sprite.last_motion_state,

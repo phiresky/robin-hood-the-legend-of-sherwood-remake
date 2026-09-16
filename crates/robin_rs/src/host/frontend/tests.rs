@@ -330,6 +330,66 @@ mod host_resource_tests {
     use robin_engine::sprite_script::SpriteScript;
 
     #[test]
+    fn admitted_effects_keep_modal_and_render_work_while_filtering_receipts_by_seat() {
+        use robin_engine::engine::{HostEffects, HostModalPhase};
+        use robin_engine::player_command::{ModalKind, PlayerId};
+        use robin_engine::trading::{TradeQuantity, TradeReceipt, TradeRejectReason};
+
+        let receipt = TradeReceipt::rejected(
+            7,
+            robin_engine::sector_production::Type::MakeArrow,
+            TradeQuantity::One,
+            TradeRejectReason::TradingDisabled,
+        );
+        for seat in [PlayerId::HOST, PlayerId(1)] {
+            let mut frontend = HostFrontend::default();
+            let mut effects = HostEffectBatches::default();
+            let mut requests = HostEffects::default();
+            requests.extend_popup_texts([11]);
+            requests.extend_dialogues([7]);
+            requests.extend_trade_receipts([receipt]);
+            requests.background_blits.push(engine_api::PendingBgBlit {
+                entity_id: EntityId::Fx(robin_engine::element::FxId(7)),
+                restore_only: true,
+                decal: None,
+            });
+            frontend.apply_side_effects(
+                SideEffects {
+                    host_effects: requests,
+                    reset_input: true,
+                    ..Default::default()
+                },
+                &mut HostAudio::default(),
+                &mut effects,
+                &ApplicationContext::default(),
+                seat,
+            );
+            assert_eq!(
+                effects.take_trade_receipts(),
+                if seat == PlayerId::HOST {
+                    vec![receipt]
+                } else {
+                    vec![]
+                }
+            );
+            assert!(effects.take_signal(HostSignal::PromoteFpsCheat));
+            assert_eq!(
+                effects.take_modals(HostModalPhase::Dialogue),
+                vec![ModalKind::Dialog { dialog_id: 7 }]
+            );
+            assert_eq!(
+                effects.take_modals(HostModalPhase::Popup),
+                vec![ModalKind::PopupText { text_id: 11 }]
+            );
+            assert_eq!(
+                effects.background_blits.len(),
+                1,
+                "decals wait for rendering even after modal consumption"
+            );
+        }
+    }
+
+    #[test]
     fn effect_batches_preserve_domain_order_and_coalesce_signals() {
         let mut effects = HostEffectBatches::default();
         effects.extend_dialogues([7]);
@@ -341,8 +401,18 @@ mod host_resource_tests {
         effects.request_signal(HostSignal::ShowConsole);
         effects.request_signal(HostSignal::ResetInput);
 
-        assert_eq!(effects.take_dialogues(), vec![7, 8, 9]);
-        assert_eq!(effects.take_popup_texts(), vec![11]);
+        assert_eq!(
+            effects.take_modals(robin_engine::engine::HostModalPhase::Dialogue),
+            vec![
+                engine_player_command::ModalKind::Dialog { dialog_id: 7 },
+                engine_player_command::ModalKind::Dialog { dialog_id: 8 },
+                engine_player_command::ModalKind::Dialog { dialog_id: 9 },
+            ]
+        );
+        assert_eq!(
+            effects.take_modals(robin_engine::engine::HostModalPhase::Popup),
+            vec![engine_player_command::ModalKind::PopupText { text_id: 11 },]
+        );
         assert!(effects.take_sherwood_report());
         assert!(!effects.take_sherwood_report());
         assert!(effects.take_signal(HostSignal::ResetInput));

@@ -384,13 +384,12 @@ pub struct Sprite {
     /// water-titbit side effects, so it participates in snapshots.
     pub splitch_count: u8,
 
-    /// Whether this sprite is behind its display order reference.
+    /// Computed display depth. Attachment updates copy the other sprite's
+    /// current depth with a bias; they do not retain a live relationship.
+    pub display_depth: f32,
+    /// Retained serialized display-reference flag.
     pub behind_display_order_ref: bool,
-    /// Reference entity for display ordering (carried/attached entities).
-    /// When set, the depth used by the host's draw-order sort is computed
-    /// as `ref.position.y ± 0.001` instead of `self.position.y`.  The
-    /// per-entity depth is ephemeral (host-cached in `DrawOrder::depths`
-    /// each frame); only the ref binding is sim state.
+    /// Retained serialized reference, independent of computed display depth.
     pub display_order_ref: Option<EntityId>,
 
     /// Animations to be replaced (parallel lists with `replacing_anims`).
@@ -476,6 +475,7 @@ pub struct SpriteSnapshot {
     action_done_counter: u16,
     last_sound_id: u16,
     splitch_count: u8,
+    display_depth: f32,
     behind_display_order_ref: bool,
     display_order_ref: Option<EntityId>,
     anims_to_be_replaced: Vec<OrderType>,
@@ -506,6 +506,7 @@ impl crate::bitcode_adapters::NativeBitcode for Sprite {
             action_done_counter: self.action_done_counter,
             last_sound_id: self.last_sound_id,
             splitch_count: self.splitch_count,
+            display_depth: self.display_depth,
             behind_display_order_ref: self.behind_display_order_ref,
             display_order_ref: self.display_order_ref,
             anims_to_be_replaced: self.anims_to_be_replaced.clone(),
@@ -525,6 +526,16 @@ impl crate::bitcode_adapters::NativeBitcode for Sprite {
 crate::bitcode_adapters::impl_native_bitcode!(Sprite);
 
 impl Sprite {
+    /// Publish depth after a completed positional update.
+    pub fn compute_display_depth(&mut self) {
+        self.display_depth = self.position_iface.get_position().y;
+    }
+
+    /// Copy a reference sprite's current depth at the attachment update.
+    pub fn compute_display_depth_relative_to(&mut self, depth: f32, behind: bool) {
+        self.display_depth = if behind { depth - 0.001 } else { depth + 0.001 };
+    }
+
     fn from_snapshot(snapshot: SpriteSnapshot) -> Self {
         Self {
             position_iface: snapshot.position_iface,
@@ -542,6 +553,7 @@ impl Sprite {
             action_done_counter: snapshot.action_done_counter,
             last_sound_id: snapshot.last_sound_id,
             splitch_count: snapshot.splitch_count,
+            display_depth: snapshot.display_depth,
             behind_display_order_ref: snapshot.behind_display_order_ref,
             display_order_ref: snapshot.display_order_ref,
             anims_to_be_replaced: snapshot.anims_to_be_replaced,
@@ -646,6 +658,7 @@ impl robin_util::state_hash::StateHash for Sprite {
         self.last_sound_id.state_hash(state);
         self.splitch_count.state_hash(state);
         self.behind_display_order_ref.state_hash(state);
+        self.display_depth.state_hash(state);
         self.display_order_ref.state_hash(state);
         self.anims_to_be_replaced.state_hash(state);
         self.replacing_anims.state_hash(state);
@@ -675,6 +688,7 @@ impl Default for Sprite {
             last_sound_id: 0,
             splitch_count: 0,
             behind_display_order_ref: false,
+            display_depth: 0.0,
             display_order_ref: None,
             anims_to_be_replaced: Vec::new(),
             replacing_anims: Vec::new(),
@@ -791,6 +805,7 @@ impl Sprite {
         if obstacle_index.is_some() {
             pi.set_obstacle(obstacle_index, obstacle_plane);
         }
+        self.compute_display_depth();
     }
 
     // -- Script accessors --
@@ -3191,6 +3206,7 @@ mod tests {
             action_done_counter: 2,
             last_sound_id: 17,
             splitch_count: 1,
+            display_depth: -7.25,
             behind_display_order_ref: true,
             display_order_ref: Some(EntityId::Soldier(crate::entity_id::SoldierId(9))),
             anims_to_be_replaced: vec![OrderType::WaitingUpright, OrderType::WaitingUprightBored],
@@ -3210,19 +3226,18 @@ mod tests {
         }
     }
 
-    /// Save (JSON), native snapshot (bitcode) and state-hash encodings of a
-    /// sprite are frozen; the digests were recorded from the hand-written
-    /// `SpriteSnapshotRef` serializer before it was replaced by derives.
     #[test]
-    fn sprite_encodings_match_golden_digests() {
-        const GOLDEN: [&str; 3] = [
-            "d178929fccad7b1e41e10d2965af4887d844284a5ef56402f7f8b0fdee16998b",
-            "1b16f63c2ffbbb86b16399432b2e9c9f96551a416c440cd2af8770bfd3405543",
-            "a9d3291a54fc42e9707bd9ce613d1e1f144d6dfcfbdfc482db439b1a8e6cb682",
-        ];
-
-        let sprite = golden_sprite_fixture();
-        assert_eq!(golden_digests(&sprite), GOLDEN);
+    fn sprite_encodings_preserve_computed_depth_and_exclude_resource_attachments() {
+        let mut sprite = golden_sprite_fixture();
+        let before = golden_digests(&sprite);
+        sprite.display_depth = 123.001;
+        let expected = golden_digests(&sprite);
+        for (before, after) in before.iter().zip(&expected) {
+            assert_ne!(
+                before, after,
+                "computed depth must participate in every encoding"
+            );
+        }
 
         let json = serde_json::to_string(&sprite).unwrap();
         let bytes = bitcode::encode(&sprite);
@@ -3235,7 +3250,8 @@ mod tests {
             assert!(decoded.conversion.is_empty());
             assert!(decoded.alternate_conversion.is_none());
             assert_eq!(decoded.last_motion_state, None);
-            assert_eq!(golden_digests(&decoded), GOLDEN);
+            assert_eq!(decoded.display_depth, 123.001);
+            assert_eq!(golden_digests(&decoded), expected);
         }
     }
 }

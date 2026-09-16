@@ -1740,6 +1740,7 @@ impl EngineInner {
                         fx.element
                             .set_position_map(fx.element.position_map() + motion.movement);
                     }
+                    fx.element.sprite.compute_display_depth();
                     fx.fx.animation_speed = movement_animation_speed;
                 }
 
@@ -2350,21 +2351,10 @@ impl EngineInner {
                     .get(owner)
                     .and_then(Entity::actor_data)
                     .and_then(|actor| actor.installed_order);
-                if let Some(installed) = installed
-                    && let Some((seq_id, elem_idx)) =
-                        self.world.entities.current_element_for_actor(owner)
-                    && let Some(order) = self
-                        .orders
-                        .sequence_manager
-                        .get_element_mut(seq_id, elem_idx)
-                        .and_then(|element| {
-                            element
-                                .orders
-                                .iter_mut()
-                                .find(|order| order.order_id == installed.order_id)
-                        })
-                {
-                    order.done = true;
+                if let Some(installed) = installed {
+                    installed
+                        .resolve_mut(&mut self.orders.sequence_manager)
+                        .done = true;
                 }
             }
             MotionState::Start | MotionState::InProgress => {}
@@ -2410,6 +2400,7 @@ impl EngineInner {
         };
         let helper_frame = helper.sprite().current_frame;
         let helper_frame_count = helper.sprite().frame_count;
+        let helper_depth = helper.sprite().display_depth;
         let carried = self
             .get_entity_mut(carried_id)
             .expect("shoulder rider disappeared before synchronization");
@@ -2421,8 +2412,7 @@ impl EngineInner {
             carried_sprite_direction,
         );
         sprite.synchronize_anim(helper_frame, helper_frame_count);
-        sprite.display_order_ref = Some(helper_id);
-        sprite.behind_display_order_ref = false;
+        sprite.compute_display_depth_relative_to(helper_depth, false);
 
         if motion == MotionState::Done {
             carried.set_posture(Posture::Upright);

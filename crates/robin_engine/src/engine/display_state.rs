@@ -4,37 +4,29 @@ use super::*;
 use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint, ScreenVec};
 use crate::element::EntityId;
 use crate::shadow_polygon::ViewParameters;
-use std::collections::HashMap;
 
 /// Tuple returned by `selected_view_cone_params`: (eye point, view
 /// parameters, optional RGB tint for the darkening overlay).
 pub type ViewConeParams = (GroundPoint, ViewParameters, Option<(u8, u8, u8)>);
 
-/// Back-to-front entity render order plus the per-entity depth value
-/// the sort used as its key.
+/// Back-to-front entity render order.
 ///
 /// Computed by [`EngineInner::compute_display_order`] as a pure function
-/// of sim state (entity positions, FX polylines, carried/attached refs).
+/// of sim state (computed sprite depths and FX polylines).
 /// The host caches the result between tick and render / input hit-test;
 /// it is *not* sim state and never participates in the rollback hash.
 #[derive(Debug, Clone, Default)]
 pub struct DrawOrder {
     /// Back-to-front entity IDs (first = furthest back, last = topmost).
     pub ids: Vec<EntityId>,
-    /// Depth key used by the sort (`position.y`, or `ref.depth ± 0.001`
-    /// for carried/attached entities). Consumed by the titbit Z-flush
-    /// in the host render loop.
-    pub depths: HashMap<EntityId, f32>,
-}
-
-impl DrawOrder {
-    /// Depth for one entity, if present in the current ordering.
-    pub fn depth(&self, id: EntityId) -> Option<f32> {
-        self.depths.get(&id).copied()
-    }
 }
 
 impl EngineInner {
+    pub(super) fn initialize_mission_display_depths(&mut self) {
+        for (_, entity) in self.world.entities.occupied_mut() {
+            entity.sprite_mut().compute_display_depth();
+        }
+    }
     // ─── Rendering ───────────────────────────────────────────────
 
     #[cfg(test)]
@@ -602,44 +594,12 @@ impl EngineInner {
     /// (before render + before input hit-test) without participating in
     /// the rollback hash.
     ///
-    /// The algorithm has three phases:
-    /// 1. Compute each entity's depth from `position.y` (or from a
-    ///    reference entity for carried/attached entities).
-    /// 2. Classify entities into "animations" (FX with masking polylines)
+    /// The algorithm has two phases:
+    /// 1. Classify entities into "animations" (FX with masking polylines)
     ///    and "non-animations" (everything else), sort each group.
-    /// 3. Merge animations into the sorted non-animation list using the
+    /// 2. Merge animations into the sorted non-animation list using the
     ///    `is_element_behind_polyline` test (a two-pass merge).
     pub fn compute_display_order(&self) -> DrawOrder {
-        // ── Phase 1: Compute depth per entity ────────────────────
-        //
-        // Free entities use `position.y` as their depth. Carried/attached
-        // entities use `ref.depth ± 0.001` so they sort right next to the
-        // entity they're attached to (sign chosen by `behind_display_order_ref`).
-        //
-        // Two-pass: first fill position.y for every entity, then resolve
-        // the ref offset for carried/attached ones (which need the base
-        // values computed first).
-        let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.world.entities.len());
-        for (id, e) in self.world.entities.occupied() {
-            depths.insert(id, e.element_data().position().y);
-        }
-
-        for (id, entity) in self.world.entities.occupied() {
-            let sprite = &entity.element_data().sprite;
-            let Some(ref_id) = sprite.display_order_ref else {
-                continue;
-            };
-            let Some(&ref_depth) = depths.get(&ref_id) else {
-                continue;
-            };
-            let offset = if sprite.behind_display_order_ref {
-                -0.001
-            } else {
-                0.001
-            };
-            depths.insert(id, ref_depth + offset);
-        }
-
         // ── Phase 2: Classify and sort ───────────────────────────
         //
         // Two buckets:
@@ -689,8 +649,16 @@ impl EngineInner {
         // a monotonic slot index that's never reused, so it doubles as
         // the creation-order tiebreak.
         non_animations.sort_by(|a, b| {
-            let da = depths.get(a).copied().unwrap_or(f32::MAX);
-            let db = depths.get(b).copied().unwrap_or(f32::MAX);
+            let da = entities
+                .get(*a)
+                .expect("sorted entity exists")
+                .sprite()
+                .display_depth;
+            let db = entities
+                .get(*b)
+                .expect("sorted entity exists")
+                .sprite()
+                .display_depth;
             compare_display_depth(da, db, *a, *b)
         });
 
@@ -764,7 +732,7 @@ impl EngineInner {
             merged
         };
 
-        DrawOrder { ids, depths }
+        DrawOrder { ids }
     }
 
     // ─── Minimap dot info ───────────────────────────────────────
@@ -863,28 +831,8 @@ impl EngineInner {
 
             pa.cmp(&pb)
                 .then_with(|| {
-                    // Tiebreak by Y depth: position.y for free entities,
-                    // ref.position.y ± 0.001 for carried ones (so minimap
-                    // dots of carried objects sit right next to their
-                    // carrier). Computed inline instead of via a cached
-                    // sprite field.
-                    let depth_of = |e: &Entity| -> f32 {
-                        let sprite = &e.element_data().sprite;
-                        if let Some(ref_id) = sprite.display_order_ref
-                            && let Some(ref_entity) = self.world.entities.get(ref_id)
-                        {
-                            let base = ref_entity.element_data().position().y;
-                            if sprite.behind_display_order_ref {
-                                base - 0.001
-                            } else {
-                                base + 0.001
-                            }
-                        } else {
-                            e.element_data().position().y
-                        }
-                    };
-                    let da = depth_of(ea);
-                    let db = depth_of(eb);
+                    let da = ea.sprite().display_depth;
+                    let db = eb.sprite().display_depth;
                     da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
                 })
                 // Final tiebreak by creation order: EntityId is a
@@ -1010,6 +958,7 @@ mod display_order_tests {
             initial_element
         };
         element.set_position(position);
+        element.sprite.compute_display_depth();
         Entity::Fx(ElementFx {
             element,
             fx: FxData {
@@ -1018,6 +967,68 @@ mod display_order_tests {
                 ..Default::default()
             },
         })
+    }
+
+    #[test]
+    fn attachment_depth_is_a_value_shared_by_draw_and_minimap_sorting() {
+        let mut engine = EngineInner::new();
+        let carrier = engine.add_test_entity(fx_entity(
+            WorldPoint3D::new(0.0, 40.0, 1.0),
+            Vec::new(),
+            None,
+        ));
+        let carried = engine.add_test_entity(fx_entity(
+            WorldPoint3D::new(0.0, 5.0, 1.0),
+            Vec::new(),
+            None,
+        ));
+        let tail = engine.add_test_entity(fx_entity(
+            WorldPoint3D::new(0.0, 10.0, 1.0),
+            Vec::new(),
+            None,
+        ));
+        let depth = engine.get_entity(carrier).unwrap().sprite().display_depth;
+        let sprite = engine.get_entity_mut(carried).unwrap().sprite_mut();
+        sprite.display_order_ref = Some(tail);
+        sprite.behind_display_order_ref = true;
+        sprite.compute_display_depth_relative_to(depth, false);
+        let depth = sprite.display_depth;
+        engine
+            .get_entity_mut(tail)
+            .unwrap()
+            .sprite_mut()
+            .compute_display_depth_relative_to(depth, false);
+        let carrier_entity = engine.get_entity_mut(carrier).unwrap();
+        carrier_entity
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(0.0, 90.0, 1.0));
+        carrier_entity.sprite_mut().compute_display_depth();
+        let expected = vec![carried, tail, carrier];
+        assert_eq!(engine.compute_display_order().ids, expected);
+        assert_eq!(engine.sort_for_minimap(), expected);
+        let sprite = engine.get_entity(carried).unwrap().sprite();
+        assert_eq!(sprite.display_depth, 40.001);
+        assert_eq!(sprite.display_order_ref, Some(tail));
+        assert!(sprite.behind_display_order_ref);
+    }
+
+    #[test]
+    fn mission_initialization_publishes_position_depth_without_rebinding_references() {
+        let mut engine = EngineInner::new();
+        let id = engine.add_test_entity(fx_entity(
+            WorldPoint3D::new(0.0, 40.0, 1.0),
+            Vec::new(),
+            None,
+        ));
+        let sprite = engine.get_entity_mut(id).unwrap().sprite_mut();
+        sprite.display_depth = -900.0;
+        sprite.display_order_ref = Some(id);
+        sprite.behind_display_order_ref = true;
+        engine.initialize_mission_display_depths();
+        let sprite = engine.get_entity(id).unwrap().sprite();
+        assert_eq!(sprite.display_depth, 40.0);
+        assert_eq!(sprite.display_order_ref, Some(id));
+        assert!(sprite.behind_display_order_ref);
     }
 
     #[test]

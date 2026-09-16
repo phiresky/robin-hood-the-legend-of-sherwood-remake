@@ -255,6 +255,7 @@ impl ElementData {
                 (map.x - center.x).floor(),
                 (map.y - center.y).floor(),
             ));
+        self.sprite.compute_display_depth();
     }
 
     /// Queue a map-space position change for the next actor update.
@@ -290,6 +291,7 @@ impl ElementData {
             self.position_delayed = false;
         }
         self.update_grid_cell();
+        self.sprite.compute_display_depth();
         Some((old_position, self.position_map(), layer))
     }
 
@@ -575,7 +577,7 @@ pub struct ActiveLiftClimb {
     pub upwards: bool,
 }
 
-/// Exact representation of the original game's installed actor order.
+/// Stable reference to an installed canonical actor order.
 ///
 /// Sequence-manager selection is deliberately not sufficient: an element can
 /// be selected before instruction installs its first order, while order advancement
@@ -594,8 +596,38 @@ pub struct ActiveLiftClimb {
     bitcode::Decode,
 )]
 pub struct InstalledActorOrder {
-    pub order_id: std::num::NonZeroU32,
-    pub order_type: crate::order::OrderType,
+    pub element: crate::sequence::SequenceElementRef,
+    pub slot: u64,
+}
+
+impl InstalledActorOrder {
+    pub fn new(element: crate::sequence::SequenceElementRef, order: &crate::order::Order) -> Self {
+        assert_ne!(
+            order.storage_slot, 0,
+            "installed order must belong to canonical storage"
+        );
+        Self {
+            element,
+            slot: order.storage_slot,
+        }
+    }
+
+    pub fn resolve(self, manager: &crate::sequence::SequenceManager) -> &crate::order::Order {
+        manager
+            .get_element(self.element.sequence_id, self.element.element_index)
+            .and_then(|element| element.orders.resolve(self.slot))
+            .expect("installed order storage retired before actor installation boundary")
+    }
+
+    pub fn resolve_mut(
+        self,
+        manager: &mut crate::sequence::SequenceManager,
+    ) -> &mut crate::order::Order {
+        manager
+            .get_element_mut(self.element.sequence_id, self.element.element_index)
+            .and_then(|element| element.orders.resolve_mut(self.slot))
+            .expect("installed order storage retired before actor installation boundary")
+    }
 }
 
 /// Actor-level data.
@@ -625,7 +657,7 @@ pub struct ActorData {
     /// last-order identity. This is deliberately independent of the sprite's
     /// processed order: FrozenAll still consumes actor initialization once.
     pub last_execute_order_id: Option<std::num::NonZeroU32>,
-    /// the original game's live order identity and action.
+    /// Stable identity of the installed canonical order, independent of selection.
     pub installed_order: Option<InstalledActorOrder>,
     /// Original-game new-order state for the currently entered execution. Set at
     /// owner selection and cleared after Execute/completion/ActionChange.

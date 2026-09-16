@@ -1,20 +1,11 @@
 use super::{current_door_for_route_source, sector_hits_have_distinct_identity};
-use crate::element::{
-    ActorData, ActorPc, ElementData, Entity, HumanData, InstalledActorOrder, PcData,
-};
-use crate::order::OrderType;
+use crate::element::{ActorData, ActorPc, ElementData, Entity, HumanData, PcData};
 use crate::position_interface::DoorHandle;
 
 fn pc_with_door_pass(crossed: bool) -> Entity {
     let mut entity = Entity::Pc(ActorPc {
         element: ElementData::default(),
-        actor: ActorData {
-            installed_order: Some(InstalledActorOrder {
-                order_id: std::num::NonZeroU32::new(1).unwrap(),
-                order_type: OrderType::WalkingUpright,
-            }),
-            ..ActorData::default()
-        },
+        actor: ActorData::default(),
         human: HumanData::default(),
         pc: PcData::default(),
     });
@@ -44,18 +35,14 @@ fn route_source_drops_active_door_after_pass_callback() {
 }
 
 #[test]
-fn route_source_does_not_resurrect_postponed_door_under_unrelated_order() {
+fn route_source_does_not_resurrect_cleared_door() {
     let mut pc = pc_with_door_pass(false);
     pc.position_iface_mut().clear_door();
-    pc.actor_data_mut().unwrap().installed_order = Some(InstalledActorOrder {
-        order_id: std::num::NonZeroU32::new(2).unwrap(),
-        order_type: OrderType::WaitingUpright,
-    });
 
     assert_eq!(
         current_door_for_route_source(&pc),
         None,
-        "an unrelated order must not replace an absent position door reference"
+        "the route source must respect the cleared position door reference"
     );
 }
 

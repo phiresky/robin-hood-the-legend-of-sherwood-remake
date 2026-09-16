@@ -512,7 +512,7 @@ pub const SAVE_MAGIC: &str = "RHSG";
 
 /// Current save format version. Bump on incompatible serialized-field changes.
 /// See `docs/SAVE_FORMAT.md` for the version history.
-pub const SAVE_FORMAT_VERSION: u32 = 91;
+pub const SAVE_FORMAT_VERSION: u32 = 92;
 
 /// Human-facing provenance captured when a save is written.
 ///

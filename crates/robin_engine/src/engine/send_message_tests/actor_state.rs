@@ -652,5 +652,11 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
         .unwrap();
     assert_eq!(engine.players.seats[0].selection, vec![pc_id]);
     assert_eq!(engine.players.selection_before_user_lock, vec![pc_id]);
-    assert!(engine.feedback.pending_side_effects.pending_reset_input);
+    assert!(
+        engine
+            .feedback
+            .pending_side_effects
+            .host_effects
+            .has_signal(crate::engine::HostSignal::ResetInput)
+    );
 }

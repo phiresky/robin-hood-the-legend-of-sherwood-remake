@@ -787,13 +787,7 @@ impl EngineInner {
             if let Some(carried) = carried {
                 if order_is_initialising {
                     self.actor_freeze_execution(sim, assets, carried);
-                    self.world
-                        .entities
-                        .get_mut(carried)
-                        .expect("shoulder rider disappeared")
-                        .actor_data_mut()
-                        .expect("shoulder rider must be actor")
-                        .installed_order = None;
+                    self.install_actor_order(carried, None);
                 }
                 let direction = (self
                     .expect_entity(entity_id, "shoulder helper")
@@ -1522,6 +1516,10 @@ impl EngineInner {
                         .human_data()
                         .and_then(|human| human.carrier)
                         .expect("waiting rider has no carrier");
+                    let depth = self
+                        .expect_entity(carrier, "waiting rider carrier")
+                        .sprite()
+                        .display_depth;
                     let sprite = &mut self
                         .world
                         .entities
@@ -1529,8 +1527,7 @@ impl EngineInner {
                         .expect("waiting rider disappeared")
                         .element_data_mut()
                         .sprite;
-                    sprite.display_order_ref = Some(carrier);
-                    sprite.behind_display_order_ref = false;
+                    sprite.compute_display_depth_relative_to(depth, false);
                 }
                 _ => {}
             }
