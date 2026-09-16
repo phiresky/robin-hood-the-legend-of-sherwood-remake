@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
+mod campaign_v48;
+
 const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,8 +143,8 @@ fn bounded_read(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// These versions changed engine state/hashes, retaining the same replay input
-/// and campaign wire layout. Future input migrations must be explicit here.
+/// These versions retain the replay input layout. Migrate embedded campaign
+/// state separately before decoding with the current engine types.
 fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
     let version = header
         .get("version")
@@ -154,6 +156,13 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
             || ((43..=49).contains(&version) && (43..=49).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
+    if version < 49 {
+        if let Some(campaign) = header.get_mut("campaign") {
+            let bytes: Vec<u8> = serde_json::from_value(campaign.clone())
+                .context("read embedded replay campaign bytes")?;
+            *campaign = serde_json::to_value(campaign_v48::migrate(&bytes)?)?;
+        }
+    }
     if let Some(config) = header.get_mut("sim_config").and_then(|v| v.as_object_mut()) {
         config.remove("bypass_fog_sprites_crash");
     }
