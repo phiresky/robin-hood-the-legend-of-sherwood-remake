@@ -4,7 +4,7 @@ import test from 'node:test';
 import { fetchRunReplay, fetchRunCheckpoints, parseHostedReplayContent, parseRunLaunch, runFromQuery, runPlaybackBuild, RANKED_REPLAY_MEDIA_TYPE } from './run-replay.ts';
 
 test('recorded builds select compatible viewer fixes', () => {
-    assert.equal(runPlaybackBuild('e7557179eb05'), '0232a76f7f6e');
+    assert.equal(runPlaybackBuild('e7557179eb05'), 'f5c6e859973f');
     assert.equal(runPlaybackBuild('1699bc12ffb8'), '1f546fbb6547');
     assert.equal(runPlaybackBuild('0123456789ab'), '0123456789ab');
 });
