@@ -4,6 +4,7 @@
 
 export const RUN_QUERY_KEY = 'run';
 export const RANKED_REPLAY_MEDIA_TYPE = 'application/x-robin-rhrec';
+const LEGACY_REPLAY_MEDIA_TYPE = `${RANKED_REPLAY_MEDIA_TYPE}+compact`;
 const RUNTIME_BUILD_RE = /^[0-9a-f]{12}$/u;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 const MAX_RUN_JSON_BYTES = 2 * 1024 * 1024;
@@ -22,6 +23,7 @@ export type RunReplay = {
     /** Exact binary replay artifact. */
     readonly content: Uint8Array;
     checkpoints?: Uint8Array;
+    legacyViewer?: true;
 };
 
 export function runFromQuery(params: URLSearchParams): string | null {
@@ -34,7 +36,7 @@ export function runFromQuery(params: URLSearchParams): string | null {
     return value;
 }
 
-type Launch = { readonly edition: 'demo' | 'full'; readonly runtimeBuild: string; readonly sha256: string; readonly byteLength: number };
+type Launch = { readonly edition: 'demo' | 'full'; readonly runtimeBuild: string; readonly sha256: string; readonly byteLength: number; readonly mediaType: string };
 
 /** Minimal checks of the RunDetailV2 fields playback needs. */
 export function parseRunLaunch(document: unknown, runId: string): Launch {
@@ -61,10 +63,10 @@ export function parseRunLaunch(document: unknown, runId: string): Launch {
     if (typeof artifact.sha256 !== 'string' || !SHA256_RE.test(artifact.sha256)
         || typeof artifact.byte_length !== 'number' || !Number.isSafeInteger(artifact.byte_length)
         || artifact.byte_length <= 0 || artifact.byte_length > MAX_REPLAY_BYTES
-        || artifact.media_type !== RANKED_REPLAY_MEDIA_TYPE) {
+        || (artifact.media_type !== RANKED_REPLAY_MEDIA_TYPE && artifact.media_type !== LEGACY_REPLAY_MEDIA_TYPE)) {
         throw new Error(`run ${runId} has an invalid replay artifact`);
     }
-    return { edition, runtimeBuild, sha256: artifact.sha256, byteLength: artifact.byte_length };
+    return { edition, runtimeBuild, sha256: artifact.sha256, byteLength: artifact.byte_length, mediaType: artifact.media_type };
 }
 
 export async function fetchRunReplay(
@@ -82,17 +84,19 @@ export async function fetchRunReplay(
         throw new Error(`run ${runId}: the server returned invalid JSON`);
     }
     const launch = parseRunLaunch(document, runId);
-    const bytes = await get(fetchImpl, `${runUrl}/replay`, RANKED_REPLAY_MEDIA_TYPE, launch.byteLength, signal);
+    const bytes = await get(fetchImpl, `${runUrl}/replay`, launch.mediaType, launch.byteLength, signal);
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
     const hex = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
     if (bytes.byteLength !== launch.byteLength || hex !== launch.sha256) {
         throw new Error(`run ${runId}: the replay does not match its published identity`);
     }
-    const header = new TextEncoder().encode(`RHREC\x01${launch.runtimeBuild}`);
+    const legacy = launch.mediaType === LEGACY_REPLAY_MEDIA_TYPE;
+    const header = new TextEncoder().encode(legacy ? `rhrec-${launch.runtimeBuild}-` : `RHREC\x01${launch.runtimeBuild}`);
     if (bytes.length <= header.length || !header.every((byte, index) => bytes[index] === byte)) {
         throw new Error(`run ${runId}: the replay was not recorded by engine build ${launch.runtimeBuild}`);
     }
     let checkpoints: Uint8Array | undefined;
+    if (legacy) return { runId, runtimeBuild: launch.runtimeBuild, edition: launch.edition, content: bytes, legacyViewer: true };
     try {
         const sidecar = await get(fetchImpl, `${runUrl}/checkpoints`, 'application/x-robin-rhseek', 64 * 1024 * 1024, signal, true);
         if (sidecar.length !== 0) checkpoints = sidecar;

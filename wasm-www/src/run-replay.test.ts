@@ -44,6 +44,18 @@ test('run query ids are bounded opaque text', () => {
     assert.throws(() => runFromQuery(new URLSearchParams('run=%20bad')), /valid run id/u);
 });
 
+test('published compact runs retain their authenticated archived viewer route', async () => {
+    const bytes = new TextEncoder().encode(`rhrec-${build}-fixture`);
+    const mediaType = `${RANKED_REPLAY_MEDIA_TYPE}+compact`;
+    const { fetchImpl, urls } = api(runDocument({ replay: { artifact: {
+        sha256: createHash('sha256').update(bytes).digest('hex'), byte_length: bytes.length, media_type: mediaType,
+    } } }), bytes, mediaType);
+    const result = await fetchRunReplay('run-1', 'https://example.test/api/v1', fetchImpl, new AbortController().signal);
+    assert.equal(result.legacyViewer, true);
+    assert.deepEqual(result.content, bytes);
+    assert.equal(urls.length, 2);
+});
+
 test('a run launches its recorded engine build with the exact published replay', async () => {
     const { fetchImpl, urls } = api(runDocument());
     const result = await fetchRunReplay('run-1', 'https://robinhood.example/api/v1/', fetchImpl, new AbortController().signal);

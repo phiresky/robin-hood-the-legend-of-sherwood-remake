@@ -518,12 +518,11 @@ function renderReplayActions(api: HighscoreApi, run: RunDetail): HTMLElement {
     download.rel = 'noopener';
     actions.append(download);
     wrapper.append(actions);
-    if (run.replay.artifact.mediaType !== 'application/x-robin-rhrec') {
-        wrapper.append(element('p', { className: 'notice', text: 'Replay playback is unavailable for this older recording. You can still view the result and download the original replay.' }));
-    } else if (run.viewer.availability.status === 'unavailable') {
+    if (run.viewer.availability.status === 'unavailable') {
         wrapper.append(element('p', { className: 'notice', text: run.viewer.availability.safeReason }));
     } else {
         const viewerUrl = new URL('../', window.location.href);
+        if (run.replay.artifact.mediaType === 'application/x-robin-rhrec+compact') viewerUrl.pathname = '/legacy-replay/';
         viewerUrl.search = '';
         viewerUrl.searchParams.set('run', run.runId);
         viewerUrl.searchParams.set('embed', '1');

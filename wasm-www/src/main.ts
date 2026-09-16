@@ -382,6 +382,12 @@ async function main(): Promise<void> {
     const runReplay = runQuery === null
         ? null
         : await fetchRunReplay(runQuery, RUN_API_BASE, fetch, bootAbort.signal);
+    if (runReplay?.legacyViewer === true) {
+        const legacyUrl = new URL('/legacy-replay/', location.href);
+        legacyUrl.search = location.search;
+        location.replace(legacyUrl);
+        return;
+    }
     if (runReplay !== null) {
         logOk(`[leaderboard run ${runReplay.runId} recorded by build ${runReplay.runtimeBuild}]`);
         // Archived runtimes recognize this launch option before their main menu starts.
