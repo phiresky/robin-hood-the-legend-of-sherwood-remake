@@ -498,15 +498,9 @@ impl EngineInner {
 
     /// Per-frame melee maintenance outside the actor-owned Execute arms.
     ///
-    /// Active sequence strikes run in [`Self::tick_selected_melee_owner`] at
-    /// the attacker's legacy creation slot. This pass retains the periodic
-    /// combat diagnostics and the remaining global melee bookkeeping.
-    pub(crate) fn tick_melee_combat(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        if self.actors_frozen() {
+    /// Periodic diagnostics for live combat state.
+    pub(crate) fn trace_combat_state(&self) {
+        if self.actors_frozen() || !tracing::enabled!(tracing::Level::DEBUG) {
             return;
         }
 
@@ -534,7 +528,6 @@ impl EngineInner {
                 );
             }
         }
-
     }
 
     /// Apply the parry hold countdown at the owning actor's legacy Execute

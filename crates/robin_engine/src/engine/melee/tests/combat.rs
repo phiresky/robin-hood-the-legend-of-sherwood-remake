@@ -755,10 +755,6 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
         engine.execute_ai_sword_strike_proposal(sim, &assets, attacker);
     });
 
-    let ai = engine
-        .get_entity(attacker)
-        .and_then(Entity::enemy_ai)
-        .expect("AI-controlled hero must retain its Enemy AI");
     assert!(
         engine
             .orders

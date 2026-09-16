@@ -30,8 +30,8 @@ impl EngineInner {
     /// `titbit_manager.update()`.
     ///
     /// UnconsciousStar and WeakStunned (combat) titbits are created
-    /// event-driven at their transition sites (`handle_knockout`,
-    /// `try_pc_coma_save`, `tick_melee_combat`).  Only the apple-sauce
+    /// event-driven at knockout, coma-save, and combat-animation
+    /// transition sites. Only the apple-sauce
     /// WeakStunned case is synced here because the AI code doesn't have
     /// direct access to the titbit manager.
     pub(super) fn sync_titbits(&mut self, assets: &LevelAssets) {
@@ -143,13 +143,8 @@ impl EngineInner {
         );
     }
 
-    // No producer as of 2026-04-29 — workspace grep
-    // `rg -t rust '\badd_gun_impact_titbit\b' crates/` returns only the
-    // definition. Kept as documentation of the titbit/impact-FX pairing
-    // for any future gun/cannon-impact path; promote to a real callsite when
-    // such a path is wired.
     /// Add a WeakStunned titbit for the given entity.
-    /// Called from `tick_melee_combat` when a BeingWeakSword or
+    /// Called when a BeingWeakSword or
     /// BeingStunnedSword animation begins, and when an apple hits a visor.
     pub(super) fn add_weak_stunned(&mut self, entity_id: EntityId) {
         let handle = ElementHandle(entity_id.index());

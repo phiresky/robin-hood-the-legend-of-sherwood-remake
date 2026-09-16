@@ -235,30 +235,15 @@ impl EngineInner {
         self.tick_screen_remarks();
     }
 
-    /// Advance combat, projectiles, abilities, and other gameplay systems that
-    /// consume the entity/sequence/NPC state established above.
-    pub(in crate::engine) fn hourglass_phase_gameplay_systems(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        _display: &mut CameraDisplayState,
-        assets: &LevelAssets,
-    ) {
-        // Active abilities, Listen/Heard, projectiles, and beggar simulation
-        // already executed in their live owner slots.
-
-        // Combat progression without a proven cross-subsystem ordering
-        // discrepancy remains batched. Fallback-timed completions already
-        // cleared at their owning actor slots above and are skipped here.
-        self.tick_melee_combat(sim, assets);
+    /// Finish diagnostics and clear motion edges after all owner updates.
+    pub(in crate::engine) fn hourglass_phase_finish_owner_updates(&mut self) {
+        self.trace_combat_state();
 
         // Order completion was published inside each actor's Execute boundary.
         // Clear presentation motion edges only after their frame consumers.
         for (_, entity) in self.world.entities.occupied_mut() {
             entity.element_data_mut().sprite.last_motion_state = None;
         }
-
-        // TODO(original-parity): move further gameplay maintenance into the
-        // ordered pass only when a concrete observable discrepancy is proven.
     }
 
     /// Apply work intentionally deferred until every entity, path, sequence,

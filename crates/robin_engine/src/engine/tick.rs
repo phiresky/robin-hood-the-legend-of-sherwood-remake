@@ -632,7 +632,7 @@ pub(super) enum HourglassPhase {
     Paths,
     Entities,
     EntitySystems,
-    GameplaySystems,
+    FinishOwnerUpdates,
     Sequences,
     DeferredEffectsEnd,
 }
@@ -1415,8 +1415,8 @@ impl EngineInner {
             self.hourglass_phase_entity_systems(sim, assets)
         });
 
-        time_hourglass_phase(HourglassPhase::GameplaySystems, || {
-            self.hourglass_phase_gameplay_systems(sim, display, assets)
+        time_hourglass_phase(HourglassPhase::FinishOwnerUpdates, || {
+            self.hourglass_phase_finish_owner_updates()
         });
 
         time_hourglass_phase(HourglassPhase::Sequences, || {
