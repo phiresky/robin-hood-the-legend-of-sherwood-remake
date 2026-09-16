@@ -957,7 +957,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
                 false,
             ),
         );
-        timeline.begin_history_frame(frame, engine);
+        if source.replay_after().is_some() && host.transport.net().is_none() {
+            timeline.begin_replay_seek_history_frame(frame, engine);
+        } else {
+            timeline.begin_history_frame(frame, engine);
+        }
         // Force-unpaused tick.  Same as the live-frame path at the
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole

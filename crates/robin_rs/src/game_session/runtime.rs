@@ -982,6 +982,12 @@ impl TimelineRuntime {
         self.history.begin_frame(frame, engine);
     }
 
+    pub(super) fn begin_replay_seek_history_frame(&mut self, frame: u32, engine: &Engine) {
+        assert_eq!(frame, self.frame_number());
+        assert!(self.replay.playback().is_some());
+        self.history.begin_seek_frame(frame, engine);
+    }
+
     /// Live input diverged from buffered history: truncate history, reset the
     /// checker, then drop hash samples derived from the abandoned future.
     pub(super) fn branch_history_at(&mut self, frame: u32) {
