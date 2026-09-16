@@ -434,13 +434,11 @@ pub struct Sprite {
     pub center: SpriteAnchor,
 
     /// Most recent [`MotionState`] returned by a `perform_*` advance
-    /// this tick.  Set automatically by every perform method, consumed
-    /// by `EngineInner::propagate_done_to_current_orders` at end of
-    /// tick to flip the actor's current order's `done` flag once the
-    /// sprite reports `MotionState::Done`.
+    /// this tick. Set automatically by every perform method for consumers
+    /// within the frame. Actor order completion uses its Execute return value.
     ///
     /// Transient: `None` between ticks, written during dispatches,
-    /// reset to `None` after the propagation pass.  Excluded from
+    /// reset to `None` after gameplay maintenance. Excluded from
     /// snapshots and state-hash because it is purely a derived
     /// per-tick quantity.
     #[serde(skip)]
@@ -1734,8 +1732,7 @@ impl Sprite {
     // -- High-level animation methods --
 
     /// Record `state` as the most recent motion-state on this sprite
-    /// (consumed by `EngineInner::propagate_done_to_current_orders` at
-    /// end of tick) and return it.  Every `perform_*` exit funnels
+    /// and return it. Every `perform_*` exit funnels
     /// through here so one place owns the write.
     #[inline]
     fn record_motion_state(&mut self, state: MotionState) -> MotionState {

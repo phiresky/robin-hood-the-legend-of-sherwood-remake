@@ -5,6 +5,52 @@
 use super::*;
 use crate::element::{Command, Entity, EntityId};
 
+#[test]
+fn extracting_arrow_speaks_on_done_while_order_remains_installed() {
+    use crate::engine::test_support::actors::make_test_pc;
+    use crate::sprite::MotionState;
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
+    let installed = engine.install_test_order(owner, OrderType::ExtractingArrowSword);
+    let assets = engine.test_runtime_assets();
+    engine.control.sim_config.amount_of_speaking = 100;
+    let sim = crate::sim_rng::test_context();
+    engine.tick_pc_combat_anim_speech_for_owner(
+        &sim,
+        &assets,
+        owner,
+        Some(OrderType::ExtractingArrowSword),
+        Some(Command::Generic),
+        MotionState::Start,
+    );
+    assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
+    engine.tick_pc_combat_anim_speech_for_owner(
+        &sim,
+        &assets,
+        owner,
+        Some(OrderType::ExtractingArrowSword),
+        Some(Command::Generic),
+        MotionState::Done,
+    );
+    assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
+    assert_eq!(
+        engine.feedback.sound_sim.pending_exclamations[0].exclamation_id,
+        HERO_PROVOKE_OPPONENT
+    );
+    assert_eq!(
+        engine
+            .world
+            .entities
+            .get(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .installed_order,
+        Some(installed)
+    );
+}
+
 impl EngineInner {
     pub(in crate::engine) fn combat_insult_after_reconsider(
         &mut self,
@@ -444,150 +490,52 @@ impl EngineInner {
         }
     }
 
-    /// Fire combat-animation hero-speech triggers when a PC's
-    /// `combat_anim` transitions.  Compares each PC's current
-    /// `combat_anim` id against the previously observed id: a change
-    /// to a *new* anim id is equivalent to MotionState::Start; a
-    /// change to `None` (id 0) is MotionState::Done.  Filtering
-    /// (chorus / forbidden / amount-of-speaking) is applied inside
-    /// `hero_speaking`.
-    pub(super) fn tick_pc_combat_anim_speech(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.tick_pc_combat_anim_speech_matching(sim, assets, None);
-    }
-
-    /// Run the PC Execute-owned combat-speech edge for one actor immediately
-    /// after its sprite reports `MotionState::Start`.
-    ///
-    /// Original-game player-character execution uses
-    /// action-with-optional-remark processing, so its RNG draw and hero speech
-    /// side effects happen before the next element's update slot.
+    /// Emit the remark at the executing PC's motion boundary.
     pub(crate) fn tick_pc_combat_anim_speech_for_owner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-    ) {
-        self.tick_pc_combat_anim_speech_matching(sim, assets, Some(owner));
-    }
-
-    fn tick_pc_combat_anim_speech_matching(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        only_owner: Option<EntityId>,
+        action: Option<OrderType>,
+        command: Option<Command>,
+        motion: crate::sprite::MotionState,
     ) {
         use crate::order::OrderType as OT;
+        use crate::sprite::MotionState;
 
-        // Collect transitions first to avoid borrow conflicts with hero_speaking.
-        let mut start_immediate: Vec<(EntityId, u16)> = Vec::new();
-        let mut start_eventual: Vec<(EntityId, u16)> = Vec::new();
-        let mut on_done: Vec<(EntityId, u16)> = Vec::new();
-
-        // Snapshot each PC's current front order so the speech gate
-        // can diff against the previous tick's observation without
-        // needing the sequence manager held across the entity-mut loop.
-        let cur_orders: std::collections::HashMap<
-            EntityId,
-            (std::num::NonZeroU32, OrderType, Command),
-        > = {
-            let mut m = std::collections::HashMap::new();
-            for &pc_id in &self.world.pc_ids {
-                if only_owner.is_some_and(|owner| owner != pc_id) {
-                    continue;
-                }
-                if let Some((seq_id, elem_idx, o)) = self
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(&self.world.entities, pc_id)
-                {
-                    let command = self
-                        .orders
-                        .sequence_manager
-                        .get_element(seq_id, elem_idx)
-                        .map(|elem| elem.command)
-                        .unwrap_or(Command::Null);
-                    m.insert(pc_id, (o.order_id, o.order_type, command));
-                }
-            }
-            m
-        };
-
-        for (id, pc) in self.world.entities.pcs_mut() {
-            if only_owner.is_some_and(|owner| owner != EntityId::from(id)) {
-                continue;
-            }
-            let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id.into()) {
-                Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
-                None => (0, None, None),
-            };
-            let prev_id = pc.pc.prev_combat_anim_id;
-            let prev_ot = pc.pc.prev_combat_anim_ot;
-            let current_order_started = pc.element.sprite.last_processed_order_id == cur_id
-                && pc.element.sprite.last_motion_state == Some(crate::sprite::MotionState::Start);
-
-            if cur_id != prev_id && (cur_id == 0 || current_order_started) {
-                // START means the new order actually reached the PC Execute
-                // arm and its sprite returned MotionState::Start. Merely
-                // becoming the selected front order during the manager tail
-                // is one frame earlier and must not own speech/RNG yet.
-                if let Some(ot) = cur_ot {
-                    match ot {
-                        OT::TransitionRaisingSword if cur_command != Some(Command::HitTarget) => {
-                            start_immediate.push((id.into(), HERO_PROVOKE_DUEL));
-                        }
-                        OT::Provoking => start_immediate.push((id.into(), HERO_PROVOKE_OPPONENT)),
-                        OT::StrikingLeftSmalltalk
-                        | OT::StrikingRightSmalltalk
-                        | OT::StrikingLowLeftSmalltalk
-                        | OT::StrikingLowRightSmalltalk => {
-                            start_eventual.push((id.into(), HERO_SWEAR_AT));
-                        }
-                        OT::StrikingRoundLeftSword
-                        | OT::StrikingRoundRightSword
-                        | OT::ExecutingSword => {
-                            start_eventual.push((id.into(), HERO_WARCRY));
-                        }
-                        _ => {}
-                    }
-                }
-                // DONE: anim finished (current is None, previous was set).
-                if cur_id == 0
-                    && matches!(
-                        prev_ot,
-                        Some(
-                            OT::ExtractingArrowUpright
-                                | OT::ExtractingArrowBow
-                                | OT::ExtractingArrowSword
-                        )
-                    )
-                {
-                    on_done.push((id.into(), HERO_PROVOKE_OPPONENT));
-                }
-                pc.pc.prev_combat_anim_id = cur_id;
-                pc.pc.prev_combat_anim_ot = cur_ot;
-            }
-        }
-
-        for (id, expr) in start_immediate {
-            self.hero_speaking(assets, id, expr);
-        }
-        for (id, expr) in start_eventual {
-            // The original game's action-and-remark handling tests
-            // `rand() > RAND_MAX / 2`, not the low bit. Both are unbiased in
-            // a fresh stream, but replaying a concrete libc draw must preserve
-            // the exact predicate.
-            if crate::sim_rng::u32(sim, crate::sim_rng::RngSite::HeroSpeech, 0..=2_147_483_647)
-                > 2_147_483_647 / 2
+        let (expression, eventual) = match (action, motion) {
+            (Some(OT::TransitionRaisingSword), MotionState::Start)
+                if command != Some(Command::HitTarget) =>
             {
-                self.hero_speaking(assets, id, expr);
+                (HERO_PROVOKE_DUEL, false)
             }
-        }
-        for (id, expr) in on_done {
-            self.hero_speaking(assets, id, expr);
+            (Some(OT::Provoking), MotionState::Start) => (HERO_PROVOKE_OPPONENT, false),
+            (
+                Some(
+                    OT::StrikingLeftSmalltalk
+                    | OT::StrikingRightSmalltalk
+                    | OT::StrikingLowLeftSmalltalk
+                    | OT::StrikingLowRightSmalltalk,
+                ),
+                MotionState::Start,
+            ) => (HERO_SWEAR_AT, true),
+            (
+                Some(OT::StrikingRoundLeftSword | OT::StrikingRoundRightSword | OT::ExecutingSword),
+                MotionState::Start,
+            ) => (HERO_WARCRY, true),
+            (
+                Some(
+                    OT::ExtractingArrowUpright | OT::ExtractingArrowBow | OT::ExtractingArrowSword,
+                ),
+                MotionState::Done,
+            ) => (HERO_PROVOKE_OPPONENT, false),
+            _ => return,
+        };
+        if !eventual
+            || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::HeroSpeech, 0..=2_147_483_647)
+                > 2_147_483_647 / 2
+        {
+            self.hero_speaking(assets, owner, expression);
         }
     }
 

@@ -5,6 +5,11 @@ mod frame_systems;
 mod mission;
 mod paths;
 
+#[test]
+fn actor_done_publishes_to_installed_order_before_frame_tail() {
+    EngineInner::new().assert_done_uses_installed_order_before_tail();
+}
+
 #[path = "tick_action_change_step.rs"]
 mod tick_action_change_step;
 
@@ -2315,6 +2320,29 @@ impl EngineInner {
             MotionState::Start | MotionState::InProgress => {}
             MotionState::Error => panic!("actor {owner:?} Execute returned MotionState::Error"),
         }
+    }
+
+    #[cfg(test)]
+    fn assert_done_uses_installed_order_before_tail(&mut self) {
+        let owner = self.add_test_entity(super::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+        let installed = self.install_test_order(owner, crate::order::OrderType::WaitingUpright);
+        let selected = self.install_test_order(owner, crate::order::OrderType::WaitingAlerted);
+        self.install_actor_order(owner, Some(installed));
+        self.select_sequence_element(
+            owner,
+            Some((selected.element.sequence_id, selected.element.element_index)),
+        );
+        self.finish_actor_execute_completion(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            None,
+            crate::sprite::MotionState::Done,
+        );
+        assert!(installed.resolve(&self.orders.sequence_manager).done);
+        assert!(!selected.resolve(&self.orders.sequence_manager).done);
     }
 
     /// Whether `owner` is a beggar civilian that refuses this command.

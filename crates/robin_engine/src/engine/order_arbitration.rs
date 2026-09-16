@@ -686,62 +686,6 @@ impl EngineInner {
     }
 }
 
-/// Walk every actor whose sprite reported `MotionState::Done` this
-/// tick and flip `done = true` on the actor's currently-dispatched
-/// order, then clear `last_motion_state` on every sprite so the
-/// field is fresh for the next tick.
-///
-/// Sprite advancement is split across the live owner coordinator and
-/// the remaining specialized arms (`tick_actor_animation_for`, active
-/// jumps, melee, bow, and abilities); each one funnels through
-/// [`Sprite::record_motion_state`](crate::sprite::Sprite), which
-/// stashes the result in [`Sprite::last_motion_state`].  This pass
-/// runs once per frame after every per-system tick has completed,
-/// recovering the "single Done observer" semantics without forcing
-/// each per-system tick to know about the order-completion flag.
-///
-/// The corresponding read site is the postpone-race guard in
-/// [`EngineInner::engine_postpone`]: when a postpone target's last order
-/// is already `done`, the postpone short-circuits to TERMINATED
-/// instead of installing the cross-element link.
-pub(super) fn propagate_done_to_current_orders(
-    entities: &mut crate::entities::Entities,
-    sequence_manager: &mut crate::sequence::SequenceManager,
-) {
-    let done_actors: Vec<(crate::element::EntityId, u32)> = entities
-        .actors()
-        .filter_map(|(entity_id, entity)| {
-            matches!(
-                entity.element_data().sprite.last_motion_state,
-                Some(crate::sprite::MotionState::Done)
-            )
-            .then_some((
-                entity_id.into(),
-                entity.element_data().sprite.last_processed_order_id,
-            ))
-        })
-        .collect();
-
-    for (entity_id, processed_order_id) in done_actors {
-        let Some((seq_id, elem_idx)) = entities.current_element_for_actor(entity_id) else {
-            continue;
-        };
-        if let Some(elem) = sequence_manager.get_element_mut(seq_id, elem_idx)
-            && let Some(order) = elem.orders.front_mut()
-            && order.order_id.get() == processed_order_id
-        {
-            order.done = true;
-        }
-    }
-
-    // Reset every sprite's transient last_motion_state so the next
-    // tick starts clean, regardless of whether the slot was an
-    // actor or had an order to mark.
-    for (_, entity) in entities.occupied_mut() {
-        entity.element_data_mut().sprite.last_motion_state = None;
-    }
-}
-
 impl EngineInner {
     fn prepare_cross_postponed_waiter(
         &mut self,

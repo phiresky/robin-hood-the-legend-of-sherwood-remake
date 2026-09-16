@@ -85,6 +85,13 @@ impl EngineInner {
         let selected_order =
             entry.map(|(seq_id, elem_idx, order)| (seq_id, elem_idx, order.order_id));
         let selected_order_type = entry.map(|(_, _, order)| order.order_type);
+        let selected_command = entry.map(|(sequence, element, _)| {
+            self.orders
+                .sequence_manager
+                .get_element(sequence, element)
+                .expect("selected order lost its element")
+                .command
+        });
         let selected_owner_family = selected_order_type
             .and_then(|order_type| classify_live_actor_execute_arm(entity_id, order_type));
         let installed_at_entry = entry.map(|(sequence_id, element_index, order)| {
@@ -359,14 +366,22 @@ impl EngineInner {
                 "owner_post_execute",
             );
         }
-        if motion == MotionState::Start
+        if !validity_short_circuited
+            && !execution_frozen
             && self
                 .world
                 .entities
                 .get(entity_id)
                 .is_some_and(Entity::is_pc)
         {
-            self.tick_pc_combat_anim_speech_for_owner(sim, assets, entity_id);
+            self.tick_pc_combat_anim_speech_for_owner(
+                sim,
+                assets,
+                entity_id,
+                selected_order_type,
+                selected_command,
+                motion,
+            );
         }
         if waiting_sword_execute_reaches_evaluation(
             selected_order_type,

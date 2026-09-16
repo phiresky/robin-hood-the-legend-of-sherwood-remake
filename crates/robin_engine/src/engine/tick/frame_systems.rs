@@ -257,19 +257,11 @@ impl EngineInner {
         // cleared at their owning actor slots above and are skipped here.
         self.tick_melee_combat(sim, assets);
 
-        // ── Per-actor `Order::done` propagation ────────────────
-        // Runs after every per-system sprite-advance tick this frame
-        // (movement, jumps, animations, bow shots, melee, abilities),
-        // each of which has already stashed its result on the sprite
-        // via `Sprite::record_motion_state`.  The pass flips
-        // `Order::done` on every actor whose sprite reported
-        // `MotionState::Done`, then clears `last_motion_state` so the
-        // next tick starts fresh.  Read by the postpone-race guard in
-        // `EngineInner::engine_postpone`.
-        crate::engine::order_arbitration::propagate_done_to_current_orders(
-            &mut self.world.entities,
-            &mut self.orders.sequence_manager,
-        );
+        // Order completion was published inside each actor's Execute boundary.
+        // Clear presentation motion edges only after their frame consumers.
+        for (_, entity) in self.world.entities.occupied_mut() {
+            entity.element_data_mut().sprite.last_motion_state = None;
+        }
 
         // TODO(original-parity): move further gameplay maintenance into the
         // ordered pass only when a concrete observable discrepancy is proven.
