@@ -9,7 +9,7 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
-- **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches with paint opportunities targeting 25 updates per second. Progress remains visible, and a new timeline target redirects an in-progress seek.
+- **Responsive browser replay seeking.** Timeline fast-forward runs in adaptive batches targeting two progress updates per second during seeks. Normal playback keeps its existing frame rate. Progress remains visible, and a new timeline target redirects an in-progress seek.
 
 - **Vulkan presentation feedback profiling (Linux).** With
   `ROBIN_GAMEPLAY_PROFILE=1`, supported Vulkan devices collect asynchronous
