@@ -85,7 +85,8 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// and leaderboard co-sign messages.
 /// Protocol 56 carries canonical sequence links and ordinary door-route orders
 /// in authoritative snapshots (save 88 / replay 48).
-pub const NET_PROTOCOL_VERSION: u32 = 56;
+/// Protocol 57 removes the retired fog-sprite bypass from snapshot configuration.
+pub const NET_PROTOCOL_VERSION: u32 = 57;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must

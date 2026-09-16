@@ -151,9 +151,12 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
-            || ((43..=48).contains(&version) && (43..=48).contains(&REPLAY_SCHEMA_VERSION)),
+            || ((43..=49).contains(&version) && (43..=49).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
+    if let Some(config) = header.get_mut("sim_config").and_then(|v| v.as_object_mut()) {
+        config.remove("bypass_fog_sprites_crash");
+    }
     header["version"] = REPLAY_SCHEMA_VERSION.into();
     Ok(version)
 }
@@ -464,10 +467,19 @@ mod tests {
         for version in [42, REPLAY_SCHEMA_VERSION + 1] {
             assert!(upgrade_header(&mut serde_json::json!({"version":version})).is_err());
         }
-        for version in 43..=48 {
-            let mut header = serde_json::json!({"version": version});
+        for version in 43..=49 {
+            let mut header = serde_json::json!({
+                "version": version,
+                "sim_config": {"bypass_fog_sprites_crash": true, "fog_of_war": true}
+            });
             assert_eq!(upgrade_header(&mut header).unwrap(), version);
             assert_eq!(header["version"], REPLAY_SCHEMA_VERSION);
+            assert!(
+                header["sim_config"]
+                    .get("bypass_fog_sprites_crash")
+                    .is_none()
+            );
+            assert_eq!(header["sim_config"]["fog_of_war"], true);
         }
     }
 

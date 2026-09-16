@@ -212,7 +212,6 @@ fn effective_sim_config(
     config.highlander2 = launcher.highlander2;
     config.golden_eye = launcher.golden_eye;
     config.ignore_default_loose = launcher.ignore_default_loose;
-    config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
     config
 }
 

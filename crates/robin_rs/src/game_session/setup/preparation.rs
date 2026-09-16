@@ -339,7 +339,6 @@ pub(super) fn publish_initial_sprite_variants(
     assets: &mut LevelAssets,
     effective_initial_ambiance: engine_api::Ambiance,
     authored_initial_ambiance: engine_api::Ambiance,
-    bypass_fog_sprites_crash: bool,
     timer: &mut PhaseTimer,
 ) -> (bool, u16) {
     let dynamic_visuals = host
@@ -356,7 +355,6 @@ pub(super) fn publish_initial_sprite_variants(
     crate::level_loading_host::initialize_sprite_variants_for_ambiance(
         host,
         presentation_initial_ambiance,
-        bypass_fog_sprites_crash,
     );
     timer.step("initial sprite variants");
     let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();

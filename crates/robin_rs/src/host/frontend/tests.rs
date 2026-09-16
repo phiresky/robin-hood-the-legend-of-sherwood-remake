@@ -629,7 +629,7 @@ mod host_resource_tests {
 
         frontend
             .resources
-            .rebind_frame_holder_ambiance(engine_api::Ambiance::Fog, false, 0x1234);
+            .rebind_frame_holder_ambiance(engine_api::Ambiance::Fog, 0x1234);
 
         assert!(!Arc::ptr_eq(
             &old_renderer,

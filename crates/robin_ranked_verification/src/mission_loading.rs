@@ -14,7 +14,7 @@ use robin_assets::frame_holder::{FrameHolder, PublishedFrameHolder};
 use robin_assets::picture::Picture;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::campaign::Campaign;
-use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets, SimConfig};
+use robin_engine::engine::{Ambiance, GroundMarkSpriteData, LevelAssets};
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::SbFileSystem;
 use robin_engine::sprite_variant::SpriteVariant;
@@ -34,7 +34,6 @@ pub(crate) fn load_raw_mission_inputs(
     campaign: &Campaign,
     profiles: &ProfileManager,
     options: &robin_engine::engine::GlobalOptions,
-    sim_config: SimConfig,
     files: Arc<SbFileSystem>,
 ) -> Result<RawMissionInputs, RankedVerifierLoadError> {
     let mut text = ResourceManager::with_files(files.clone());
@@ -169,11 +168,7 @@ pub(crate) fn load_raw_mission_inputs(
     populate_ranked_sound_duration_tables(&mut assets, profiles)
         .map_err(RankedVerifierLoadError::SoundTiming)?;
 
-    initialize_sprite_variants_for_ambiance(
-        &mut frame_holder,
-        authored_ambiance,
-        sim_config.bypass_fog_sprites_crash,
-    );
+    initialize_sprite_variants_for_ambiance(&mut frame_holder, authored_ambiance);
     let (night_r, night_g, night_b) = authored_ambiance.night_color_rgb();
     frame_holder.apply_arno_law(robin_util::color::rgb565(night_r, night_g, night_b));
     assets.attachments.pixel_opacity =
@@ -352,16 +347,7 @@ fn populate_ranked_sound_duration_tables(
     .populate(&mut assets.audio, profiles)
 }
 
-fn initialize_sprite_variants_for_ambiance(
-    frame_holder: &mut FrameHolder,
-    ambiance: Ambiance,
-    bypass_fog_sprites_crash: bool,
-) {
-    if bypass_fog_sprites_crash {
-        frame_holder.drop_variant_dictionaries(SpriteVariant::Night);
-        frame_holder.drop_variant_dictionaries(SpriteVariant::Fog);
-        return;
-    }
+fn initialize_sprite_variants_for_ambiance(frame_holder: &mut FrameHolder, ambiance: Ambiance) {
     match ambiance {
         Ambiance::Fog => {
             frame_holder.drop_variant_dictionaries(SpriteVariant::Night);
