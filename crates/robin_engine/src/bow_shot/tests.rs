@@ -776,18 +776,15 @@ fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
     );
     assert_eq!(result, BeginShotResult::Started);
     let mut next_order_id = 1000;
-    sm.get_element_mut(seq_id, elem_idx)
-        .unwrap()
-        .orders
-        .insert(
-            0,
-            Order::new(
-                OrderType::TransitionWaitingUprightBoredWaitingUpright,
-                0.0,
-                0.0,
-                crate::order::alloc_order_id(&mut next_order_id),
-            ),
-        );
+    sm.get_element_mut(seq_id, elem_idx).unwrap().orders.insert(
+        0,
+        Order::new(
+            OrderType::TransitionWaitingUprightBoredWaitingUpright,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(&mut next_order_id),
+        ),
+    );
 
     run_test_bow_owner(
         sim,

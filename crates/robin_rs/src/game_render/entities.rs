@@ -654,7 +654,8 @@ pub(super) fn transition_crenel_climb_up_mask_position(
         return None;
     }
     let actor = entity.actor_data()?;
-    if actor.installed_order?.order_type != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+    if engine.installed_order_type(actor.installed_order?)
+        != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
     {
         return None;
     }

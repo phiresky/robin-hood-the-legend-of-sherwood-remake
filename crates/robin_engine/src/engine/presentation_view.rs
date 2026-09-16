@@ -136,6 +136,15 @@ impl<'world> PresentationView<'world> {
         self.inner.compute_display_order()
     }
 
+    pub fn installed_order_type(
+        &self,
+        order: crate::element::InstalledActorOrder,
+    ) -> crate::order::OrderType {
+        order
+            .resolve(&self.inner.orders.sequence_manager)
+            .order_type
+    }
+
     pub fn minimap_dot_info(
         &self,
         id: crate::element::EntityId,

@@ -1527,7 +1527,7 @@ pub(super) async fn drain_pending_debriefings(
             tracing::warn!(
                 "DisplayDebriefing: level descriptors or menu resources unavailable — \
                  dropping {} debriefing(s)",
-                ids.len()
+                requests.len()
             );
         }
     }
