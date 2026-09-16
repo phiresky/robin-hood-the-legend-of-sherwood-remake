@@ -1236,7 +1236,7 @@ mod tests {
         engine
             .orders
             .sequence_manager
-            .elements_to_go
+            .deferred_elements_to_go()
             .iter()
             .copied()
             .filter(|&(id, index)| {
@@ -1367,7 +1367,7 @@ mod tests {
                 .primary_target,
             Some(AiEntityHandle::new(target.index()))
         );
-        let pending = &engine.orders.sequence_manager.elements_to_go;
+        let pending = engine.orders.sequence_manager.deferred_elements_to_go();
         assert!(pending.iter().any(|&(id, index)| {
             engine
                 .orders

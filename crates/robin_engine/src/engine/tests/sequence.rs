@@ -2556,7 +2556,8 @@ fn post_seek_handoff_registers_parent_successor_before_post_seek_tail() {
         .orders
         .sequence_manager
         .deferred_elements_to_go()
-        .into_iter()
+        .iter()
+        .copied()
         .map(|(sequence_id, element_index)| {
             engine
                 .orders

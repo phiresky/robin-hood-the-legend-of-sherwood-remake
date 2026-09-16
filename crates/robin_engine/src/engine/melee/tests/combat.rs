@@ -4121,7 +4121,7 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     let (enter_sequence, enter_index) = engine
         .orders
         .sequence_manager
-        .elements_to_go
+        .deferred_elements_to_go()
         .iter()
         .copied()
         .find(|(sequence, index)| {

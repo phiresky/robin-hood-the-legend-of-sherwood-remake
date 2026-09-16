@@ -144,7 +144,7 @@ fn pending_moves(
     engine
         .orders
         .sequence_manager
-        .elements_to_go
+        .deferred_elements_to_go()
         .iter()
         .copied()
         .filter(|&(id, index)| {

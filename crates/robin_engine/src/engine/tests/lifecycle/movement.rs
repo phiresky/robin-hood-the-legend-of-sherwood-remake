@@ -652,9 +652,14 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
         )
         .unwrap();
     assert_ne!(first_sequence, second_sequence);
-    assert_eq!(
-        engine.orders.sequence_manager.deferred_elements_to_go(),
-        vec![(first_sequence, 0), (second_sequence, 0)],
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .deferred_elements_to_go()
+            .iter()
+            .copied()
+            .eq([(first_sequence, 0), (second_sequence, 0)]),
         "both same-owner movements register in call order before manager instruction"
     );
     assert!(

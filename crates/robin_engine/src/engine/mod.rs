@@ -1672,7 +1672,8 @@ impl EngineInner {
         let selected = self.world.entities.current_element_for_actor(owner);
         let deferred = manager
             .deferred_elements_to_go()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|(seq_id, elem_idx)| {
                 manager
                     .get_element(*seq_id, *elem_idx)

@@ -276,17 +276,14 @@ impl SequenceManager {
                 .is_some_and(|element| element.state != SequenceState::Interrupted)
     }
 
-    /// Snapshot the deferred manager FIFO without changing registration.
-    /// Synchronous engine boundaries use this to identify only the elements
-    /// authored by a nested statement while leaving older and foreign-owner
-    /// work in place.
-    pub(crate) fn deferred_elements_to_go(&self) -> Vec<(SequenceId, usize)> {
-        self.elements_to_go.iter().copied().collect()
+    /// Borrow the deferred manager FIFO without changing registration.
+    pub(crate) fn deferred_elements_to_go(&self) -> &VecDeque<(SequenceId, usize)> {
+        &self.elements_to_go
     }
 
     #[cfg(test)]
     pub(crate) fn v48_elements_to_go(&self) -> Vec<(SequenceId, usize)> {
-        self.deferred_elements_to_go()
+        self.deferred_elements_to_go().iter().copied().collect()
     }
 
     /// Get a reference to a specific element within a sequence.
