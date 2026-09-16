@@ -1,5 +1,5 @@
-// `?run=<run id>`: play a verified leaderboard run on the engine build that
-// recorded it. RunDetailV2.viewer.runtime_build is the replay's recorded engine
+// `?run=<run id>`: play a verified leaderboard run on a compatible engine build.
+// RunDetailV2.viewer.runtime_build is the replay's recorded engine
 // version, the 12-hex ROBIN_GIT_HASH prefix that also names `/wasm/<short>/`.
 
 export const RUN_QUERY_KEY = 'run';
@@ -8,6 +8,12 @@ const RUNTIME_BUILD_RE = /^[0-9a-f]{12}$/u;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 const MAX_RUN_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_REPLAY_BYTES = 32 * 1024 * 1024;
+
+/** Host-only fixes for archived runtimes; simulation and replay schemas stay identical. */
+export function runPlaybackBuild(recordedBuild: string): string {
+    // This patch disables player-save storage during playback.
+    return recordedBuild === '1699bc12ffb8' ? '340d66324974' : recordedBuild;
+}
 
 export type RunReplay = {
     readonly runId: string;

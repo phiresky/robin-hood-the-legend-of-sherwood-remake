@@ -29,7 +29,7 @@ import {
 } from './replay.js';
 import { installTimeline } from './timeline.js';
 import { createRpcClient } from './rpc-client.js';
-import { fetchRunReplay, parseHostedReplayContent, runFromQuery, type RunReplay } from './run-replay.js';
+import { fetchRunReplay, parseHostedReplayContent, runFromQuery, runPlaybackBuild, type RunReplay } from './run-replay.js';
 
 declare global {
     // Optional test/dev override for loading binaries from a local checkout.
@@ -249,8 +249,8 @@ async function resolveBuild(
     if (ticket !== undefined) {
         return { short: ticket.payload.engine_version.slice(0, 12), source: 'multiplayer' };
     }
-    // A verified leaderboard run plays on the exact engine build that recorded it.
-    if (run !== null) return { short: run.runtimeBuild, source: 'replay' };
+    // Only reviewed host fixes may replace a run's recorded simulation build.
+    if (run !== null) return { short: runPlaybackBuild(run.runtimeBuild), source: 'replay' };
     const wasmBase = pageParams.get('wasm-base') ?? pageParams.get('wasm_base');
     if (wasmBase !== null && wasmBase.length > 0) {
         return {
@@ -341,10 +341,10 @@ async function selectedDemoDatadir(
 }
 
 async function selectedFullReplayDatadir(
-    _base: string, build: BuildSelection, signal: AbortSignal,
+    recordedBuild: string, signal: AbortSignal,
 ): Promise<{ readonly url: string; readonly identity: DemoDatadirIdentity; readonly parts: readonly string[] }> {
     const content = parseHostedReplayContent(await fetchJson<unknown>(
-        `${BINARIES_BASE}/datadirs/replays/v2/${build.short}.json`, signal,
+        `${BINARIES_BASE}/datadirs/replays/v2/${recordedBuild}.json`, signal,
     ), BINARIES_BASE);
     return { url: content.url, identity: content, parts: content.parts };
 }
@@ -414,7 +414,7 @@ async function main(): Promise<void> {
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (base, build, signal) => {
             const demo: { url: string; identity?: DemoDatadirIdentity; parts?: readonly string[] } = runReplay?.edition === 'full'
-                ? await selectedFullReplayDatadir(base, build, signal)
+                ? await selectedFullReplayDatadir(runReplay.runtimeBuild, signal)
                 : await selectedDemoDatadir(base, build, signal);
             const urls = demo.parts ?? [demo.url];
             const chunks: Uint8Array<ArrayBuffer>[] = [];
