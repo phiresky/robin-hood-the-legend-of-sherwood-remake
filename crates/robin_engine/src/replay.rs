@@ -156,7 +156,8 @@ pub struct ReplayHeader {
 /// Version 50 consolidates quick-action storage and actor execution state.
 /// Version 51 stores ordered pathfinder state and canonical action payloads.
 /// Version 52 stores canonical order ownership, sequence links, and host effects.
-pub const REPLAY_SCHEMA_VERSION: u32 = 52;
+/// Version 53 stores unified host output and canonical human opponent records.
+pub const REPLAY_SCHEMA_VERSION: u32 = 53;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
