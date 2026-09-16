@@ -544,9 +544,7 @@ async fn run_prepared_replay(
     context: ApplicationContext,
     prepared: PreparedReplayLaunch,
 ) -> Result<i32, LaunchError> {
-    let Some(mut callbacks) = RustCallbacks::new_for_window(context, window).await? else {
-        return Ok(0);
-    };
+    let mut callbacks = RustCallbacks::for_replay(context);
     let outcome = Box::pin(run_mission(
         window,
         &mut callbacks,
@@ -1220,7 +1218,11 @@ async fn run_rust_game_headless_active(
         ));
     };
 
-    let mut callbacks = RustCallbacks::new(application_context)?;
+    let mut callbacks = if request.replay_data.is_some() || request.replay.is_some() {
+        RustCallbacks::for_replay(application_context)
+    } else {
+        RustCallbacks::new(application_context)?
+    };
     let outcome = run_mission_headless(
         &mut callbacks,
         campaign,

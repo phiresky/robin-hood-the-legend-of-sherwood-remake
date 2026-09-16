@@ -331,6 +331,10 @@ impl RustCallbacks {
         Ok(Self::with_save_manager(application_context, save_manager))
     }
 
+    pub(crate) fn for_replay(application_context: ApplicationContext) -> Self {
+        Self::with_save_manager(application_context, SaveGameManager::disabled())
+    }
+
     pub(crate) async fn new_for_window(
         application_context: ApplicationContext,
         window: &mut crate::window::GameWindow,

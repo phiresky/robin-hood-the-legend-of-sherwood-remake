@@ -459,6 +459,7 @@ impl SaveGameManager {
 
     /// The single dispatch for every named write entry point.
     fn write(&mut self, request: SaveRequest<'_>) -> Result<SaveOutcome> {
+        self.require_storage()?;
         let SaveRequest { slot, source } = request;
         match slot {
             SaveSlot::Special { target, mode } => {

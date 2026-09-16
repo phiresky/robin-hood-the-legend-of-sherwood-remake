@@ -1281,6 +1281,10 @@ end in an incomplete write.
 
 ## Inline leaderboard replays
 
+Replay launches use a disabled save store in graphical and headless modes. They
+do not open the player's save index or autosave manifest, and reject persistent
+save requests. Recorded save/load boundaries remain in-memory playback state.
+
 Verified run pages include an embedded replay player with playback controls and a
 full-page link. Full-game replays load hosted shipping data automatically. Each
 recorded runtime has an immutable `datadirs/replays/v2/<build>.json` binding to a

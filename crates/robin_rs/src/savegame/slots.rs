@@ -179,6 +179,7 @@ impl SaveGameManager {
     }
 
     pub(super) fn ensure_no_pending_delete(&self) -> Result<()> {
+        self.require_storage()?;
         self.check_operation_error()?;
         #[cfg(not(target_arch = "wasm32"))]
         match std::fs::symlink_metadata(self.owned_recovery_path()) {
@@ -311,6 +312,7 @@ impl SaveGameManager {
     /// Replace only auto-managed slots, preserving manual and Original
     /// special slots that may have changed while the writer was active.
     pub(crate) fn replace_autosaves(&mut self, autosaves: Vec<SaveGame>) -> Result<()> {
+        self.require_storage()?;
         self.finish_background()?;
         self.catalog.replace_autosaves(autosaves)
     }

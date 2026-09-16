@@ -274,6 +274,7 @@ impl AutosaveCoordinator {
         thumbnail: Option<Thumbnail>,
         reason: AutosaveReason,
     ) -> Result<(AutosaveJob, PlannedAutosave)> {
+        manager.require_storage()?;
         let AutosaveRequest {
             host,
             game,

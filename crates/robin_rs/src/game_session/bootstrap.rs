@@ -2003,7 +2003,13 @@ mod tests {
         .unwrap();
         bootstrap.host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 1024.0, 768.0).unwrap();
-        let mut callbacks = crate::main_entry::RustCallbacks::new(context).unwrap();
+        let save_dir = context.active_profile_save_directory().unwrap();
+        std::fs::create_dir_all(&save_dir).unwrap();
+        let index = save_dir.join("saves.json");
+        let obsolete_index = br#"{"saves":[{"rust_schema":83}],"next_id":1}"#;
+        std::fs::write(&index, obsolete_index).unwrap();
+        assert!(crate::main_entry::RustCallbacks::new(context.clone()).is_err());
+        let mut callbacks = crate::main_entry::RustCallbacks::for_replay(context);
         let descriptor = bootstrap.game.mission_assets().unwrap().clone();
         let replay: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
             header: robin_engine::replay::ReplayHeader {
@@ -2052,6 +2058,7 @@ mod tests {
             .unwrap();
         assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         assert!(!callbacks.save_manager.has_restart_save());
+        assert_eq!(std::fs::read(&index).unwrap(), obsolete_index);
         let replay = super::super::replay_init::init_replay_and_rollback(
             &bootstrap.loaded.replay_campaign,
             std::sync::Arc::new(bootstrap.loaded.assets),

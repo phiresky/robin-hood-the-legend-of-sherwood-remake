@@ -1,5 +1,30 @@
 use super::*;
 
+#[test]
+fn replay_store_rejects_save_io_before_capture_or_publication() {
+    let (engine, _, profiles, mut host) = fresh_save_session("Replay viewer");
+    let game = game_for_save(&profiles, 17);
+    let mut manager = SaveGameManager::disabled();
+    for error in [
+        manager.save_index().unwrap_err(),
+        manager.load_autosaves().unwrap_err().to_string(),
+        manager
+            .create_draft("Replay".into(), 17)
+            .unwrap_err()
+            .to_string(),
+        manager.preflight_exact_slot(0).unwrap_err().to_string(),
+        manager
+            .write_restart_save(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap_err()
+            .to_string(),
+    ] {
+        assert!(error.contains("save storage is disabled"), "{error}");
+    }
+    assert_eq!(manager.count(), 0);
+    assert!(!manager.poll_background().unwrap());
+    manager.finish_background().unwrap();
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn snapshots_are_pure_and_recording_boundaries_are_explicit() {

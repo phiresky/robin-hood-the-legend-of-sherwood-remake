@@ -389,6 +389,7 @@ fn required_save_provenance(
 // Runtime directory authority must never be reconstructed by serde.
 #[derive(Debug)]
 pub struct SaveGameManager {
+    storage_disabled: bool,
     catalog: SlotCatalog,
     operations: operation::SaveOperationOwner,
     operation_error: Option<String>,
@@ -490,6 +491,7 @@ struct SpecialSaveRecovery {
 impl SaveGameManager {
     pub fn new(save_directory: String) -> Self {
         SaveGameManager {
+            storage_disabled: false,
             catalog: SlotCatalog::default(),
             operations: Default::default(),
             operation_error: None,
@@ -498,6 +500,22 @@ impl SaveGameManager {
             next_id: 0,
             session_restart: None,
         }
+    }
+
+    /// Replay save boundaries are owned by the playback timeline in memory.
+    /// This manager has no authority to access player saves, even on request.
+    pub(crate) fn disabled() -> Self {
+        let mut manager = Self::new(String::new());
+        manager.storage_disabled = true;
+        manager
+    }
+
+    pub(crate) fn require_storage(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.storage_disabled,
+            "save storage is disabled during replay playback"
+        );
+        Ok(())
     }
 
     /// Create a manager rooted at the active profile's save subdirectory
@@ -526,6 +544,8 @@ impl SaveGameManager {
     }
 
     pub fn save_directory(&self) -> &str {
+        self.require_storage()
+            .expect("save directory requires storage authority");
         &self.save_directory
     }
 

@@ -5,6 +5,7 @@ use super::*;
 impl SaveGameManager {
     /// Persist the save manager index itself (the list of saves).
     pub fn save_index(&self) -> Result<(), String> {
+        self.require_storage().map_err(|error| error.to_string())?;
         self.check_operation_error()
             .map_err(|error| format!("{error:#}"))?;
         if self.operations.pending_name().is_some() {
@@ -141,6 +142,7 @@ impl SaveGameManager {
 
     /// Merge the independently committed autosave manifest into this manager.
     pub(crate) fn load_autosaves(&mut self) -> Result<()> {
+        self.require_storage()?;
         use autosave_store::*;
         // The manifest owns menu metadata. Decode and validate only the selected
         // payload on load, so opening the menu never reads every saved simulation.

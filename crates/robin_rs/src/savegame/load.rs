@@ -86,6 +86,7 @@ impl SaveGameManager {
     /// This is used when a UI decision and the later apply must refer to the
     /// same selected file even if the directory changes concurrently.
     pub(crate) fn preflight_exact_slot(&self, index: usize) -> Result<PreparedGameSave> {
+        self.require_storage()?;
         self.check_operation_error()?;
         let slot = self
             .catalog
