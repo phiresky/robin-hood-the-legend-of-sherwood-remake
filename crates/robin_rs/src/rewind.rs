@@ -116,6 +116,13 @@ impl RewindBuffer {
         self.pending_recent = Some(Snapshot::new(frame, engine));
     }
 
+    /// Journal a seek tick without copying the network rollback cache.
+    /// Periodic checkpoints and commands still support ordinary rewind.
+    pub(crate) fn begin_seek_frame(&mut self, frame: u32, engine: &Engine) {
+        self.history.begin_frame(frame, engine);
+        self.pending_recent = None;
+    }
+
     /// Anchor a freshly reset timeline at a whole-state adoption boundary.
     /// Snapshot joins and save/load can land between the sparse tier's normal
     /// periodic frames, but their very next command must still be journaled.
@@ -358,6 +365,36 @@ mod tests {
         let cache = buffer.session.as_ref().unwrap();
         assert_eq!(cache.len(), SESSION_CACHE_FRAMES as usize);
         assert_eq!(cache.first_key_value().unwrap().0, &225);
+    }
+
+    #[test]
+    fn seek_journal_reconstructs_intermediate_frames_without_recent_copies() {
+        let mut assets = LevelAssets::default();
+        let mut engine =
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let mut buffer = RewindBuffer::new();
+        let mut hashes = Vec::new();
+        for frame in 0..=SNAPSHOT_INTERVAL + 3 {
+            hashes.push(robin_engine::replay::state_hash(&engine));
+            buffer.begin_seek_frame(frame, &engine);
+            let input = robin_engine::engine::SimulationFrameInput::default();
+            engine.advance_frame(&assets, input.clone()).unwrap();
+            buffer.end_frame_input(input);
+        }
+        assert!(
+            buffer
+                .restore_recent(&assets, 249, RestorePolicy::Exact)
+                .is_none()
+        );
+        for frame in [253, 251, 249, 1, 0] {
+            let restored = buffer
+                .rewind_to(&assets, frame)
+                .expect("sparse seek history remains rewindable");
+            assert_eq!(
+                robin_engine::replay::state_hash(&restored),
+                hashes[frame as usize]
+            );
+        }
     }
 
     #[test]

@@ -34,6 +34,14 @@ impl ReconstructionHistory {
         }
     }
 
+    pub(super) fn begin_seek_frame(&mut self, frame: u32, engine: &Engine) {
+        if self.checker.is_some() {
+            self.begin_frame(frame, engine);
+        } else if self.capture_enabled {
+            self.buffer.begin_seek_frame(frame, engine);
+        }
+    }
+
     /// Read-only view of retained reconstruction frames. Mutation stays behind
     /// the lifecycle methods so the checker resets with the buffer.
     pub(in crate::game_session) fn buffer(&self) -> &RewindBuffer {
