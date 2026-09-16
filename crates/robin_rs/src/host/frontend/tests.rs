@@ -342,7 +342,7 @@ mod host_resource_tests {
             requests.extend_popup_texts([11]);
             requests.extend_dialogues([7]);
             requests.extend_trade_receipts([receipt]);
-            requests.background_blits.push(PendingBgBlit {
+            requests.background_blits.push(engine_api::PendingBgBlit {
                 entity_id: EntityId::Fx(robin_engine::element::FxId(7)),
                 restore_only: true,
                 decal: None,
