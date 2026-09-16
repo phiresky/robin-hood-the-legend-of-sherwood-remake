@@ -42,15 +42,14 @@ test('boot preserves preload, runtime/canvas handoff, RPC readiness and replay o
 });
 
 test('a fresh profile can queue its replay before mission RPC readiness', async () => {
-    let resolveReady!: () => void;
-    const ready = new Promise<void>(resolve => { resolveReady = resolve; });
+    const ready = Promise.withResolvers<void>();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error('startup deadlocked')), 100);
     try {
         await bootGame({
             ...fixture([]),
-            installRpc: () => async <T>() => { await ready; return undefined as T; },
-            installReplay: async () => { resolveReady(); },
+            installRpc: () => async <T>() => { await ready.promise; return undefined as T; },
+            installReplay: async () => { ready.resolve(); },
         }, controller.signal);
     } finally { clearTimeout(timer); }
 });
