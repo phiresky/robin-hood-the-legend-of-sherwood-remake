@@ -111,16 +111,13 @@ impl EngineInner {
         if matches!(cmd, PlayerCommand::GroupMove { .. }) {
             return;
         }
-        // When multiple PCs are armed for recording, each one receives
-        // its own macro step.  Snapshot the set up-front so we can
-        // re-borrow `self` inside the per-PC loop.
-        let recording_pcs = self.players.qa_recording_for.clone();
-        for recording_pc in recording_pcs {
+        // Recording writes slots and titbits without changing the armed set.
+        for index in 0..self.players.qa_recording_for.len() {
+            let recording_pc = self.players.qa_recording_for[index];
             self.record_macro_step_for_pc(
                 seat,
                 cmd,
                 recording_pc,
-                None,
                 None,
                 assets,
                 QuickActionRecordingStore::Manual,
@@ -141,7 +138,6 @@ impl EngineInner {
             destination,
             running,
             route,
-            None,
             assets,
             QuickActionRecordingStore::Manual,
         );
@@ -153,27 +149,23 @@ impl EngineInner {
         destination: MapPoint,
         running: bool,
         route: crate::macro_store::RecordedQaMoveRoute,
-        action_override: Option<crate::profiles::Action>,
         assets: &LevelAssets,
         recording_store: QuickActionRecordingStore,
     ) {
-        let command = PlayerCommand::GroupMove {
-            actors: vec![recording_pc],
-            destination,
-            running,
-            show_marker: false,
-            goal_override: None,
-            goal_sector_index_override: None,
-            door_route_override: None,
-            recorded_gate_routes: Vec::new(),
-            recorded_failed_gate_routes: Vec::new(),
-        };
-        self.record_macro_step_for_pc(
-            0,
-            &command,
+        self.record_quick_action_step(
             recording_pc,
-            action_override,
-            Some(route),
+            crate::macro_store::QuickActionStep {
+                action: Action::NoAction,
+                position: destination,
+                replay: crate::macro_store::QaReplayCommand::Move {
+                    destination,
+                    running,
+                    route,
+                },
+            },
+            running,
+            None,
+            false,
             assets,
             recording_store,
         );
@@ -185,7 +177,6 @@ impl EngineInner {
         cmd: &PlayerCommand,
         recording_pc: EntityId,
         action_override: Option<crate::profiles::Action>,
-        resolved_move_route: Option<crate::macro_store::RecordedQaMoveRoute>,
         assets: &LevelAssets,
         recording_store: QuickActionRecordingStore,
     ) {
@@ -240,36 +231,6 @@ impl EngineInner {
             MapPoint,
             QaReplayCommand,
         ) = match cmd {
-            GroupMove {
-                actors,
-                destination,
-                running,
-                show_marker: _,
-                goal_override: _,
-                goal_sector_index_override: _,
-                door_route_override: _,
-                recorded_gate_routes: _,
-                recorded_failed_gate_routes: _,
-            } => {
-                if !actors.contains(&recording_pc) {
-                    return;
-                }
-                running_move = *running;
-                (
-                    recording_pc,
-                    crate::profiles::Action::NoAction, // move → Walk/Run titbit path
-                    *destination,
-                    QaReplayCommand::Move {
-                        destination: *destination,
-                        running: *running,
-                        route: resolved_move_route.unwrap_or_else(|| {
-                            panic!(
-                                "group-move quick action for {recording_pc:?} has no resolved route"
-                            )
-                        }),
-                    },
-                )
-            }
             LaunchInteraction {
                 actor,
                 target,
@@ -562,11 +523,35 @@ impl EngineInner {
             _ => return,
         };
 
-        let step = QuickActionStep {
-            action,
-            position,
-            replay: replay.clone(),
-        };
+        self.record_quick_action_step(
+            actor,
+            QuickActionStep {
+                action,
+                position,
+                replay,
+            },
+            running_move,
+            phase_override,
+            dispatch_arm_records_titbit,
+            assets,
+            recording_store,
+        );
+    }
+
+    fn record_quick_action_step(
+        &mut self,
+        recording_pc: EntityId,
+        step: crate::macro_store::QuickActionStep,
+        running_move: bool,
+        phase_override: Option<crate::titbit::QuickAction>,
+        dispatch_arm_records_titbit: bool,
+        assets: &LevelAssets,
+        recording_store: QuickActionRecordingStore,
+    ) {
+        use crate::macro_store::QaReplayCommand;
+        let actor = recording_pc;
+        let action = step.action;
+        let position = step.position;
         let slot_idx =
             match recording_store {
                 QuickActionRecordingStore::Manual => {
@@ -612,7 +597,23 @@ impl EngineInner {
         {
             return;
         }
-        let phase = match (phase_override, &replay) {
+        let recorded_step = match recording_store {
+            QuickActionRecordingStore::Manual => self
+                .players
+                .macro_store
+                .get(actor)
+                .and_then(|state| state.slot(slot_idx))
+                .and_then(|slot| slot.steps.last()),
+            QuickActionRecordingStore::Automatic => self
+                .players
+                .auto_queues
+                .get(actor)
+                .and_then(|queue| queue.last())
+                .map(|entry| &entry.step),
+        }
+        .expect("recorded quick-action step disappeared before its titbit was created");
+        let replay = &recorded_step.replay;
+        let phase = match (phase_override, replay) {
             (Some(q), _) => q as u16,
             (
                 None,
@@ -661,7 +662,7 @@ impl EngineInner {
         // stores movement/ground QAs as fixed 3D points. The distinction is
         // also a rendering contract: supplier icons float above the entity;
         // fixed-point crosshairs are centered directly on the destination.
-        let supplier = match &replay {
+        let supplier = match replay {
             QaReplayCommand::Interaction { target, .. }
             | QaReplayCommand::TargetInteraction { target, .. }
             | QaReplayCommand::ScrollRead { target, .. }
@@ -683,7 +684,7 @@ impl EngineInner {
             .expect_entity(recording_pc, "quick-action recording PC")
             .element_data()
             .layer();
-        let (pos3d, layer) = match &replay {
+        let (pos3d, layer) = match replay {
             QaReplayCommand::GroundTarget {
                 target_pos,
                 titbit_layer,
@@ -784,11 +785,10 @@ impl EngineInner {
                 .copied()
                 .filter(|soldier| self.is_tactically_controllable(*soldier))
                 .collect();
-            let leaders = self.players.seats[seat].selection.clone();
             let slots = self.tactical_formation_slots(
                 assets,
                 &valid,
-                &leaders,
+                &self.players.seats[seat].selection,
                 *destination,
                 *formation,
                 false,
@@ -819,7 +819,6 @@ impl EngineInner {
                     plan.destination,
                     *running,
                     plan.route,
-                    Some(action),
                     assets,
                     QuickActionRecordingStore::Automatic,
                 );
@@ -877,7 +876,6 @@ impl EngineInner {
                     plan.destination,
                     *running,
                     plan.route,
-                    Some(action),
                     assets,
                     QuickActionRecordingStore::Automatic,
                 );
@@ -911,7 +909,6 @@ impl EngineInner {
                 command,
                 actor,
                 Some(action),
-                None,
                 assets,
                 QuickActionRecordingStore::Automatic,
             );
@@ -1274,32 +1271,30 @@ impl EngineInner {
         // front and bail without dispatching or clearing on failure —
         // the jingle path in `apply_start_macro` then keys off the
         // slot still being occupied to emit `QuickActionFailed`.
-        // Snapshot the steps — replay must not be perturbed by any
-        // macro-store mutation the dispatched commands perform (the
-        // recording-append gate runs inside `apply_command`, but
-        // `stop_recording_macro` was called in `apply_start_macro` so
-        // `qa_recording_for` is None and no appends will happen).
-        let steps: Vec<crate::macro_store::QuickActionStep> = self
+        let Some(steps) = self
             .players
             .macro_store
             .get(pc)
-            .map(|s| {
-                s.slot(slot as usize)
-                    .map(|slot| slot.steps.clone())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
+            .and_then(|state| state.slot(slot as usize))
+            .map(|slot| slot.steps.as_slice())
+        else {
+            return;
+        };
+        if !self.check_quick_action_steps_validity(assets, pc, steps) {
+            return;
+        }
+        // Execution owns its accepted steps across callbacks that can replace
+        // or clear the stored slot. Validation only needs the borrowed slice.
+        let steps = steps.to_vec();
 
-        if !self.check_quick_action_steps_validity(assets, pc, &steps)
-            || !self.replay_quick_action_steps(
-                sim,
-                display,
-                assets,
-                pc,
-                steps,
-                QuickActionRecordingStore::Manual,
-            )
-        {
+        if !self.replay_quick_action_steps(
+            sim,
+            display,
+            assets,
+            pc,
+            steps,
+            QuickActionRecordingStore::Manual,
+        ) {
             return;
         }
 
@@ -1823,13 +1818,12 @@ impl EngineInner {
         pc: EntityId,
         slot: u8,
     ) -> Option<bool> {
-        let (mut action, mut seek) = self
+        let (action, seek) = self
             .players
             .macro_store
             .get(pc)?
             .slot(slot as usize)?
-            .legacy_sequences()
-            .map(|(action, seek)| (action.clone(), seek.cloned()))?;
+            .legacy_sequences()?;
         let swordfighting = self
             .get_entity(pc)
             .and_then(|entity| entity.human_data())
@@ -1881,7 +1875,7 @@ impl EngineInner {
             })
         }
         if action.is_empty()
-            || !valid(self, assets, &action, swordfighting, false)
+            || !valid(self, assets, action, swordfighting, false)
             || seek
                 .as_ref()
                 .is_some_and(|sequence| !valid(self, assets, sequence, swordfighting, true))
@@ -1889,6 +1883,8 @@ impl EngineInner {
             return Some(false);
         }
 
+        let mut action = action.clone();
+        let mut seek = seek.cloned();
         for element in &mut action.elements {
             element.script_driven = true;
             element.orders.clear();
@@ -2078,26 +2074,7 @@ impl EngineInner {
         // End recording on every PC that was armed (the currently-
         // armed set, not the current selection — those can differ).
         self.stop_recording_macro();
-        // Re-arm on whoever is currently selected.
-        let targets: Vec<EntityId> = self.players.seats[seat].selection.to_vec();
-        if targets.is_empty() {
-            return;
-        }
-        for id in &targets {
-            self.players
-                .macro_store
-                .get_or_insert(*id)
-                .begin_recording(slot);
-            if self
-                .get_entity(*id)
-                .and_then(|entity| entity.pc_data())
-                .is_none()
-            {
-                panic!("quick-action recording target {id:?} is not a PC");
-            }
-        }
-        self.players.qa_recording_slot = slot;
-        self.players.qa_recording_for = targets;
+        self.apply_start_recording_macro(seat, None, slot);
     }
 
     /// Drop macro slot `slot` without replaying.
@@ -2116,8 +2093,8 @@ impl EngineInner {
                 self.abort_quick_action(id, slot);
             }
             None => {
-                let pcs = self.world.pc_ids.clone();
-                for id in pcs {
+                for index in 0..self.world.pc_ids.len() {
+                    let id = self.world.pc_ids[index];
                     self.abort_quick_action(id, slot);
                 }
                 self.do_tetris_macro(slot);

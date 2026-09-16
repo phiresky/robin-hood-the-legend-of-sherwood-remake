@@ -190,8 +190,7 @@ fn post_load_fixups_aborts_midzoom() {
 
 #[test]
 fn group_formation_uses_original_pair_distance_bounds_and_integer_radius() {
-    let three_candidates =
-        circular_dispatch_candidate_points(3, crate::coordinates::map_pt(0.0, 0.0));
+    let three_candidates = circular_dispatch_offsets(3);
     assert_eq!(three_candidates[1].x.to_bits(), 0x419f_5942);
     assert_eq!(three_candidates[1].y.to_bits(), 0x4138_0001);
     assert_eq!(three_candidates[2].x.to_bits(), 0xc19f_5943);
@@ -227,18 +226,25 @@ fn group_formation_uses_original_pair_distance_bounds_and_integer_radius() {
         crate::coordinates::map_pt(2009.6876, 1681.5897),
     ];
     assert!(!uses_mercenary_group_formation(&spread));
-    let destinations = circular_dispatch_destinations(&spread, click);
-    assert_eq!(destinations[0], crate::coordinates::map_pt(2097.0, 1656.0));
-    assert_eq!(destinations[1], crate::coordinates::map_pt(2097.0, 1702.0));
-    let (_, dispatch_order) = assign_circular_dispatch_candidates(
-        &spread,
-        &[
-            crate::coordinates::map_pt(2097.0, 1702.0),
-            crate::coordinates::map_pt(2097.0, 1656.0),
-        ],
+    let mut dispatched = Vec::new();
+    dispatch_circular_candidates(
+        &mut dispatched,
+        circular_dispatch_offsets(spread.len())
+            .into_iter()
+            .rev()
+            .map(|offset| click + offset)
+            .collect(),
         &[true, true],
+        |_, index| spread[index],
+        |dispatched, index, destination, _| dispatched.push((index, destination)),
     );
-    assert_eq!(dispatch_order, [1, 0]);
+    assert_eq!(
+        dispatched,
+        [
+            (1, crate::coordinates::map_pt(2097.0, 1702.0)),
+            (0, crate::coordinates::map_pt(2097.0, 1656.0))
+        ]
+    );
 }
 
 #[test]

@@ -156,7 +156,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         entity_id: EntityId,
-        selected: MovementOwnerSelection,
+        mut selected: MovementOwnerSelection,
         actor_id: crate::entity_id::ActorId,
         mut ft: FinalTol,
         prepared: &LiveMobileGeometry,
@@ -196,7 +196,7 @@ impl EngineInner {
         // `path_waypoints` is kept as a mirror for legacy bolt-ons
         // (drunken wobble, abilities, debug overlays) but is no
         // longer the authoritative path source in the hot loop.
-        let Some(selected_order) = EngineInner::prepare_selected_movement_order(
+        let Some(mut selected_order) = EngineInner::prepare_selected_movement_order(
             entity,
             &self.orders.sequence_manager,
             selected,
@@ -828,6 +828,7 @@ impl EngineInner {
                     .speed_factor()
             };
             let motion_order = motion_order.map(|mut context| {
+                context.order_id = selected.order_id;
                 let (seq_id, elem_idx) = self
                     .world
                     .entities
@@ -926,16 +927,32 @@ impl EngineInner {
             let sword_arm_without_face_turn = executes_sword_movement
                 && combat_target.is_none()
                 && !active_move_flags.contains(MoveFlags::SEEK);
-            // Entity-target seeking returns from its successful
-            // pre-motion tolerance branch without processing motion.
-            // Besides avoiding displacement, this preserves the prior sprite
-            // action and suppresses START-owned side effects such as combat
-            // initiative transfer. When post-seek sequence launch succeeds the
-            // wrapper returns TERMINATED, however; the surrounding Execute
-            // arm must still observe that result so a pending movement-end
-            // transition applies its terminal posture/action-state effect
-            // before the interaction is instructed.
+            // An in-range seek freezes the selected animation and renews the
+            // order identity so resuming motion initializes its trajectory.
+            // Its Execute result remains in-progress even if the action starts.
             let (motion_state, frame_dist_raw) = if tolerance_arrival {
+                if !ft.has_post_seek {
+                    sprite.perform_action(
+                        sim,
+                        Some(selected.order_id),
+                        sprite_motion_order_for_nonanimation(anim),
+                        u16::from(sprite.position_iface.get_direction().as_u8()),
+                        FrameProgression::Frozen,
+                        false,
+                    );
+                    let (element, next_order_id) = self
+                        .orders
+                        .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                        .expect("frozen seek lost its selected element");
+                    let order = element
+                        .orders
+                        .front_mut()
+                        .expect("frozen seek lost its selected order");
+                    assert_eq!(order.order_id, selected.order_id);
+                    order.reseed_id(crate::order::alloc_order_id(next_order_id));
+                    selected.order_id = order.order_id;
+                    selected_order.order_id = Some(order.order_id);
+                }
                 (
                     if ft.has_post_seek {
                         MotionState::Terminated
@@ -1037,12 +1054,8 @@ impl EngineInner {
                 result
             };
             if tolerance_arrival {
-                // This seeking branch returns before calling any sprite
-                // method. Preserve the wrapper's authoritative Execute result
-                // for the actor update just as the non-sprite movement branches
-                // above do. Leaving the prior sprite DONE latched causes the
-                // successful post-seek sequence termination to be hidden as
-                // IN_PROGRESS by the generic entity-seek projection.
+                // Seeking owns the Execute result independently of its frozen
+                // action's start/done state.
                 sprite.last_motion_state = Some(motion_state);
             }
 
