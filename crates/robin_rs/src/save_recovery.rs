@@ -379,6 +379,27 @@ pub async fn open_for_launch(
         Err(error) => error,
     };
     tracing::error!("{original_error}");
+    let (mut renderer, resources, mut cursor) = launch_dialog_resources(context, window)
+        .map_err(|error| format!("{original_error}; {error}"))?;
+    Ok(recover_attempt(
+        context,
+        window,
+        &mut renderer,
+        &resources,
+        Some(&ModalCursor::new(
+            &mut cursor,
+            robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+            0,
+        )),
+        Err(original_error),
+    )
+    .await)
+}
+
+fn launch_dialog_resources(
+    context: &ApplicationContext,
+    window: &mut GameWindow,
+) -> Result<(Renderer, IngameMenuResources, crate::cursor::CursorRenderer), String> {
     let graphic_config = context.with_active_profile(|profile| profile.graphic_config.clone())?;
     let (width, height) = window.logical_size();
     let mut renderer = Renderer::new(
@@ -393,9 +414,7 @@ pub async fn open_for_launch(
         context.shipping()?,
         context.preparation_files()?.clone(),
     )
-    .ok_or_else(|| {
-        format!("{original_error}; save recovery UI: Data/Interface/DEFAULT.RES unavailable")
-    })?;
+    .ok_or_else(|| "Warning dialog: Data/Interface/DEFAULT.RES unavailable".to_owned())?;
     let mut cursor = crate::cursor::CursorRenderer::new();
     cursor.init(&renderer);
     if !cursor.load_cursor(
@@ -403,21 +422,45 @@ pub async fn open_for_launch(
         &mut resources.res,
         &renderer,
     ) {
-        tracing::warn!("Save recovery: default cursor unavailable, using fallback arrow");
+        tracing::warn!("Warning dialog: default cursor unavailable, using fallback arrow");
     }
-    Ok(recover_attempt(
-        context,
+    Ok((renderer, resources, cursor))
+}
+
+/// Display the same scrollable warning used by save recovery after a failed
+/// menu launch. A window close remains an application close, not an OK click.
+pub(crate) async fn show_launch_error(
+    context: &ApplicationContext,
+    window: &mut GameWindow,
+    message: String,
+) -> Result<(), String> {
+    let (mut renderer, resources, mut cursor) = launch_dialog_resources(context, window)?;
+    let cursor = ModalCursor::new(
+        &mut cursor,
+        robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+        0,
+    );
+    let mut notice = ErrorNotice::new(message);
+    notice.input.seed_mouse_from_window(
         window,
-        &mut renderer,
-        &resources,
-        Some(&ModalCursor::new(
-            &mut cursor,
-            robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
-            0,
-        )),
-        Err(original_error),
-    )
-    .await)
+        MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        ),
+    );
+    while !window.close_requested {
+        context.poll_leaderboard_receipts();
+        if notice.tick(&mut ModalScreenIo {
+            window,
+            renderer: &mut renderer,
+            resources: &resources,
+            cursor: Some(&cursor),
+        }) {
+            break;
+        }
+        crate::window::sleep_ui_frame().await;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
