@@ -36,3 +36,10 @@ on every platform — the web build decodes it with the browser, native builds
 with rav1d. Legacy JPEG XL terrain still loads natively, but the web build
 rejects mods that contain JPEG XL assets at admission. Sprite encoding itself
 does not require `avifenc`. Use a new destination directory when encoding a mod.
+
+Authored sprite bundles use bounded bitcode inside Zstd: `RHMODVF5` for
+families and `RHMODVQ4` for standalone bundles. Both retain the current VQ
+sprite codec. Older binary and JSON bundle versions require regeneration
+from the source `.rhs.d` directories; renaming their headers is insufficient.
+Document decoding limits scratch/collection allocation before expansion,
+with separate compressed-byte, Zstd-window, and decoded-frame budgets.

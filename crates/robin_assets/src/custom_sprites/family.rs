@@ -12,11 +12,11 @@ use std::{
     sync::Arc,
 };
 
-// v4: VQ blobs use the match-gated sprite codec (shipping datadir v17).
-const MAGIC: &[u8] = b"RHMODVF4";
+// v5: bounded bitcode documents; VQ blobs retain the v17 sprite codec.
+const MAGIC: &[u8] = b"RHMODVF5";
 const GROUP_TILES: usize = 1_048_576;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct Character {
     name: String,
     metadata: HackableRhsCache,
@@ -25,7 +25,7 @@ struct Character {
     widths: Vec<u16>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct Family {
     characters: Vec<Character>,
     bank: ShippingSpriteBank,
@@ -584,12 +584,12 @@ mod tests {
 
     fn encoded(family: &Family) -> Vec<u8> {
         let mut bytes = MAGIC.to_vec();
-        serde_json::to_writer(&mut bytes, family).unwrap();
+        bytes.extend(bitcode::encode(family));
         zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()
     }
 
     #[test]
-    fn json_family_preserves_exact_numeric_and_unicode_metadata() {
+    fn bitcode_family_preserves_exact_numeric_and_unicode_metadata() {
         for value in [
             f32::from_bits(1),
             f32::from_bits(0x3f800001),
@@ -615,13 +615,13 @@ mod tests {
             let mut invalid = family(HACKABLE_RHS_CACHE_VERSION, 0);
             Arc::make_mut(&mut invalid.characters[0].metadata.profiles[0].info.scripts)[0]
                 .average_speed = non_finite;
-            assert!(admission::encode_document(MAGIC, &invalid).is_err());
+            assert!(read_selected_bytes(&encoded(&invalid), None).is_err());
         }
     }
 
     #[test]
-    fn old_family_format_requires_regeneration_and_json_must_be_complete() {
-        let old = zstd::stream::encode_all(&b"RHMODVF3"[..], 1).unwrap();
+    fn old_family_format_requires_regeneration_and_bitcode_must_be_complete() {
+        let old = zstd::stream::encode_all(&b"RHMODVF4{}"[..], 1).unwrap();
         let error = read_selected_bytes(&old, None).unwrap_err();
         assert!(error.to_string().contains("encode_mod_sprites"));
         let mut bytes =

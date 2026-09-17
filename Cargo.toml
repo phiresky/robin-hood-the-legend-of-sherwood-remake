@@ -2,6 +2,7 @@ cargo-features = ["codegen-backend"]
 
 [workspace]
 resolver = "2"
+exclude = ["vendor/bitcode"]
 members = [
     "crates/robin_content",
     "crates/robin_identity_signer",
@@ -360,3 +361,7 @@ codegen-backend = "llvm"
 inherits = "release"
 codegen-backend = "llvm"
 panic = "abort"
+
+# Keep the pinned bitcode wire format while bounding untrusted sprite decode.
+[patch."https://github.com/SoftbearStudios/bitcode.git"]
+bitcode = { path = "vendor/bitcode" }

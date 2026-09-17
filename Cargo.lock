@@ -581,11 +581,9 @@ checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
 [[package]]
 name = "bitcode"
 version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a6ed1b54d8dc333e7be604d00fa9262f4635485ffea923647b6521a5fff045d"
 dependencies = [
  "arrayvec",
- "bitcode_derive 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bitcode_derive 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "bytemuck",
  "glam",
  "serde",
@@ -594,10 +592,11 @@ dependencies = [
 [[package]]
 name = "bitcode"
 version = "0.6.9"
-source = "git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf#7ae88076943b74151e99713f33635ac5a5d4f4bf"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a6ed1b54d8dc333e7be604d00fa9262f4635485ffea923647b6521a5fff045d"
 dependencies = [
  "arrayvec",
- "bitcode_derive 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode_derive 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytemuck",
  "glam",
  "serde",
@@ -5916,7 +5915,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "avif-parse",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "bytemuck",
  "bzip2",
  "clap",
@@ -5953,7 +5952,7 @@ dependencies = [
 name = "robin_content"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "robin_state_hash_derive",
  "robin_util",
  "serde",
@@ -5986,7 +5985,7 @@ dependencies = [
 name = "robin_engine"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "bitflags 2.13.2",
  "cpu-time",
  "enum-map",
@@ -6029,7 +6028,7 @@ dependencies = [
 name = "robin_engine_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "geo",
  "robin_data_io",
  "robin_state_hash_derive",
@@ -6047,7 +6046,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.23.1",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "bytes",
  "cap-std",
  "clap",
@@ -6118,7 +6117,7 @@ dependencies = [
 name = "robin_level_data"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "json-patch",
  "num_enum",
  "robin_data_io",
@@ -6193,7 +6192,7 @@ dependencies = [
 name = "robin_ranked_verification"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "bytemuck",
  "robin_assets",
  "robin_engine",
@@ -6221,7 +6220,7 @@ dependencies = [
 name = "robin_replay_format"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "hex",
  "libc",
  "robin_engine",
@@ -6238,7 +6237,7 @@ dependencies = [
 name = "robin_replay_verifier"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "clap",
  "mimalloc",
  "nix",
@@ -6263,7 +6262,7 @@ dependencies = [
  "ash",
  "async-channel",
  "base64 0.23.1",
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "bitflags 2.13.2",
  "bytemuck",
  "cc",
@@ -6375,7 +6374,7 @@ dependencies = [
 name = "robin_run_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "hex",
  "robin_display_text",
  "serde",
@@ -6388,7 +6387,7 @@ dependencies = [
 name = "robin_script_types"
 version = "0.0.0"
 dependencies = [
- "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "bitcode 0.6.9",
  "hex",
  "num_enum",
  "robin_engine_types",
