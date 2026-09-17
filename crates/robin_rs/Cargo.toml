@@ -1,6 +1,7 @@
 [package]
 name = "robin_rs"
-version.workspace = true
+# The native update version must not inherit the unpublished workspace version.
+version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 

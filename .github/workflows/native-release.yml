@@ -215,6 +215,19 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Reject invalid or regressing package versions
+        uses: actions/github-script@v9
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          RUN_TIMESTAMP: ${{ steps.timestamp.outputs.timestamp }}
+        with:
+          script: |
+            const { releaseTag } = require('./scripts/release/publish_native_release.ts');
+            const { verifyPackageVersion } = require('./scripts/release/package_version.ts');
+            const ref = context.ref.replace(/^refs\/(tags|heads)\//, '');
+            const { tag } = releaseTag(context.eventName, ref, process.env.RUN_TIMESTAMP, context.sha);
+            await verifyPackageVersion(github, context.repo, process.env.PACKAGE_VERSION, tag);
+
       - name: Build release binaries
         shell: bash
         env:
@@ -286,6 +299,10 @@ jobs:
 
   release:
     name: Publish GitHub release
+    # Serialize promotion across branches and tags, not just within one ref.
+    concurrency:
+      group: native-release-publish
+      cancel-in-progress: false
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     needs: package
     runs-on: ubuntu-latest

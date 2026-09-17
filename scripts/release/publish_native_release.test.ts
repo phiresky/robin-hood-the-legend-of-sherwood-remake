@@ -20,7 +20,7 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
   }
   for (const runtime of ['win', 'linux']) {
     await writeFile(join(root, `releases.${runtime}.json`), JSON.stringify({ Assets: [{
-      FileName: 'game package.nupkg', Size: 7, SHA256: hash(Buffer.from('package')),
+      Version: '0.1.0-nightly.202609171419', FileName: 'game package.nupkg', Size: 7, SHA256: hash(Buffer.from('package')),
     }] }));
   }
   return root;
@@ -158,7 +158,7 @@ test('new draft can remain absent from listing through upload and promotion', as
   for (const prerelease of [true, false]) {
     const a = api();
     await publish(a.github, core, root, repo, 'v1', 'commit', prerelease);
-    assert.equal(a.calls.filter(call => call === 'list').length, 1);
+    assert.equal(a.calls.filter(call => call === 'list').length, 2);
     assert.equal(a.calls.includes('tag'), !prerelease);
     assert.equal(a.calls.at(-1), 'promote');
     assert.equal(a.calls.filter(call => call === 'download').length, 6);
@@ -349,4 +349,29 @@ test('normal release packages contain every modding binary on both platforms', a
     }
     assert.equal(await readFile(join(root, 'target/package-input/docs/MODDING_TOOLS.md'), 'utf8'), 'MODDING_TOOLS.md');
   }
+});
+
+test('a newer release appearing during upload blocks promotion', async t => {
+  const root = await fixture(t);
+  const a = api();
+  let lists = 0;
+  a.client.paginate.iterator = async function* () {
+    lists++;
+    if (lists === 1) yield { data: [] };
+    else yield { data: [{ ...a.draft, draft: false, tag_name: 'newer', assets: [{ name: 'releases.win.json', id: 999 }] }] };
+  };
+  a.bytes.set(999, Buffer.from(JSON.stringify({ Assets: [{ Version: '0.2.0' }] })));
+  await assert.rejects(publish(a.github, core, root, repo, 'v1', 'commit', true), /must be newer than published 0.2.0/);
+  assert.equal(a.state.promoted, false);
+});
+
+test('different platform package versions block promotion', async t => {
+  const root = await fixture(t);
+  const feedPath = join(root, 'releases.win.json');
+  const feed = JSON.parse(await readFile(feedPath, 'utf8'));
+  feed.Assets[0].Version = '0.2.0';
+  await writeFile(feedPath, JSON.stringify(feed));
+  const a = api();
+  await assert.rejects(publish(a.github, core, root, repo, 'v1', 'commit', true), /same version/);
+  assert.equal(a.state.promoted, false);
 });
