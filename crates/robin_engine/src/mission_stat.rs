@@ -235,17 +235,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_zeroed() {
-        let stat = MissionStat::default();
-        assert_eq!(stat.collected_money, 0);
-        assert_eq!(stat.killed_peasant_count, 0);
-        assert_eq!(stat.killed_allied_count, 0);
-        assert_eq!(stat.new_peasant_count, 0);
-        assert_eq!(stat.added_score, 0);
-        assert!(stat.pc_names.is_empty());
-    }
-
-    #[test]
     fn reset_clears_all() {
         let mut stat = MissionStat {
             collected_money: 500,

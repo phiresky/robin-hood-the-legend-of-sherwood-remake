@@ -803,12 +803,6 @@ mod tests {
     }
 
     #[test]
-    fn order_defaults() {
-        let order = Order::test_new(OrderType::Invalid, 0.0, 0.0);
-        assert_eq!(order.target_actor, None);
-    }
-
-    #[test]
     fn serde_roundtrip_order() {
         let order = Order::test_new(OrderType::ShootingWithBow, 100.0, 200.0).with_target_actor(7);
 

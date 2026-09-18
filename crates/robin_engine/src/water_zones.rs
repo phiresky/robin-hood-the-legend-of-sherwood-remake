@@ -335,6 +335,7 @@ fn segment_line_intersection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::element::GameMaterial;
     use crate::level_data::SectorPolygon;
 
     fn square(material: u8, min: i16, max: i16) -> RawMaterialSector {
@@ -485,116 +486,45 @@ mod tests {
         );
     }
 
-    /// Branch 2 — water-material obstacle with a sub-sector covering
-    /// the impact. Models a "land island" within a lake — the no-splash
-    /// sentinel, here `None`.  Sub-sector material is irrelevant.
-    #[test]
-    fn water_obstacle_dry_sub_sector_gives_no_splash() {
+    /// Obstacle with one 0..10 sub-sector. Branch 2 (water obstacle, id 5):
+    /// any covering sub-sector is a dry "land island" (no splash), otherwise
+    /// the lake splashes. Branch 3 (non-water obstacle): only WATER/HOLE
+    /// sub-sectors covering the impact classify; everything else is `None`.
+    #[rstest::rstest]
+    #[case::water_obstacle_dry_sub_sector_gives_no_splash(5, GameMaterial::Stone, 5.0, None)]
+    #[case::water_obstacle_off_sub_sector_still_splashes(
+        5,
+        GameMaterial::Stone,
+        50.0,
+        Some(Material::Water)
+    )]
+    #[case::non_water_obstacle_with_hole_sub_sector_returns_hole(
+        2,
+        GameMaterial::Hole,
+        5.0,
+        Some(Material::Hole)
+    )]
+    #[case::non_water_obstacle_with_water_sub_sector_returns_water(
+        1,
+        GameMaterial::Water,
+        5.0,
+        Some(Material::Water)
+    )]
+    #[case::non_water_obstacle_ignores_non_water_sub_sectors(2, GameMaterial::Wood, 5.0, None)]
+    #[case::non_water_obstacle_off_sub_sector_returns_none(2, GameMaterial::Hole, 50.0, None)]
+    fn obstacle_with_sub_sector(
+        #[case] obstacle_material: u8,
+        #[case] sub_sector: GameMaterial,
+        #[case] impact: f32,
+        #[case] expected: Option<Material>,
+    ) {
         let obs = make_obstacle(
-            5,
-            vec![material_sector(
-                crate::element::GameMaterial::Stone,
-                0.0,
-                10.0,
-            )],
+            obstacle_material,
+            vec![material_sector(sub_sector, 0.0, 10.0)],
         );
         assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(5.0, 5.0)),
-            None
-        );
-    }
-
-    /// Branch 2 — sub-sector exists but impact is outside it →
-    /// fallthrough to splash on the lake.
-    #[test]
-    fn water_obstacle_off_sub_sector_still_splashes() {
-        let obs = make_obstacle(
-            5,
-            vec![material_sector(
-                crate::element::GameMaterial::Stone,
-                0.0,
-                10.0,
-            )],
-        );
-        assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(50.0, 50.0)),
-            Some(Material::Water)
-        );
-    }
-
-    /// Branch 3 — non-water obstacle (e.g. a stone roof) with a HOLE
-    /// sub-sector punched out. Impact inside the hole returns
-    /// `Some(Hole)`.
-    #[test]
-    fn non_water_obstacle_with_hole_sub_sector_returns_hole() {
-        let obs = make_obstacle(
-            2, /* STONE */
-            vec![material_sector(
-                crate::element::GameMaterial::Hole,
-                0.0,
-                10.0,
-            )],
-        );
-        assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(5.0, 5.0)),
-            Some(Material::Hole)
-        );
-    }
-
-    /// Branch 3 — non-water obstacle with a WATER sub-sector
-    /// (a puddle). Impact inside returns `Some(Water)`.
-    #[test]
-    fn non_water_obstacle_with_water_sub_sector_returns_water() {
-        let obs = make_obstacle(
-            1, /* WOOD */
-            vec![material_sector(
-                crate::element::GameMaterial::Water,
-                0.0,
-                10.0,
-            )],
-        );
-        assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(5.0, 5.0)),
-            Some(Material::Water)
-        );
-    }
-
-    /// Branch 3 — non-water obstacle with no water/hole sub-sector
-    /// (e.g. a stone roof with only a wood-floor inset) returns
-    /// `None`. The polygon test is gated on `material == Water ||
-    /// material == Hole`, so non-water/hole sub-sectors are skipped
-    /// without affecting the outcome.
-    #[test]
-    fn non_water_obstacle_ignores_non_water_sub_sectors() {
-        let obs = make_obstacle(
-            2,
-            vec![material_sector(
-                crate::element::GameMaterial::Wood,
-                0.0,
-                10.0,
-            )],
-        );
-        assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(5.0, 5.0)),
-            None
-        );
-    }
-
-    /// Branch 3 — non-water obstacle, water/hole sub-sector exists
-    /// but impact is outside → no splash.
-    #[test]
-    fn non_water_obstacle_off_sub_sector_returns_none() {
-        let obs = make_obstacle(
-            2,
-            vec![material_sector(
-                crate::element::GameMaterial::Hole,
-                0.0,
-                10.0,
-            )],
-        );
-        assert_eq!(
-            determine_water_hole_with_obstacle(&obs, MapPoint::new(50.0, 50.0)),
-            None
+            determine_water_hole_with_obstacle(&obs, MapPoint::new(impact, impact)),
+            expected
         );
     }
 

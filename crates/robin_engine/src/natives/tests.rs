@@ -152,6 +152,41 @@ fn call_host_command(
     }
 }
 
+/// Call `native(actor, argument)` for a lone soldier in slot 0 with empty
+/// world views and live query owners; returns the actor handle and outcome.
+fn lone_soldier_native_outcome(native: NativeFn, argument: i32) -> (i32, NativeCallOutcome) {
+    let mut host = NativeTestHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 17;
+    let sim = crate::sim_rng::test_context();
+    let mut capabilities = NativeSessionCapabilities::new(
+        &sim,
+        &mut host.entities,
+        &mut host.ai_global,
+        &mut host.fast_grid,
+        &mut host.globals,
+    )
+    .with_world_views(&[], &[], &[])
+    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
+    let mut context = NativeContext::with_bindings(
+        &mut host.state,
+        &mut host.script_domains,
+        AttachedScriptBindings::empty_ref(),
+        &mut capabilities,
+    );
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(argument);
+    let outcome =
+        <NativeContext<'_, '_> as HostFunctions>::call(&mut context, native as u32, &mut stack);
+    (actor, outcome)
+}
+
 fn call_host_native_with_queries(
     host: &mut NativeTestHost,
     native: NativeFn,
@@ -2555,40 +2590,9 @@ fn selection_native_completes_portrait_cleanup_before_later_queries() {
 
 #[test]
 fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
-    let mut host = NativeTestHost::new();
-    host.entities.push(Some(native_test_soldier()));
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = Vec::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 17;
-    let sim = crate::sim_rng::test_context();
-    let mut capabilities = NativeSessionCapabilities::new(
-        &sim,
-        &mut host.entities,
-        &mut host.ai_global,
-        &mut host.fast_grid,
-        &mut host.globals,
-    )
-    .with_world_views(&[], &[], &[])
-    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
-    let mut context = NativeContext::with_bindings(
-        &mut host.state,
-        &mut host.script_domains,
-        AttachedScriptBindings::empty_ref(),
-        &mut capabilities,
-    );
-
-    let mut lock = NativeStack::default();
-    lock.push_i32(actor);
-    lock.push_i32(1);
+    let (actor, outcome) = lone_soldier_native_outcome(NativeFn::LockAI, 1);
     assert!(matches!(
-        <NativeContext<'_, '_> as HostFunctions>::call(
-            &mut context,
-            NativeFn::LockAI as u32,
-            &mut lock,
-        ),
+        outcome,
         NativeCallOutcome::Yield(crate::interp::NativeYield {
             operation: crate::interp::NativeOperation::EngineAction(
                 crate::interp::SynchronousScriptRequest::LockAi {
@@ -2604,40 +2608,9 @@ fn ai_lock_yields_before_the_script_can_launch_replacement_work() {
 
 #[test]
 fn assign_path_yields_until_return_to_duty_finishes() {
-    let mut host = NativeTestHost::new();
-    host.entities.push(Some(native_test_soldier()));
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = Vec::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 17;
-    let sim = crate::sim_rng::test_context();
-    let mut capabilities = NativeSessionCapabilities::new(
-        &sim,
-        &mut host.entities,
-        &mut host.ai_global,
-        &mut host.fast_grid,
-        &mut host.globals,
-    )
-    .with_world_views(&[], &[], &[])
-    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
-    let mut context = NativeContext::with_bindings(
-        &mut host.state,
-        &mut host.script_domains,
-        AttachedScriptBindings::empty_ref(),
-        &mut capabilities,
-    );
-
-    let mut assign = NativeStack::default();
-    assign.push_i32(actor);
-    assign.push_i32(7);
+    let (actor, outcome) = lone_soldier_native_outcome(NativeFn::AssignPath, 7);
     assert!(matches!(
-        <NativeContext<'_, '_> as HostFunctions>::call(
-            &mut context,
-            NativeFn::AssignPath as u32,
-            &mut assign,
-        ),
+        outcome,
         NativeCallOutcome::Yield(crate::interp::NativeYield {
             operation: crate::interp::NativeOperation::EngineAction(
                 crate::interp::SynchronousScriptRequest::AssignPath {
@@ -3013,40 +2986,9 @@ fn briefing_and_objective_writes_share_the_live_canonical_model() {
 
 #[test]
 fn honolulu_location_native_yields_canonical_engine_action() {
-    let mut host = NativeTestHost::new();
-    host.entities.push(Some(native_test_soldier()));
-    let actor = ScriptHandleCodec::actor_handle_from_index(0);
-    let mut sequences = crate::sequence::SequenceManager::new();
-    let mut selected = Vec::new();
-    let mut sounds = crate::sound_source::SoundSourceManager::new();
-    let weather = crate::engine::WeatherState::default();
-    let frame = 17;
-    let sim = crate::sim_rng::test_context();
-    let mut capabilities = NativeSessionCapabilities::new(
-        &sim,
-        &mut host.entities,
-        &mut host.ai_global,
-        &mut host.fast_grid,
-        &mut host.globals,
-    )
-    .with_world_views(&[], &[], &[])
-    .with_queries(&mut sequences, &mut selected, &mut sounds, &weather, &frame);
-    let mut context = NativeContext::with_bindings(
-        &mut host.state,
-        &mut host.script_domains,
-        AttachedScriptBindings::empty_ref(),
-        &mut capabilities,
-    );
-
-    let mut set_location = NativeStack::default();
-    set_location.push_i32(actor);
-    set_location.push_i32(0);
+    let (actor, outcome) = lone_soldier_native_outcome(NativeFn::SetActorLocation, 0);
     assert!(matches!(
-        <NativeContext<'_, '_> as HostFunctions>::call(
-            &mut context,
-            NativeFn::SetActorLocation as u32,
-            &mut set_location,
-        ),
+        outcome,
         NativeCallOutcome::Yield(crate::interp::NativeYield {
             operation: crate::interp::NativeOperation::EngineAction(
                 crate::interp::SynchronousScriptRequest::SetActorLocation {

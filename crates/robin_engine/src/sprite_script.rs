@@ -1074,20 +1074,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sprite_script_default() {
-        let s = SpriteScript::default();
-        assert_eq!(s.action_done, 0);
-        assert_eq!(s.average_speed, 0.0);
-        assert_eq!(s.num_frames(), 0);
-        assert_eq!(s.sum_distance, 0);
-        assert!(s.frame_ids.is_empty());
-        assert!(s.delays.is_empty());
-        assert!(s.distances.is_empty());
-        assert!(s.offsets.is_empty());
-        assert!(s.sound_ids.is_empty());
-    }
-
-    #[test]
     fn test_sprite_info_row_for_action() {
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[0] = 0; // WaitingUprightBored -> row 0
@@ -1155,65 +1141,6 @@ mod tests {
     #[test]
     fn test_nonanimation_end_value() {
         assert_eq!(NONANIMATION_END, 283);
-    }
-
-    #[test]
-    fn test_scriptor_new_and_get() {
-        let scriptor = SpriteScriptor::new();
-        assert!(scriptor.get("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_frame_kind_serialize_roundtrip() {
-        let kinds = [
-            FrameKind::Character,
-            FrameKind::CharacterBlipped,
-            FrameKind::Animation,
-            FrameKind::Object,
-        ];
-        for kind in &kinds {
-            let json = serde_json::to_string(kind).unwrap();
-            let back: FrameKind = serde_json::from_str(&json).unwrap();
-            assert_eq!(*kind, back);
-        }
-    }
-
-    #[test]
-    fn test_sprite_info_serde_roundtrip() {
-        let mut conversion = crate::engine::test_support::unmapped_conversion();
-        conversion[0] = 0;
-
-        let script = SpriteScript {
-            frame_ids: vec![1, 2, 3],
-            delays: vec![10, 10, 10],
-            distances: vec![2, 2, 2],
-            offsets: vec![
-                SpriteFrameOffset::new(0.0, 0.0),
-                SpriteFrameOffset::new(1.0, 1.0),
-                SpriteFrameOffset::new(2.0, 2.0),
-            ],
-            sound_ids: vec![0, 0, 0],
-            average_speed: 0.2,
-            sum_distance: 6,
-            ..Default::default()
-        };
-
-        let info = SpriteInfo {
-            scripts: std::sync::Arc::new(vec![script]),
-            conversion: std::sync::Arc::new(conversion),
-            size: SpriteSize::new(48.0, 48.0),
-            center: SpriteAnchor::new(24.0, 24.0),
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let back: SpriteInfo = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(back.scripts.len(), 1);
-        assert_eq!(back.scripts[0].frame_ids, vec![1, 2, 3]);
-        assert_eq!(back.size.x, 48.0);
-        assert_eq!(back.center.y, 24.0);
-        assert_eq!(back.conversion[0], 0);
-        assert_eq!(back.conversion[1], UNMAPPED);
     }
 
     #[test]

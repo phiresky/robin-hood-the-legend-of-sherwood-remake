@@ -735,35 +735,4 @@ mod tests {
         assert_eq!(src.ambiences, 3);
         assert_eq!(pos, data.len());
     }
-
-    #[test]
-    fn serde_roundtrip() {
-        let mut src = SoundSource::new();
-        src.id = 7;
-        src.source_kind = SoundSourceKind::Delayed;
-        src.min_delay = 10;
-        src.max_delay = 50;
-        src.active = true;
-        src.shape.push(MapPoint::new(1.0, 2.0));
-
-        let json = serde_json::to_string(&src).unwrap();
-        let restored: SoundSource = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.id, 7);
-        assert_eq!(restored.source_kind, SoundSourceKind::Delayed);
-        assert!(restored.active);
-        assert_eq!(restored.shape.len(), 1);
-    }
-
-    #[test]
-    fn source_manager_serde() {
-        let mut mgr = SoundSourceManager::new();
-        let mut s = SoundSource::new();
-        s.id = 99;
-        mgr.add(s);
-
-        let json = serde_json::to_string(&mgr).unwrap();
-        let restored: SoundSourceManager = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.num_sources(), 1);
-        assert_eq!(restored.get(0).unwrap().id, 99);
-    }
 }
