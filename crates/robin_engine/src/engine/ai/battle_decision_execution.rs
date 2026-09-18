@@ -11,7 +11,6 @@ use crate::ai_enemy::{
     AiMapVec, BattleDecisionInputs, PrimaryTargetFlags, SeekFlags, archer, combat,
 };
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
 #[cfg(test)]

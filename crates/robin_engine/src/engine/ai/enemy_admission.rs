@@ -4,7 +4,6 @@ use crate::ai::{
 };
 use crate::element::{EyeStatus, Posture};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests;

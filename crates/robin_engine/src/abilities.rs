@@ -9,6 +9,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
+#[cfg(test)]
 use crate::engine::TickCtx;
 use crate::entities::Entities;
 use crate::movement::AbilityKind;

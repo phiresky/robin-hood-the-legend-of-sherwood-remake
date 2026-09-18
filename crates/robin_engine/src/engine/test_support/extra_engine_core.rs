@@ -3,9 +3,8 @@
 //! keeps advancing across them instead of restarting from the seed per call.
 
 use crate::engine::TickCtx;
-use crate::engine::{EngineInner, HostDisplayState, LevelAssets};
+use crate::engine::{EngineInner, HostDisplayState};
 use crate::sequence::{Sequence, SequenceElement, SequenceId};
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(crate) fn t_launch_element_with(

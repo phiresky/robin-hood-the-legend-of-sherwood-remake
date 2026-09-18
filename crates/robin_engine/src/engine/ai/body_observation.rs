@@ -8,8 +8,6 @@ use crate::ai::{AiEntityHandle, AiState, EmoticonType, HumanHandle, Remark, Repo
 use crate::element::Human as _;
 use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]

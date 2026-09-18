@@ -31,6 +31,7 @@
 use super::movement::GoalShape;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{ActionState, Entity, EntityId};
+#[cfg(test)]
 use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;

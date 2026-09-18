@@ -4,9 +4,9 @@
 use super::object_use::take_seek_tolerance;
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::EngineInner;
 use crate::engine::TickCtx;
 use crate::engine::movement::GoalShape;
-use crate::engine::{EngineInner, LevelAssets};
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
 };

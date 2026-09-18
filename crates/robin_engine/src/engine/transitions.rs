@@ -25,12 +25,14 @@ use crate::element::{ActionState, Command, EntityId, Posture};
 use crate::element_kinds::{
     ChangePostureFlags as CP, ElementKind, EnterActionStateFlags as EA, ExitActionStateFlags as EX,
 };
+#[cfg(test)]
+use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{SequenceElementData, SequenceId};
 use serde::{Deserialize, Serialize};
 
-use super::{EngineInner, LevelAssets};
+use super::EngineInner;
 
 /// Invalid transition state is not a gameplay refusal (for example trying to
 /// crouch an actor that is already crouched). Keep that distinction until the

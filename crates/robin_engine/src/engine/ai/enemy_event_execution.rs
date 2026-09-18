@@ -6,8 +6,6 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]

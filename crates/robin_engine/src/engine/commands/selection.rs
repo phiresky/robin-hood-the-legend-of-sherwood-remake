@@ -2,8 +2,8 @@
 //! Keep that batch interpretation outside these individual command handlers.
 
 use crate::element::EntityId;
+use crate::engine::EngineInner;
 use crate::engine::TickCtx;
-use crate::engine::{EngineInner, LevelAssets};
 
 impl EngineInner {
     pub(super) fn dispatch_pc_selection(

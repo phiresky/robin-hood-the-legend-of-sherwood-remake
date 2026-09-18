@@ -9,7 +9,6 @@ use crate::ai::{
 use crate::ai_enemy::SeekFlags;
 use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rpc(

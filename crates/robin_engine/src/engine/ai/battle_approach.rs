@@ -5,7 +5,6 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiSpeechAttempt, AiState, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, rider_charge_goal_geometry};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 use crate::weapons::WeaponDistance;
 
 impl EngineInner {

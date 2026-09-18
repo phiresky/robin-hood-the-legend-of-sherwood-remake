@@ -3,7 +3,6 @@
 use super::*;
 use crate::ai::*;
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct MacroOwner {

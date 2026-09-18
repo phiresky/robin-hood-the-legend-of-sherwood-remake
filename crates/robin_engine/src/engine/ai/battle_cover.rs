@@ -6,7 +6,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
 #[cfg(test)]

@@ -4,13 +4,15 @@
 //! the larger modules — attentive-mode requests, drunken-step
 //! perturbation, etc.
 
+use super::EngineInner;
 use super::movement::{
     GoalShape, adapt_source_to_current_door_with_identity, current_door_for_route_source,
 };
-use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId};
+#[cfg(test)]
+use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{

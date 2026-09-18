@@ -3,7 +3,6 @@
 use super::*;
 use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
 use crate::element::{Camp, Entity, Posture};
-use crate::engine::TickCtx;
 use crate::fog_of_war::{
     FogCellState, FogOfWarState, LISTEN_REVEAL_FRAMES, SPOTTED_HYSTERESIS_FRAMES,
 };

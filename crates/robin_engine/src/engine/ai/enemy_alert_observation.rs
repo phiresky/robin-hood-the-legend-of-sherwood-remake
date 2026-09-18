@@ -4,9 +4,6 @@ use crate::ai::{
     AiState, EmoticonType, Hint, Noise, NoiseType, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::ProfileRank;
-use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests;

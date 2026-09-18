@@ -17,6 +17,7 @@ use crate::element::{
     ActorData, ActorPc, Command, Detectable, DetectableType, ElementData, ElementKind, Entity,
     EntityId, HULK_LENGTH, HumanData, PcData,
 };
+#[cfg(test)]
 use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;

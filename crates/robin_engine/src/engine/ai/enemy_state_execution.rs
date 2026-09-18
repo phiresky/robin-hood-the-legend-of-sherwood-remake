@@ -1,7 +1,6 @@
 use super::*;
 use crate::ai::{AiState, AlertLevel, LogLineType, Substate};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(super) fn begin_live_enemy_state(

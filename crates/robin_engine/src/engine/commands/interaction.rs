@@ -2,8 +2,8 @@
 
 use super::{recorded_ground_target_titbit_layer, recorded_interaction_quick_phase};
 use crate::element::{Command, EntityId};
+use crate::engine::EngineInner;
 use crate::engine::TickCtx;
-use crate::engine::{EngineInner, LevelAssets};
 use crate::profiles::Action;
 use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 

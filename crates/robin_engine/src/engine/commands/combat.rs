@@ -4,9 +4,9 @@
 use super::object_use::{coin_pickup_target, determine_use_command};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId, Human as _};
+use crate::engine::EngineInner;
 use crate::engine::TickCtx;
 use crate::engine::movement::GoalShape;
-use crate::engine::{EngineInner, LevelAssets};
 use crate::player_command::{CompositeSwordTechnique, GestureQuality};
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,

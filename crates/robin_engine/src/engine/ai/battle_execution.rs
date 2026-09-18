@@ -8,7 +8,6 @@ use crate::ai_enemy::{
 };
 use crate::element::Human;
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_merry_man_forest_cassos(

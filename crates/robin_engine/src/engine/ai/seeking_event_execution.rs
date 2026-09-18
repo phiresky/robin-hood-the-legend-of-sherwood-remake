@@ -5,8 +5,6 @@ use crate::ai::{
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::engine::TickCtx;
 use crate::parameters_ai;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]

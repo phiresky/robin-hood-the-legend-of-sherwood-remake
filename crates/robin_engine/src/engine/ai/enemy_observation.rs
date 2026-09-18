@@ -5,8 +5,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::{EnemyAi, ProfileRank, task_priority};
 use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests;

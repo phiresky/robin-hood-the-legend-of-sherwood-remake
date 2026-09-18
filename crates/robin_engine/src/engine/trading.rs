@@ -1,4 +1,5 @@
 use crate::campaign::CampaignValue;
+#[cfg(test)]
 use crate::engine::TickCtx;
 use crate::entities::Entities;
 use crate::entity_id::BonusId;

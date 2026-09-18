@@ -1,7 +1,6 @@
 use super::*;
 use crate::ai::Substate;
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn stop_ai_owner(&mut self, tcx: TickCtx<'_>, owner: EntityId) {

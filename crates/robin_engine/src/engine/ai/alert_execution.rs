@@ -8,7 +8,6 @@ use crate::ai_enemy::task_priority;
 use crate::element::{Element as _, Human as _};
 use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
 
 fn officer_report_in_progress(substate: Substate) -> bool {
     matches!(

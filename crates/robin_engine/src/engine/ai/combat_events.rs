@@ -5,7 +5,6 @@ use super::*;
 use crate::ai::{AiState, EmoticonType, GotoFlags, Position, Remark, StimulusType, Substate};
 use crate::ai_enemy::{AiMapVec, EnemyAi, SeekFlags, UNDEFINED_DIRECTION};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_combat_unexpected_event(

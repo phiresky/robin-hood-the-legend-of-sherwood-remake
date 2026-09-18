@@ -6,7 +6,6 @@ use crate::ai::{
 use crate::ai_enemy::{EnemyAi, SeekAreaSpec, SeekFlags, task_priority};
 use crate::engine::TickCtx;
 use crate::parameters_ai;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(super) fn seek_enemy(&self, owner: EntityId) -> &EnemyAi {

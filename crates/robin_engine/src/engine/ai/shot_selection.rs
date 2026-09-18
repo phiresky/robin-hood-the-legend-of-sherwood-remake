@@ -3,7 +3,6 @@
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, Decision, Substate};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
 fn vector_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {

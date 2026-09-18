@@ -4,10 +4,7 @@ use crate::ai::{
     AiState, AlertLevel, DutyFlags, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, task_priority};
-use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]

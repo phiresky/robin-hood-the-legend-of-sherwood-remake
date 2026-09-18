@@ -6,7 +6,6 @@ use crate::bow_shot;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{Animation, Command, Entity, EntityId, ObjectType};
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(crate) fn tick_existing_projectile(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {

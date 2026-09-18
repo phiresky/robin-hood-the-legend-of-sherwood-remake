@@ -7,7 +7,7 @@ use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
-use super::{EngineInner, LevelAssets};
+use super::EngineInner;
 
 fn rolling_initial_direction(position: MapPoint, goal: MapPoint) -> i16 {
     vector_to_sector_0_to_15(goal.x - position.x, goal.y - position.y)

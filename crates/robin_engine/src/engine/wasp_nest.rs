@@ -18,12 +18,14 @@
 //!    `RECEIVE_WASP_STING` sequence on its victim and then dies,
 //!    decrementing the nest's `flying_wasp_count`.
 
-use super::{EngineInner, LevelAssets};
+use super::EngineInner;
 use crate::bow_shot::{self, NUMBER_OF_WASPS};
 use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
 #[cfg(test)]
 use crate::element::Camp;
 use crate::element::{Animation, Entity, EntityId, ObjectType};
+#[cfg(test)]
+use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 
 /// Buzz FX id played at the nest position each frame while wasps are

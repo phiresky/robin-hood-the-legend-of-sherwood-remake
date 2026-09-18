@@ -6,7 +6,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::SeekFlags;
 use crate::engine::TickCtx;
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_kill_nearby_sleeping_enemies(

@@ -9,7 +9,6 @@ use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests {

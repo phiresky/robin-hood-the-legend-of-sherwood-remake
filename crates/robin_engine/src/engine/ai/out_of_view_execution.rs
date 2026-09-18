@@ -7,9 +7,6 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, Stimulus, StimulusInfo, Substate};
 use crate::ai_enemy::AiMapVec;
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]

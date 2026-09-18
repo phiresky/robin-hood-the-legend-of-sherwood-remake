@@ -3,8 +3,6 @@
 use super::*;
 use crate::ai::{AiState, EmoticonType, Substate};
 use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
 mod tests {

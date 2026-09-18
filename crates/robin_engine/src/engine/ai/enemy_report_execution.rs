@@ -7,8 +7,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::SeekFlags;
 use crate::engine::TickCtx;
-#[cfg(test)]
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     #[cfg(test)]
