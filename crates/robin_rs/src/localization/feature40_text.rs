@@ -1,9 +1,10 @@
 //! Port-owned Feature 40 catalogue.
 //!
 //! Retail resource tables cannot provide strings for a feature added by this
-//! port. Keep one complete catalogue for every locale the shipping-datadir
-//! importer accepts, as one embedded `data/feature40/<locale>.toml` file per
-//! locale keyed by `PortTextKey` variant name. Parsing rejects missing and
+//! port. Keep one complete catalogue for every language the game verifiably
+//! shipped in, as one embedded `data/feature40/<locale>.toml` file per locale
+//! keyed by `PortTextKey` variant name; other accepted locales fall back to
+//! English. Parsing rejects missing and
 //! unknown keys; tests in `localization.rs` enforce full coverage and
 //! identical named-placeholder contracts in every language.
 
@@ -22,17 +23,11 @@ pub(super) fn text(locale: &str, key: PortTextKey) -> Option<&'static str> {
         "de" | "de-de" => "de",
         "fr" | "fr-fr" => "fr",
         "it" | "it-it" => "it",
-        "pt" | "pt-pt" => "pt",
-        "pt-br" => "pt-br",
         "es" | "es-es" => "es",
         "ru" | "ru-ru" => "ru",
         "ja" | "ja-jp" => "ja",
         "cs" | "cs-cz" => "cs",
         "pl" | "pl-pl" => "pl",
-        "zh" | "zh-tw" => "zh-tw",
-        "zh-cn" => "zh-cn",
-        "ko" | "ko-kr" => "ko",
-        "th" | "th-th" => "th",
         _ => return None,
     };
     let (_, texts) = TABLES
@@ -49,10 +44,7 @@ macro_rules! sources {
 }
 
 /// Embedded `(table name, TOML source)` pairs.
-const SOURCES: [(&str, &str); 15] = sources![
-    "en", "de", "fr", "it", "pt", "pt-br", "es", "ru", "ja", "cs", "pl", "zh-tw", "zh-cn", "ko",
-    "th",
-];
+const SOURCES: [(&str, &str); 9] = sources!["en", "de", "fr", "it", "es", "ru", "ja", "cs", "pl"];
 
 /// Per-locale texts in `FEATURE40_PORT_TEXT_KEYS` order.
 static TABLES: LazyLock<Vec<(&'static str, Vec<String>)>> = LazyLock::new(|| {

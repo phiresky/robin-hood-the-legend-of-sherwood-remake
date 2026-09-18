@@ -212,21 +212,15 @@ mod tests {
         ("SaveFailed", &["de", "en"]),
         (
             "Language",
-            &[
-                "de", "fr", "it", "pt", "es", "ru", "ja", "cs", "pl", "zh", "ko", "th", "en",
-            ],
+            &["de", "fr", "it", "es", "ru", "ja", "cs", "pl", "en"],
         ),
         (
             "Automatic",
-            &[
-                "de", "fr", "it", "pt", "es", "ru", "ja", "cs", "pl", "zh", "ko", "th", "en",
-            ],
+            &["de", "fr", "it", "es", "ru", "ja", "cs", "pl", "en"],
         ),
         (
             "Apply",
-            &[
-                "de", "fr", "it", "pt", "es", "ru", "ja", "cs", "pl", "zh", "ko", "th", "en",
-            ],
+            &["de", "fr", "it", "es", "ru", "ja", "cs", "pl", "en"],
         ),
         ("InstalledLanguages", &["en"]),
         ("OptionalEnglishFallback", &["en"]),
@@ -251,10 +245,7 @@ mod tests {
     fn parsed_text_matches_former_constants() {
         use crate::gameplay_settings::GameplaySetting;
         let samples = [
-            (Some("th"), PortTextKey::Automatic, "อัตโนมัติ"),
             (Some("ru"), PortTextKey::Automatic, "Автоматически"),
-            (Some("zh"), PortTextKey::Automatic, "自動"),
-            (Some("pt"), PortTextKey::Automatic, "Automático"),
             (
                 Some("de-DE"),
                 PortTextKey::SaveFailed,
@@ -326,56 +317,6 @@ mod tests {
                 "[Мод] {title} - {version}",
             ),
             (
-                Some("th"),
-                PortTextKey::SpellforgeHostAttestation,
-                "โฮสต์ {host} รับรองว่ามีสิทธิ์แจกจ่าย `{title}` จาก {source} ซ้ำสำหรับเซสชันผู้เล่นหลายคนนี้",
-            ),
-            (
-                Some("th"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[ม็อด] {title} - {version}",
-            ),
-            (
-                Some("zh"),
-                PortTextKey::SpellforgeHostAttestation,
-                "主機 {host} 聲明已獲准在此多人連線中，從 {source} 再散布 `{title}`",
-            ),
-            (
-                Some("zh"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[模組] {title} - {version}",
-            ),
-            (
-                Some("zh-CN"),
-                PortTextKey::SpellforgeHostAttestation,
-                "主机 {host} 声明已获准在此多人会话中从 {source} 再分发 `{title}`",
-            ),
-            (
-                Some("zh-CN"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[模组] {title} - {version}",
-            ),
-            (
-                Some("pt-BR"),
-                PortTextKey::SpellforgeHostAttestation,
-                "O host {host} declara ter permissão para redistribuir `{title}` de {source} nesta sessão multijogador",
-            ),
-            (
-                Some("pt-BR"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[Mod] {title} - {version}",
-            ),
-            (
-                Some("ko"),
-                PortTextKey::SpellforgeHostAttestation,
-                "호스트 {host}은(는) 이 멀티플레이 세션에서 {source}의 `{title}`을(를) 재배포할 권한이 있음을 확인합니다",
-            ),
-            (
-                Some("ko"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[모드] {title} - {version}",
-            ),
-            (
                 Some("cs"),
                 PortTextKey::SpellforgeHostAttestation,
                 "Hostitel {host} potvrzuje oprávnění redistribuovat `{title}` ze zdroje {source} pro tuto hru více hráčů",
@@ -422,16 +363,6 @@ mod tests {
             ),
             (
                 Some("es"),
-                PortTextKey::SpellforgeMpModMissionLabel,
-                "[Mod] {title} - {version}",
-            ),
-            (
-                Some("pt"),
-                PortTextKey::SpellforgeHostAttestation,
-                "O anfitrião {host} atesta ter permissão para redistribuir `{title}` de {source} nesta sessão multijogador",
-            ),
-            (
-                Some("pt"),
                 PortTextKey::SpellforgeMpModMissionLabel,
                 "[Mod] {title} - {version}",
             ),
