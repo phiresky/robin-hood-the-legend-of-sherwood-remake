@@ -11,6 +11,7 @@ impl EngineInner {
     /// Restore an original-game parity-session boundary field that the v48 save
     /// serializer omits. This is intentionally a replay-only seam: normal
     /// simulation updates the value during detection refresh.
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         let entity = self
             .world
@@ -30,6 +31,7 @@ impl EngineInner {
     /// Restore a dormant original-game waypoint-macro reference which survived an
     /// in-process v48 load even though that save omitted it because
     /// the patrol-path flag was false.
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn restore_parity_npc_dormant_macro_cursor(
         &mut self,
         id: EntityId,

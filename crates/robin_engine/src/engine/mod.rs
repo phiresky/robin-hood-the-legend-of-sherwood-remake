@@ -105,10 +105,12 @@ pub(crate) use movement::{
     adapt_source_to_current_door_with_identity, current_door_for_route_source,
 };
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
+#[cfg(any(test, feature = "original-parity"))]
+pub use rollback_safe::ParityReplaySetup;
 pub use rollback_safe::{
     CompressedEngineSnapshot, Engine, EngineArgs, GroundMarkSpriteData, HostConsoleDispatch,
-    LevelLoadArgs, MinimapWidgetSetup, MissionBootstrapCompletion, ParityReplaySetup,
-    PresentationEngine, SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
+    LevelLoadArgs, MinimapWidgetSetup, MissionBootstrapCompletion, PresentationEngine,
+    SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
 };
 pub use scroll_reveal::{BeggarRemark, ScrollStatus};
 pub use seat::SeatState;

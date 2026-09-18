@@ -204,6 +204,7 @@ impl SequenceManager {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn has_pending_drop_ale_route_candidate(
         &self,
         actor: EntityId,

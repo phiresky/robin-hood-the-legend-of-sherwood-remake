@@ -3189,10 +3189,7 @@ mod tests {
             decoded
                 .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
                 .unwrap();
-            assert_eq!(
-                engine.parity_engine_state().script_globals,
-                expected_globals
-            );
+            assert_eq!(engine.script_globals(), expected_globals);
             let mut restored = MissionFrame::new(0);
             restored.bind_timeline(live.current_frame());
             restored
@@ -3321,10 +3318,7 @@ mod tests {
                     timeline = adopted;
                 }
                 if ordinal == load_ordinal {
-                    assert_eq!(
-                        manager.engine.parity_engine_state().script_globals,
-                        expected_globals
-                    );
+                    assert_eq!(manager.engine.script_globals(), expected_globals);
                     assert_eq!(
                         robin_engine::replay::state_hash(&manager.engine),
                         restored_hash
@@ -3342,10 +3336,7 @@ mod tests {
                 robin_engine::replay::state_hash(&manager.engine),
                 final_hash
             );
-            assert_eq!(
-                manager.engine.parity_engine_state().script_globals,
-                expected_globals
-            );
+            assert_eq!(manager.engine.script_globals(), expected_globals);
             assert_eq!(
                 serde_json::to_value(&playback_host.audio.sound).unwrap(),
                 serde_json::to_value(&host.audio.sound).unwrap()

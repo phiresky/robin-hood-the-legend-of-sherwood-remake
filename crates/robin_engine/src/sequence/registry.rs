@@ -29,6 +29,7 @@ impl SequenceManager {
     /// snapshot. References remain in native IDs here; the engine facade maps
     /// them to manager insertion ordinals before exposing the snapshot.
     #[doc(hidden)]
+    #[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
     pub(crate) fn parity_runtime_refs(
         &self,
         entities: &crate::entities::Entities,

@@ -1650,24 +1650,21 @@ mod tests {
         let mut fixture = serde_json::to_value(&engine).unwrap();
         fixture["scripts"]["globals"] = serde_json::json!(expected);
         let engine: Engine = serde_json::from_value(fixture).unwrap();
-        assert_eq!(engine.parity_engine_state().script_globals, expected);
+        assert_eq!(engine.script_globals(), expected);
 
         let host = Host::scratch(800.0, 600.0);
         let save = GameSaveFile::capture(&engine, &host, 7, "canonical globals".into());
-        assert_eq!(save.engine.parity_engine_state().script_globals, expected);
+        assert_eq!(save.engine.script_globals(), expected);
         let bytes = serde_json::to_vec(&save).unwrap();
         let decoded: GameSaveFile = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            decoded.engine.parity_engine_state().script_globals,
-            expected
-        );
+        assert_eq!(decoded.engine.script_globals(), expected);
 
         let (mut restored, assets) = fresh_engine();
         let mut restored_host = Host::scratch(800.0, 600.0);
         decoded
             .apply_to(&mut restored, &mut restored_host, &assets)
             .expect("apply populated canonical-global save");
-        assert_eq!(restored.parity_engine_state().script_globals, expected);
+        assert_eq!(restored.script_globals(), expected);
     }
 
     #[test]

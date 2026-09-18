@@ -26,9 +26,13 @@ mod test_helpers;
 use std::collections::BTreeMap;
 use std::ops::Deref;
 
+// Read-only JSON projections: the Original parity tool compares them and
+// cross-crate save tests (`test-helpers`) use them as state observers.
+#[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
 #[path = "parity_state.rs"]
 mod parity_state;
 
+#[cfg(any(test, feature = "original-parity"))]
 #[path = "parity_replay_setup.rs"]
 mod parity_replay_setup;
 
@@ -148,31 +152,6 @@ impl SpatialPresentationPose {
             || pc_teleported
             || implausibly_large_step
     }
-}
-
-/// Canonical gameplay-authoritative engine scalars emitted by schema-13
-/// Original parity traces. Presentation camera/surface/backend state is
-/// deliberately absent.
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, bitcode::Encode, bitcode::Decode,
-)]
-pub struct ParityEngineState {
-    pub cheat_used_flags: u32,
-    pub next_creation_order: u32,
-    pub chorus_timer: u16,
-    pub force_check: bool,
-    pub men_to_blazon_conversion: bool,
-    pub lock_engine: bool,
-    pub freeze_all: bool,
-    pub locker: bool,
-    pub speed: f32,
-    pub speed_int: u16,
-    pub mission_won: bool,
-    pub mission_won_first_time: bool,
-    pub quit_won: bool,
-    pub quit_lost: bool,
-    pub quit_interrupted: bool,
-    pub script_globals: Vec<i32>,
 }
 
 /// Parallel runtime array whose length must match the loaded level geometry.
@@ -522,6 +501,7 @@ impl Engine {
 /// only be acquired when the explicit `original-parity` feature is enabled
 /// (or inside engine unit tests). Ordinary client builds cannot construct it.
 #[must_use = "parity replay setup must be used immediately and not retained"]
+#[cfg(any(test, feature = "original-parity"))]
 pub struct ParityReplaySetup<'a> {
     engine: &'a mut Engine,
 }
@@ -713,6 +693,7 @@ impl Engine {
         self.inner.live_tradable_production_sectors(profiles)
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     fn has_pending_recorded_drop_ale_route(
         &self,
         actor: EntityId,
@@ -726,10 +707,12 @@ impl Engine {
 
     /// Restore an Original schema-16 session-boundary transient before the
     /// first replay frame. The v48 save payload does not carry this field.
+    #[cfg(any(test, feature = "original-parity"))]
     fn restore_parity_npc_maximal_visibility(&mut self, id: EntityId, value: u16) {
         self.inner.restore_parity_npc_maximal_visibility(id, value);
     }
 
+    #[cfg(any(test, feature = "original-parity"))]
     fn restore_parity_npc_dormant_macro_cursor(
         &mut self,
         id: EntityId,
@@ -819,6 +802,7 @@ impl Engine {
     }
 
     /// Append one original frame's raw RNG values to an active parity replay.
+    #[cfg(any(test, feature = "original-parity"))]
     fn append_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.rng.append_original_replay(draws);
     }
@@ -826,6 +810,7 @@ impl Engine {
     /// Supply one frame's captured results for Original's undefined stale
     /// sprite action-point read. This is a parity-tool boundary, analogous to
     /// the captured Original RNG stream; live simulation leaves it empty.
+    #[cfg(any(test, feature = "original-parity"))]
     fn set_original_impossible_action_done_deadlines(
         &mut self,
         deadlines: impl IntoIterator<Item = (u32, u32, i16)>,
@@ -846,6 +831,7 @@ impl Engine {
     /// construction. A reconstruction tool may therefore need one copy of
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
+    #[cfg(any(test, feature = "original-parity"))]
     fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
         self.inner.control.sim_config.item_gameplay =
             crate::gameplay_config::ItemGameplayConfig::classic();
@@ -1533,6 +1519,7 @@ impl Engine {
 
     /// Select whether recorded between-frame director events own completion
     /// timing for camera sequence elements.
+    #[cfg(any(test, feature = "original-parity"))]
     fn set_external_director_completion_replay(&mut self, enabled: bool) {
         self.inner.set_external_director_completion_replay(enabled);
     }
@@ -1917,6 +1904,11 @@ impl EngineInner {
 
     pub fn patches(&self) -> &[crate::patch::Patch] {
         &self.script_domains.interactables.patches
+    }
+
+    /// Mission script global variables, in script slot order.
+    pub fn script_globals(&self) -> &[i32] {
+        &self.scripts.globals
     }
 }
 
