@@ -35,6 +35,7 @@ use crate::titbit::QuickAction;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SelectionCommandBatchMode {
     InferNestedSelection,
+    #[cfg_attr(not(any(test, feature = "original-parity")), allow(dead_code))]
     IndependentRecordedMessages,
 }
 

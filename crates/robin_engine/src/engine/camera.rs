@@ -65,6 +65,7 @@ impl EngineInner {
 
     // ─── Director work (camera automation) ─────────────────────
 
+    #[cfg(any(test, feature = "original-parity"))]
     pub(crate) fn set_external_director_completion_replay(&mut self, enabled: bool) {
         self.feedback.cutscene_camera.external_completion_replay = enabled;
     }

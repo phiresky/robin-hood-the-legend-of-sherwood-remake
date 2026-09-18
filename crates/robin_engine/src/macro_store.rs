@@ -343,6 +343,7 @@ impl QuickActionSlot {
             .map(|action| (action, self.seek_sequence.as_ref()))
     }
 
+    #[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
     pub(crate) fn retained_sequence_sizes(&self) -> (Option<usize>, Option<usize>) {
         (
             self.action_sequence.as_ref().map(|sequence| sequence.len()),
@@ -536,6 +537,7 @@ impl PcMacroState {
         self.reset_special_count(slot);
     }
 
+    #[cfg(any(test, feature = "original-parity", feature = "test-helpers"))]
     pub(crate) fn special_count(&self, slot: usize) -> u16 {
         self.special_counts[slot]
     }
