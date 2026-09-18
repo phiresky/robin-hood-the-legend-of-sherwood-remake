@@ -16,25 +16,7 @@ impl EngineInner {
     ) -> Option<bool> {
         use StimulusType::*;
         use Substate::*;
-        if !matches!(
-            stimulus.stimulus_type,
-            EventReachPoint
-                | EventDone
-                | EventTimer
-                | EventSyncCharly
-                | CallCoordinate
-                | CallInstruction
-                | CallReport
-                | EventGaloppLoopEnd
-                | EventMyTalk0
-                | EventMyTalk1
-                | EventMyTalk2
-                | EventMyTalk3
-                | CallYourTalk0
-                | CallYourTalk1
-                | CallYourTalk2
-                | CallYourTalk3
-        ) {
+        if !stimulus.stimulus_type.is_expected_class() {
             return Option::None;
         }
         let state = self.seek_enemy(owner).base.current_substate;

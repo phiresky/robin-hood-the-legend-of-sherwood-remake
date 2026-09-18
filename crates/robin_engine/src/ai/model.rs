@@ -964,6 +964,30 @@ pub enum StimulusType {
 }
 
 impl StimulusType {
+    /// The "expected" stimulus class: completion events and officer/talk
+    /// calls an actor is waiting for, as opposed to unsolicited perception.
+    pub fn is_expected_class(self) -> bool {
+        matches!(
+            self,
+            Self::EventReachPoint
+                | Self::EventDone
+                | Self::EventTimer
+                | Self::EventSyncCharly
+                | Self::CallCoordinate
+                | Self::CallInstruction
+                | Self::CallReport
+                | Self::EventGaloppLoopEnd
+                | Self::EventMyTalk0
+                | Self::EventMyTalk1
+                | Self::EventMyTalk2
+                | Self::EventMyTalk3
+                | Self::CallYourTalk0
+                | Self::CallYourTalk1
+                | Self::CallYourTalk2
+                | Self::CallYourTalk3
+        )
+    }
+
     pub fn log_string_from_u16(raw: u16) -> &'static str {
         Self::try_from(u32::from(raw))
             .ok()

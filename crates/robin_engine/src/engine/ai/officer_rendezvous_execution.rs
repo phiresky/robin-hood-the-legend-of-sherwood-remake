@@ -144,25 +144,7 @@ impl EngineInner {
             .expect_ai_controller(owner, format_args!("officer rendezvous"))
             .current_substate;
         use Substate::*;
-        if !matches!(
-            stimulus.stimulus_type,
-            StimulusType::EventReachPoint
-                | StimulusType::EventDone
-                | StimulusType::EventTimer
-                | StimulusType::EventSyncCharly
-                | StimulusType::CallCoordinate
-                | StimulusType::CallInstruction
-                | StimulusType::CallReport
-                | StimulusType::EventGaloppLoopEnd
-                | StimulusType::EventMyTalk0
-                | StimulusType::EventMyTalk1
-                | StimulusType::EventMyTalk2
-                | StimulusType::EventMyTalk3
-                | StimulusType::CallYourTalk0
-                | StimulusType::CallYourTalk1
-                | StimulusType::CallYourTalk2
-                | StimulusType::CallYourTalk3
-        ) {
+        if !stimulus.stimulus_type.is_expected_class() {
             return Option::None;
         }
         if !matches!(

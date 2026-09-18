@@ -5,26 +5,7 @@ use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     fn is_default_expected_stimulus(kind: StimulusType) -> bool {
-        use StimulusType::*;
-        matches!(
-            kind,
-            EventReachPoint
-                | EventDone
-                | EventTimer
-                | EventSyncCharly
-                | CallCoordinate
-                | CallInstruction
-                | CallReport
-                | EventGaloppLoopEnd
-                | EventMyTalk0
-                | EventMyTalk1
-                | EventMyTalk2
-                | EventMyTalk3
-                | CallYourTalk0
-                | CallYourTalk1
-                | CallYourTalk2
-                | CallYourTalk3
-        )
+        kind.is_expected_class()
     }
 
     fn default_ai(&self, owner: EntityId) -> &AiController {
