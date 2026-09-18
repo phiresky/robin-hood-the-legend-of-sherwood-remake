@@ -83,6 +83,7 @@ pub struct MemberVariable {
 /// One function of a script class.
 #[derive(
     Debug,
+    Default,
     Clone,
     PartialEq,
     Eq,
@@ -105,6 +106,7 @@ pub struct Function {
 /// Fully parsed contents of one class in a `.scb` file.
 #[derive(
     Debug,
+    Default,
     Clone,
     PartialEq,
     Eq,
@@ -126,6 +128,7 @@ pub struct ClassEntry {
 /// A parsed `.scb` file.
 #[derive(
     Debug,
+    Default,
     Clone,
     serde::Serialize,
     serde::Deserialize,

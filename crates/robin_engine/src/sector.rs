@@ -178,7 +178,7 @@ impl std::fmt::Display for SectorNumber {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct SectorType: u32 {
         const AREA       = 1;
         const MOTION     = 2;

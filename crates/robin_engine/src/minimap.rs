@@ -1204,184 +1204,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn classify_hero_alive() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_pc: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Hero));
-    }
-
-    #[test]
-    fn classify_hero_dead() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_pc: true,
-            is_dead: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::DeadHero));
-    }
-
-    #[test]
-    fn classify_hero_stunned() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_pc: true,
-            is_unconscious: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::StunnedHero));
-    }
-
-    #[test]
-    fn classify_hero_lying_conscious() {
-        // PC that is lying but not unconscious shows as dead (hiding).
-        let info = ElementDotInfo {
-            is_human: true,
-            is_pc: true,
-            posture_lying: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::DeadHero));
-    }
-
-    #[test]
-    fn classify_enemy_soldier() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_soldier: true,
-            camp: Some(Camp::Hostile),
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Enemy));
-    }
-
-    #[test]
-    fn classify_ally_soldier() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_soldier: true,
-            camp: Some(Camp::Allied),
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Ally));
-    }
-
-    #[test]
-    fn classify_neutral_soldier_with_amber_civilian_dot() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_soldier: true,
-            camp: Some(Camp::Neutral),
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Civilian));
-    }
-
-    #[test]
-    fn classify_vip_soldier() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_soldier: true,
-            is_vip: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Vip));
-    }
-
-    #[test]
-    fn classify_blipped_soldier() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_soldier: true,
-            is_blipped: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Blip));
-    }
-
-    #[test]
-    fn classify_civilian() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_civilian: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Civilian));
-    }
-
-    #[test]
-    fn classify_civilian_vip() {
-        let info = ElementDotInfo {
-            is_human: true,
-            is_civilian: true,
-            is_civilian_vip: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Vip));
-    }
-
-    #[test]
-    fn classify_object_item() {
-        let info = ElementDotInfo {
-            is_object: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Item));
-    }
-
-    #[test]
-    fn classify_scroll() {
-        let info = ElementDotInfo {
-            is_object: true,
-            is_scroll: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Scroll));
-    }
-
-    #[test]
-    fn classify_projectile() {
-        let info = ElementDotInfo {
-            is_object: true,
-            is_projectile: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::Projectile));
-    }
-
-    #[test]
-    fn classify_invisible() {
-        let info = ElementDotInfo {
-            custom_dot: CustomDot::Invisible,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), None);
-    }
-
-    #[test]
-    fn classify_inactive() {
-        let info = ElementDotInfo {
-            is_active: false,
-            is_human: true,
-            is_pc: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), None);
-    }
-
-    #[test]
-    fn classify_custom_villain_multi_dead() {
-        let info = ElementDotInfo {
-            custom_dot: CustomDot::VillainMulti,
-            is_human: true,
-            is_dead: true,
-            ..default_info()
-        };
-        assert_eq!(classify_element_dot(&info), Some(DotType::DeadEnemy));
+    // One case per dot rule: the fields that differ from `default_info()`.
+    #[rstest::rstest]
+    #[case::hero_alive(ElementDotInfo { is_human: true, is_pc: true, ..default_info() }, Some(DotType::Hero))]
+    #[case::hero_dead(ElementDotInfo { is_human: true, is_pc: true, is_dead: true, ..default_info() }, Some(DotType::DeadHero))]
+    #[case::hero_stunned(ElementDotInfo { is_human: true, is_pc: true, is_unconscious: true, ..default_info() }, Some(DotType::StunnedHero))]
+    // PC that is lying but not unconscious shows as dead (hiding).
+    #[case::hero_lying_conscious(ElementDotInfo { is_human: true, is_pc: true, posture_lying: true, ..default_info() }, Some(DotType::DeadHero))]
+    #[case::enemy_soldier(ElementDotInfo { is_human: true, is_soldier: true, camp: Some(Camp::Hostile), ..default_info() }, Some(DotType::Enemy))]
+    #[case::ally_soldier(ElementDotInfo { is_human: true, is_soldier: true, camp: Some(Camp::Allied), ..default_info() }, Some(DotType::Ally))]
+    #[case::neutral_soldier_with_amber_civilian_dot(ElementDotInfo { is_human: true, is_soldier: true, camp: Some(Camp::Neutral), ..default_info() }, Some(DotType::Civilian))]
+    #[case::vip_soldier(ElementDotInfo { is_human: true, is_soldier: true, is_vip: true, ..default_info() }, Some(DotType::Vip))]
+    #[case::blipped_soldier(ElementDotInfo { is_human: true, is_soldier: true, is_blipped: true, ..default_info() }, Some(DotType::Blip))]
+    #[case::civilian(ElementDotInfo { is_human: true, is_civilian: true, ..default_info() }, Some(DotType::Civilian))]
+    #[case::civilian_vip(ElementDotInfo { is_human: true, is_civilian: true, is_civilian_vip: true, ..default_info() }, Some(DotType::Vip))]
+    #[case::object_item(ElementDotInfo { is_object: true, ..default_info() }, Some(DotType::Item))]
+    #[case::scroll(ElementDotInfo { is_object: true, is_scroll: true, ..default_info() }, Some(DotType::Scroll))]
+    #[case::projectile(ElementDotInfo { is_object: true, is_projectile: true, ..default_info() }, Some(DotType::Projectile))]
+    #[case::invisible(ElementDotInfo { custom_dot: CustomDot::Invisible, ..default_info() }, None)]
+    #[case::inactive(ElementDotInfo { is_active: false, is_human: true, is_pc: true, ..default_info() }, None)]
+    #[case::custom_villain_multi_dead(ElementDotInfo { custom_dot: CustomDot::VillainMulti, is_human: true, is_dead: true, ..default_info() }, Some(DotType::DeadEnemy))]
+    fn classify(#[case] info: ElementDotInfo, #[case] expected: Option<DotType>) {
+        assert_eq!(classify_element_dot(&info), expected);
     }
 
     #[test]

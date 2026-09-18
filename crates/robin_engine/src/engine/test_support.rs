@@ -1,6 +1,8 @@
 //! Shared fixtures and unwind-safe, observational test instrumentation.
 pub(crate) mod actors;
 pub(crate) mod asm;
+pub(crate) mod pair_fixture;
+pub(crate) mod shortcuts;
 
 use super::commands::SelectionCommandBatchMode;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
@@ -168,17 +170,7 @@ pub(crate) fn square_sector(
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer,
         sector_number: crate::sector::SectorNumber::new(number),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     }
 }
 
@@ -207,17 +199,7 @@ pub(crate) fn ensure_ordinary_sector(
                 sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
                 layer,
                 sector_number: number,
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
+                ..Default::default()
             },
             layer,
         );

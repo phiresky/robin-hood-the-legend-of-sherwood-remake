@@ -246,10 +246,11 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"], optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 robin_test_support.workspace = true
 syn = { workspace = true, features = ["full", "visit"] }
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
-robin_engine = { workspace = true, features = ["test-helpers"] }
+robin_engine = { workspace = true, features = ["test-helpers", "test-support"] }
 
 [build-dependencies]
 cc = "1"
