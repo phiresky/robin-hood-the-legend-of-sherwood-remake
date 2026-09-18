@@ -140,7 +140,7 @@ impl GraphicsScreen {
             let label = super::gameplay::fit_button_label(resources, label, true, width);
             frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
         };
-        for (i, label) in ["Display", "Scaling", "Effects & Tuning", "Window"]
+        for (i, label) in ["Display", "Scaling", "Effects", "Window"]
             .iter()
             .enumerate()
         {
@@ -181,7 +181,7 @@ impl GraphicsScreen {
             "Native Refresh Rate".into(),
             "Mission Countdown".into(),
             "Dynamic Ambience Visuals".into(),
-            "Diplomacy Colors (neutral = amber)".into(),
+            "Diplomacy Colors".into(),
             "Quick-Action Cursor Pulse".into(),
             "Fullscreen".into(),
             "Hardware Cursor".into(),
