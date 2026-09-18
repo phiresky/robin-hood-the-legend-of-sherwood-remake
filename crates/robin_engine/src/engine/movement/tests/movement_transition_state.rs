@@ -196,14 +196,7 @@ mod suite {
         };
         assert_eq!(*actual, MapPoint::new(destination.x, destination.y));
         assert!(flags.contains(MoveFlags::MAP));
-        assert!(
-            !map_exit
-                .get_entity(map_owner)
-                .unwrap()
-                .ai_controller()
-                .unwrap()
-                .couldnt_reachpoint
-        );
+        assert!(!map_exit.ai_ctrl(map_owner).couldnt_reachpoint);
 
         for ordinary_destination in [MapPoint::new(100.0, 90.0), MapPoint::new(90.0, 130.0)] {
             let mut ordinary = EngineInner::new();
@@ -232,14 +225,7 @@ mod suite {
                             || !matches!(element.data, SequenceElementData::Movement { .. }))),
                 "ordinary movement at or outside the level must retain the existing rejection"
             );
-            assert!(
-                ordinary
-                    .get_entity(ordinary_owner)
-                    .unwrap()
-                    .ai_controller()
-                    .unwrap()
-                    .couldnt_reachpoint
-            );
+            assert!(ordinary.ai_ctrl(ordinary_owner).couldnt_reachpoint);
         }
     }
 
@@ -675,12 +661,7 @@ mod suite {
             "a moving startup transition must restore the forecast that its action change reset"
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
+            engine.action_state_of(owner),
             ActionState::Waiting,
             "a nonterminal startup-transition tick must retain Waiting"
         );
@@ -698,12 +679,7 @@ mod suite {
 
         engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
+            engine.action_state_of(owner),
             ActionState::Waiting,
             "the transition remains nonterminal while its turning slowdown leaves the goal ahead"
         );
@@ -711,12 +687,7 @@ mod suite {
         engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
+            engine.action_state_of(owner),
             ActionState::MovingFast,
             "arrival changed InProgress to Terminated after motion processing, so the transition side effect must observe the final state"
         );
@@ -1822,13 +1793,7 @@ mod suite {
         panic!(
             "terminal seek transition did not finish: order={:?}, post_seek_present={}",
             engine.actor_order_type(owner),
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .post_seek_sequence
-                .is_some()
+            engine.actor(owner).post_seek_sequence.is_some()
         );
     }
 
@@ -1951,11 +1916,7 @@ mod suite {
         }
         assert_eq!(element.orders.len(), 3);
         assert_ne!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .position_map(),
+            engine.map_pos_of(owner),
             MapPoint::new(110.0, 100.0),
             "the first transition must loop before reaching its destination"
         );
@@ -2029,14 +1990,7 @@ mod suite {
 
         let actor = engine.actor(owner);
         assert_eq!(actor.wait_time, 25);
-        assert_eq!(
-            actor.last_seek_target_position,
-            engine
-                .get_entity(target)
-                .unwrap()
-                .element_data()
-                .position_map()
-        );
+        assert_eq!(actor.last_seek_target_position, engine.map_pos_of(target));
         assert_eq!(actor.action_state, ActionState::Moving);
         assert_ne!(
             engine.actor_order_type(owner),
@@ -2083,12 +2037,7 @@ mod suite {
             "seeking must observe the live in-range target before testing stale-route refresh"
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time,
+            engine.actor(owner).wait_time,
             0,
             "the suppressed refresh must not rearm the 25-frame timer"
         );

@@ -320,15 +320,7 @@ mod suite {
 
         engine.t_tick_actor_owner_envelopes(&assets);
 
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
-            ActionState::HoldingShield
-        );
+        assert_eq!(engine.action_state_of(owner), ActionState::HoldingShield);
     }
 
     #[test]
@@ -895,22 +887,12 @@ mod suite {
         engine.t_tick_actor_owner_envelopes(&assets_with_test_pc_profile());
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
+            engine.action_state_of(owner),
             ActionState::MovingSword,
             "the Human Execute ABORTED arm does not normalize a live sword-motion state"
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            engine.elem(owner).sprite.last_action,
             OrderType::StrafingLeftSword,
             "the regression drives the same terminal strafe family as Soldier 57"
         );
@@ -984,13 +966,7 @@ mod suite {
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .continuation
-                .motion_state,
+            engine.motion_state_of(owner),
             crate::sprite::MotionState::InProgress,
             "the later accepted actor instruction must overwrite execution's ABORTED result"
         );
@@ -1221,12 +1197,7 @@ mod suite {
         engine.t_tick_actor_owner_envelopes(&assets_with_test_pc_profile());
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            engine.elem(owner).sprite.last_action,
             OrderType::WalkingBackwardsSword,
             "opponent-facing uses a co-located opponent's literal zero vector for angle calculation, which resolves to PI"
         );

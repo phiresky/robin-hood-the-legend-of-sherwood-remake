@@ -232,11 +232,7 @@ impl SwordDamageProbe {
                 .get_entity(victim_id)
                 .and_then(test_human_life_points)
                 .expect("sword damage test victim remains human"),
-            victim_direction_after: engine
-                .get_entity(victim_id)
-                .expect("sword damage test victim remains present")
-                .element_data()
-                .direction(),
+            victim_direction_after: engine.direction_of(victim_id),
         };
         SWORD_DAMAGE_PROBE.with(|probe| probe.record(observation));
     }
@@ -3795,14 +3791,7 @@ mod net_publication_tests {
 
         engine.apply_net(&sim, &assets, victim);
 
-        assert!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .already_detectable_body
-        );
+        assert!(engine.human(victim).already_detectable_body);
         for owner in [victim, friend] {
             let list =
                 &engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize];
@@ -3814,12 +3803,7 @@ mod net_publication_tests {
             );
         }
         assert_eq!(
-            engine
-                .get_entity(friend)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .money_fight_enemies,
+            engine.enemy(friend).money_fight_enemies,
             vec![victim.index()]
         );
         // Once published, another announcement preserves the existing entries.

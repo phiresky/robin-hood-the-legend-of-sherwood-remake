@@ -326,14 +326,7 @@ fn hit_translation_defers_flight_facing_until_first_execute() {
         4,
         "takeoff preparation publishes its authored goal layer immediately"
     );
-    assert_ne!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .direction(),
-        5
-    );
+    assert_ne!(engine.direction_of(victim), 5);
 }
 
 #[test]
@@ -707,11 +700,7 @@ fn enemy_ai_hero_consumes_enemy_sword_strike_proposal() {
         "the authorized AI-controlled hero proposal must launch a real strike"
     );
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .current_outline,
+        engine.elem(attacker).current_outline,
         crate::element::OutlineColorName::Default,
         "attacking another AI-controlled hero must not use the player-warning hulk delay"
     );
@@ -934,12 +923,7 @@ fn completed_missed_sword_strike_adds_tiredness_once() {
     engine.tick_actor_owner_envelopes(sim, &assets);
 
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .tiredness,
+        engine.human(attacker).tiredness,
         7,
         "out-of-range strikes still cost tiredness when the active strike terminates"
     );
@@ -1079,12 +1063,7 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .tiredness,
+        engine.human(attacker).tiredness,
         11,
         "damage application is victim-count dependent and must not charge strike energy"
     );
@@ -1115,11 +1094,7 @@ fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
     engine.translate_shoulder_damage(&sim, &assets, victim, (sequence_id, 0));
 
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .expect("test victim must remain live")
-            .element_data()
-            .posture(),
+        engine.posture_of(victim),
         Posture::HelpingToClimb,
         "shoulder-damage translation only queues FallingBackUpright; execution start changes posture on the actor's next slot"
     );
@@ -1682,13 +1657,7 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
     );
     assert!(victim_entity.human_data().unwrap().opponents.is_empty());
     assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(attacker).opponents.is_empty(),
         "sword-damage translation's plain quit removes the reciprocal opponent"
     );
     assert_eq!(
@@ -1806,15 +1775,7 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
         vec![attacker],
         "NO_DAMAGE must not enter sword-damage translation's plain-quit path"
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![victim]
-    );
+    assert_eq!(engine.human(attacker).opponents, vec![victim]);
     assert!(
         engine
             .orders
@@ -1900,15 +1861,7 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
         victim_entity.human_data().unwrap().opponents,
         vec![attacker]
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![victim]
-    );
+    assert_eq!(engine.human(attacker).opponents, vec![victim]);
     let damage = engine
         .orders
         .sequence_manager
@@ -2235,15 +2188,7 @@ fn lethal_push_runs_npc_kill_cascade_before_owning_the_fall() {
     assert_eq!(victim_ai.current_music_alert_status, AlertLevel::Green);
     assert_eq!(victim_ai.view_alert_status, AlertLevel::Green);
     assert!(victim_entity.human_data().unwrap().opponents.is_empty());
-    assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .is_empty()
-    );
+    assert!(engine.human(attacker).opponents.is_empty());
     let observer_npc = engine.npc(observer);
     let remaining_friends = &observer_npc.detectable_lists[DetectableType::Friend as usize];
     assert_eq!(
@@ -2351,15 +2296,7 @@ fn surviving_push_does_not_run_npc_kill_cascade() {
         victim_entity.human_data().unwrap().opponents,
         vec![attacker]
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![victim]
-    );
+    assert_eq!(engine.human(attacker).opponents, vec![victim]);
 }
 
 #[test]
@@ -2713,12 +2650,7 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
     );
     assert_eq!(engine.mission_domain.campaign.gang_indices, vec![0, 1]);
     assert!(
-        !engine
-            .get_entity(victim)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .trumpet_enabled,
+        !engine.pc(victim).trumpet_enabled,
         "an already-dead PC must not be offered another replacement"
     );
 }
@@ -2802,15 +2734,7 @@ fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
         crate::sequence::SequenceState::Interrupted,
         "death cleanup must still discard unrelated queued owner work"
     );
-    assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .life_points,
-        0
-    );
+    assert_eq!(engine.pc(victim).life_points, 0);
     assert_ne!(
         engine
             .orders
@@ -2823,10 +2747,7 @@ fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
     assert_eq!(engine.actor_command(victim), Command::ReceiveSwordDamage);
     assert_eq!(
         engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
+            .actor(victim)
             .installed_order
             .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
         Some(crate::order::OrderType::DyingSword),
@@ -2876,13 +2797,7 @@ fn sword_damage_on_dying_pc_preserves_the_fresh_sprite_start() {
         crate::sequence::SequenceState::Terminated
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
+        engine.motion_state_of(victim),
         crate::sprite::MotionState::Start,
         "sword-damage translation changes the selection before actor instruction can stamp InProgress"
     );
@@ -2945,7 +2860,7 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
             .get_element(sequence, 0)
             .expect("grounded sword damage remains registered");
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture(),
+            engine.posture_of(victim),
             Posture::Dead,
             "sword-damage translation must publish Dead for lethal {initial_posture:?} non-riders"
         );
@@ -3015,7 +2930,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
         );
 
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture(),
+            engine.posture_of(victim),
             Posture::Lying,
             "living grounded actors and lethal riders bypass the Dead rewrite"
         );
@@ -3486,13 +3401,7 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
     );
 
     assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .contains(&opponent),
+        engine.human(owner).opponents.contains(&opponent),
         "control admission must succeed"
     );
     assert_eq!(
@@ -3566,15 +3475,7 @@ fn uncrowded_cross_sector_swordfight_enters_without_a_jump_line() {
         element.current_order().unwrap().order_type,
         crate::order::OrderType::TransitionRaisingSword
     );
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .contains(&opponent),
-    );
+    assert!(engine.human(owner).opponents.contains(&opponent),);
 }
 
 #[test]
@@ -3712,22 +3613,12 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
     engine.direct_enter_swordfight(&sim, &LevelAssets::default(), victim, attacker);
 
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
+        engine.human(victim).opponents,
         vec![attacker, existing_opponent],
         "opponent insertion installs the new attacker as principal"
     );
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
+        engine.human(attacker).opponents,
         vec![victim],
         "direct entry synchronously installs the reciprocal relationship"
     );
@@ -3810,24 +3701,8 @@ fn direct_enter_swordfight_accepts_typed_slot_zero_opponent() {
     assert_eq!(opponent.index(), 0, "control requires typed slot zero");
 
     assert!(engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,));
-    assert_eq!(
-        engine
-            .get_entity(initiator)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![opponent]
-    );
-    assert_eq!(
-        engine
-            .get_entity(opponent)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![initiator]
-    );
+    assert_eq!(engine.human(initiator).opponents, vec![opponent]);
+    assert_eq!(engine.human(opponent).opponents, vec![initiator]);
 }
 
 #[test]
@@ -3852,24 +3727,8 @@ fn direct_enter_swordfight_does_not_reject_same_camp_soldiers() {
         crate::element::Camp::Lacklandists
     );
     assert!(engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,));
-    assert_eq!(
-        engine
-            .get_entity(initiator)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![opponent]
-    );
-    assert_eq!(
-        engine
-            .get_entity(opponent)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![initiator]
-    );
+    assert_eq!(engine.human(initiator).opponents, vec![opponent]);
+    assert_eq!(engine.human(opponent).opponents, vec![initiator]);
 }
 
 #[test]
@@ -4026,12 +3885,7 @@ fn quit_swordfight_resets_moving_survivor_smalltalk_initiative() {
     assert!(survivor_human.smalltalk_initiative);
     assert!(survivor_human.received_smalltalk_initiative);
     assert!(
-        !engine
-            .get_entity(principal)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative,
+        !engine.human(principal).smalltalk_initiative,
         "mutual principal must lose initiative even while the survivor is Moving"
     );
 }

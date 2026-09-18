@@ -218,13 +218,7 @@ fn goto_post_registers_facing_before_leaving_attentive_mode() {
     ai.will_be_attentive = true;
     event(&mut engine, &assets, owner, StimulusType::EventReachPoint);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .enemy_ai()
-            .unwrap()
-            .base
-            .current_substate,
+        engine.enemy(owner).base.current_substate,
         Substate::DefaultGotoPostTurn
     );
     let commands = commands(&engine, owner);
@@ -411,15 +405,7 @@ fn group_arrival_compares_raw_direction_before_registering_a_turn() {
                 matches!(elements[0].get_property(crate::sequence::Field::Direction), Some(crate::sequence::FieldValue::Integer(d)) if *d == u32::from(gather))
             );
         } else {
-            assert!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .enemy_ai()
-                    .unwrap()
-                    .base
-                    .already_turned
-            );
+            assert!(engine.enemy(owner).base.already_turned);
         }
     }
 }
@@ -455,15 +441,7 @@ fn apple_interrupt_rule_uses_actual_combat_relationship() {
             assert_eq!(ai.base.when_does_timer_ring, 160);
             assert!(commands(&engine, owner).contains(&Command::QuitSwordfight));
         } else {
-            assert!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .contains(&target)
-            );
+            assert!(engine.human(owner).opponents.contains(&target));
         }
     }
 }
@@ -484,15 +462,7 @@ fn engaged_hit_ignores_existing_opponent_and_friendly_attacker() {
             owner,
             &Stimulus::with_human(StimulusType::EventGotHit, attacker.index()),
         );
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![target]
-        );
+        assert_eq!(engine.human(owner).opponents, vec![target]);
         assert!(!commands(&engine, owner).contains(&Command::EnterSwordfight));
     }
 }
@@ -570,12 +540,7 @@ fn body_arrival_uses_live_distance_and_does_not_turn_toward_a_nearby_corpse() {
         }
         if dead && distance > 60.0 {
             assert!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .detectable_lists[crate::element::DetectableType::Body as usize]
+                engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize]
                     .iter()
                     .any(|d| d.element == Some(body))
             );
@@ -679,12 +644,7 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
         );
         for id in [owner, observer] {
             assert!(
-                engine
-                    .get_entity(id)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .detectable_lists[crate::element::DetectableType::Beggar as usize]
+                engine.npc(id).detectable_lists[crate::element::DetectableType::Beggar as usize]
                     .iter()
                     .all(|d| d.element != Some(beggar))
             );
@@ -735,14 +695,7 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
             crate::sim_rng::SimulationContext::with_seed_and_config(1, engine.control.sim_config);
         engine.execute_ai_ale_reaction(&sim, &assets, owner);
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .base
-                .object_of_desire
-                == Some(AiEntityHandle::new(bottle.index())),
+            engine.enemy(owner).base.object_of_desire == Some(AiEntityHandle::new(bottle.index())),
             take
         );
     }
@@ -780,12 +733,7 @@ fn check_instructed_soldier_body_registration(already_registered: bool) {
     assert_eq!(ai.base.alert_soldiers_point, position);
     assert_eq!(ai.officers_position, position);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .detectable_lists[crate::element::DetectableType::Body as usize]
+        engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize]
             .iter()
             .filter(|d| d.element == Some(body))
             .count(),
@@ -797,16 +745,7 @@ fn check_instructed_soldier_body_registration(already_registered: bool) {
 fn hiding_timer_returns_to_duty_inline() {
     let (mut engine, assets, owner, _) = fixture(Substate::FleeingHiding);
     event(&mut engine, &assets, owner, StimulusType::EventTimer);
-    assert_ne!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .enemy_ai()
-            .unwrap()
-            .base
-            .current_state,
-        AiState::Fleeing
-    );
+    assert_ne!(engine.enemy(owner).base.current_state, AiState::Fleeing);
 }
 
 #[test]
@@ -869,13 +808,5 @@ fn engaged_hit_adds_a_new_hostile_attacker_inline() {
         owner,
         &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
     );
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .contains(&target)
-    );
+    assert!(engine.human(owner).opponents.contains(&target));
 }

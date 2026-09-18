@@ -130,15 +130,7 @@ mod tests {
         );
 
         assert!(enemy(&engine, owner).base.couldnt_reachpoint);
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .installed_order,
-            Some(installed)
-        );
+        assert_eq!(engine.actor(owner).installed_order, Some(installed));
     }
 
     #[test]

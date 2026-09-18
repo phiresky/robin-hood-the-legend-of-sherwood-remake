@@ -918,11 +918,7 @@ mod suite {
             "Original's nonzero animation-distance block refreshes the forecast with the zero goal increment"
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .position_map(),
+            engine.map_pos_of(owner),
             position,
             "the forecast refresh must not move an actor already at the transition goal"
         );

@@ -225,14 +225,7 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
             selected,
         );
         assert!(result.is_none());
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            before
-        );
+        assert_eq!(engine.map_pos_of(owner), before);
         assert_eq!(
             engine
                 .orders

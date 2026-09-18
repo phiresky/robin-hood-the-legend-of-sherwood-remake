@@ -182,15 +182,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
         assert_eq!(ai.base.stop_before_end_of_path_distance, 200);
         let moves = pending_moves(&engine, owner);
         if stops_move {
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .custom_values[0],
-                1
-            );
+            assert_eq!(engine.npc(owner).custom_values[0], 1);
             assert!(
                 moves.is_empty(),
                 "the callback must stop the already registered Observe route"

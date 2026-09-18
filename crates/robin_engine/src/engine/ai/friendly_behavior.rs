@@ -767,15 +767,7 @@ mod tests {
             assert!(ai.base.ai_log.iter().any(|line| line.line_type
                 == crate::ai::LogLineType::EventRefused
                 && line.info == refused));
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .eye_status,
-                eye
-            );
+            assert_eq!(engine.npc(owner).eye_status, eye);
         }
     }
 
@@ -832,23 +824,10 @@ mod tests {
             AiState::Default,
             Substate::DefaultOnPost,
         );
-        assert!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[Friend as usize]
-                .is_empty()
-        );
+        assert!(engine.npc(owner).detectable_lists[Friend as usize].is_empty());
         engine.execute_ai_append_detectable(owner, target, Friend);
         assert!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[Friend as usize]
+            engine.npc(owner).detectable_lists[Friend as usize]
                 .iter()
                 .any(|entry| entry.element == Some(target))
         );

@@ -623,25 +623,12 @@ fn reactive_counterstrike_registers_after_stop_callback_removes_final_principal(
             assert!(!observed.replace(true), "the selected parry completes once");
             assert!(card.from_halt);
             assert_eq!(
-                engine
-                    .get_entity(victim)
-                    .unwrap()
-                    .enemy_ai()
-                    .unwrap()
-                    .base
-                    .current_substate,
+                engine.enemy(victim).base.current_substate,
                 crate::ai::Substate::AttackingSwordfightSpecialStrike,
                 "the state change precedes the Stop callback",
             );
             assert_eq!(
-                engine
-                    .get_entity(victim)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .first()
-                    .copied(),
+                engine.human(victim).opponents.first().copied(),
                 Some(attacker),
                 "the principal must still exist when the real callback begins",
             );
@@ -649,24 +636,8 @@ fn reactive_counterstrike_registers_after_stop_callback_removes_final_principal(
             // stack, before its caller constructs the counterstrike.
             let sim = engine.control.simulation_context();
             engine.quit_swordfight(&sim, &callback_assets, victim);
-            assert!(
-                engine
-                    .get_entity(victim)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty()
-            );
-            assert!(
-                engine
-                    .get_entity(attacker)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty()
-            );
+            assert!(engine.human(victim).opponents.is_empty());
+            assert!(engine.human(attacker).opponents.is_empty());
         },
         || {
             engine.with_simulation_context(|engine, sim| {
@@ -900,24 +871,12 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
     };
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .current_angle,
+        engine.human(attacker).sword_sweep.current_angle,
         std::f32::consts::PI
     );
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .current_angle,
+        engine.human(attacker).sword_sweep.current_angle,
         std::f32::consts::TAU
     );
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
@@ -1129,16 +1088,7 @@ fn interrupted_push_victims_survive_replacement_lateral_start() {
 
     engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
 
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
-        vec![victim]
-    );
+    assert_eq!(engine.human(attacker).sword_sweep.victims, vec![victim]);
 }
 
 #[test]
@@ -1379,21 +1329,12 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
     // retained victim FIFO belongs to the interrupted H strike.
     engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_motion_state,
+        engine.elem(attacker).sprite.last_motion_state,
         Some(crate::sprite::MotionState::Start),
         "the first selected-owner tick must exercise G's START warning boundary"
     );
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(attacker),
         0,
         "replacement G must turn right while the stale H victim remains on the left"
     );
@@ -1411,12 +1352,7 @@ fn replacement_half_circle_start_rebases_retained_angles_before_effect() {
 
     engine.tick_selected_melee_owner(&sim, &assets, attacker, selected);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_motion_state,
+        engine.elem(attacker).sprite.last_motion_state,
         Some(crate::sprite::MotionState::InProgress),
         "the second selected-owner tick must exercise retained G geometry before DONE"
     );
@@ -1530,11 +1466,7 @@ fn saved_empty_true_circle_sweep_rotates_from_persistent_angles() {
 
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(attacker),
         3,
         "true-circle sword-strike execution presents its saved angle even with no victims"
     );
@@ -1603,16 +1535,7 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
         vec![victim],
         crate::player_command::GestureQuality::PERFECT,
     );
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
-        vec![victim]
-    );
+    assert_eq!(engine.human(attacker).sword_sweep.victims, vec![victim]);
 
     engine.complete_melee_strike(
         &crate::sim_rng::test_context(),
@@ -1636,16 +1559,7 @@ fn terminated_lateral_sweep_cannot_hit_again_in_a_fresh_strike() {
 
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, true);
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
-    assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims
-            .is_empty()
-    );
+    assert!(engine.human(attacker).sword_sweep.victims.is_empty());
     assert!(
         !engine
             .orders
@@ -1762,11 +1676,7 @@ fn push_replacement_executes_without_advancing_retained_circle_sweep() {
     engine.tick_selected_melee_owner(sim, &assets, attacker, selected);
 
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(attacker),
         8,
         "PushAside must not present the retained F sweep's terminal direction"
     );
@@ -1936,24 +1846,11 @@ fn ordinary_cutting_strike_still_informs_soldier_of_good_strike() {
         entry.line_type == LogLineType::Event && entry.info == StimulusType::EventGoodStrike as u16
     }));
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
+        engine.human(attacker).opponents,
         vec![victim],
         "a conscious surviving victim must retain the swordfight"
     );
-    assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![attacker]
-    );
+    assert_eq!(engine.human(victim).opponents, vec![attacker]);
     let damage = engine
         .orders
         .sequence_manager
@@ -2111,13 +2008,7 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
         "the animated translation removes the victim's opponent"
     );
     assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(attacker).opponents.is_empty(),
         "the animated translation removes the reciprocal opponent"
     );
     assert_eq!(
@@ -2267,11 +2158,7 @@ fn parried_true_circle_still_queues_push_fall() {
     );
     engine.tick_actor_animation_for(&sim, &assets, victim);
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(victim),
         victim_position_before,
         "prepared push flight must wait behind the still-selected parry order"
     );
@@ -2325,7 +2212,7 @@ fn parried_true_circle_still_queues_push_fall() {
         OrderType::FallingPushedWithSword,
     );
     assert_eq!(
-        engine.get_entity(victim).unwrap().element_data().material(),
+        engine.elem(victim).material(),
         material_before_takeoff,
         "takeoff preparation installs only the goal obstacle/plane, not its material"
     );
@@ -2370,11 +2257,7 @@ fn parried_true_circle_still_queues_push_fall() {
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
     engine.finish_combat_flight(&sim, &assets, victim, motion);
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(victim),
         crate::coordinates::MapPoint::new(
             victim_position_before.x + 2.0 * accepted_increment,
             victim_position_before.y
@@ -2587,17 +2470,12 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
         0,
     );
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(pc),
         action_state_before_dispatch,
         "Instruct must not apply the Execute MotionState::Start WaitingSword transition"
     );
     assert_eq!(
-        engine.get_entity(pc).unwrap().element_data().direction(),
+        engine.direction_of(pc),
         direction_before_dispatch,
         "strike translation must leave facing to the following Execute call"
     );
@@ -2612,22 +2490,12 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
+        engine.human(pc).opponents,
         vec![clicked, current],
         "thrust-A against an existing secondary opponent must make it principal"
     );
     assert_eq!(
-        engine
-            .get_entity(clicked)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
+        engine.human(clicked).opponents,
         vec![pc, current],
         "the attacker is also promoted as the target's principal opponent"
     );
@@ -2704,13 +2572,7 @@ fn reconsider_direct_entry_does_not_prepare_or_stop_opponent() {
         "direct swordfight entry must not run the preparation's stop action"
     );
     assert_eq!(
-        engine
-            .get_entity(opponent)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
+        engine.motion_state_of(opponent),
         crate::sprite::MotionState::InProgress
     );
     assert!(
@@ -2947,15 +2809,7 @@ fn apply_concussion_uses_pc_profile_wake_up() {
     // PC with profile_index 0 — `make_pc` defaults to that.
     let pc_id = engine.add_test_entity(make_pc(wp(0.0, 0.0), None));
     // Sanity: the helper does default to index 0.
-    assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .profile_index,
-        CharacterProfileIdx(0)
-    );
+    assert_eq!(engine.pc(pc_id).profile_index, CharacterProfileIdx(0));
 
     // Build a `LevelAssets` whose `ProfileManager` has a single PC
     // profile at index 0 with a distinctive `wake_up`.
@@ -3064,12 +2918,7 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
         element_index,
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .last_motion_was_step_back_in_combat,
+        !engine.human(owner).last_motion_was_step_back_in_combat,
         "requesting and then aborting a step-back before RHMOTION_TERMINATED must not publish completed-step history"
     );
 }

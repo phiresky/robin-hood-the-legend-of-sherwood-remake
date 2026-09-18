@@ -3783,27 +3783,13 @@ mod tests {
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position_map(), carried_position);
         assert!(target.human_data().unwrap().small_repulsive_radius);
-        assert!(
-            engine
-                .get_entity(neighbour_id)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .small_repulsive_radius
-        );
+        assert!(engine.human(neighbour_id).small_repulsive_radius);
 
         engine
             .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must retain its delayed destination");
-        assert_eq!(
-            engine
-                .get_entity(target_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            drop_position
-        );
+        assert_eq!(engine.map_pos_of(target_id), drop_position);
     }
 
     #[test]

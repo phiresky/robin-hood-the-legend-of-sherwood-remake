@@ -451,14 +451,7 @@ fn saved_human_sweep_executes_once_for_the_live_strike_order() {
 
     engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
     assert!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims
-            .is_empty(),
+        engine.human(attacker).sword_sweep.victims.is_empty(),
         "executing a saved sweep consumes its persistent victim list"
     );
     let damage_count = |engine: &EngineInner| {
@@ -617,21 +610,11 @@ fn lateral_done_processes_victims_in_original_actor_order_before_good_strike() {
     }
 
     assert!(
-        engine
-            .get_entity(knockout)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .unconscious,
+        engine.human(knockout).unconscious,
         "first victim must exercise the synchronous knockout/quit arm"
     );
     assert!(
-        !engine
-            .get_entity(survivor)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .unconscious,
+        !engine.human(survivor).unconscious,
         "later cutting victim must remain a genuine surviving control"
     );
     let ai = engine.ai_ctrl(attacker);
@@ -740,13 +723,7 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
     engine.execute_ai_rebalance_swordfight(&sim, &LevelAssets::default(), owner, replacement);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .first(),
+        engine.human(owner).opponents.first(),
         Some(&replacement),
         "direct swordfight entry must promote the replacement opponent"
     );
@@ -791,12 +768,7 @@ fn enabling_temp_actions_restores_matching_slot_after_targeted_selection_collaps
     assert_eq!(pc_data.current_action, Action::Purse);
     assert_eq!(pc_data.disabled_actions_temp, vec![false; 3]);
     assert_eq!(
-        engine
-            .get_entity(companion)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(companion).current_action,
         Action::Bow,
         "the messenger removes the companion before fanning out the targeted restored action"
     );

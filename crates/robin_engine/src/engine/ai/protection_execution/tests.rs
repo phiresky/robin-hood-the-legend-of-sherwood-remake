@@ -12,9 +12,7 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![1]);
-    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![
-        engine.get_entity(target).unwrap().element_data().sector(),
-    ]);
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![engine.sector_of(target)]);
     engine
         .world
         .entities

@@ -912,14 +912,7 @@ mod tests {
             engine.live_ai_position(target).map_point(),
             MapPoint::new(500.0, 500.0)
         );
-        assert_eq!(
-            engine
-                .get_entity(target)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(70.0, 80.0)
-        );
+        assert_eq!(engine.map_pos_of(target), MapPoint::new(70.0, 80.0));
         engine.execute_ai_reconsider_enemy_approach(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1111,13 +1104,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .base
-                .current_substate,
+            engine.enemy(owner).base.current_substate,
             Substate::AttackingSwordfight
         );
         assert!(
@@ -1272,13 +1259,7 @@ mod tests {
         );
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(
-            engine
-                .get_entity(friend)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .base
-                .primary_target,
+            engine.enemy(friend).base.primary_target,
             Some(AiEntityHandle::new(target.index()))
         );
         let pending = engine.orders.sequence_manager.deferred_elements_to_go();

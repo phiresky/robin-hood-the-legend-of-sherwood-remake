@@ -56,12 +56,7 @@ mod tests {
                 });
                 let ai = engine.ai_ctrl(owner);
                 assert_eq!(
-                    engine
-                        .get_entity(owner)
-                        .unwrap()
-                        .enemy_ai()
-                        .unwrap()
-                        .fleeing_seen_enemy_counter,
+                    engine.enemy(owner).fleeing_seen_enemy_counter,
                     if stimulus == StimulusType::EventReachPoint {
                         0
                     } else {

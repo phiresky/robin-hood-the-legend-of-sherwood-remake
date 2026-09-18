@@ -2944,10 +2944,7 @@ mod tests {
             SectorHandle::new(4).and_then(SectorHandle::arena_index),
         );
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().position(),
-            WorldPoint3D::new(8.0, 18.0, 0.0)
-        );
+        assert_eq!(engine.pos_of(victim), WorldPoint3D::new(8.0, 18.0, 0.0));
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Terminated);
         let entity = engine.ent(victim);
         assert_eq!(
@@ -3345,33 +3342,15 @@ mod tests {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.perform_combat_flight_position(earlier, crate::sprite::MotionState::InProgress);
 
+        assert_eq!(engine.map_pos_of(earlier), MapPoint::new(15.0, 20.0));
         assert_eq!(
-            engine
-                .get_entity(earlier)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
+            engine.map_pos_of(later),
             MapPoint::new(10.0, 20.0),
             "a later actor must retain its pre-update position"
         );
 
         engine.perform_combat_flight_position(later, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(later), MapPoint::new(15.0, 20.0));
         let flights =
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
@@ -3493,13 +3472,7 @@ mod tests {
 
         for fighter in [victim, opponent] {
             assert!(
-                engine
-                    .get_entity(fighter)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty(),
+                engine.human(fighter).opponents.is_empty(),
                 "knockout must synchronously remove both reciprocal relationships"
             );
         }
@@ -3541,32 +3514,9 @@ mod tests {
             crate::sprite::MotionState::InProgress,
         );
 
-        assert!(
-            !engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .unconscious
-        );
-        assert_eq!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![opponent]
-        );
-        assert_eq!(
-            engine
-                .get_entity(opponent)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![victim]
-        );
+        assert!(!engine.human(victim).unconscious);
+        assert_eq!(engine.human(victim).opponents, vec![opponent]);
+        assert_eq!(engine.human(opponent).opponents, vec![victim]);
     }
 
     #[test]
@@ -3584,23 +3534,9 @@ mod tests {
         let motion = engine
             .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         assert_eq!(motion, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(15.0, 20.0));
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(14.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(14.0, 20.0));
     }
 
     #[test]

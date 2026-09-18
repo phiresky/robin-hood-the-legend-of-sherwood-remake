@@ -337,10 +337,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     );
     assert_eq!(
         engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
+            .actor(victim)
             .installed_order
             .as_ref()
             .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),
@@ -405,7 +402,7 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
         );
         assert!(element.orders.is_empty());
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture(),
+            engine.posture_of(victim),
             Posture::Dead,
             "arrow-damage translation changes dead {initial_posture:?} non-riders to Dead"
         );
@@ -454,7 +451,7 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         "PC arrow-damage translation must dispatch shoulder-damage translation"
     );
     assert_ne!(
-        engine.get_entity(victim).unwrap().element_data().posture(),
+        engine.posture_of(victim),
         Posture::Dead,
         "PC OnShoulders must not enter Human's dead-grounded fallthrough"
     );
