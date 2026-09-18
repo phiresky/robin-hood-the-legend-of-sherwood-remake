@@ -29,19 +29,12 @@ def snapshot_executable(source, target):
     return expected
 
 
-def client_helper_path(source):
-    return source.with_name("robin-replay-admission.exe" if source.suffix == ".exe" else "robin-replay-admission")
-
-
-def observe_client_sources(source):
-    """Diagnostic build-tree observations, never authority for a later launch."""
-    result = {}
-    for name, path in (("game", source), ("admission_helper", client_helper_path(source))):
-        try:
-            result[name] = {"path": str(path), "sha256": digest(path)}
-        except OSError as error:
-            result[name] = {"path": str(path), "error_type": type(error).__name__, "error": str(error)}
-    return result
+def observe_client_source(source):
+    """Diagnostic build-tree observation, never authority for a later launch."""
+    try:
+        return {"path": str(source), "sha256": digest(source)}
+    except OSError as error:
+        return {"path": str(source), "error_type": type(error).__name__, "error": str(error)}
 
 
 def snapshot_client(source, evidence, summary):
@@ -51,21 +44,12 @@ def snapshot_client(source, evidence, summary):
     summary["binary_source"] = str(source)
     summary["binary"] = str(binary)
     summary["binary_sha256"] = snapshot_executable(source, binary)
-    # The bounded replay decoder is installed beside the game, not found on PATH.
-    helper = client_helper_path(source)
-    if helper.is_file():
-        retained = destination / helper.name
-        summary["admission_helper"] = str(retained)
-        summary["admission_helper_sha256"] = snapshot_executable(helper, retained)
     return binary
 
 
 def verify_client(binary, summary):
     if digest(binary) != summary["binary_sha256"]:
         raise RuntimeError("retained game executable changed before launch")
-    if "admission_helper" in summary:
-        if digest(summary["admission_helper"]) != summary["admission_helper_sha256"]:
-            raise RuntimeError("retained replay admission executable changed before launch")
 
 
 def stop_process_group(child):

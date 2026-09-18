@@ -92,7 +92,6 @@ webbrowser = "1"
 # platform uses robin_spellforge's one pure-Rust VM.
 robin_lua = { workspace = true, optional = true }
 mlua = { workspace = true, optional = true }
-robin_replay_format = { workspace = true, features = ["native-admission"] }
 # OS data directories are standard for every native build.
 dirs = "7"
 rayon = { version = "1", optional = true }
@@ -254,7 +253,6 @@ robin_engine = { workspace = true, features = ["test-helpers", "test-support"] }
 
 [build-dependencies]
 cc = "1"
-sha2.workspace = true
 
 [features]
 # Bare builds are intentionally dependency-minimal. Opt into the normal native

@@ -237,7 +237,6 @@ jobs:
           # TODO: Bundle FFmpeg DLLs on Windows, then switch `release` to
           # `full` so packaged builds also include video and RetroArch presets.
           cargo build --locked --release --no-default-features --features release -p robin_rs --bin robin --target ${{ matrix.target }}
-          cargo build --locked --release -p robin_replay_format --features native-admission --bin robin-replay-admission --target ${{ matrix.target }}
           cargo build --locked --release -p robin_modding_tools --bins --target ${{ matrix.target }}
 
       - name: Stage package input

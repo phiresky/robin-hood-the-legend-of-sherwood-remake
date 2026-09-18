@@ -65,16 +65,12 @@ and will be installed automatically by rustup.
     bash scripts/build-native.sh               # debug
     bash scripts/build-native.sh --release
 
-Native compact replay loading requires the matching `robin-replay-admission`
-helper beside the game executable (`.exe` on Windows). The build script builds
-both in the same target/profile, and release packages ship both. Cargo test and
-example executables also discover the helper in their profile directory.
-Building only `robin` does not build dependency binaries: build the helper with
-`cargo build -p robin_replay_format --features native-admission --bin robin-replay-admission`
-using the same profile/target. Missing or incompatible helpers produce an error;
-there is no PATH search or uncontained fallback. Native admission retains its
-384 MiB ceiling and currently requires Unix containment; unsupported platforms
-continue to reject public compact admission.
+Native compact replay loading (`--replay <path>` and the loopback-only
+`load-replay` RPC route) decodes in-process under the bounded decoder: input
+size, decompressed size, zstd window and collection/string limits all apply.
+Those entry points only ever read the player's own files, so a hostile replay
+can at worst spend that player's own bounded memory. The browser build loads
+other players' replays and validates them in a memory-capped Web Worker first.
 
 ### Native release packages
 

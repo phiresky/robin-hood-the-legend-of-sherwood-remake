@@ -325,7 +325,6 @@ test('normal release packages contain every modding binary on both platforms', a
   const stage = fileURLToPath(new URL('./stage_package_input.sh', import.meta.url));
   const binaries = (await readdir(new URL('../../crates/robin_modding_tools/src/bin/', import.meta.url)))
     .filter(name => name.endsWith('.rs')).map(name => name.slice(0, -3));
-  binaries.push('robin-replay-admission');
   for (const runtime of ['win-x64', 'linux-x64']) {
     const root = await mkdtemp(join(tmpdir(), 'modding-package-'));
     t.after(() => rm(root, { recursive: true, force: true }));

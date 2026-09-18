@@ -11,8 +11,6 @@ use crate::leaderboard_http::{
 use crate::leaderboard_preferences::{
     LeaderboardApiBaseUrl, LeaderboardPreferences, LeaderboardPreferencesError,
 };
-#[cfg(test)]
-use robin_run_protocol::ReplayArtifactV1;
 use robin_run_protocol::{
     Digest32, LeaderboardMetadataV2, LeaderboardPageV2, LeaderboardQueryV2,
     RANKED_REPLAY_MEDIA_TYPE_V1, SignedSubmissionOwnerStatusRequestV2, SignedSubmissionV3,
@@ -41,9 +39,6 @@ pub enum LeaderboardServiceError {
     BoardCursorMismatch,
     #[error("signed replay artifact does not match the exact bytes selected for upload")]
     ArtifactMismatch,
-    #[error("leaderboard artifact response has no Content-Type header")]
-    #[cfg(test)]
-    MissingContentType,
     #[error("replay is not the canonical current compact-bitcode artifact: {0}")]
     InvalidCompactReplay(String),
     #[error("leaderboard success response is not JSON (Content-Type was {found:?})")]
@@ -202,55 +197,6 @@ pub fn decode_board(
     Ok(page)
 }
 
-#[cfg(test)]
-#[derive(Clone)]
-pub struct CanonicalReplayDownload {
-    pub bytes: Arc<[u8]>,
-    pub engine_hash: String,
-}
-
-#[cfg(test)]
-impl std::fmt::Debug for CanonicalReplayDownload {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("CanonicalReplayDownload")
-            .field("byte_length", &self.bytes.len())
-            .field("engine_hash", &self.engine_hash)
-            .finish()
-    }
-}
-
-// Preserve the exact artifact-boundary regression harness independently of
-// the retired, unwired replay-download UI flow.
-#[cfg(test)]
-fn decode_replay_download(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected: &ReplayArtifactV1,
-) -> Result<CanonicalReplayDownload, LeaderboardServiceError> {
-    expected.validate().map_err(invalid_protocol)?;
-    let response = result?;
-    if !(200..300).contains(&response.status) {
-        return Err(http_status_error(response));
-    }
-    let media_type = response
-        .content_type
-        .as_deref()
-        .map(base_media_type)
-        .ok_or(LeaderboardServiceError::MissingContentType)?;
-    if !media_type.eq_ignore_ascii_case(RANKED_REPLAY_MEDIA_TYPE_V1)
-        || expected.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
-        || u64::try_from(response.body.len()).ok() != Some(expected.artifact.byte_length)
-        || Digest32::digest_bytes(&response.body) != expected.artifact.sha256
-    {
-        return Err(LeaderboardServiceError::ArtifactMismatch);
-    }
-    let engine_hash = validate_canonical_replay_bytes(&response.body)?;
-    Ok(CanonicalReplayDownload {
-        bytes: response.body.into(),
-        engine_hash,
-    })
-}
-
 pub fn decode_submission_accepted(
     result: Result<HttpResponse, HttpTransportError>,
 ) -> Result<SubmissionAcceptedV1, LeaderboardServiceError> {
@@ -364,7 +310,7 @@ fn invalid_protocol(error: impl std::fmt::Display) -> LeaderboardServiceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leaderboard::test_fixtures::{MISSION_ID, single_frame_replay};
+    use crate::leaderboard::test_fixtures::MISSION_ID;
 
     fn response(status: u16, media_type: &str, body: Vec<u8>) -> HttpResponse {
         HttpResponse {
@@ -372,54 +318,6 @@ mod tests {
             content_type: Some(media_type.to_owned()),
             body,
         }
-    }
-
-    fn compact_fixture() -> Vec<u8> {
-        let replay =
-            single_frame_replay(bitcode::encode(&robin_engine::campaign::Campaign::default()));
-        robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
-            .unwrap()
-    }
-
-    fn artifact(bytes: &[u8]) -> ReplayArtifactV1 {
-        ReplayArtifactV1 {
-            artifact: robin_run_protocol::ArtifactRefV1 {
-                sha256: Digest32::digest_bytes(bytes),
-                byte_length: bytes.len() as u64,
-                media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
-            },
-            replay_schema_version: robin_run_protocol::CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
-        }
-    }
-
-    #[test]
-    fn replay_download_requires_mime_length_digest_and_canonical_decode() {
-        let bytes = compact_fixture();
-        let expected = artifact(&bytes);
-        let decoded = decode_replay_download(
-            Ok(response(200, RANKED_REPLAY_MEDIA_TYPE_V1, bytes.clone())),
-            &expected,
-        )
-        .unwrap();
-        assert_eq!(decoded.bytes.as_ref(), bytes);
-
-        assert!(matches!(
-            decode_replay_download(
-                Ok(response(200, "application/json", compact_fixture())),
-                &expected
-            ),
-            Err(LeaderboardServiceError::ArtifactMismatch)
-        ));
-        let mut corrupt = compact_fixture();
-        corrupt.push(b' ');
-        let corrupt_expected = artifact(&corrupt);
-        assert!(matches!(
-            decode_replay_download(
-                Ok(response(200, RANKED_REPLAY_MEDIA_TYPE_V1, corrupt)),
-                &corrupt_expected
-            ),
-            Err(LeaderboardServiceError::InvalidCompactReplay(_))
-        ));
     }
 
     #[test]

@@ -7,21 +7,6 @@ publish.workspace = true
 [lib]
 name = "robin_replay_format"
 
-[[bin]]
-name = "robin-replay-admission"
-path = "src/bin/replay_admission.rs"
-required-features = ["native-admission"]
-
-[features]
-native-admission = ["dep:robin_spellforge", "dep:libc", "dep:sha2", "dep:hex", "dep:serde_json"]
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-robin_spellforge = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
-hex = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-
 [dependencies]
 bitcode.workspace = true
 robin_engine.workspace = true
@@ -29,12 +14,8 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 zstd.workspace = true
 
-[build-dependencies]
-sha2.workspace = true
-
 [dev-dependencies]
 serde_json.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

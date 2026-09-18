@@ -49,15 +49,7 @@ impl RpcError {
             ReplayLoadError::Compact(error) => Self::replay_format(context, error),
             ReplayLoadError::Io(_) => Self::internal(message),
             #[cfg(not(target_arch = "wasm32"))]
-            ReplayLoadError::LocalJsonl(_) | ReplayLoadError::AdmissionRejected(_) => {
-                Self::invalid_request(message)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            ReplayLoadError::ResourceLimit { .. } => Self::capacity(message),
-            #[cfg(not(target_arch = "wasm32"))]
-            ReplayLoadError::ContainmentUnavailable(_) => Self::unavailable_capability(message),
-            #[cfg(not(target_arch = "wasm32"))]
-            ReplayLoadError::WorkerProtocol(_) => Self::internal(message),
+            ReplayLoadError::LocalJsonl(_) => Self::invalid_request(message),
             #[cfg(target_arch = "wasm32")]
             ReplayLoadError::BrowserWorkerValidationRequired
             | ReplayLoadError::BrowserCompactOnly => Self::invalid_request(message),
@@ -125,38 +117,6 @@ mod tests {
             .kind,
             RpcErrorKind::Internal
         );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn isolated_replay_failures_keep_capacity_capability_and_internal_categories() {
-        use crate::replay_format::ReplayLoadError;
-        for (error, kind) in [
-            (
-                ReplayLoadError::ResourceLimit {
-                    stage: "memory",
-                    detail: "bounded".into(),
-                },
-                RpcErrorKind::Capacity,
-            ),
-            (
-                ReplayLoadError::ContainmentUnavailable("sandbox".into()),
-                RpcErrorKind::UnavailableCapability,
-            ),
-            (
-                ReplayLoadError::WorkerProtocol("bad response".into()),
-                RpcErrorKind::Internal,
-            ),
-            (
-                ReplayLoadError::AdmissionRejected("invalid artifact".into()),
-                RpcErrorKind::InvalidRequest,
-            ),
-        ] {
-            let text = format!("decode compact replay: {error}");
-            let error = RpcError::replay_load("decode compact replay", error);
-            assert_eq!(error.kind, kind);
-            assert_eq!(error.message, text);
-        }
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
