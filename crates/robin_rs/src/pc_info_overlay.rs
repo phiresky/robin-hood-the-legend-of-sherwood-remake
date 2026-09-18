@@ -7,7 +7,7 @@
 //! background is used instead of the huge one.  The window is anchored to
 //! the mouse with a fixed `(+25, +10)` offset.
 //!
-//! This module is a pure state model alongside `portrait_bar.rs` /
+//! This module is a pure state model alongside
 //! `ui_screens.rs`: it owns no draw calls itself; the renderer reads
 //! [`PcInfoOverlay::visible`], [`PcInfoOverlay::position`], and the derived
 //! pip counts each frame.
