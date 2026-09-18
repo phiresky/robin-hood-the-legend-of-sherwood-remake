@@ -328,162 +328,99 @@ fn trace_actor_order(
 
 #[test]
 fn legacy_blocked_box_reset_requires_perform_motion_execute_arm() {
+    use robin_engine::order::OrderType;
+    use robin_engine::sprite::MotionState::{InProgress, Start};
     let soldier = EntityId::new(122, robin_engine::element::EntityIdKind::Soldier);
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::TransitionWaitingUprightBoredWaitingUpright,
-            true,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright,
-            false,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::Start,
-            10,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            11,
-        ),
-        soldier,
-        10,
-        true,
-        None,
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            10,
-        ),
-        soldier,
-        10,
-        true,
-        None,
-        None,
-        None,
-    ));
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            10,
-        ),
-        soldier,
-        10,
-        true,
-        Some(10),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::WalkingUpright,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            11,
-        ),
-        soldier,
-        10,
-        false,
-        None,
-        None,
-        None,
-    ));
     let pc = EntityId::new(101, robin_engine::element::EntityIdKind::Pc);
-    assert!(original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
+    let bored = OrderType::TransitionWaitingUprightBoredWaitingUpright;
+    let stop_walk = OrderType::TransitionWalkingUprightWaitingUpright;
+    let walk = OrderType::WalkingUpright;
+    let sword_run = OrderType::RunningWithSword;
+    // (order, movement sequence, motion, current order id, actor, last
+    //  processed order id, moved this frame, prior pending motion order id,
+    //  expected reset)
+    let rows = [
+        (bored, true, Start, 10, soldier, 10, false, None, false),
+        (stop_walk, false, Start, 10, soldier, 10, false, None, false),
+        (walk, true, Start, 10, soldier, 10, false, None, true),
+        (walk, true, InProgress, 11, soldier, 10, true, None, true),
+        (walk, true, InProgress, 10, soldier, 10, true, None, false),
+        (
+            walk,
             true,
-            robin_engine::sprite::MotionState::InProgress,
+            InProgress,
+            10,
+            soldier,
+            10,
+            true,
+            Some(10),
+            true,
+        ),
+        (walk, true, InProgress, 11, soldier, 10, false, None, false),
+        (
+            sword_run,
+            true,
+            InProgress,
             30,
-        ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
+            pc,
             30,
-        ),
-        pc,
-        30,
-        false,
-        Some(29),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
-            true,
-            robin_engine::sprite::MotionState::InProgress,
-            31,
-        ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &trace_actor_order(
-            robin_engine::order::OrderType::RunningWithSword,
             false,
-            robin_engine::sprite::MotionState::InProgress,
-            30,
+            Some(30),
+            true,
         ),
-        pc,
-        30,
-        false,
-        Some(30),
-        None,
-        None,
-    ));
+        (
+            sword_run,
+            true,
+            InProgress,
+            30,
+            pc,
+            30,
+            false,
+            Some(29),
+            false,
+        ),
+        (
+            sword_run,
+            true,
+            InProgress,
+            31,
+            pc,
+            30,
+            false,
+            Some(30),
+            false,
+        ),
+        (
+            sword_run,
+            false,
+            InProgress,
+            30,
+            pc,
+            30,
+            false,
+            Some(30),
+            false,
+        ),
+    ];
+    for (
+        row,
+        (order, movement, motion, order_id, actor, last_processed, moved, pending, expected),
+    ) in rows.into_iter().enumerate()
+    {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &trace_actor_order(order, movement, motion, order_id),
+                actor,
+                last_processed,
+                moved,
+                pending,
+                None,
+                None,
+            ),
+            expected,
+            "row {row}"
+        );
+    }
 }
 
 #[test]
@@ -500,42 +437,27 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
         stop_animation: robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright
             as u32,
     };
-    assert!(original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        false,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        false,
-        None,
-        Some(prior_walking),
-        Some(19),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        30,
-        false,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
-    assert!(!original_reset_blocked_box_this_frame(
-        &turn_after_stop,
-        soldier,
-        25,
-        true,
-        None,
-        Some(prior_walking),
-        Some(20),
-    ));
+    // (last processed order id, moved this frame, prior last processed, expected)
+    for (last_processed, moved, prior_last_processed, expected) in [
+        (25, false, 20, true),
+        (25, false, 19, false),
+        (30, false, 20, false),
+        (25, true, 20, false),
+    ] {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &turn_after_stop,
+                soldier,
+                last_processed,
+                moved,
+                None,
+                Some(prior_walking),
+                Some(prior_last_processed),
+            ),
+            expected,
+            "last_processed={last_processed} moved={moved} prior={prior_last_processed}"
+        );
+    }
 
     for (action, stop_animation) in [
         (

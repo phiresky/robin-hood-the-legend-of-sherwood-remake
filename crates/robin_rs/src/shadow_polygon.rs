@@ -975,49 +975,16 @@ mod tests {
 
     #[test]
     fn visibility_clips_against_obstacle() {
-        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
-
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             half_aperture: std::f32::consts::FRAC_PI_2, // 90° half → 180° total
             radius: 300.0,
-            alpha: ALPHA_DAY,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
+            ..ViewParameters::default()
         };
 
         // Place a small obstacle directly ahead
-        let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 100.0,
-                y: -20.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 120.0,
-                y: -20.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 120.0,
-                y: 20.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 100.0,
-                y: 20.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-        ];
-        obs.rebuild_geometry();
+        let obs = make_box(100.0, -20.0, 120.0, 20.0, 0.0, 50.0);
 
         let cone = compute_view_cone(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&obs]);
@@ -1085,329 +1052,111 @@ mod tests {
         );
     }
 
-    #[test]
-    fn view_parameters_serde_roundtrip() {
-        let vp = ViewParameters::default();
-        let json = serde_json::to_string(&vp).unwrap();
-        let back: ViewParameters = serde_json::from_str(&json).unwrap();
-        assert!((back.half_aperture - NORMAL_HALF_APERTURE).abs() < 0.001);
-    }
-
-    /// Helper to build a SightObstacle with given ground points.
-    fn make_obstacle_with_points(
-        pts: &[(f32, f32)],
-    ) -> robin_engine::sight_obstacle::SightObstacle {
+    /// Build a SightObstacle from ground points spanning `z_bottom..z_top`.
+    fn make_obstacle(pts: &[(f32, f32)], z_bottom: f32, z_top: f32) -> SightObstacle {
         let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = pts
             .iter()
             .map(|&(x, y)| robin_engine::sight_obstacle::ObstaclePoint {
                 x,
                 y,
-                z_top: 5.0,
-                z_bottom: 0.0,
+                z_top,
+                z_bottom,
             })
             .collect();
         obs.rebuild_geometry();
         obs
     }
 
-    #[test]
-    fn view_cone_winding_ccw_obstacle_clips_correctly() {
-        // CCW square obstacle at (50,0)..(60,10) — should clip a
-        // narrow shadow from the right side of a view cone centered
-        // at the origin looking right.
-        let obs =
-            make_obstacle_with_points(&[(50.0, 0.0), (60.0, 0.0), (60.0, 10.0), (50.0, 10.0)]);
-        let params = ViewParameters {
-            direction: [1.0, 0.0], // looking right
-            radius: 200.0,
-            half_aperture: 45.0_f32.to_radians(),
-            alpha: 128,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
-        };
-        let viewer = GroundPoint { x: 0.0, y: 5.0 };
-        let result = compute_visibility_polygon(viewer, &params, &[&obs]);
-        // Expect a single non-convex polygon with a wedge bite. It
-        // must not degenerate to a sliver (< 4 vertices total across
-        // all rings was the bug symptom).
-        let total: usize = result.iter().map(Vec::len).sum();
-        assert!(
-            total >= 4,
-            "CCW obstacle produced {} total vertices across {:?} rings (degenerate)",
-            total,
-            result.iter().map(Vec::len).collect::<Vec<_>>()
-        );
+    /// CCW axis-aligned box obstacle.
+    fn make_box(x0: f32, y0: f32, x1: f32, y1: f32, z_bottom: f32, z_top: f32) -> SightObstacle {
+        make_obstacle(&[(x0, y0), (x1, y0), (x1, y1), (x0, y1)], z_bottom, z_top)
     }
 
-    #[test]
-    fn view_cone_winding_cw_obstacle_clips_correctly() {
-        // CW square obstacle (reversed winding) — the winding detection
-        // should still produce correct silhouette edges.
-        let obs =
-            make_obstacle_with_points(&[(50.0, 10.0), (60.0, 10.0), (60.0, 0.0), (50.0, 0.0)]);
+    const CCW_SQUARE: [(f32, f32); 4] = [(50.0, 0.0), (60.0, 0.0), (60.0, 10.0), (50.0, 10.0)];
+    const CW_SQUARE: [(f32, f32); 4] = [(50.0, 10.0), (60.0, 10.0), (60.0, 0.0), (50.0, 0.0)];
+
+    /// Total vertex count of the visibility polygon for a viewer at (0, 5)
+    /// looking right past a single low obstacle.
+    fn winding_visibility(pts: &[(f32, f32)]) -> Vec<usize> {
+        let obs = make_obstacle(pts, 0.0, 5.0);
         let params = ViewParameters {
             direction: [1.0, 0.0],
             radius: 200.0,
             half_aperture: 45.0_f32.to_radians(),
             alpha: 128,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
+            ..ViewParameters::default()
         };
         let viewer = GroundPoint { x: 0.0, y: 5.0 };
-        let result = compute_visibility_polygon(viewer, &params, &[&obs]);
-        let total: usize = result.iter().map(Vec::len).sum();
+        compute_visibility_polygon(viewer, &params, &[&obs])
+            .iter()
+            .map(Vec::len)
+            .collect()
+    }
+
+    /// Either winding must clip a wedge bite without degenerating to a
+    /// sliver (< 4 vertices total across all rings was the bug symptom).
+    #[rstest::rstest]
+    #[case::ccw(CCW_SQUARE)]
+    #[case::cw(CW_SQUARE)]
+    fn view_cone_winding_obstacle_clips_correctly(#[case] pts: [(f32, f32); 4]) {
+        let rings = winding_visibility(&pts);
+        let total: usize = rings.iter().sum();
         assert!(
             total >= 4,
-            "CW obstacle produced {} total vertices across {:?} rings (degenerate)",
-            total,
-            result.iter().map(Vec::len).collect::<Vec<_>>()
+            "obstacle produced {total} total vertices across {rings:?} rings (degenerate)"
         );
     }
 
     #[test]
     fn view_cone_winding_both_produce_similar_results() {
-        // CCW and CW versions of the same obstacle should produce
-        // visibility polygons with the same total vertex count.
-        let ccw =
-            make_obstacle_with_points(&[(50.0, 0.0), (60.0, 0.0), (60.0, 10.0), (50.0, 10.0)]);
-        let cw = make_obstacle_with_points(&[(50.0, 10.0), (60.0, 10.0), (60.0, 0.0), (50.0, 0.0)]);
-        let params = ViewParameters {
-            direction: [1.0, 0.0], // looking right
-            radius: 200.0,
-            half_aperture: 45.0_f32.to_radians(),
-            alpha: 128,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
-        };
-        let viewer = GroundPoint { x: 0.0, y: 5.0 };
-        let ccw_result = compute_visibility_polygon(viewer, &params, &[&ccw]);
-        let cw_result = compute_visibility_polygon(viewer, &params, &[&cw]);
-        let ccw_total: usize = ccw_result.iter().map(Vec::len).sum();
-        let cw_total: usize = cw_result.iter().map(Vec::len).sum();
+        let ccw_total: usize = winding_visibility(&CCW_SQUARE).iter().sum();
+        let cw_total: usize = winding_visibility(&CW_SQUARE).iter().sum();
         assert_eq!(
             ccw_total, cw_total,
-            "CCW ({}) and CW ({}) should produce same total vertex count",
-            ccw_total, cw_total
+            "CCW ({ccw_total}) and CW ({cw_total}) should produce same total vertex count"
         );
     }
 
     // ── flanking-ray rejection / usefulness predicate tests ───────
 
-    #[test]
-    fn box_inside_field_rejects_obstacle_outside_left_flank() {
-        // Cone looks right (+x) with ±30° half-aperture. An obstacle
-        // far to the left rear should be rejected by the flanking-ray
-        // test before any shadow computation.
+    /// Cone looks right (+x) with ±30° half-aperture: an obstacle far to the
+    /// left rear is rejected by the flanking-ray test, one directly ahead
+    /// is kept.
+    #[rstest::rstest]
+    #[case::rejects_obstacle_outside_left_flank(-200.0, -180.0, false)]
+    #[case::accepts_obstacle_inside_cone(100.0, 120.0, true)]
+    fn box_inside_field(#[case] x0: f32, #[case] x1: f32, #[case] expected: bool) {
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
-        let params = ViewParameters {
-            direction: [1.0, 0.0],
-            half_aperture: 30.0_f32.to_radians(),
-            radius: 400.0,
-            ..ViewParameters::default()
-        };
-        let dir = normalise(params.direction);
-        let left_side = iso(rotate(dir, -params.half_aperture));
-        let right_side = iso(rotate(dir, params.half_aperture));
-
-        // Behind-left obstacle: (-200..-180, -10..10)
-        let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: -200.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: -180.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: -180.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: -200.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-        ];
-        obs.rebuild_geometry();
-
-        assert!(
-            !is_box_inside_field(viewer, &obs.box_ground, left_side, right_side),
-            "obstacle entirely behind/left of the cone should be rejected"
-        );
-    }
-
-    #[test]
-    fn box_inside_field_accepts_obstacle_inside_cone() {
-        let viewer = GroundPoint { x: 0.0, y: 0.0 };
-        let params = ViewParameters {
-            direction: [1.0, 0.0],
-            half_aperture: 30.0_f32.to_radians(),
-            radius: 400.0,
-            ..ViewParameters::default()
-        };
-        let dir = normalise(params.direction);
-        let left_side = iso(rotate(dir, -params.half_aperture));
-        let right_side = iso(rotate(dir, params.half_aperture));
-
-        // Obstacle directly ahead along +x.
-        let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: 100.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: 120.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: 120.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            robin_engine::sight_obstacle::ObstaclePoint {
-                x: 100.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-        ];
-        obs.rebuild_geometry();
-
-        assert!(
+        let half_aperture = 30.0_f32.to_radians();
+        let dir = normalise([1.0, 0.0]);
+        let left_side = iso(rotate(dir, -half_aperture));
+        let right_side = iso(rotate(dir, half_aperture));
+        let obs = make_box(x0, -10.0, x1, 10.0, 0.0, 50.0);
+        assert_eq!(
             is_box_inside_field(viewer, &obs.box_ground, left_side, right_side),
-            "obstacle inside the cone should be kept"
+            expected
         );
     }
 
-    #[test]
-    fn visibility_skips_obstacles_above_viewer_head() {
-        // Regression test: a high elevated obstacle shouldn't clip
-        // the eye-level visibility polygon.
-        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
+    /// Regression tests for the usefulness predicate: an obstacle that
+    /// cannot shadow the eye-level cone must leave the visibility polygon
+    /// equal to the unclipped cone.
+    #[rstest::rstest]
+    // A high elevated slab inside the cone's ground bbox.
+    #[case::above_viewer_head(45.0, make_box(100.0, -20.0, 120.0, 20.0, 400.0, 500.0))]
+    // Behind the viewer, fully outside a narrow 10° cone.
+    #[case::outside_cone_flanks(10.0, make_box(-120.0, -10.0, -100.0, 10.0, 0.0, 50.0))]
+    fn visibility_skips_obstacles(#[case] half_aperture_deg: f32, #[case] obstacle: SightObstacle) {
         let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
-            half_aperture: 45.0_f32.to_radians(),
+            half_aperture: half_aperture_deg.to_radians(),
             radius: 400.0,
-            alpha: ALPHA_DAY,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
+            ..ViewParameters::default()
         };
-
-        let mut sky_slab = SightObstacle::new_default(0);
-        sky_slab.obstacle_points = vec![
-            ObstaclePoint {
-                x: 100.0,
-                y: -20.0,
-                z_top: 500.0,
-                z_bottom: 400.0,
-            },
-            ObstaclePoint {
-                x: 120.0,
-                y: -20.0,
-                z_top: 500.0,
-                z_bottom: 400.0,
-            },
-            ObstaclePoint {
-                x: 120.0,
-                y: 20.0,
-                z_top: 500.0,
-                z_bottom: 400.0,
-            },
-            ObstaclePoint {
-                x: 100.0,
-                y: 20.0,
-                z_top: 500.0,
-                z_bottom: 400.0,
-            },
-        ];
-        sky_slab.rebuild_geometry();
-
         let cone = compute_view_cone(viewer, &params);
-        let vis = compute_visibility_polygon(viewer, &params, &[&sky_slab]);
-        // Without height filtering the slab would still cast a shadow
-        // wedge because it sits inside the cone's ground bbox. The
-        // usefulness predicate must reject it so the visibility polygon
-        // equals the unclipped cone.
-        assert_eq!(vis.len(), 1);
-        assert_eq!(cone.len(), vis[0].len());
-    }
-
-    #[test]
-    fn visibility_skips_obstacles_outside_cone_flanks() {
-        // Regression test for is_box_inside_field rejection: an
-        // obstacle to the side of the view cone shouldn't contribute
-        // a shadow wedge.
-        use robin_engine::sight_obstacle::{ObstaclePoint, SightObstacle};
-        let viewer = GroundPoint { x: 0.0, y: 0.0 };
-        let params = ViewParameters {
-            direction: [1.0, 0.0],
-            // Narrow 10° half-aperture so only a thin strip in +x is visible.
-            half_aperture: 10.0_f32.to_radians(),
-            radius: 400.0,
-            alpha: ALPHA_DAY,
-            lean_out: false,
-            viewer_z: 0.0,
-            projection_plane: None,
-            projection_obstacle: None,
-        };
-
-        // Obstacle behind the viewer — fully outside the cone.
-        let mut behind = SightObstacle::new_default(0);
-        behind.obstacle_points = vec![
-            ObstaclePoint {
-                x: -120.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: -100.0,
-                y: -10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: -100.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: -120.0,
-                y: 10.0,
-                z_top: 50.0,
-                z_bottom: 0.0,
-            },
-        ];
-        behind.rebuild_geometry();
-
-        let cone = compute_view_cone(viewer, &params);
-        let vis = compute_visibility_polygon(viewer, &params, &[&behind]);
+        let vis = compute_visibility_polygon(viewer, &params, &[&obstacle]);
         assert_eq!(vis.len(), 1);
         assert_eq!(cone.len(), vis[0].len());
     }

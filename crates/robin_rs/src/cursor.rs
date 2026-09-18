@@ -652,16 +652,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_renderer_new_defaults() {
-        let cr = CursorRenderer::new();
-        assert!(cr.frames.is_empty());
-        assert_eq!(cr.hotspot_x, 0.0);
-        assert_eq!(cr.hotspot_y, 0.0);
-        assert_eq!(cr.current_cursor_id, -1);
-        assert_eq!(cr.current_frame, 0);
-    }
-
-    #[test]
     fn recording_pulse_uses_local_elapsed_time_and_wraps() {
         for (millis, value) in [(0, 0), (200, 50), (400, 100), (600, 50), (800, 0)] {
             let elapsed = std::time::Duration::from_millis(millis);

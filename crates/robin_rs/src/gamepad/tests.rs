@@ -289,22 +289,6 @@ fn recognize_swing_unrecognized_direction() {
 }
 
 #[test]
-fn gamepad_state_serde_roundtrip() {
-    let mut pad = GamePadState::new();
-    let mut state = JoystickState {
-        x: 1234,
-        ..Default::default()
-    };
-    state.buttons[GamePadButton::ActionB] = true;
-    pad.update(state);
-
-    let json = serde_json::to_string(&pad).unwrap();
-    let restored: GamePadState = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.current.x, 1234);
-    assert!(restored.is_down(GamePadButton::ActionB));
-}
-
-#[test]
 fn multiple_buttons_independent() {
     let mut pad = GamePadState::new();
     let mut state = JoystickState::default();

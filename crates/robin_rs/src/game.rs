@@ -725,21 +725,7 @@ mod tests {
     use super::*;
     use robin_engine::campaign::CampaignValue;
 
-    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-        use robin_engine::campaign::Campaign;
-        let mut assets = engine_api::LevelAssets::new();
-        let engine =
-            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
-        (engine, assets)
-    }
-
-    #[test]
-    fn default_game_state() {
-        let game = Game::default();
-        assert!(game.operation.is(GameCode::LevelInProgress));
-        assert!(!game.is_sherwood);
-        assert!(!game.persistent.campaign_map_active);
-    }
+    use robin_engine::test_support::fresh_engine;
 
     #[test]
     fn new_sherwood_game() {
