@@ -44,209 +44,12 @@ impl EngineInner {
         frames: u16,
         index: u16,
     ) {
-        // The civilian role has no friend-check implementation.
-        if self
-            .entities()
-            .get(owner)
-            .and_then(Entity::enemy_ai)
-            .is_none()
-        {
-            return;
-        }
-        let target_handle = *self
-            .world
-            .soldier_registry
-            .all()
-            .get(friend_id as usize)
-            .expect("friend-check soldier index is out of range");
-        let target = self.expect_human_id_for_ai_handle(target_handle, "friend-check partner");
-        assert!(
-            self.expect_entity(target, "friend-check partner")
-                .npc_data()
-                .is_some(),
-            "friend-check partner must be an NPC"
-        );
-        self.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(target_handle)));
-        assert_ne!(
-            owner, target,
-            "friend-check partner cannot be the checking actor"
-        );
-
-        let ai = self.ai(owner, "friend-check owner");
-        if ai.missed_in_action.contains(&target_handle)
-            || (ai.frame_when_enemy_detected > 0
-                && self
-                    .control
-                    .frame_counter
-                    .wrapping_sub(ai.frame_when_enemy_detected)
-                    < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME)
-        {
-            self.execute_ai_set_checkpoint_charly(owner, None);
-            self.resume_after_friend_check(sim, assets, owner);
-            return;
-        }
-
-        if frames == 0 && index != u16::MAX {
-            let current = path_status(self.ai(owner, "synchronizing owner")).0;
-            let destination = synchronize_index(current, index);
-            let ai = self.friend_check_owner_mut(owner);
-            ai.synchronize_index = destination;
-            ai.synchronize_charly = Some(AiEntityHandle::new(target_handle));
-            self.execute_ai_set_checkpoint_charly(owner, None);
-            assert!(
-                self.world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("friend synchronization"))
-                    .macro_in_progress,
-                "pure friend synchronization requires a running macro"
-            );
-
-            let entity = self.expect_entity(target, "synchronizing partner");
-            let partner = entity
-                .ai_controller()
-                .expect("synchronizing partner needs AI");
-            if partner.current_state != AiState::Default || entity.is_dead() {
-                self.resume_after_friend_check(sim, assets, owner);
-                return;
-            }
-            let (current, last, partner_forward, _) = path_status(partner);
-            let (_, _, forward, _) = path_status(self.ai(owner, "synchronizing owner"));
-            let waypoint = if partner.macro_in_progress {
-                Some(current)
-            } else if partner.current_substate == Substate::DefaultEnroute {
-                Some(last)
-            } else {
-                None
-            };
-            let already_there = waypoint.is_some_and(|waypoint| {
-                if index < 500 {
-                    waypoint == destination
-                } else if partner_forward != forward {
-                    forward
-                } else if forward {
-                    waypoint >= destination
-                } else {
-                    waypoint <= destination
-                }
-            });
-            if already_there {
-                self.resume_after_friend_check(sim, assets, owner);
-            } else {
-                self.ai_mut(target, "synchronizing partner")
-                    .synchronizing_actors
-                    .push(owner.index());
-                self.friend_check_state(sim, assets, owner, Substate::DefaultSynchronizing);
-            }
-            return;
-        }
-
-        let partner = self.ai(target, "friend-check partner");
-        if !partner.has_patrol_path {
-            let post = partner.initial_position;
-            let mut point = self.friend_check_world_point(assets, post);
-            if !self.friend_check_detects_point(owner, assets, point) {
-                point.z += 15.0;
-                assert!(
-                    self.friend_check_detects_point(owner, assets, point),
-                    "friend-check partner's post is not visible"
-                );
-            }
-            assert_eq!(
-                index,
-                u16::MAX,
-                "cannot synchronize with a partner without a path"
-            );
-        } else {
-            let path = path_status(partner)
-                .3
-                .expect("friend-check partner has no authored path");
-            let waypoints = &assets.navigation.hiking_paths[path.get() as usize].waypoints;
-            let count = waypoints.len() as u16;
-            let mut visible = false;
-            for waypoint_index in 0..count {
-                let waypoint = &waypoints[waypoint_index as usize];
-                let position = Position {
-                    x: waypoint.x as f32,
-                    y: waypoint.y as f32,
-                    level: waypoint.level,
-                    sector: assets.navigation.hiking_waypoint_sector(
-                        path.get() as usize,
-                        waypoint_index as usize,
-                        waypoint.sector,
-                    ),
-                };
-                let mut point = self.friend_check_world_point(assets, position);
-                point.z += 15.0;
-                if self.friend_check_detects_point(owner, assets, point) {
-                    visible = true;
-                    break;
-                }
-            }
-            if !visible {
-                tracing::warn!(
-                    ?owner,
-                    ?target,
-                    "no waypoint of friend-check partner is visible"
-                );
-                self.resume_after_friend_check(sim, assets, owner);
-                return;
-            }
-        }
-
-        let ai = self.friend_check_owner_mut(owner);
-        if index == u16::MAX {
-            ai.synchronize_charly = None;
-            ai.synchronize_index = u16::MAX;
-        } else {
-            ai.synchronize_charly = Some(AiEntityHandle::new(target_handle));
-            ai.synchronize_index = synchronize_index(path_status(ai).0, index);
-        }
-        ai.number_of_looks = look_count(
-            frames,
-            crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u16,
-        );
-        ai.delta_sorrow_level = 1000 / ai.number_of_looks as u16;
-        self.friend_check_state(
-            sim,
-            assets,
-            owner,
-            Substate::DefaultLookingSidewardsForCharly,
-        );
-        let direction = if crate::sim_rng::u32(
-            sim,
-            crate::sim_rng::RngSite::CheckForLookDirection,
-            0..2,
-        ) != 0
-        {
-            LookDirection::LeftRight
-        } else {
-            LookDirection::RightLeft
-        };
-        self.execute_ai_look_sidewards(sim, assets, owner, direction);
+        AiOwnerCtx::new(self, sim, assets, owner)
+            .initialize_ai_friend_check(friend_id, frames, index)
     }
 
     fn friend_check_owner_mut(&mut self, owner: EntityId) -> &mut AiController {
         self.ai_mut(owner, "friend-check owner")
-    }
-
-    fn friend_check_state(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        substate: Substate,
-    ) {
-        self.duty_set_state(sim, assets, owner, AiState::Default, substate);
-    }
-
-    fn resume_after_friend_check(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        self.friend_check_state(sim, assets, owner, Substate::DefaultInMacro);
-        self.run_ai_macro(sim, assets, owner);
     }
 
     fn friend_check_world_point(
@@ -301,6 +104,217 @@ impl EngineInner {
             [point.x, point.y, point.z],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         )
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn initialize_ai_friend_check(
+        &mut self,
+        friend_id: u16,
+        frames: u16,
+        index: u16,
+    ) {
+        // The civilian role has no friend-check implementation.
+        if self
+            .engine
+            .entities()
+            .get(self.owner)
+            .and_then(Entity::enemy_ai)
+            .is_none()
+        {
+            return;
+        }
+        let target_handle = *self
+            .engine
+            .world
+            .soldier_registry
+            .all()
+            .get(friend_id as usize)
+            .expect("friend-check soldier index is out of range");
+        let target = self
+            .engine
+            .expect_human_id_for_ai_handle(target_handle, "friend-check partner");
+        assert!(
+            self.engine
+                .expect_entity(target, "friend-check partner")
+                .npc_data()
+                .is_some(),
+            "friend-check partner must be an NPC"
+        );
+        self.engine
+            .execute_ai_set_checkpoint_charly(self.owner, Some(AiEntityHandle::new(target_handle)));
+        assert_ne!(
+            self.owner, target,
+            "friend-check partner cannot be the checking actor"
+        );
+
+        let ai = self.engine.ai(self.owner, "friend-check owner");
+        if ai.missed_in_action.contains(&target_handle)
+            || (ai.frame_when_enemy_detected > 0
+                && self
+                    .engine
+                    .control
+                    .frame_counter
+                    .wrapping_sub(ai.frame_when_enemy_detected)
+                    < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME)
+        {
+            self.engine
+                .execute_ai_set_checkpoint_charly(self.owner, None);
+            self.resume_after_friend_check();
+            return;
+        }
+
+        if frames == 0 && index != u16::MAX {
+            let current = path_status(self.engine.ai(self.owner, "synchronizing owner")).0;
+            let destination = synchronize_index(current, index);
+            let ai = self.engine.friend_check_owner_mut(self.owner);
+            ai.synchronize_index = destination;
+            ai.synchronize_charly = Some(AiEntityHandle::new(target_handle));
+            self.engine
+                .execute_ai_set_checkpoint_charly(self.owner, None);
+            assert!(
+                self.engine
+                    .world
+                    .entities
+                    .expect_ai_controller(self.owner, format_args!("friend synchronization"))
+                    .macro_in_progress,
+                "pure friend synchronization requires a running macro"
+            );
+
+            let entity = self.engine.expect_entity(target, "synchronizing partner");
+            let partner = entity
+                .ai_controller()
+                .expect("synchronizing partner needs AI");
+            if partner.current_state != AiState::Default || entity.is_dead() {
+                self.resume_after_friend_check();
+                return;
+            }
+            let (current, last, partner_forward, _) = path_status(partner);
+            let (_, _, forward, _) = path_status(self.engine.ai(self.owner, "synchronizing owner"));
+            let waypoint = if partner.macro_in_progress {
+                Some(current)
+            } else if partner.current_substate == Substate::DefaultEnroute {
+                Some(last)
+            } else {
+                None
+            };
+            let already_there = waypoint.is_some_and(|waypoint| {
+                if index < 500 {
+                    waypoint == destination
+                } else if partner_forward != forward {
+                    forward
+                } else if forward {
+                    waypoint >= destination
+                } else {
+                    waypoint <= destination
+                }
+            });
+            if already_there {
+                self.resume_after_friend_check();
+            } else {
+                self.engine
+                    .ai_mut(target, "synchronizing partner")
+                    .synchronizing_actors
+                    .push(self.owner.index());
+                self.friend_check_state(Substate::DefaultSynchronizing);
+            }
+            return;
+        }
+
+        let partner = self.engine.ai(target, "friend-check partner");
+        if !partner.has_patrol_path {
+            let post = partner.initial_position;
+            let mut point = self.engine.friend_check_world_point(self.assets, post);
+            if !self
+                .engine
+                .friend_check_detects_point(self.owner, self.assets, point)
+            {
+                point.z += 15.0;
+                assert!(
+                    self.engine
+                        .friend_check_detects_point(self.owner, self.assets, point),
+                    "friend-check partner's post is not visible"
+                );
+            }
+            assert_eq!(
+                index,
+                u16::MAX,
+                "cannot synchronize with a partner without a path"
+            );
+        } else {
+            let path = path_status(partner)
+                .3
+                .expect("friend-check partner has no authored path");
+            let waypoints = &self.assets.navigation.hiking_paths[path.get() as usize].waypoints;
+            let count = waypoints.len() as u16;
+            let mut visible = false;
+            for waypoint_index in 0..count {
+                let waypoint = &waypoints[waypoint_index as usize];
+                let position = Position {
+                    x: waypoint.x as f32,
+                    y: waypoint.y as f32,
+                    level: waypoint.level,
+                    sector: self.assets.navigation.hiking_waypoint_sector(
+                        path.get() as usize,
+                        waypoint_index as usize,
+                        waypoint.sector,
+                    ),
+                };
+                let mut point = self.engine.friend_check_world_point(self.assets, position);
+                point.z += 15.0;
+                if self
+                    .engine
+                    .friend_check_detects_point(self.owner, self.assets, point)
+                {
+                    visible = true;
+                    break;
+                }
+            }
+            if !visible {
+                tracing::warn!(
+                    owner = ?self.owner,
+                    ?target,
+                    "no waypoint of friend-check partner is visible"
+                );
+                self.resume_after_friend_check();
+                return;
+            }
+        }
+
+        let ai = self.engine.friend_check_owner_mut(self.owner);
+        if index == u16::MAX {
+            ai.synchronize_charly = None;
+            ai.synchronize_index = u16::MAX;
+        } else {
+            ai.synchronize_charly = Some(AiEntityHandle::new(target_handle));
+            ai.synchronize_index = synchronize_index(path_status(ai).0, index);
+        }
+        ai.number_of_looks = look_count(
+            frames,
+            crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u16,
+        );
+        ai.delta_sorrow_level = 1000 / ai.number_of_looks as u16;
+        self.friend_check_state(Substate::DefaultLookingSidewardsForCharly);
+        let direction = if crate::sim_rng::u32(
+            self.sim,
+            crate::sim_rng::RngSite::CheckForLookDirection,
+            0..2,
+        ) != 0
+        {
+            LookDirection::LeftRight
+        } else {
+            LookDirection::RightLeft
+        };
+        self.execute_ai_look_sidewards(direction);
+    }
+
+    fn friend_check_state(&mut self, substate: Substate) {
+        self.duty_set_state(AiState::Default, substate);
+    }
+
+    fn resume_after_friend_check(&mut self) {
+        self.friend_check_state(Substate::DefaultInMacro);
+        self.run_ai_macro();
     }
 }
 

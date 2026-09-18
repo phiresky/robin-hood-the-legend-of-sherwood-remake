@@ -2754,25 +2754,7 @@ impl EngineInner {
         owner: EntityId,
         direction: crate::ai::LookDirection,
     ) {
-        use crate::ai::LookDirection;
-        use crate::element::Command;
-        let commands: &[Command] = match direction {
-            LookDirection::Left => &[Command::LookLeft],
-            LookDirection::Right => &[Command::LookRight],
-            LookDirection::LeftRight => &[Command::LookLeft, Command::LookRight],
-            LookDirection::RightLeft => &[Command::LookRight, Command::LookLeft],
-            LookDirection::Down => &[Command::LeanOut],
-        };
-        crate::ai_vision::unfocus(self.ai_actor_mut(owner, "sideways look owner"));
-        let mut sequence = crate::sequence::Sequence::new();
-        for (index, command) in commands.iter().enumerate() {
-            sequence.append_element(crate::sequence::SequenceElement::new(
-                index as u16 + 1,
-                *command,
-                Some(owner),
-            ));
-        }
-        self.launch_sequence(sim, assets, sequence);
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_look_sidewards(direction)
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
@@ -3367,5 +3349,32 @@ impl EngineInner {
             creation_order
                 .expect("phase6 caller diagnostic matched an owner without creation order"),
         );
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_look_sidewards(
+        &mut self,
+        direction: crate::ai::LookDirection,
+    ) {
+        use crate::ai::LookDirection;
+        use crate::element::Command;
+        let commands: &[Command] = match direction {
+            LookDirection::Left => &[Command::LookLeft],
+            LookDirection::Right => &[Command::LookRight],
+            LookDirection::LeftRight => &[Command::LookLeft, Command::LookRight],
+            LookDirection::RightLeft => &[Command::LookRight, Command::LookLeft],
+            LookDirection::Down => &[Command::LeanOut],
+        };
+        crate::ai_vision::unfocus(self.engine.ai_actor_mut(self.owner, "sideways look owner"));
+        let mut sequence = crate::sequence::Sequence::new();
+        for (index, command) in commands.iter().enumerate() {
+            sequence.append_element(crate::sequence::SequenceElement::new(
+                index as u16 + 1,
+                *command,
+                Some(self.owner),
+            ));
+        }
+        self.engine.launch_sequence(self.sim, self.assets, sequence);
     }
 }

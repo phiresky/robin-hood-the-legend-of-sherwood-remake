@@ -6,9 +6,11 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::SeekFlags;
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_enemy_report_callback(
         &mut self,
         sim: &SimulationContext,
@@ -16,392 +18,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        let enemy = self.entities().get(owner)?.enemy_ai()?;
-        let substate = enemy.base.current_substate;
-        let kind = stimulus.stimulus_type;
-        if !matches!(
-            kind,
-            StimulusType::EventReachPoint
-                | StimulusType::EventDone
-                | StimulusType::EventTimer
-                | StimulusType::EventSyncCharly
-                | StimulusType::CallCoordinate
-                | StimulusType::CallInstruction
-                | StimulusType::CallReport
-                | StimulusType::EventGaloppLoopEnd
-                | StimulusType::EventMyTalk0
-                | StimulusType::EventMyTalk1
-                | StimulusType::EventMyTalk2
-                | StimulusType::EventMyTalk3
-                | StimulusType::CallYourTalk0
-                | StimulusType::CallYourTalk1
-                | StimulusType::CallYourTalk2
-                | StimulusType::CallYourTalk3
-        ) {
-            return None;
-        }
-        match substate {
-            Substate::SeekingSoldierReturnToOfficer => {
-                if matches!(
-                    kind,
-                    StimulusType::EventTimer | StimulusType::EventReachPoint
-                ) {
-                    let officer = self.report_antagonist(owner);
-                    let officer_substate = self
-                        .ai(officer, "returning soldier's officer")
-                        .current_substate;
-                    let waiting = matches!(
-                        officer_substate,
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                            | Substate::SeekingOfficerWaitForInstructedGroup
-                    );
-                    if kind == StimulusType::EventTimer {
-                        let position = self.live_ai_position(owner);
-                        let remembered =
-                            self.enemy_ai(owner, "returning soldier").officers_position;
-                        let dx = position.x - remembered.x;
-                        let dy = position.y - remembered.y;
-                        if waiting
-                            || officer_substate == Substate::SeekingDetectedCharly
-                            || dx * dx + dy * dy
-                                >= (self.ai.standard_view_polygon_radius as f32).powi(2)
-                        {
-                            self.report_timer(owner, 20);
-                        } else {
-                            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                        }
-                    } else if waiting {
-                        self.execute_ai_callback(
-                            sim,
-                            assets,
-                            officer,
-                            &Stimulus::with_human(StimulusType::CallReport, owner.index()),
-                        );
-                        self.execute_ai_speech(
-                            sim,
-                            assets,
-                            owner,
-                            AiSpeechAttempt {
-                                remark: Remark::TellsOfficerNothing,
-                                flags: SpeechFlags::MYTALK_1.bits(),
-                            },
-                        );
-                        self.report_state(
-                            sim,
-                            assets,
-                            owner,
-                            Substate::SeekingSoldierGiveReportToOfficer,
-                        );
-                        self.report_timer(owner, 100);
-                    } else {
-                        self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                    }
-                }
-            }
-            Substate::SeekingSoldierGiveReportToOfficer => match kind {
-                StimulusType::EventMyTalk1 => {
-                    let officer = self.report_antagonist(owner);
-                    self.execute_ai_callback(
-                        sim,
-                        assets,
-                        officer,
-                        &Stimulus::with_human(StimulusType::CallYourTalk1, owner.index()),
-                    );
-                    self.report_timer(owner, 20);
-                }
-                StimulusType::EventTimer => {
-                    self.enemy_ai_mut(owner, "report completion").seek_flags = SeekFlags::empty();
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-                _ => {}
-            },
-            Substate::SeekingOfficerGetReportFromSoldier => match kind {
-                StimulusType::CallYourTalk1 => self.execute_ai_speech(
-                    sim,
-                    assets,
-                    owner,
-                    AiSpeechAttempt {
-                        remark: Remark::OfficerEndsConversation,
-                        flags: SpeechFlags::MYTALK_1.bits(),
-                    },
-                ),
-                StimulusType::EventTimer | StimulusType::EventMyTalk1 => {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-                _ => {}
-            },
-            Substate::SeekingRunningToOfficerSeen => {
-                if matches!(
-                    kind,
-                    StimulusType::EventMyTalk0
-                        | StimulusType::EventTimer
-                        | StimulusType::EventReachPoint
-                ) {
-                    let officer = self.report_antagonist(owner);
-                    let waiting = matches!(
-                        self.world
-                            .entities
-                            .expect_ai_controller(officer, format_args!("alert report officer"))
-                            .current_substate,
-                        Substate::SeekingOfficerWaitForInstructedSoldier
-                            | Substate::SeekingOfficerWaitForAlertingSoldier
-                            | Substate::SeekingDetectedCharly
-                    );
-                    if kind == StimulusType::EventMyTalk0 {
-                        if waiting {
-                            self.execute_ai_callback(
-                                sim,
-                                assets,
-                                officer,
-                                &Stimulus::new(StimulusType::CallYourTalk0),
-                            );
-                        }
-                    } else if !waiting {
-                        self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                    } else if kind == StimulusType::EventTimer {
-                        self.report_timer(owner, 20);
-                    } else {
-                        self.report_state(
-                            sim,
-                            assets,
-                            owner,
-                            Substate::SeekingSoldierGiveAlertingReportToOfficerStart,
-                        );
-                        let remark = match self
-                            .ai(owner, "alert report speech")
-                            .my_reconnaissance_report
-                            .report_type
-                        {
-                            ReportType::Body | ReportType::DeadBody => Remark::TellsOfficerBody,
-                            ReportType::Enemy => Remark::TellsOfficerEnemy,
-                            ReportType::MissedCharly => Remark::TellsOfficerCharlyAway,
-                            _ => Remark::TellsOfficerOther,
-                        };
-                        self.execute_ai_speech(
-                            sim,
-                            assets,
-                            owner,
-                            AiSpeechAttempt {
-                                remark,
-                                flags: (SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY).bits(),
-                            },
-                        );
-                        self.report_timer(owner, 150);
-                    }
-                }
-            }
-            Substate::SeekingSoldierGiveAlertingReportToOfficerStart => {
-                if matches!(kind, StimulusType::EventMyTalk1 | StimulusType::EventTimer) {
-                    let officer = self.report_antagonist(owner);
-                    let officer_report = self
-                        .ai(officer, "alert report recipient")
-                        .my_reconnaissance_report
-                        .report_type;
-                    let point = match self
-                        .ai(owner, "alert report donor")
-                        .my_reconnaissance_report
-                        .report_type
-                    {
-                        ReportType::Nothing => false,
-                        ReportType::Noise | ReportType::MissedCharly => {
-                            officer_report == ReportType::Nothing
-                        }
-                        ReportType::Body | ReportType::DeadBody => {
-                            officer_report <= ReportType::Noise
-                        }
-                        ReportType::Enemy => officer_report <= ReportType::DeadBody,
-                    };
-                    if point {
-                        self.execute_ai_callback(
-                            sim,
-                            assets,
-                            officer,
-                            &Stimulus::with_human(StimulusType::CallReport, owner.index()),
-                        );
-                        // The recipient can redirect the conversation during the report.
-                        let officer = self.report_antagonist(owner);
-                        self.execute_ai_callback(
-                            sim,
-                            assets,
-                            officer,
-                            &Stimulus::new(StimulusType::CallYourTalk1),
-                        );
-                        self.report_state(
-                            sim,
-                            assets,
-                            owner,
-                            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
-                        );
-                        self.report_timer(owner, 100);
-                    } else {
-                        self.report_state(
-                            sim,
-                            assets,
-                            owner,
-                            Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
-                        );
-                        let officer = self.report_antagonist(owner);
-                        self.execute_ai_callback(
-                            sim,
-                            assets,
-                            officer,
-                            &Stimulus::with_human(StimulusType::CallReport, owner.index()),
-                        );
-                        self.report_timer(
-                            owner,
-                            crate::parameters_ai::AI_STANDARD_TALK_TIME as u32,
-                        );
-                    }
-                }
-            }
-            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint => match kind {
-                StimulusType::CallYourTalk1 | StimulusType::EventTimer => {
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        AiSpeechAttempt {
-                            remark: Remark::TellsOfficerWhere,
-                            flags: SpeechFlags::empty().bits(),
-                        },
-                    );
-                    let position = self.ai(owner, "report pointing").seek_position;
-                    self.duty_point_to(sim, assets, owner, position);
-                }
-                StimulusType::EventDone => {
-                    self.report_state(
-                        sim,
-                        assets,
-                        owner,
-                        Substate::SeekingSoldierGiveAlertingReportToOfficerEnd,
-                    );
-                    let officer = self.report_antagonist(owner);
-                    self.report_face(sim, assets, owner, officer);
-                    self.report_timer(owner, crate::parameters_ai::AI_STANDARD_TALK_TIME as u32);
-                }
-                _ => {}
-            },
-            Substate::SeekingSoldierGiveAlertingReportToOfficerEnd => {
-                if kind == StimulusType::EventTimer {
-                    self.enemy_ai_mut(owner, "alert report completion")
-                        .seek_flags = SeekFlags::empty();
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            Substate::SeekingOfficerGetAlertingReportFromSoldier
-                if matches!(
-                    kind,
-                    StimulusType::CallYourTalk1 | StimulusType::EventMyTalk1
-                ) =>
-            {
-                if kind == StimulusType::CallYourTalk1 {
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        AiSpeechAttempt {
-                            remark: Remark::OfficerAsksWhere,
-                            flags: (SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY).bits(),
-                        },
-                    );
-                } else {
-                    let soldier = self.report_antagonist(owner);
-                    self.execute_ai_callback(
-                        sim,
-                        assets,
-                        soldier,
-                        &Stimulus::new(StimulusType::CallYourTalk1),
-                    );
-                }
-            }
-            Substate::SeekingOfficerWaitForInstructedSoldier
-            | Substate::SeekingOfficerWaitForInstructedGroup
-            | Substate::SeekingOfficerWaitForAlertingSoldier
-            | Substate::SeekingWaitForAlertingCivilian
-                if kind == StimulusType::CallReport =>
-            {
-                let civilian = substate == Substate::SeekingWaitForAlertingCivilian;
-                let sender = match &stimulus.info {
-                    StimulusInfo::Human(sender) => *sender,
-                    _ => panic!("report requires a reporting human"),
-                };
-                let donor = self.expect_human_id_for_ai_handle(sender.get(), "reporting human");
-                assert!(
-                    matches!(
-                        (civilian, self.world.entities.get(donor)),
-                        (true, Some(Entity::Civilian(_))) | (false, Some(Entity::Soldier(_)))
-                    ),
-                    "report donor has the wrong actor kind"
-                );
-                let old_type = self
-                    .ai(owner, "report recipient")
-                    .my_reconnaissance_report
-                    .report_type;
-                self.consider_live_ai_report(owner, donor, 7);
-                if !civilian {
-                    self.consider_live_ai_report(donor, owner, 0);
-                }
-                let report = &self
-                    .ai(donor, "report donor after handoff")
-                    .my_reconnaissance_report;
-                let report_type = report.report_type;
-                let group = substate == Substate::SeekingOfficerWaitForInstructedGroup;
-                let alerting = report_type > old_type
-                    && if civilian {
-                        report_type >= ReportType::Body
-                    } else {
-                        report_type > ReportType::Body
-                    }
-                    && (!group || old_type == ReportType::MissedCharly);
-                if alerting {
-                    self.report_state(
-                        sim,
-                        assets,
-                        owner,
-                        if civilian {
-                            Substate::SeekingGetAlertingReportFromCivilian
-                        } else {
-                            Substate::SeekingOfficerGetAlertingReportFromSoldier
-                        },
-                    );
-                    self.ai_mut(owner, "alert report").antagonist =
-                        Some(AiEntityHandle::new(donor.index()));
-                    self.report_face(sim, assets, owner, donor);
-                    let report = &self
-                        .ai(donor, "alert report after facing")
-                        .my_reconnaissance_report;
-                    let (report_type, seek_position) = (report.report_type, report.seek_position);
-                    let ai = self.ai_mut(owner, "alert report position");
-                    ai.seek_position = seek_position;
-                    ai.my_reconnaissance_report
-                        .update(report_type, seek_position);
-                } else if group {
-                    self.report_face(sim, assets, owner, donor);
-                } else {
-                    self.report_state(
-                        sim,
-                        assets,
-                        owner,
-                        if civilian {
-                            Substate::SeekingGetReportFromCivilian
-                        } else {
-                            Substate::SeekingOfficerGetReportFromSoldier
-                        },
-                    );
-                    let antagonist = self.report_antagonist(owner);
-                    self.report_face(sim, assets, owner, antagonist);
-                }
-                let frames =
-                    if !alerting && substate == Substate::SeekingOfficerWaitForInstructedSoldier {
-                        100
-                    } else {
-                        crate::parameters_ai::AI_STANDARD_TALK_TIME as u32
-                    };
-                self.report_timer(owner, frames);
-            }
-            _ => return None,
-        }
-        Some(false)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_enemy_report_callback(stimulus)
     }
 
     fn report_antagonist(&self, owner: EntityId) -> EntityId {
@@ -417,31 +34,6 @@ impl EngineInner {
             .entities
             .expect_ai_controller_mut(owner, format_args!("report timer"))
             .launch_timer(frames, self.control.frame_counter);
-    }
-
-    fn report_state(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        substate: Substate,
-    ) {
-        self.duty_set_state(sim, assets, owner, AiState::Seeking, substate);
-    }
-
-    fn report_face(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-    ) {
-        let position = self.live_ai_position(target);
-        let elevation = self
-            .expect_entity(target, "report facing target")
-            .position_iface()
-            .get_elevation() as i16 as f32;
-        self.duty_face_position_at_elevation(sim, assets, owner, position, elevation);
     }
 
     /// Transfer a report directly from its owning brain. Only the loop extent is
@@ -500,6 +92,372 @@ impl EngineInner {
                 .my_reconnaissance_report
                 .update(kind, position);
         }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_enemy_report_callback(
+        &mut self,
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        let enemy = self.engine.entities().get(self.owner)?.enemy_ai()?;
+        let substate = enemy.base.current_substate;
+        let kind = stimulus.stimulus_type;
+        if !matches!(
+            kind,
+            StimulusType::EventReachPoint
+                | StimulusType::EventDone
+                | StimulusType::EventTimer
+                | StimulusType::EventSyncCharly
+                | StimulusType::CallCoordinate
+                | StimulusType::CallInstruction
+                | StimulusType::CallReport
+                | StimulusType::EventGaloppLoopEnd
+                | StimulusType::EventMyTalk0
+                | StimulusType::EventMyTalk1
+                | StimulusType::EventMyTalk2
+                | StimulusType::EventMyTalk3
+                | StimulusType::CallYourTalk0
+                | StimulusType::CallYourTalk1
+                | StimulusType::CallYourTalk2
+                | StimulusType::CallYourTalk3
+        ) {
+            return None;
+        }
+        match substate {
+            Substate::SeekingSoldierReturnToOfficer => {
+                if matches!(
+                    kind,
+                    StimulusType::EventTimer | StimulusType::EventReachPoint
+                ) {
+                    let officer = self.engine.report_antagonist(self.owner);
+                    let officer_substate = self
+                        .engine
+                        .ai(officer, "returning soldier's officer")
+                        .current_substate;
+                    let waiting = matches!(
+                        officer_substate,
+                        Substate::SeekingOfficerWaitForInstructedSoldier
+                            | Substate::SeekingOfficerWaitForInstructedGroup
+                    );
+                    if kind == StimulusType::EventTimer {
+                        let position = self.engine.live_ai_position(self.owner);
+                        let remembered = self
+                            .engine
+                            .enemy_ai(self.owner, "returning soldier")
+                            .officers_position;
+                        let dx = position.x - remembered.x;
+                        let dy = position.y - remembered.y;
+                        if waiting
+                            || officer_substate == Substate::SeekingDetectedCharly
+                            || dx * dx + dy * dy
+                                >= (self.engine.ai.standard_view_polygon_radius as f32).powi(2)
+                        {
+                            self.engine.report_timer(self.owner, 20);
+                        } else {
+                            self.execute_ai_return_to_duty(DutyFlags::empty());
+                        }
+                    } else if waiting {
+                        self.engine.execute_ai_callback(
+                            self.sim,
+                            self.assets,
+                            officer,
+                            &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
+                        );
+                        self.execute_ai_speech(AiSpeechAttempt {
+                            remark: Remark::TellsOfficerNothing,
+                            flags: SpeechFlags::MYTALK_1.bits(),
+                        });
+                        self.report_state(Substate::SeekingSoldierGiveReportToOfficer);
+                        self.engine.report_timer(self.owner, 100);
+                    } else {
+                        self.execute_ai_return_to_duty(DutyFlags::empty());
+                    }
+                }
+            }
+            Substate::SeekingSoldierGiveReportToOfficer => match kind {
+                StimulusType::EventMyTalk1 => {
+                    let officer = self.engine.report_antagonist(self.owner);
+                    self.engine.execute_ai_callback(
+                        self.sim,
+                        self.assets,
+                        officer,
+                        &Stimulus::with_human(StimulusType::CallYourTalk1, self.owner.index()),
+                    );
+                    self.engine.report_timer(self.owner, 20);
+                }
+                StimulusType::EventTimer => {
+                    self.engine
+                        .enemy_ai_mut(self.owner, "report completion")
+                        .seek_flags = SeekFlags::empty();
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+                _ => {}
+            },
+            Substate::SeekingOfficerGetReportFromSoldier => match kind {
+                StimulusType::CallYourTalk1 => self.execute_ai_speech(AiSpeechAttempt {
+                    remark: Remark::OfficerEndsConversation,
+                    flags: SpeechFlags::MYTALK_1.bits(),
+                }),
+                StimulusType::EventTimer | StimulusType::EventMyTalk1 => {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+                _ => {}
+            },
+            Substate::SeekingRunningToOfficerSeen => {
+                if matches!(
+                    kind,
+                    StimulusType::EventMyTalk0
+                        | StimulusType::EventTimer
+                        | StimulusType::EventReachPoint
+                ) {
+                    let officer = self.engine.report_antagonist(self.owner);
+                    let waiting = matches!(
+                        self.engine
+                            .world
+                            .entities
+                            .expect_ai_controller(officer, format_args!("alert report officer"))
+                            .current_substate,
+                        Substate::SeekingOfficerWaitForInstructedSoldier
+                            | Substate::SeekingOfficerWaitForAlertingSoldier
+                            | Substate::SeekingDetectedCharly
+                    );
+                    if kind == StimulusType::EventMyTalk0 {
+                        if waiting {
+                            self.engine.execute_ai_callback(
+                                self.sim,
+                                self.assets,
+                                officer,
+                                &Stimulus::new(StimulusType::CallYourTalk0),
+                            );
+                        }
+                    } else if !waiting {
+                        self.execute_ai_return_to_duty(DutyFlags::empty());
+                    } else if kind == StimulusType::EventTimer {
+                        self.engine.report_timer(self.owner, 20);
+                    } else {
+                        self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerStart);
+                        let remark = match self
+                            .engine
+                            .ai(self.owner, "alert report speech")
+                            .my_reconnaissance_report
+                            .report_type
+                        {
+                            ReportType::Body | ReportType::DeadBody => Remark::TellsOfficerBody,
+                            ReportType::Enemy => Remark::TellsOfficerEnemy,
+                            ReportType::MissedCharly => Remark::TellsOfficerCharlyAway,
+                            _ => Remark::TellsOfficerOther,
+                        };
+                        self.execute_ai_speech(AiSpeechAttempt {
+                            remark,
+                            flags: (SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY).bits(),
+                        });
+                        self.engine.report_timer(self.owner, 150);
+                    }
+                }
+            }
+            Substate::SeekingSoldierGiveAlertingReportToOfficerStart => {
+                if matches!(kind, StimulusType::EventMyTalk1 | StimulusType::EventTimer) {
+                    let officer = self.engine.report_antagonist(self.owner);
+                    let officer_report = self
+                        .engine
+                        .ai(officer, "alert report recipient")
+                        .my_reconnaissance_report
+                        .report_type;
+                    let point = match self
+                        .engine
+                        .ai(self.owner, "alert report donor")
+                        .my_reconnaissance_report
+                        .report_type
+                    {
+                        ReportType::Nothing => false,
+                        ReportType::Noise | ReportType::MissedCharly => {
+                            officer_report == ReportType::Nothing
+                        }
+                        ReportType::Body | ReportType::DeadBody => {
+                            officer_report <= ReportType::Noise
+                        }
+                        ReportType::Enemy => officer_report <= ReportType::DeadBody,
+                    };
+                    if point {
+                        self.engine.execute_ai_callback(
+                            self.sim,
+                            self.assets,
+                            officer,
+                            &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
+                        );
+                        // The recipient can redirect the conversation during the report.
+                        let officer = self.engine.report_antagonist(self.owner);
+                        self.engine.execute_ai_callback(
+                            self.sim,
+                            self.assets,
+                            officer,
+                            &Stimulus::new(StimulusType::CallYourTalk1),
+                        );
+                        self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerPoint);
+                        self.engine.report_timer(self.owner, 100);
+                    } else {
+                        self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerEnd);
+                        let officer = self.engine.report_antagonist(self.owner);
+                        self.engine.execute_ai_callback(
+                            self.sim,
+                            self.assets,
+                            officer,
+                            &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
+                        );
+                        self.engine.report_timer(
+                            self.owner,
+                            crate::parameters_ai::AI_STANDARD_TALK_TIME as u32,
+                        );
+                    }
+                }
+            }
+            Substate::SeekingSoldierGiveAlertingReportToOfficerPoint => match kind {
+                StimulusType::CallYourTalk1 | StimulusType::EventTimer => {
+                    self.execute_ai_speech(AiSpeechAttempt {
+                        remark: Remark::TellsOfficerWhere,
+                        flags: SpeechFlags::empty().bits(),
+                    });
+                    let position = self.engine.ai(self.owner, "report pointing").seek_position;
+                    self.duty_point_to(position);
+                }
+                StimulusType::EventDone => {
+                    self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerEnd);
+                    let officer = self.engine.report_antagonist(self.owner);
+                    self.report_face(officer);
+                    self.engine.report_timer(
+                        self.owner,
+                        crate::parameters_ai::AI_STANDARD_TALK_TIME as u32,
+                    );
+                }
+                _ => {}
+            },
+            Substate::SeekingSoldierGiveAlertingReportToOfficerEnd => {
+                if kind == StimulusType::EventTimer {
+                    self.engine
+                        .enemy_ai_mut(self.owner, "alert report completion")
+                        .seek_flags = SeekFlags::empty();
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            Substate::SeekingOfficerGetAlertingReportFromSoldier
+                if matches!(
+                    kind,
+                    StimulusType::CallYourTalk1 | StimulusType::EventMyTalk1
+                ) =>
+            {
+                if kind == StimulusType::CallYourTalk1 {
+                    self.execute_ai_speech(AiSpeechAttempt {
+                        remark: Remark::OfficerAsksWhere,
+                        flags: (SpeechFlags::MYTALK_1 | SpeechFlags::EMERGENCY).bits(),
+                    });
+                } else {
+                    let soldier = self.engine.report_antagonist(self.owner);
+                    self.engine.execute_ai_callback(
+                        self.sim,
+                        self.assets,
+                        soldier,
+                        &Stimulus::new(StimulusType::CallYourTalk1),
+                    );
+                }
+            }
+            Substate::SeekingOfficerWaitForInstructedSoldier
+            | Substate::SeekingOfficerWaitForInstructedGroup
+            | Substate::SeekingOfficerWaitForAlertingSoldier
+            | Substate::SeekingWaitForAlertingCivilian
+                if kind == StimulusType::CallReport =>
+            {
+                let civilian = substate == Substate::SeekingWaitForAlertingCivilian;
+                let sender = match &stimulus.info {
+                    StimulusInfo::Human(sender) => *sender,
+                    _ => panic!("report requires a reporting human"),
+                };
+                let donor = self
+                    .engine
+                    .expect_human_id_for_ai_handle(sender.get(), "reporting human");
+                assert!(
+                    matches!(
+                        (civilian, self.engine.world.entities.get(donor)),
+                        (true, Some(Entity::Civilian(_))) | (false, Some(Entity::Soldier(_)))
+                    ),
+                    "report donor has the wrong actor kind"
+                );
+                let old_type = self
+                    .engine
+                    .ai(self.owner, "report recipient")
+                    .my_reconnaissance_report
+                    .report_type;
+                self.engine.consider_live_ai_report(self.owner, donor, 7);
+                if !civilian {
+                    self.engine.consider_live_ai_report(donor, self.owner, 0);
+                }
+                let report = &self
+                    .engine
+                    .ai(donor, "report donor after handoff")
+                    .my_reconnaissance_report;
+                let report_type = report.report_type;
+                let group = substate == Substate::SeekingOfficerWaitForInstructedGroup;
+                let alerting = report_type > old_type
+                    && if civilian {
+                        report_type >= ReportType::Body
+                    } else {
+                        report_type > ReportType::Body
+                    }
+                    && (!group || old_type == ReportType::MissedCharly);
+                if alerting {
+                    self.report_state(if civilian {
+                        Substate::SeekingGetAlertingReportFromCivilian
+                    } else {
+                        Substate::SeekingOfficerGetAlertingReportFromSoldier
+                    });
+                    self.engine.ai_mut(self.owner, "alert report").antagonist =
+                        Some(AiEntityHandle::new(donor.index()));
+                    self.report_face(donor);
+                    let report = &self
+                        .engine
+                        .ai(donor, "alert report after facing")
+                        .my_reconnaissance_report;
+                    let (report_type, seek_position) = (report.report_type, report.seek_position);
+                    let ai = self.engine.ai_mut(self.owner, "alert report position");
+                    ai.seek_position = seek_position;
+                    ai.my_reconnaissance_report
+                        .update(report_type, seek_position);
+                } else if group {
+                    self.report_face(donor);
+                } else {
+                    self.report_state(if civilian {
+                        Substate::SeekingGetReportFromCivilian
+                    } else {
+                        Substate::SeekingOfficerGetReportFromSoldier
+                    });
+                    let antagonist = self.engine.report_antagonist(self.owner);
+                    self.report_face(antagonist);
+                }
+                let frames =
+                    if !alerting && substate == Substate::SeekingOfficerWaitForInstructedSoldier {
+                        100
+                    } else {
+                        crate::parameters_ai::AI_STANDARD_TALK_TIME as u32
+                    };
+                self.engine.report_timer(self.owner, frames);
+            }
+            _ => return None,
+        }
+        Some(false)
+    }
+
+    fn report_state(&mut self, substate: Substate) {
+        self.duty_set_state(AiState::Seeking, substate);
+    }
+
+    fn report_face(&mut self, target: EntityId) {
+        let position = self.engine.live_ai_position(target);
+        let elevation = self
+            .engine
+            .expect_entity(target, "report facing target")
+            .position_iface()
+            .get_elevation() as i16 as f32;
+        self.duty_face_position_at_elevation(position, elevation);
     }
 }
 

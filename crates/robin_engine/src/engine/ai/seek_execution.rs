@@ -66,157 +66,12 @@ impl EngineInner {
         flags: SeekFlags,
         seek_direction: u16,
     ) {
-        let center = self.resolve_live_seek_center(owner, center);
-        self.stop_ai_owner(sim, assets, owner);
-        self.execute_ai_unfocus(owner);
-
-        if self.is_player_aligned_camp(self.expect_entity(owner, "seek camp").camp())
-            || self.seek_enemy(owner).company_number == 100
-        {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-            return;
-        }
-        if !flags.contains(SeekFlags::CHARLY_SEEK) {
-            self.execute_ai_set_checkpoint_charly(owner, None);
-        }
-        self.seek_enemy_mut(owner).current_task_priority = task_priority::SEEKING;
-        if self.execute_seek_other_bodies(sim, assets, owner) {
-            return;
-        }
-
-        let hostile =
-            self.is_hostile_to_player_camp(self.expect_entity(owner, "seek IQ camp").camp());
-        let iq = self.seek_enemy(owner).iq_for_difficulty(
-            &assets.profile_manager,
-            self.control.sim_config.difficulty,
-            hostile,
-        );
-        if i32::from(iq) >= parameters_ai::CHECK_BEGGAR_MIN_IQ
-            && !self.seek_enemy(owner).combat_trainer
-        {
-            let mut beggars: Vec<_> = self
-                .entities()
-                .occupied()
-                .filter_map(|(id, entity)| {
-                    let beggar = match entity {
-                        Entity::Civilian(c) => {
-                            c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
-                        }
-                        Entity::Pc(_) | Entity::Soldier(_) => {
-                            entity.element_data().posture()
-                                == crate::element::Posture::SimulatingBeggar
-                        }
-                        _ => false,
-                    };
-                    beggar.then_some(id)
-                })
-                .collect();
-            beggars.sort_unstable_by_key(|id| self.world.original_creation_order(*id));
-            self.execute_ai_delete_detectable_type(owner, crate::element::DetectableType::Beggar);
-            self.seek_enemy_mut(owner).beggar_to_examine = None;
-            for id in beggars {
-                self.execute_ai_add_detectable(owner, id, crate::element::DetectableType::Beggar);
-            }
-        }
-
-        let ai = self.seek_enemy_mut(owner);
-        ai.seek_flags = flags;
-        ai.seek_center = center;
-        ai.my_seek_points.clear();
-        let spec = SeekAreaSpec {
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seek_area(
             center,
             standard_radius,
             flags,
             seek_direction,
-        };
-        let frame = self.control.frame_counter;
-        let creation_order = Some(self.world.original_creation_order(owner));
-        if standard_radius > 0 && !self.seek_enemy(owner).combat_trainer {
-            let position = self.live_ai_position(owner);
-            let mut seeking_friends = 0usize;
-            let mut clears_help = false;
-            for (id, soldier) in self.entities().soldiers() {
-                let id = EntityId::Soldier(id);
-                if id == owner {
-                    continue;
-                }
-                let Some(ai) = soldier.npc.ai_brain.enemy() else {
-                    continue;
-                };
-                if ai.base.view_alert_status == crate::ai::AlertLevel::Green {
-                    continue;
-                }
-                let friend = self.live_ai_position(id);
-                let dx = position.x - friend.x;
-                let dy = position.y - friend.y;
-                // Membership requires a positively established distance. An
-                // unordered position must not increase the search workload.
-                if !(dx * dx + dy * dy < 500.0 * 500.0) {
-                    continue;
-                }
-                seeking_friends += 1;
-                clears_help |= ai.base.current_substate.is_seek_area()
-                    && ai.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER);
-            }
-            let ai = self
-                .world
-                .entities
-                .expect_entity_mut(owner, format_args!("seek point selection"))
-                .enemy_ai_mut()
-                .expect("seek point selection requires enemy AI");
-            ai.append_global_area_seek_points(
-                sim,
-                frame,
-                creation_order,
-                seeking_friends,
-                clears_help,
-                spec,
-                &mut self.ai.global,
-            );
-        } else {
-            debug_assert!(flags.intersects(SeekFlags::LOCATION_FIRST | SeekFlags::LOCATION_END));
-        }
-        if flags.contains(SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE) {
-            let adjusted = self.live_seek_door_center(
-                owner,
-                self.seek_enemy(owner).seek_center,
-                seek_direction,
-            );
-            self.seek_enemy_mut(owner).seek_center = adjusted;
-        }
-        let ai = self
-            .entities_mut()
-            .expect_entity_mut(owner, format_args!("personal seek points"))
-            .enemy_ai_mut()
-            .expect("personal seek points require enemy AI");
-        ai.append_personal_area_seek_points(sim, spec, frame, creation_order);
-        ai.actual_seek_point = None;
-        assert!(
-            !ai.my_seek_points.is_empty(),
-            "area search must produce a seek point"
-        );
-
-        let building = self.entity_building_sector(
-            self.expect_entity(owner, "seek building")
-                .element_data()
-                .sector(),
-        );
-        if building.is_none() {
-            self.execute_ai_seek_next_point(sim, assets, owner);
-        } else {
-            self.seek_enemy_mut(owner)
-                .seek_point_view_directions
-                .clear();
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingSeekpointWatchingSidewards,
-            );
-            let frame = self.control.frame_counter;
-            self.seek_enemy_mut(owner).base.launch_timer(3, frame);
-        }
+        )
     }
 
     fn live_seek_door_center(&self, owner: EntityId, center: Position, direction: u16) -> Position {
@@ -284,19 +139,207 @@ impl EngineInner {
         nearest
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_seek_next_point(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        loop {
-            if let Some(id) = self.seek_enemy(owner).actual_seek_point {
-                self.seek_point_mut(owner, id).locked = false;
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seek_next_point()
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_seek_area(
+        &mut self,
+        center: Position,
+        standard_radius: u16,
+        flags: SeekFlags,
+        seek_direction: u16,
+    ) {
+        let center = self.engine.resolve_live_seek_center(self.owner, center);
+        self.stop_ai_owner();
+        self.engine.execute_ai_unfocus(self.owner);
+
+        if self
+            .engine
+            .is_player_aligned_camp(self.engine.expect_entity(self.owner, "seek camp").camp())
+            || self.engine.seek_enemy(self.owner).company_number == 100
+        {
+            self.execute_ai_return_to_duty(DutyFlags::empty());
+            return;
+        }
+        if !flags.contains(SeekFlags::CHARLY_SEEK) {
+            self.engine
+                .execute_ai_set_checkpoint_charly(self.owner, None);
+        }
+        self.engine.seek_enemy_mut(self.owner).current_task_priority = task_priority::SEEKING;
+        if self.execute_seek_other_bodies() {
+            return;
+        }
+
+        let hostile = self.engine.is_hostile_to_player_camp(
+            self.engine.expect_entity(self.owner, "seek IQ camp").camp(),
+        );
+        let iq = self.engine.seek_enemy(self.owner).iq_for_difficulty(
+            &self.assets.profile_manager,
+            self.engine.control.sim_config.difficulty,
+            hostile,
+        );
+        if i32::from(iq) >= parameters_ai::CHECK_BEGGAR_MIN_IQ
+            && !self.engine.seek_enemy(self.owner).combat_trainer
+        {
+            let mut beggars: Vec<_> = self
+                .engine
+                .entities()
+                .occupied()
+                .filter_map(|(id, entity)| {
+                    let beggar = match entity {
+                        Entity::Civilian(c) => {
+                            c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
+                        }
+                        Entity::Pc(_) | Entity::Soldier(_) => {
+                            entity.element_data().posture()
+                                == crate::element::Posture::SimulatingBeggar
+                        }
+                        _ => false,
+                    };
+                    beggar.then_some(id)
+                })
+                .collect();
+            beggars.sort_unstable_by_key(|id| self.engine.world.original_creation_order(*id));
+            self.engine.execute_ai_delete_detectable_type(
+                self.owner,
+                crate::element::DetectableType::Beggar,
+            );
+            self.engine.seek_enemy_mut(self.owner).beggar_to_examine = None;
+            for id in beggars {
+                self.engine.execute_ai_add_detectable(
+                    self.owner,
+                    id,
+                    crate::element::DetectableType::Beggar,
+                );
             }
-            self.seek_enemy_mut(owner).current_task_priority = task_priority::SEEKING;
-            if !self.seek_enemy(owner).beggars_to_control.is_empty() {
-                let ai = self.seek_enemy_mut(owner);
+        }
+
+        let ai = self.engine.seek_enemy_mut(self.owner);
+        ai.seek_flags = flags;
+        ai.seek_center = center;
+        ai.my_seek_points.clear();
+        let spec = SeekAreaSpec {
+            center,
+            standard_radius,
+            flags,
+            seek_direction,
+        };
+        let frame = self.engine.control.frame_counter;
+        let creation_order = Some(self.engine.world.original_creation_order(self.owner));
+        if standard_radius > 0 && !self.engine.seek_enemy(self.owner).combat_trainer {
+            let position = self.engine.live_ai_position(self.owner);
+            let mut seeking_friends = 0usize;
+            let mut clears_help = false;
+            for (id, soldier) in self.engine.entities().soldiers() {
+                let id = EntityId::Soldier(id);
+                if id == self.owner {
+                    continue;
+                }
+                let Some(ai) = soldier.npc.ai_brain.enemy() else {
+                    continue;
+                };
+                if ai.base.view_alert_status == crate::ai::AlertLevel::Green {
+                    continue;
+                }
+                let friend = self.engine.live_ai_position(id);
+                let dx = position.x - friend.x;
+                let dy = position.y - friend.y;
+                // Membership requires a positively established distance. An
+                // unordered position must not increase the search workload.
+                if !(dx * dx + dy * dy < 500.0 * 500.0) {
+                    continue;
+                }
+                seeking_friends += 1;
+                clears_help |= ai.base.current_substate.is_seek_area()
+                    && ai.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER);
+            }
+            let ai = self
+                .engine
+                .world
+                .entities
+                .expect_entity_mut(self.owner, format_args!("seek point selection"))
+                .enemy_ai_mut()
+                .expect("seek point selection requires enemy AI");
+            ai.append_global_area_seek_points(
+                self.sim,
+                frame,
+                creation_order,
+                seeking_friends,
+                clears_help,
+                spec,
+                &mut self.engine.ai.global,
+            );
+        } else {
+            debug_assert!(flags.intersects(SeekFlags::LOCATION_FIRST | SeekFlags::LOCATION_END));
+        }
+        if flags.contains(SeekFlags::LOCATION_FIRST | SeekFlags::HOUSE) {
+            let adjusted = self.engine.live_seek_door_center(
+                self.owner,
+                self.engine.seek_enemy(self.owner).seek_center,
+                seek_direction,
+            );
+            self.engine.seek_enemy_mut(self.owner).seek_center = adjusted;
+        }
+        let ai = self
+            .engine
+            .entities_mut()
+            .expect_entity_mut(self.owner, format_args!("personal seek points"))
+            .enemy_ai_mut()
+            .expect("personal seek points require enemy AI");
+        ai.append_personal_area_seek_points(self.sim, spec, frame, creation_order);
+        ai.actual_seek_point = None;
+        assert!(
+            !ai.my_seek_points.is_empty(),
+            "area search must produce a seek point"
+        );
+
+        let building = self.engine.entity_building_sector(
+            self.engine
+                .expect_entity(self.owner, "seek building")
+                .element_data()
+                .sector(),
+        );
+        if building.is_none() {
+            self.execute_ai_seek_next_point();
+        } else {
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .seek_point_view_directions
+                .clear();
+            self.duty_set_state(
+                AiState::Seeking,
+                Substate::SeekingSeekpointWatchingSidewards,
+            );
+            let frame = self.engine.control.frame_counter;
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .base
+                .launch_timer(3, frame);
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_seek_next_point(&mut self) {
+        loop {
+            if let Some(id) = self.engine.seek_enemy(self.owner).actual_seek_point {
+                self.engine.seek_point_mut(self.owner, id).locked = false;
+            }
+            self.engine.seek_enemy_mut(self.owner).current_task_priority = task_priority::SEEKING;
+            if !self
+                .engine
+                .seek_enemy(self.owner)
+                .beggars_to_control
+                .is_empty()
+            {
+                let ai = self.engine.seek_enemy_mut(self.owner);
                 let beggar = ai.beggars_to_control.pop().expect("nonempty beggar queue");
                 ai.beggar_to_examine = Some(AiEntityHandle::new(beggar));
                 ai.base.seek_position = ai
@@ -304,51 +347,54 @@ impl EngineInner {
                     .pop()
                     .expect("beggar position missing");
                 self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
                     AiState::Seeking,
                     Substate::SeekingSeekpointApproachingBeggar,
                 );
-                let position = self.seek_enemy(owner).base.seek_position;
-                self.duty_go_near(sim, assets, owner, position, 50, GotoFlags::RUN);
+                let position = self.engine.seek_enemy(self.owner).base.seek_position;
+                self.duty_go_near(position, 50, GotoFlags::RUN);
                 return;
             }
-            if self.seek_enemy(owner).my_seek_points.is_empty() {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                self.execute_finish_exhausted_search(sim, assets, owner);
+            if self.engine.seek_enemy(self.owner).my_seek_points.is_empty() {
+                self.execute_ai_return_to_duty(DutyFlags::empty());
+                self.execute_finish_exhausted_search();
                 return;
             }
-            let id = self.seek_enemy_mut(owner).my_seek_points.remove(0);
-            self.seek_enemy_mut(owner).actual_seek_point = Some(id);
-            if self.seek_point_mut(owner, id).locked {
+            let id = self
+                .engine
+                .seek_enemy_mut(self.owner)
+                .my_seek_points
+                .remove(0);
+            self.engine.seek_enemy_mut(self.owner).actual_seek_point = Some(id);
+            if self.engine.seek_point_mut(self.owner, id).locked {
                 continue;
             }
-            let frame = self.control.frame_counter;
-            let interest = self.seek_point_mut(owner, id).calculate_interest(frame);
-            if crate::sim_rng::u8(sim, crate::sim_rng::RngSite::SeekPointAcceptance, 0..100)
-                >= interest
+            let frame = self.engine.control.frame_counter;
+            let interest = self
+                .engine
+                .seek_point_mut(self.owner, id)
+                .calculate_interest(frame);
+            if crate::sim_rng::u8(
+                self.sim,
+                crate::sim_rng::RngSite::SeekPointAcceptance,
+                0..100,
+            ) >= interest
             {
                 continue;
             }
-            let point = self.seek_point_mut(owner, id);
+            let point = self.engine.seek_point_mut(self.owner, id);
             point.subtract_interest(
                 parameters_ai::SEEK_POINT_EXAMINE_DELTA_INTEREST as u8,
                 frame,
             );
             point.locked = true;
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingSeekpoint,
-            );
-            self.seek_enemy_mut(owner)
+            self.duty_set_state(AiState::Seeking, Substate::SeekingSeekpoint);
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .base
                 .set_emoticon(EmoticonType::QuestionMark);
             let flags = if self
-                .seek_enemy(owner)
+                .engine
+                .seek_enemy(self.owner)
                 .seek_flags
                 .contains(SeekFlags::WALKING)
             {
@@ -357,35 +403,39 @@ impl EngineInner {
                 GotoFlags::RUN
             };
             let current = self
-                .seek_enemy(owner)
+                .engine
+                .seek_enemy(self.owner)
                 .actual_seek_point
                 .expect("seek callback cleared current seek point");
-            let position = self.seek_point_mut(owner, current).position;
-            let position = self.resolve_live_seek_center(owner, position);
-            self.duty_go_to(sim, assets, owner, position, flags);
+            let position = self.engine.seek_point_mut(self.owner, current).position;
+            let position = self.engine.resolve_live_seek_center(self.owner, position);
+            self.duty_go_to(position, flags);
             return;
         }
     }
 
-    pub(super) fn execute_seek_other_bodies(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
+    pub(super) fn execute_seek_other_bodies(&mut self) -> bool {
         loop {
-            let Some(&body) = self.seek_enemy(owner).other_bodies_to_examine.first() else {
+            let Some(&body) = self
+                .engine
+                .seek_enemy(self.owner)
+                .other_bodies_to_examine
+                .first()
+            else {
                 return false;
             };
-            let id = self.expect_entity_id_for_index(body, "queued seek body");
-            let entity = self.expect_entity(id, "queued seek body");
+            let id = self
+                .engine
+                .expect_entity_id_for_index(body, "queued seek body");
+            let entity = self.engine.expect_entity(id, "queued seek body");
             let human = entity.human_data().expect("queued seek body must be human");
             let in_coma = if let Entity::Pc(pc) = entity {
                 let description = pc
                     .pc
                     .campaign_description_index
                     .expect("seek body PC lacks campaign identity");
-                self.mission_domain
+                self.engine
+                    .mission_domain
                     .campaign
                     .characters
                     .get(usize::try_from(description).expect("campaign character index overflow"))
@@ -403,64 +453,58 @@ impl EngineInner {
                     entity.element_data().posture(),
                     crate::element::Posture::Tied | crate::element::Posture::Carried
                 );
-            self.seek_enemy_mut(owner).other_bodies_to_examine.remove(0);
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .other_bodies_to_examine
+                .remove(0);
             if down {
-                self.seek_enemy_mut(owner).base.detected_body = Some(AiEntityHandle::new(body));
-                self.execute_seek_body(sim, assets, owner, id);
+                self.engine.seek_enemy_mut(self.owner).base.detected_body =
+                    Some(AiEntityHandle::new(body));
+                self.execute_seek_body(id);
                 return true;
             }
         }
     }
 
-    pub(super) fn execute_seek_body(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        body: EntityId,
-    ) {
+    pub(super) fn execute_seek_body(&mut self, body: EntityId) {
         if self
+            .engine
             .expect_entity(body, "seek body")
             .human_data()
             .expect("seek body must be human")
             .stuck_under_nets_counter
             > 0
         {
-            self.execute_seek_net_victim(sim, assets, owner, body);
+            self.execute_seek_net_victim(body);
             return;
         }
-        let position = self.live_ai_position(body);
-        let ai = self.seek_enemy_mut(owner);
+        let position = self.engine.live_ai_position(body);
+        let ai = self.engine.seek_enemy_mut(self.owner);
         ai.base.detected_body = Some(AiEntityHandle::new(body.index()));
         ai.base.seek_position = position;
         ai.base.set_emoticon(EmoticonType::XMark);
-        self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingBody);
-        self.execute_ai_focus(owner, Some(AiEntityHandle::new(body.index())));
+        self.duty_set_state(AiState::Seeking, Substate::SeekingBody);
+        self.engine
+            .execute_ai_focus(self.owner, Some(AiEntityHandle::new(body.index())));
 
-        let position = self.seek_enemy(owner).base.seek_position;
+        let position = self.engine.seek_enemy(self.owner).base.seek_position;
         self.duty_go_near(
-            sim,
-            assets,
-            owner,
             position,
             parameters_ai::AI_STOP_BEFORE_BODY_STEPS,
             GotoFlags::RUN,
         );
-        let frame = self.control.frame_counter;
-        self.seek_enemy_mut(owner).base.launch_timer(10, frame);
+        let frame = self.engine.control.frame_counter;
+        self.engine
+            .seek_enemy_mut(self.owner)
+            .base
+            .launch_timer(10, frame);
     }
 
-    fn execute_seek_net_victim(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        victim: EntityId,
-    ) {
-        let position = self.live_ai_position(owner);
+    fn execute_seek_net_victim(&mut self, victim: EntityId) {
+        let position = self.engine.live_ai_position(self.owner);
         let mut nearest = None;
         let mut distance = f32::INFINITY;
-        for (id, net) in self.entities().nets() {
+        for (id, net) in self.engine.entities().nets() {
             if !net.element.active || !net.net.victims.contains(&victim) {
                 continue;
             }
@@ -474,16 +518,17 @@ impl EngineInner {
             }
         }
         let net = nearest.expect("stuck victim has no covering net");
-        let ai = self.seek_enemy_mut(owner);
+        let ai = self.engine.seek_enemy_mut(self.owner);
         ai.base.detected_body = Some(AiEntityHandle::new(victim.index()));
         ai.base.interesting_object = Some(AiEntityHandle::new(net.index()));
-        let victim_entity = self.expect_entity(victim, "net victim");
-        let net_entity = self.expect_entity(net, "covering net");
-        let reachable = self.world.fast_grid.is_straight_movement_authorized(
+        let victim_entity = self.engine.expect_entity(victim, "net victim");
+        let net_entity = self.engine.expect_entity(net, "covering net");
+        let reachable = self.engine.world.fast_grid.is_straight_movement_authorized(
             victim_entity.element_data().position_map(),
             net_entity.element_data().position_map(),
             victim_entity.element_data().layer(),
-            self.expect_entity(owner, "net rescuer")
+            self.engine
+                .expect_entity(self.owner, "net rescuer")
                 .position_iface()
                 .get_move_box(),
         );
@@ -492,16 +537,19 @@ impl EngineInner {
                 unreachable!()
             };
             (
-                self.live_ai_position(net),
+                self.engine.live_ai_position(net),
                 if net_data.net.crumpled { 25 } else { 55 },
             )
         } else {
-            (self.live_ai_position(victim), 15)
+            (self.engine.live_ai_position(victim), 15)
         };
-        self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingNet);
-        self.duty_go_near(sim, assets, owner, goal, distance, GotoFlags::RUN);
-        let frame = self.control.frame_counter;
-        self.seek_enemy_mut(owner).base.launch_timer(10, frame);
+        self.duty_set_state(AiState::Seeking, Substate::SeekingNet);
+        self.duty_go_near(goal, distance, GotoFlags::RUN);
+        let frame = self.engine.control.frame_counter;
+        self.engine
+            .seek_enemy_mut(self.owner)
+            .base
+            .launch_timer(10, frame);
     }
 }
 

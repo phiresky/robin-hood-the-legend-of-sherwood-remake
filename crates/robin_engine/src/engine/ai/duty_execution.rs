@@ -6,48 +6,38 @@ use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::element::Human as _;
 use crate::profiles::ProfileRank;
 
-impl EngineInner {
-    pub(in crate::engine) fn execute_specialized_ai_duty(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        flags: DutyFlags,
-    ) {
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_specialized_ai_duty(&mut self, flags: DutyFlags) {
         if self
+            .engine
             .entities()
-            .expect_entity(owner, format_args!("duty owner"))
+            .expect_entity(self.owner, format_args!("duty owner"))
             .enemy_ai()
             .is_some()
         {
-            AiOwnerCtx::new(self, sim, assets, owner).enemy_duty(flags);
+            AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).enemy_duty(flags);
             return;
         }
-        self.entities_mut()
-            .expect_entity_mut(owner, format_args!("friendly duty owner"))
+        self.engine
+            .entities_mut()
+            .expect_entity_mut(self.owner, format_args!("friendly duty owner"))
             .friendly_ai_mut()
             .expect("duty owner has neither enemy nor friendly AI")
             .fleeing_seen_enemy_counter = 0;
-        if self.is_very_very_busy(owner) {
-            let ai = self.ai_mut(owner, "busy duty owner");
+        if self.engine.is_very_very_busy(self.owner) {
+            let ai = self.engine.ai_mut(self.owner, "busy duty owner");
             ai.non_script_lock(AiLockFlags::BUSY);
             ai.was_busy = true;
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReturnToDuty),
-            );
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventReturnToDuty));
             return;
         }
-        self.execute_common_ai_duty(sim, assets, owner, flags);
+        self.execute_common_ai_duty(flags);
     }
 }
 
 impl AiOwnerCtx<'_> {
     fn go_near(&mut self, position: crate::ai::Position, distance: i32, flags: GotoFlags) {
-        self.engine
-            .duty_go_near(self.sim, self.assets, self.owner, position, distance, flags);
+        self.duty_go_near(position, distance, flags);
     }
 
     fn object_id(&self, handle: u32) -> EntityId {
@@ -207,13 +197,7 @@ impl AiOwnerCtx<'_> {
             if !self.enemy().base.patrol.is_empty() {
                 self.state(AiState::Default, Substate::DefaultPatrolChiefReturnToPatrol);
                 let position = self.enemy().return_to_patrol_point;
-                self.engine.duty_go_to(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    GotoFlags::empty(),
-                );
+                self.duty_go_to(position, GotoFlags::empty());
                 self.enemy_mut().return_to_patrol_point.sector = None;
                 return;
             }
@@ -246,8 +230,7 @@ impl AiOwnerCtx<'_> {
 
         self.engine
             .initialize_patrol_for_npc(self.assets, self.owner);
-        self.engine
-            .execute_common_ai_duty(self.sim, self.assets, self.owner, flags);
+        self.execute_common_ai_duty(flags);
     }
 
     fn angry_officer_near(&self, position: crate::ai::Position) -> bool {

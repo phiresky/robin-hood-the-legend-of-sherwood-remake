@@ -95,8 +95,7 @@ impl AiOwnerCtx<'_> {
         self.engine.halt_actor(self.sim, self.assets, self.owner);
     }
     fn face(&mut self, target: EntityId) {
-        self.engine
-            .observation_face_entity(self.sim, self.assets, self.owner, target, false);
+        self.observation_face_entity(target, false);
     }
     fn face_position(&mut self, point: Position) {
         let target = self.engine.position_to_point_3d(
@@ -115,8 +114,7 @@ impl AiOwnerCtx<'_> {
             target.x - body.x,
             target.y - body.y,
         );
-        self.engine
-            .duty_face_direction(self.sim, self.assets, self.owner, direction as u16);
+        self.duty_face_direction(direction as u16);
     }
     fn emoticon(&mut self, emoticon: EmoticonType) {
         let frame = self.engine.control.frame_counter;
@@ -189,10 +187,7 @@ impl AiOwnerCtx<'_> {
                                 &self.engine.world.fast_grid.level.sector_number_map,
                             )
                             .position;
-                            self.engine.duty_go_near(
-                                self.sim,
-                                self.assets,
-                                self.owner,
+                            self.duty_go_near(
                                 position,
                                 crate::parameters_ai::AI_TALK_DISTANCE,
                                 GotoFlags::RUN,
@@ -262,8 +257,7 @@ impl AiOwnerCtx<'_> {
                     return false;
                 }
                 self.enemy_mut().current_task_priority = self.enemy().new_task_priority;
-                self.engine
-                    .observation_stop(self.sim, self.assets, self.owner);
+                self.observation_stop();
                 assert_eq!(self.rank(self.target()), ProfileRank::Officer);
                 self.face(self.target());
                 self.accept(SeekingSoldierCalledByOfficer);
@@ -405,13 +399,7 @@ impl AiOwnerCtx<'_> {
                 let draw =
                     crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::CharlySorrow, 0..5000);
                 if draw < u32::from(self.enemy().base.sorrow_level) + 10 {
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultLookingSidewardsForCharly,
-                    );
+                    self.duty_set_state(AiState::Default, DefaultLookingSidewardsForCharly);
                     let direction = if crate::sim_rng::u32(
                         self.sim,
                         crate::sim_rng::RngSite::CharlySorrow,
@@ -422,12 +410,7 @@ impl AiOwnerCtx<'_> {
                     } else {
                         crate::ai::LookDirection::RightLeft
                     };
-                    self.engine.execute_ai_look_sidewards(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        direction,
-                    );
+                    self.execute_ai_look_sidewards(direction);
                 }
                 self.enemy_mut().base.sorrow_level = self
                     .enemy()
@@ -436,31 +419,18 @@ impl AiOwnerCtx<'_> {
                     .wrapping_add(self.enemy().base.delta_sorrow_level);
                 if self.enemy().base.sorrow_level > 1000 {
                     self.enemy_mut().base.sorrow_level = 0;
-                    self.engine
-                        .execute_ai_search_charly(self.sim, self.assets, self.owner);
+                    self.execute_ai_search_charly();
                 }
                 self.timer(crate::parameters_ai::AI_CHECKFOR_TIME_INTERVAL as u32);
             }
             (DefaultLookingSidewardsForCharly, EventDone) => {
-                self.engine.duty_set_state(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    AiState::Default,
-                    DefaultLookingForCharly,
-                );
+                self.duty_set_state(AiState::Default, DefaultLookingForCharly);
                 self.timer(10);
             }
             (DefaultDetectedCharly, EventTimer) => {
                 if self.enemy().base.macro_in_progress {
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultInMacro,
-                    );
-                    self.engine.run_ai_macro(self.sim, self.assets, self.owner);
+                    self.duty_set_state(AiState::Default, DefaultInMacro);
+                    self.run_ai_macro();
                 } else {
                     self.duty();
                 }
@@ -496,14 +466,8 @@ impl AiOwnerCtx<'_> {
                         self.enemy().base.macro_in_progress,
                         "synchronization resumes active macro"
                     );
-                    self.engine.duty_set_state(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        AiState::Default,
-                        DefaultInMacro,
-                    );
-                    self.engine.run_ai_macro(self.sim, self.assets, self.owner);
+                    self.duty_set_state(AiState::Default, DefaultInMacro);
+                    self.run_ai_macro();
                 }
             }
             (SeekingDetectedCharly, EventTimer) => {
@@ -513,8 +477,7 @@ impl AiOwnerCtx<'_> {
                 {
                     let state = self.enemy().previous_state.get("previous state");
                     let substate = self.enemy().previous_substate.get("previous substate");
-                    self.engine
-                        .duty_set_state(self.sim, self.assets, self.owner, state, substate);
+                    self.duty_set_state(state, substate);
                     self.timer(10);
                 } else {
                     self.duty();
@@ -540,12 +503,7 @@ impl AiOwnerCtx<'_> {
                         &Stimulus::with_human(CallGoToOfficer, target.index()),
                     ) {
                         self.say(Remark::SendsCharlyToOfficer, SpeechFlags::MYTALK_2);
-                        self.engine.duty_point_to(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            self.enemy().officers_position,
-                        );
+                        self.duty_point_to(self.enemy().officers_position);
                     }
                 } else {
                     self.duty();
@@ -568,20 +526,8 @@ impl AiOwnerCtx<'_> {
             (SeekingCharlySentToOfficer, EventTimer) => {
                 self.seek_state(SeekingCharlyGoToOfficer);
                 let position = self.engine.live_ai_position(self.target());
-                self.engine.duty_go_near(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    40,
-                    GotoFlags::empty(),
-                );
-                self.engine.unalert_live_charly_seekers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.owner,
-                );
+                self.duty_go_near(position, 40, GotoFlags::empty());
+                self.unalert_live_charly_seekers(self.owner);
                 self.timer(10);
             }
             (SeekingCharlyGoToOfficerSeen, EventTimer) => {
@@ -591,12 +537,7 @@ impl AiOwnerCtx<'_> {
                     .current_substate
                     == SeekingOfficerWaitForCharly
                 {
-                    self.engine.unalert_live_charly_seekers(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        self.owner,
-                    );
+                    self.unalert_live_charly_seekers(self.owner);
                     self.timer(20);
                 } else {
                     self.duty();
@@ -694,8 +635,7 @@ impl AiOwnerCtx<'_> {
                 } else {
                     ai.initial_position
                 };
-                self.engine
-                    .duty_point_to(self.sim, self.assets, self.owner, position);
+                self.duty_point_to(position);
                 self.seek_state(SeekingOfficerLectureCharlyPointing);
                 self.say(Remark::OfficerEndsConversation, SpeechFlags::MYTALK_3);
                 self.timer(20);
@@ -720,12 +660,7 @@ impl AiOwnerCtx<'_> {
                         self.duty();
                     } else {
                         self.seek_state(SeekingCharlyWatching);
-                        self.engine.execute_ai_look_sidewards(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            crate::ai::LookDirection::LeftRight,
-                        );
+                        self.execute_ai_look_sidewards(crate::ai::LookDirection::LeftRight);
                     }
                 } else {
                     let point = self.enemy().search_charly_way[0];
@@ -735,14 +670,10 @@ impl AiOwnerCtx<'_> {
                         } else {
                             GotoFlags::empty()
                         };
-                    self.engine
-                        .duty_go_to(self.sim, self.assets, self.owner, point, flags);
+                    self.duty_go_to(point, flags);
                 }
             }
-            (SeekingCharlyWatching, EventDone) => {
-                self.engine
-                    .execute_ai_missed_charly_alert(self.sim, self.assets, self.owner)
-            }
+            (SeekingCharlyWatching, EventDone) => self.execute_ai_missed_charly_alert(),
             _ => {}
         }
     }
@@ -770,8 +701,7 @@ impl AiOwnerCtx<'_> {
                 self.duty();
             }
         } else {
-            self.engine
-                .unalert_live_charly_seekers(self.sim, self.assets, self.owner, self.owner);
+            self.unalert_live_charly_seekers(self.owner);
             self.timer(10);
         }
     }

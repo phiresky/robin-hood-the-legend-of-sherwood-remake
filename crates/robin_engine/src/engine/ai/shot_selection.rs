@@ -171,15 +171,13 @@ impl EngineInner {
         }
         best
     }
+}
 
-    pub(in crate::engine) fn execute_live_shoot_decision(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> ControlFlow<bool, Decision> {
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_live_shoot_decision(&mut self) -> ControlFlow<bool, Decision> {
         if self
-            .expect_entity(owner, "shot ammunition")
+            .engine
+            .expect_entity(self.owner, "shot ammunition")
             .ai_actor_data()
             .expect("shot actor")
             .number_of_arrows
@@ -187,69 +185,64 @@ impl EngineInner {
         {
             return ControlFlow::Continue(Decision::RunForNewArrows);
         }
-        let Some(target) = self.propose_live_shot_target(sim, assets, owner) else {
+        let Some(target) = self
+            .engine
+            .propose_live_shot_target(self.sim, self.assets, self.owner)
+        else {
             return ControlFlow::Continue(Decision::ArcherObserve);
         };
-        let ai = self.ai_mut(owner, "shot selected target");
+        let ai = self.engine.ai_mut(self.owner, "shot selected target");
         ai.primary_target = Some(target);
-        self.execute_ai_focus(owner, Some(target));
+        self.engine.execute_ai_focus(self.owner, Some(target));
 
         let bow_state = self
-            .expect_entity(owner, "shot action")
+            .engine
+            .expect_entity(self.owner, "shot action")
             .actor_data()
             .expect("shot actor")
             .action_state
             .is_bow();
         if bow_state {
-            if self.ai(owner, "shot substate").current_substate == Substate::AttackingBowAiming {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingBowShooting,
-                );
+            if self.engine.ai(self.owner, "shot substate").current_substate
+                == Substate::AttackingBowAiming
+            {
+                self.duty_set_state(AiState::Attacking, Substate::AttackingBowShooting);
                 let target = self
-                    .ai(owner, "shot target after state callback")
+                    .engine
+                    .ai(self.owner, "shot target after state callback")
                     .primary_target
                     .expect("shooting requires target");
-                self.stop_ai_owner(sim, assets, owner);
-                let target = self.expect_human_id_for_ai_handle(target.get(), "shot target");
-                self.shoot_bow_at(sim, assets, owner, target);
+                self.stop_ai_owner();
+                let target = self
+                    .engine
+                    .expect_human_id_for_ai_handle(target.get(), "shot target");
+                self.engine
+                    .shoot_bow_at(self.sim, self.assets, self.owner, target);
             } else {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingBowAiming,
-                );
+                self.duty_set_state(AiState::Attacking, Substate::AttackingBowAiming);
                 let (_, ability) = self
-                    .bow_profile_and_ability(assets, owner)
+                    .engine
+                    .bow_profile_and_ability(self.assets, self.owner)
                     .expect("aiming bow");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
-                let frame = self.control.frame_counter;
-                self.ai_mut(owner, "aim timer").launch_timer(time, frame);
+                let frame = self.engine.control.frame_counter;
+                self.engine
+                    .ai_mut(self.owner, "aim timer")
+                    .launch_timer(time, frame);
             }
         } else {
-            self.stop_ai_owner(sim, assets, owner);
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingBowLoading,
-            );
-            let ai = self.enemy_ai_mut(owner, "equip bow");
+            self.stop_ai_owner();
+            self.duty_set_state(AiState::Attacking, Substate::AttackingBowLoading);
+            let ai = self.engine.enemy_ai_mut(self.owner, "equip bow");
             let command = if ai.enemy_seen_below {
                 crate::element::Command::EquipBowDown
             } else {
                 crate::element::Command::EquipBow
             };
-            self.launch_element(
-                sim,
-                assets,
-                crate::sequence::SequenceElement::new(1, command, Some(owner)),
+            self.engine.launch_element(
+                self.sim,
+                self.assets,
+                crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
             );
         }
         ControlFlow::Break(true)

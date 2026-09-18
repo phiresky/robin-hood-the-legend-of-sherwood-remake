@@ -1014,43 +1014,6 @@ impl EngineInner {
         }
     }
 
-    fn reject_npc_speech_attempt(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        flags: crate::ai::SpeechFlags,
-        reason: u16,
-    ) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("speech owner during rejection"));
-        ai.cached_frame = self.control.frame_counter;
-        ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
-        tracing::trace!(
-            target: "robin_engine::engine::speech",
-            frame = self.control.frame_counter,
-            owner = owner.index(),
-            reason,
-            "Say rejected"
-        );
-        let invoke_finished_callback = Self::speech_finished_stimulus(flags).is_some();
-        self.debug_speech_lifecycle(
-            owner.index(),
-            "attempt_rejected",
-            (reason, flags.bits(), invoke_finished_callback),
-        );
-        if let Some(event) = Self::speech_finished_stimulus(flags) {
-            self.execute_ai_callback(sim, assets, owner, &Stimulus::new(event));
-        }
-    }
-
-    /// Execute speech and its synchronous completion callbacks in call order:
-    /// blip,
-    /// script forbid, recent-remark forbid, house, CYCLE_3 advance,
-    /// active-speech arbitration, active remark assignment, speech-profile
-    /// category dispatch, screen remark, then automatic forbidding.
     pub(in crate::engine) fn execute_ai_speech(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1058,396 +1021,7 @@ impl EngineInner {
         owner: EntityId,
         attempt: crate::ai::AiSpeechAttempt,
     ) {
-        use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
-        use crate::sound::ExclamationGroup;
-
-        let flags = SpeechFlags::from_bits_truncate(attempt.flags);
-        self.debug_speech_lifecycle(
-            owner.index(),
-            "attempt_enter",
-            (attempt.remark, attempt.flags),
-        );
-        self.debug_speech_attempt_gate_snapshot(assets, owner, attempt);
-        #[derive(Clone, Copy)]
-        enum OwnerProfile {
-            Character(crate::profiles::CharacterProfileIdx),
-            Soldier(crate::profiles::SoldierProfileIdx),
-            Civilian(crate::profiles::CivilianProfileIdx),
-        }
-
-        let (
-            owner_profile,
-            blipped,
-            sector,
-            in_door_transit,
-            position,
-            frame_profile_name,
-            script_forbidden,
-            active_remark,
-        ) = {
-            let entity = self.expect_entity(owner, "queued speech owner");
-            let owner_profile = match entity {
-                Entity::Pc(pc) if entity.enemy_ai().is_some() => {
-                    OwnerProfile::Character(pc.pc.profile_index)
-                }
-                Entity::Soldier(s) => OwnerProfile::Soldier(s.soldier.soldier_profile_index),
-                Entity::Civilian(c) => OwnerProfile::Civilian(c.civilian.civilian_profile_index),
-                other => panic!(
-                    "queued NPC speech owner {} has invalid entity kind {:?}",
-                    owner.index(),
-                    other.element_data().kind
-                ),
-            };
-            let ai = self.ai(owner, "queued speech owner");
-            (
-                owner_profile,
-                entity.element_data().blipped,
-                entity.element_data().sector(),
-                entity.element_data().is_in_door_transit(),
-                entity.element_data().position_map(),
-                entity.element_data().sprite.frame_profile_name.clone(),
-                ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),
-                ai.current_remark,
-            )
-        };
-        let is_soldier = matches!(
-            owner_profile,
-            OwnerProfile::Character(_) | OwnerProfile::Soldier(_)
-        );
-        let mut resolved_profile: Option<(bool, u32)> = None;
-        let resolve_profile = |cached: &mut Option<(bool, u32)>| {
-            if cached.is_none() {
-                *cached = Some(match owner_profile {
-                    OwnerProfile::Character(profile_index) => {
-                        let profile = assets
-                            .profile_manager
-                            .get_character(profile_index)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "speech owner {} requires missing character profile {} after early gates",
-                                    owner.index(),
-                                    profile_index
-                                )
-                            });
-                        (false, profile.exclamation_id)
-                    }
-                    OwnerProfile::Soldier(profile_index) => {
-                        let profile = assets
-                            .profile_manager
-                            .get_soldier(profile_index)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "speech owner {} requires missing soldier profile {} after early gates",
-                                    owner.index(),
-                                    profile_index
-                                )
-                            });
-                        (profile.vip, profile.exclamation_id)
-                    }
-                    OwnerProfile::Civilian(profile_index) => {
-                        let profile = assets
-                            .profile_manager
-                            .civilians
-                            .get(usize::from(profile_index))
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "speech owner {} requires missing civilian profile {} after early gates",
-                                    owner.index(),
-                                    profile_index
-                                )
-                            });
-                        (
-                            profile.civilian_type == crate::profiles::CivilianType::Vip,
-                            profile.exclamation_id,
-                        )
-                    }
-                });
-            }
-            (*cached).expect("speech profile cache was populated")
-        };
-
-        {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("speech owner before Speak log"));
-            ai.cached_frame = self.control.frame_counter;
-            ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
-        }
-        tracing::trace!(
-            target: "robin_engine::engine::speech",
-            frame = self.control.frame_counter,
-            owner = owner.index(),
-            remark = ?attempt.remark,
-            flags = attempt.flags,
-            "Say attempt"
-        );
-
-        if blipped {
-            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 0);
-        }
-        if script_forbidden {
-            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 1);
-        }
-
-        if !flags.contains(SpeechFlags::ALWAYS) {
-            let frame = self.control.frame_counter;
-            let owner_creation_order = self.world.original_creation_order(owner);
-            // Original scans lazily in list order. It deletes expired entries
-            // only as encountered and returns on the first live match, leaving
-            // every later entry (including expired ones) untouched.
-            let mut forbidden = false;
-            let mut index = 0;
-            while index < self.ai.global.forbidden_remarks.len() {
-                if self.ai.global.forbidden_remarks[index].forbidden_till_frame < frame {
-                    self.ai.global.forbidden_remarks.remove(index);
-                    continue;
-                }
-                let entry = &self.ai.global.forbidden_remarks[index];
-                if entry.remark == attempt.remark {
-                    let scope = RemarkTargetFlags::from_bits_truncate(entry.flags);
-                    if scope.contains(RemarkTargetFlags::THIS_TYPE)
-                        && entry.bad_guy == is_soldier
-                        && entry.speech_id == resolve_profile(&mut resolved_profile).1
-                    {
-                        forbidden = true;
-                    } else if scope.contains(RemarkTargetFlags::THIS_GUY)
-                        && u32::from(entry.guy_index) == owner_creation_order
-                    {
-                        forbidden = true;
-                    } else if is_soldier && scope.contains(RemarkTargetFlags::VILLAINS) {
-                        forbidden = true;
-                    } else if !is_soldier && scope.contains(RemarkTargetFlags::CIVILIANS) {
-                        forbidden = true;
-                    }
-                }
-                if forbidden {
-                    break;
-                }
-                index += 1;
-            }
-            if forbidden {
-                return self.reject_npc_speech_attempt(sim, assets, owner, flags, 2);
-            }
-        }
-
-        if !flags.contains(SpeechFlags::HOUSE)
-            && (self.entity_building_sector(sector).is_some() || in_door_transit)
-        {
-            return self.reject_npc_speech_attempt(sim, assets, owner, flags, 3);
-        }
-
-        // This is deliberately before the already-speaking gate, exactly as
-        // in the original game's speech handling. Rejected overlapping attempts still consume one
-        // shared CYCLE_3 slot.
-        let variant = if flags.contains(SpeechFlags::CYCLE_3_VARIANTS) {
-            self.ai.global.current_speech_variant = (self.ai.global.current_speech_variant + 1) % 3;
-            self.ai.global.current_speech_variant as i32
-        } else {
-            -1
-        };
-
-        if active_remark != Remark::TheSoundOfSilence {
-            if flags.contains(SpeechFlags::EMERGENCY) {
-                self.debug_speech_lifecycle(
-                    owner.index(),
-                    "emergency_cancel_before",
-                    (attempt.remark, attempt.flags),
-                );
-                self.feedback
-                    .pending_side_effects
-                    .sounds
-                    .push(super::SoundCommand::StopExclamation { actor_id: owner });
-                // Exclamation stopping removes the old pending/playing line without
-                // calling SoundIsFinished, so its MYTALK callback is discarded.
-                self.cancel_exclamation_callbacks(owner.index());
-                self.debug_speech_lifecycle(
-                    owner.index(),
-                    "emergency_cancel_after",
-                    (attempt.remark, attempt.flags),
-                );
-            } else {
-                return self.reject_npc_speech_attempt(sim, assets, owner, flags, 4);
-            }
-        }
-
-        {
-            let ai = self.ai_mut(owner, "speech owner before latch");
-            ai.current_remark = attempt.remark;
-            ai.current_remark_flags = attempt.flags;
-        }
-
-        let (is_vip, speech_id) = resolve_profile(&mut resolved_profile);
-
-        // Original skips the entire category/sound branch for speech ID zero,
-        // but still leaves current_remark latched and performs the display and
-        // auto-forbid tail. With no SoundIsFinished callback this can remain
-        // active indefinitely.
-        if speech_id != 0 {
-            let raw = attempt.remark as u32;
-            let first_vip = Remark::FIRST_VIP as u32;
-            let first_civilian = Remark::FIRST_CIVILIAN as u32;
-            let prefix = if flags.contains(SpeechFlags::SCRIPT) {
-                "Script error"
-            } else {
-                "AI error"
-            };
-            let hero_voice = matches!(owner_profile, OwnerProfile::Character(_));
-            let resolved = if hero_voice {
-                // EnemyAi uses soldier Remark indices, while character banks use
-                // HERO_* expressions. Even overlapping indices mean different lines.
-                // TODO: Author a semantic NPC-remark to hero-expression mapping.
-                // Until then use the category rejection callback, so AI continues
-                // without enqueueing an invalid hero speech/timing lookup.
-                tracing::warn!(
-                    target: "ai_speech_mismatch",
-                    owner = owner.index(),
-                    speech_id,
-                    remark = ?attempt.remark,
-                    "AI soldier remark cannot use a hero voice bank"
-                );
-                None
-            } else if raw >= first_vip {
-                if !is_vip {
-                    tracing::warn!(
-                        target: "ai_speech_mismatch",
-                        "{}: VIP remark [{}] for non-VIP NPC {} at ({},{})",
-                        prefix,
-                        attempt.remark.speech(),
-                        owner.index(),
-                        position.x as u16,
-                        position.y as u16
-                    );
-                    None
-                } else {
-                    Some((ExclamationGroup::Vip, raw.wrapping_sub(first_vip) as u16))
-                }
-            } else if raw >= first_civilian {
-                if is_soldier || is_vip {
-                    if is_soldier {
-                        tracing::warn!(
-                            target: "ai_speech_mismatch",
-                            "{}: civilian remark [{}] for soldier {} at ({},{})",
-                            prefix,
-                            attempt.remark.speech(),
-                            owner.index(),
-                            position.x as u16,
-                            position.y as u16
-                        );
-                    }
-                    None
-                } else {
-                    Some((
-                        ExclamationGroup::Civilian,
-                        raw.wrapping_sub(first_civilian) as u16,
-                    ))
-                }
-            } else if !is_soldier || is_vip {
-                if !is_soldier {
-                    tracing::warn!(
-                        target: "ai_speech_mismatch",
-                        "{}: soldier remark [{}] for civilian {} at ({},{})",
-                        prefix,
-                        attempt.remark.speech(),
-                        owner.index(),
-                        position.x as u16,
-                        position.y as u16
-                    );
-                }
-                None
-            } else {
-                // The original game's ordinary soldier bank uses the civilian exclamation category.
-                Some((ExclamationGroup::Civilian, raw as u16))
-            };
-
-            let Some((group, exclamation_id)) = resolved else {
-                let reason = if hero_voice {
-                    11
-                } else if raw >= first_vip {
-                    if is_soldier { 5 } else { 6 }
-                } else if raw >= first_civilian {
-                    if is_soldier { 7 } else { 8 }
-                } else if !is_soldier {
-                    9
-                } else {
-                    10
-                };
-                let log_before_callback = !matches!(reason, 8 | 9);
-                let ai = self.ai_mut(owner, "speech owner after category rejection");
-                if log_before_callback {
-                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
-                }
-                let invoke_finished_callback = Self::speech_finished_stimulus(flags).is_some();
-                self.debug_speech_lifecycle(
-                    owner.index(),
-                    "attempt_category_rejected",
-                    (
-                        reason,
-                        attempt.remark,
-                        attempt.flags,
-                        invoke_finished_callback,
-                    ),
-                );
-                if let Some(event) = Self::speech_finished_stimulus(flags) {
-                    self.execute_ai_callback(sim, assets, owner, &Stimulus::new(event));
-                }
-                // The outer rejection clears even a line started by its callback.
-                let ai = self.ai_mut(owner, "speech category rejection return");
-                if !log_before_callback {
-                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
-                }
-                ai.current_remark = Remark::TheSoundOfSilence;
-                ai.current_remark_flags = 0;
-                return;
-            };
-
-            self.feedback
-                .pending_side_effects
-                .sounds
-                .push(super::SoundCommand::Exclamation {
-                    group,
-                    profile_id: speech_id,
-                    exclamation_id,
-                    variant,
-                    position,
-                    actor_id: Some(owner),
-                });
-            self.feedback
-                .sound_sim
-                .pending_exclamations
-                .push(crate::sound::PendingExclamation {
-                    actor_id: owner.index(),
-                    group,
-                    profile_id: speech_id,
-                    exclamation_id,
-                    variant,
-                });
-            self.debug_speech_lifecycle(
-                owner.index(),
-                "attempt_accepted",
-                (
-                    attempt.remark,
-                    attempt.flags,
-                    exclamation_id,
-                    speech_id,
-                    variant,
-                ),
-            );
-        }
-
-        self.ai.global.screen_remarks.push(crate::ai::ScreenRemark {
-            timer: 100,
-            prefix: frame_profile_name,
-            remark: attempt.remark,
-        });
-        Self::auto_forbid_remark(
-            &mut self.ai.global.forbidden_remarks,
-            attempt.remark,
-            speech_id,
-            self.world.original_creation_order(owner) as u16,
-            is_soldier,
-            self.control.frame_counter,
-        );
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_speech(attempt)
     }
 
     /// Deliver deterministic SoundIsFinished callbacks at the first mutation
@@ -1777,5 +1351,441 @@ impl EngineInner {
                 panic!("invalid automatic-forbid remark {remark:?}")
             }
         }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    fn reject_npc_speech_attempt(&mut self, flags: crate::ai::SpeechFlags, reason: u16) {
+        let ai = self
+            .engine
+            .world
+            .entities
+            .expect_ai_controller_mut(self.owner, format_args!("speech owner during rejection"));
+        ai.cached_frame = self.engine.control.frame_counter;
+        ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+        tracing::trace!(
+            target: "robin_engine::engine::speech",
+            frame = self.engine.control.frame_counter,
+            owner = self.owner.index(),
+            reason,
+            "Say rejected"
+        );
+        let invoke_finished_callback = EngineInner::speech_finished_stimulus(flags).is_some();
+        self.engine.debug_speech_lifecycle(
+            self.owner.index(),
+            "attempt_rejected",
+            (reason, flags.bits(), invoke_finished_callback),
+        );
+        if let Some(event) = EngineInner::speech_finished_stimulus(flags) {
+            self.execute_ai_callback(&Stimulus::new(event));
+        }
+    }
+
+    /// Execute speech and its synchronous completion callbacks in call order:
+    /// blip,
+    /// script forbid, recent-remark forbid, house, CYCLE_3 advance,
+    /// active-speech arbitration, active remark assignment, speech-profile
+    /// category dispatch, screen remark, then automatic forbidding.
+    pub(in crate::engine) fn execute_ai_speech(&mut self, attempt: crate::ai::AiSpeechAttempt) {
+        use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
+        use crate::sound::ExclamationGroup;
+
+        let flags = SpeechFlags::from_bits_truncate(attempt.flags);
+        self.engine.debug_speech_lifecycle(
+            self.owner.index(),
+            "attempt_enter",
+            (attempt.remark, attempt.flags),
+        );
+        self.engine
+            .debug_speech_attempt_gate_snapshot(self.assets, self.owner, attempt);
+        #[derive(Clone, Copy)]
+        enum OwnerProfile {
+            Character(crate::profiles::CharacterProfileIdx),
+            Soldier(crate::profiles::SoldierProfileIdx),
+            Civilian(crate::profiles::CivilianProfileIdx),
+        }
+
+        let (
+            owner_profile,
+            blipped,
+            sector,
+            in_door_transit,
+            position,
+            frame_profile_name,
+            script_forbidden,
+            active_remark,
+        ) = {
+            let entity = self.engine.expect_entity(self.owner, "queued speech owner");
+            let owner_profile = match entity {
+                Entity::Pc(pc) if entity.enemy_ai().is_some() => {
+                    OwnerProfile::Character(pc.pc.profile_index)
+                }
+                Entity::Soldier(s) => OwnerProfile::Soldier(s.soldier.soldier_profile_index),
+                Entity::Civilian(c) => OwnerProfile::Civilian(c.civilian.civilian_profile_index),
+                other => panic!(
+                    "queued NPC speech owner {} has invalid entity kind {:?}",
+                    self.owner.index(),
+                    other.element_data().kind
+                ),
+            };
+            let ai = self.engine.ai(self.owner, "queued speech owner");
+            (
+                owner_profile,
+                entity.element_data().blipped,
+                entity.element_data().sector(),
+                entity.element_data().is_in_door_transit(),
+                entity.element_data().position_map(),
+                entity.element_data().sprite.frame_profile_name.clone(),
+                ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),
+                ai.current_remark,
+            )
+        };
+        let is_soldier = matches!(
+            owner_profile,
+            OwnerProfile::Character(_) | OwnerProfile::Soldier(_)
+        );
+        let mut resolved_profile: Option<(bool, u32)> = None;
+        let resolve_profile = |cached: &mut Option<(bool, u32)>| {
+            if cached.is_none() {
+                *cached = Some(match owner_profile {
+                    OwnerProfile::Character(profile_index) => {
+                        let profile = self.assets
+                            .profile_manager
+                            .get_character(profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing character profile {} after early gates",
+                                    self.owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (false, profile.exclamation_id)
+                    }
+                    OwnerProfile::Soldier(profile_index) => {
+                        let profile = self.assets
+                            .profile_manager
+                            .get_soldier(profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing soldier profile {} after early gates",
+                                    self.owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (profile.vip, profile.exclamation_id)
+                    }
+                    OwnerProfile::Civilian(profile_index) => {
+                        let profile = self.assets
+                            .profile_manager
+                            .civilians
+                            .get(usize::from(profile_index))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "speech owner {} requires missing civilian profile {} after early gates",
+                                    self.owner.index(),
+                                    profile_index
+                                )
+                            });
+                        (
+                            profile.civilian_type == crate::profiles::CivilianType::Vip,
+                            profile.exclamation_id,
+                        )
+                    }
+                });
+            }
+            (*cached).expect("speech profile cache was populated")
+        };
+
+        {
+            let ai = self.engine.world.entities.expect_ai_controller_mut(
+                self.owner,
+                format_args!("speech owner before Speak log"),
+            );
+            ai.cached_frame = self.engine.control.frame_counter;
+            ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
+        }
+        tracing::trace!(
+            target: "robin_engine::engine::speech",
+            frame = self.engine.control.frame_counter,
+            owner = self.owner.index(),
+            remark = ?attempt.remark,
+            flags = attempt.flags,
+            "Say attempt"
+        );
+
+        if blipped {
+            return self.reject_npc_speech_attempt(flags, 0);
+        }
+        if script_forbidden {
+            return self.reject_npc_speech_attempt(flags, 1);
+        }
+
+        if !flags.contains(SpeechFlags::ALWAYS) {
+            let frame = self.engine.control.frame_counter;
+            let owner_creation_order = self.engine.world.original_creation_order(self.owner);
+            // Original scans lazily in list order. It deletes expired entries
+            // only as encountered and returns on the first live match, leaving
+            // every later entry (including expired ones) untouched.
+            let mut forbidden = false;
+            let mut index = 0;
+            while index < self.engine.ai.global.forbidden_remarks.len() {
+                if self.engine.ai.global.forbidden_remarks[index].forbidden_till_frame < frame {
+                    self.engine.ai.global.forbidden_remarks.remove(index);
+                    continue;
+                }
+                let entry = &self.engine.ai.global.forbidden_remarks[index];
+                if entry.remark == attempt.remark {
+                    let scope = RemarkTargetFlags::from_bits_truncate(entry.flags);
+                    if scope.contains(RemarkTargetFlags::THIS_TYPE)
+                        && entry.bad_guy == is_soldier
+                        && entry.speech_id == resolve_profile(&mut resolved_profile).1
+                    {
+                        forbidden = true;
+                    } else if scope.contains(RemarkTargetFlags::THIS_GUY)
+                        && u32::from(entry.guy_index) == owner_creation_order
+                    {
+                        forbidden = true;
+                    } else if is_soldier && scope.contains(RemarkTargetFlags::VILLAINS) {
+                        forbidden = true;
+                    } else if !is_soldier && scope.contains(RemarkTargetFlags::CIVILIANS) {
+                        forbidden = true;
+                    }
+                }
+                if forbidden {
+                    break;
+                }
+                index += 1;
+            }
+            if forbidden {
+                return self.reject_npc_speech_attempt(flags, 2);
+            }
+        }
+
+        if !flags.contains(SpeechFlags::HOUSE)
+            && (self.engine.entity_building_sector(sector).is_some() || in_door_transit)
+        {
+            return self.reject_npc_speech_attempt(flags, 3);
+        }
+
+        // This is deliberately before the already-speaking gate, exactly as
+        // in the original game's speech handling. Rejected overlapping attempts still consume one
+        // shared CYCLE_3 slot.
+        let variant = if flags.contains(SpeechFlags::CYCLE_3_VARIANTS) {
+            self.engine.ai.global.current_speech_variant =
+                (self.engine.ai.global.current_speech_variant + 1) % 3;
+            self.engine.ai.global.current_speech_variant as i32
+        } else {
+            -1
+        };
+
+        if active_remark != Remark::TheSoundOfSilence {
+            if flags.contains(SpeechFlags::EMERGENCY) {
+                self.engine.debug_speech_lifecycle(
+                    self.owner.index(),
+                    "emergency_cancel_before",
+                    (attempt.remark, attempt.flags),
+                );
+                self.engine.feedback.pending_side_effects.sounds.push(
+                    super::SoundCommand::StopExclamation {
+                        actor_id: self.owner,
+                    },
+                );
+                // Exclamation stopping removes the old pending/playing line without
+                // calling SoundIsFinished, so its MYTALK callback is discarded.
+                self.engine.cancel_exclamation_callbacks(self.owner.index());
+                self.engine.debug_speech_lifecycle(
+                    self.owner.index(),
+                    "emergency_cancel_after",
+                    (attempt.remark, attempt.flags),
+                );
+            } else {
+                return self.reject_npc_speech_attempt(flags, 4);
+            }
+        }
+
+        {
+            let ai = self.engine.ai_mut(self.owner, "speech owner before latch");
+            ai.current_remark = attempt.remark;
+            ai.current_remark_flags = attempt.flags;
+        }
+
+        let (is_vip, speech_id) = resolve_profile(&mut resolved_profile);
+
+        // Original skips the entire category/sound branch for speech ID zero,
+        // but still leaves current_remark latched and performs the display and
+        // auto-forbid tail. With no SoundIsFinished callback this can remain
+        // active indefinitely.
+        if speech_id != 0 {
+            let raw = attempt.remark as u32;
+            let first_vip = Remark::FIRST_VIP as u32;
+            let first_civilian = Remark::FIRST_CIVILIAN as u32;
+            let prefix = if flags.contains(SpeechFlags::SCRIPT) {
+                "Script error"
+            } else {
+                "AI error"
+            };
+            let hero_voice = matches!(owner_profile, OwnerProfile::Character(_));
+            let resolved = if hero_voice {
+                // EnemyAi uses soldier Remark indices, while character banks use
+                // HERO_* expressions. Even overlapping indices mean different lines.
+                // TODO: Author a semantic NPC-remark to hero-expression mapping.
+                // Until then use the category rejection callback, so AI continues
+                // without enqueueing an invalid hero speech/timing lookup.
+                tracing::warn!(
+                    target: "ai_speech_mismatch",
+                    owner = self.owner.index(),
+                    speech_id,
+                    remark = ?attempt.remark,
+                    "AI soldier remark cannot use a hero voice bank"
+                );
+                None
+            } else if raw >= first_vip {
+                if !is_vip {
+                    tracing::warn!(
+                        target: "ai_speech_mismatch",
+                        "{}: VIP remark [{}] for non-VIP NPC {} at ({},{})",
+                        prefix,
+                        attempt.remark.speech(),
+                        self.owner.index(),
+                        position.x as u16,
+                        position.y as u16
+                    );
+                    None
+                } else {
+                    Some((ExclamationGroup::Vip, raw.wrapping_sub(first_vip) as u16))
+                }
+            } else if raw >= first_civilian {
+                if is_soldier || is_vip {
+                    if is_soldier {
+                        tracing::warn!(
+                            target: "ai_speech_mismatch",
+                            "{}: civilian remark [{}] for soldier {} at ({},{})",
+                            prefix,
+                            attempt.remark.speech(),
+                            self.owner.index(),
+                            position.x as u16,
+                            position.y as u16
+                        );
+                    }
+                    None
+                } else {
+                    Some((
+                        ExclamationGroup::Civilian,
+                        raw.wrapping_sub(first_civilian) as u16,
+                    ))
+                }
+            } else if !is_soldier || is_vip {
+                if !is_soldier {
+                    tracing::warn!(
+                        target: "ai_speech_mismatch",
+                        "{}: soldier remark [{}] for civilian {} at ({},{})",
+                        prefix,
+                        attempt.remark.speech(),
+                        self.owner.index(),
+                        position.x as u16,
+                        position.y as u16
+                    );
+                }
+                None
+            } else {
+                // The original game's ordinary soldier bank uses the civilian exclamation category.
+                Some((ExclamationGroup::Civilian, raw as u16))
+            };
+
+            let Some((group, exclamation_id)) = resolved else {
+                let reason = if hero_voice {
+                    11
+                } else if raw >= first_vip {
+                    if is_soldier { 5 } else { 6 }
+                } else if raw >= first_civilian {
+                    if is_soldier { 7 } else { 8 }
+                } else if !is_soldier {
+                    9
+                } else {
+                    10
+                };
+                let log_before_callback = !matches!(reason, 8 | 9);
+                let ai = self
+                    .engine
+                    .ai_mut(self.owner, "speech owner after category rejection");
+                if log_before_callback {
+                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+                }
+                let invoke_finished_callback =
+                    EngineInner::speech_finished_stimulus(flags).is_some();
+                self.engine.debug_speech_lifecycle(
+                    self.owner.index(),
+                    "attempt_category_rejected",
+                    (
+                        reason,
+                        attempt.remark,
+                        attempt.flags,
+                        invoke_finished_callback,
+                    ),
+                );
+                if let Some(event) = EngineInner::speech_finished_stimulus(flags) {
+                    self.execute_ai_callback(&Stimulus::new(event));
+                }
+                // The outer rejection clears even a line started by its callback.
+                let ai = self
+                    .engine
+                    .ai_mut(self.owner, "speech category rejection return");
+                if !log_before_callback {
+                    ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
+                }
+                ai.current_remark = Remark::TheSoundOfSilence;
+                ai.current_remark_flags = 0;
+                return;
+            };
+
+            self.engine.feedback.pending_side_effects.sounds.push(
+                super::SoundCommand::Exclamation {
+                    group,
+                    profile_id: speech_id,
+                    exclamation_id,
+                    variant,
+                    position,
+                    actor_id: Some(self.owner),
+                },
+            );
+            self.engine.feedback.sound_sim.pending_exclamations.push(
+                crate::sound::PendingExclamation {
+                    actor_id: self.owner.index(),
+                    group,
+                    profile_id: speech_id,
+                    exclamation_id,
+                    variant,
+                },
+            );
+            self.engine.debug_speech_lifecycle(
+                self.owner.index(),
+                "attempt_accepted",
+                (
+                    attempt.remark,
+                    attempt.flags,
+                    exclamation_id,
+                    speech_id,
+                    variant,
+                ),
+            );
+        }
+
+        self.engine
+            .ai
+            .global
+            .screen_remarks
+            .push(crate::ai::ScreenRemark {
+                timer: 100,
+                prefix: frame_profile_name,
+                remark: attempt.remark,
+            });
+        EngineInner::auto_forbid_remark(
+            &mut self.engine.ai.global.forbidden_remarks,
+            attempt.remark,
+            speech_id,
+            self.engine.world.original_creation_order(self.owner) as u16,
+            is_soldier,
+            self.engine.control.frame_counter,
+        );
     }
 }

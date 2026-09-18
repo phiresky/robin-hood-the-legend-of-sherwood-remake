@@ -10,102 +10,13 @@ use crate::element::Human;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_ai_attack_enemy(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: HumanHandle,
-    ) {
-        if matches!(self.expect_entity(owner, "attack owner"), Entity::Soldier(soldier) if soldier.soldier.rider)
-            && self.execute_ai_maybe_make_rider_attack(sim, assets, owner)
-        {
-            return;
-        }
-        self.enemy_ai_mut(owner, "attack primary")
-            .base
-            .primary_target = Some(AiEntityHandle::new(target));
-        let target = self.expect_human_id_for_ai_handle(target, "attack target");
-        debug_assert!(
-            self.camps_are_hostile(
-                self.expect_entity(owner, "attack owner").camp(),
-                self.expect_entity(target, "attack target").camp()
-            ),
-            "attack target is friendly"
-        );
-        let position = self.live_ai_position(target);
-        let ai = self.enemy_ai_mut(owner, "attack position");
-        ai.base.seek_position = position;
-        ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
-        self.execute_ai_reconsider_enemy_approach(sim, assets, owner, false);
-    }
-
     pub(in crate::engine) fn execute_ai_merry_man_forest_cassos(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        let position = self.live_ai_position(owner);
-        self.enemy_ai_mut(owner, "forest exit reset")
-            .base
-            .my_door_index = None;
-        let mut minimum = u32::MAX as f32;
-        for index in 0..self.script_domains.interactables.doors.len() {
-            let door = &self.script_domains.interactables.doors[index];
-            if door.door_type != crate::gate::DoorType::Reinforcement {
-                continue;
-            }
-            let distance = (position.x - door.point_in.x)
-                .abs()
-                .max((position.y - door.point_in.y).abs());
-            if distance < minimum {
-                minimum = distance;
-                self.enemy_ai_mut(owner, "forest exit selection")
-                    .base
-                    .my_door_index = crate::gate::DoorIndex::new(index as u32);
-            }
-        }
-        if self
-            .enemy_ai(owner, "forest exit result")
-            .base
-            .my_door_index
-            .is_none()
-        {
-            return false;
-        }
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Fleeing,
-            Substate::FleeingMerryManRunToLeaveMap,
-        );
-        let index = self
-            .enemy_ai(owner, "forest exit after state")
-            .base
-            .my_door_index
-            .expect("forest exit retained after state callback");
-        let door = &self.script_domains.interactables.doors[usize::from(index)];
-        let destination = crate::ai::Position {
-            x: door.point_in.x,
-            y: door.point_in.y,
-            level: door.layer_in,
-            sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)).map(
-                |handle| handle.with_arena_index(door.sector_in_index.expect("forest exit sector")),
-            ),
-        };
-        self.duty_go_to(sim, assets, owner, destination, crate::ai::GotoFlags::RUN);
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("forest exit movement result"));
-        ai.base.launch_timer(30, self.control.frame_counter);
-        if ai.base.couldnt_reachpoint {
-            ai.base.couldnt_reachpoint = false;
-            return false;
-        }
-        true
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_merry_man_forest_cassos()
     }
 
     pub(in crate::engine) fn reinitialize_live_ai_enemies(&mut self, owner: EntityId) {
@@ -202,30 +113,7 @@ impl EngineInner {
         owner: EntityId,
         flags: u16,
     ) {
-        if flags & 1 != 0 && self.fill_live_near_fighters(owner, false) {
-            self.fill_live_near_fighters(owner, true);
-            let primary = self
-                .select_live_ai_primary_target(owner, crate::ai_enemy::PrimaryTargetFlags::empty());
-            self.enemy_ai_mut(owner, "overview primary")
-                .base
-                .primary_target = primary;
-            if let Some(target) = primary {
-                self.execute_ai_attack_enemy(sim, assets, owner, target.get());
-                return;
-            }
-        }
-        self.reinitialize_live_ai_enemies(owner);
-        let ai = self.enemy_ai_mut(owner, "overview priority");
-        ai.current_task_priority = ai.minimal_task_priority;
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Attacking,
-            Substate::AttackingOverviewLookLeft,
-        );
-        self.stop_ai_owner(sim, assets, owner);
-        self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::Left);
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_get_battle_overview(flags)
     }
 
     pub(in crate::engine) fn execute_ai_make_battle_predecisions(
@@ -329,30 +217,14 @@ impl EngineInner {
         selected
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_battle_decisions(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let (old_substate, inputs, unconscious) = self.prepare_live_battle_decisions(assets, owner);
-        if inputs.num_enemies_i_can_see == 0 {
-            self.execute_live_battle_without_visible_enemies(sim, assets, owner, unconscious);
-            return;
-        }
-        let (decision, cover) = self.choose_live_battle_decision(sim, assets, owner, inputs);
-        if let Some(decision) = self.execute_live_battle_decision(
-            sim,
-            assets,
-            owner,
-            decision,
-            old_substate,
-            cover,
-            inputs.alerting_soldier_near,
-        ) {
-            self.ai_mut(owner, "battle decision log")
-                .register_log_line(crate::ai::LogLineType::BattleDecision, decision as u16);
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_battle_decisions()
     }
 
     fn prepare_live_battle_decisions(
@@ -547,6 +419,144 @@ impl EngineInner {
         }
         inputs.num_enemies_i_can_see = visible;
         (old_substate, inputs, unconscious)
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_attack_enemy(&mut self, target: HumanHandle) {
+        if matches!(self.engine.expect_entity(self.owner, "attack owner"), Entity::Soldier(soldier) if soldier.soldier.rider)
+            && self.execute_ai_maybe_make_rider_attack()
+        {
+            return;
+        }
+        self.engine
+            .enemy_ai_mut(self.owner, "attack primary")
+            .base
+            .primary_target = Some(AiEntityHandle::new(target));
+        let target = self
+            .engine
+            .expect_human_id_for_ai_handle(target, "attack target");
+        debug_assert!(
+            self.engine.camps_are_hostile(
+                self.engine.expect_entity(self.owner, "attack owner").camp(),
+                self.engine.expect_entity(target, "attack target").camp()
+            ),
+            "attack target is friendly"
+        );
+        let position = self.engine.live_ai_position(target);
+        let ai = self.engine.enemy_ai_mut(self.owner, "attack position");
+        ai.base.seek_position = position;
+        ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
+        self.execute_ai_reconsider_enemy_approach(false);
+    }
+
+    pub(in crate::engine) fn execute_ai_merry_man_forest_cassos(&mut self) -> bool {
+        let position = self.engine.live_ai_position(self.owner);
+        self.engine
+            .enemy_ai_mut(self.owner, "forest exit reset")
+            .base
+            .my_door_index = None;
+        let mut minimum = u32::MAX as f32;
+        for index in 0..self.engine.script_domains.interactables.doors.len() {
+            let door = &self.engine.script_domains.interactables.doors[index];
+            if door.door_type != crate::gate::DoorType::Reinforcement {
+                continue;
+            }
+            let distance = (position.x - door.point_in.x)
+                .abs()
+                .max((position.y - door.point_in.y).abs());
+            if distance < minimum {
+                minimum = distance;
+                self.engine
+                    .enemy_ai_mut(self.owner, "forest exit selection")
+                    .base
+                    .my_door_index = crate::gate::DoorIndex::new(index as u32);
+            }
+        }
+        if self
+            .engine
+            .enemy_ai(self.owner, "forest exit result")
+            .base
+            .my_door_index
+            .is_none()
+        {
+            return false;
+        }
+        self.duty_set_state(AiState::Fleeing, Substate::FleeingMerryManRunToLeaveMap);
+        let index = self
+            .engine
+            .enemy_ai(self.owner, "forest exit after state")
+            .base
+            .my_door_index
+            .expect("forest exit retained after state callback");
+        let door = &self.engine.script_domains.interactables.doors[usize::from(index)];
+        let destination = crate::ai::Position {
+            x: door.point_in.x,
+            y: door.point_in.y,
+            level: door.layer_in,
+            sector: crate::position_interface::SectorHandle::new(u16::from(door.sector_in)).map(
+                |handle| handle.with_arena_index(door.sector_in_index.expect("forest exit sector")),
+            ),
+        };
+        self.duty_go_to(destination, crate::ai::GotoFlags::RUN);
+        let ai = self
+            .engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(self.owner, format_args!("forest exit movement result"));
+        ai.base.launch_timer(30, self.engine.control.frame_counter);
+        if ai.base.couldnt_reachpoint {
+            ai.base.couldnt_reachpoint = false;
+            return false;
+        }
+        true
+    }
+
+    pub(in crate::engine) fn execute_ai_get_battle_overview(&mut self, flags: u16) {
+        if flags & 1 != 0 && self.engine.fill_live_near_fighters(self.owner, false) {
+            self.engine.fill_live_near_fighters(self.owner, true);
+            let primary = self.engine.select_live_ai_primary_target(
+                self.owner,
+                crate::ai_enemy::PrimaryTargetFlags::empty(),
+            );
+            self.engine
+                .enemy_ai_mut(self.owner, "overview primary")
+                .base
+                .primary_target = primary;
+            if let Some(target) = primary {
+                self.execute_ai_attack_enemy(target.get());
+                return;
+            }
+        }
+        self.engine.reinitialize_live_ai_enemies(self.owner);
+        let ai = self.engine.enemy_ai_mut(self.owner, "overview priority");
+        ai.current_task_priority = ai.minimal_task_priority;
+        self.duty_set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
+        self.stop_ai_owner();
+        self.execute_ai_look_sidewards(crate::ai::LookDirection::Left);
+    }
+
+    pub(in crate::engine) fn execute_battle_decisions(&mut self) {
+        let (old_substate, inputs, unconscious) = self
+            .engine
+            .prepare_live_battle_decisions(self.assets, self.owner);
+        if inputs.num_enemies_i_can_see == 0 {
+            self.execute_live_battle_without_visible_enemies(unconscious);
+            return;
+        }
+        let (decision, cover) =
+            self.engine
+                .choose_live_battle_decision(self.sim, self.assets, self.owner, inputs);
+        if let Some(decision) = self.execute_live_battle_decision(
+            decision,
+            old_substate,
+            cover,
+            inputs.alerting_soldier_near,
+        ) {
+            self.engine
+                .ai_mut(self.owner, "battle decision log")
+                .register_log_line(crate::ai::LogLineType::BattleDecision, decision as u16);
+        }
     }
 }
 

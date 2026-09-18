@@ -321,6 +321,7 @@ mod tests {
 }
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_coordinate_patrol(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -328,74 +329,7 @@ impl EngineInner {
         owner: EntityId,
         info: &crate::ai::StimulusInfo,
     ) {
-        use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
-
-        let ai = self.ai(owner, "patrol coordinate owner");
-        if ai.patrol_chief.is_none() {
-            return;
-        }
-        let StimulusInfo::Position(target) = *info else {
-            return;
-        };
-        match ai.current_substate {
-            Substate::DefaultInMacro
-            | Substate::DefaultEnroute
-            | Substate::DefaultGotoPost
-            | Substate::DefaultGotoPostTurn
-            | Substate::DefaultOnPost
-            | Substate::DefaultGotoChief
-            | Substate::DefaultOnPostLookingSidewards => {
-                self.stop_ai_owner(sim, assets, owner);
-            }
-            Substate::DefaultPatrolEnroute
-            | Substate::DefaultPatrolEnrouteRunning
-            | Substate::DefaultPatrolEnrouteWaiting => {}
-            _ => return,
-        }
-
-        let position = self.live_ai_position(owner);
-        let chief = self
-            .ai(owner, "patrol coordinate owner")
-            .patrol_chief
-            .expect("patrol chief disappeared during stop");
-        let chief_position = self.live_ai_position(chief);
-        let to_point = [target.x - position.x, target.y - position.y];
-        let to_chief = [chief_position.x - position.x, chief_position.y - position.y];
-        let distance = (to_point[0] * to_point[0] + to_point[1] * to_point[1]).sqrt();
-        let speed = crate::ai::PATROL_SPEED_BASE + distance / crate::ai::PATROL_SPEED_DIVISOR;
-        let inverse_aspect = crate::position_interface::INVERSE_ASPECT_RATIO;
-        if distance <= 30.0
-            && to_chief[0] * to_point[0]
-                + to_chief[1] * inverse_aspect * to_point[1] * inverse_aspect
-                < 0.0
-        {
-            let direction = crate::position_interface::vector_to_sector_0_to_15(
-                to_chief[0] * crate::position_interface::ASPECT_RATIO,
-                to_chief[1],
-            ) as u16;
-            self.duty_face_direction(sim, assets, owner, direction);
-            return;
-        }
-
-        let walking = speed <= 2.0;
-        let substate = if walking {
-            Substate::DefaultPatrolEnroute
-        } else {
-            Substate::DefaultPatrolEnrouteRunning
-        };
-        self.duty_set_state(sim, assets, owner, AiState::Default, substate);
-        let (flags, speed) = if walking {
-            let flags = self
-                .ai(owner, "patrol walking flags")
-                .default_path_walking_flags;
-            (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
-        } else {
-            (
-                GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
-                1.0,
-            )
-        };
-        self.duty_go_to_speed(sim, assets, owner, target, flags, speed);
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_coordinate_patrol(info)
     }
 
     /// Apply facing from the two actor values it actually reads. In particular,
@@ -583,5 +517,83 @@ impl EngineInner {
                 index += 1;
             }
         }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_coordinate_patrol(
+        &mut self,
+        info: &crate::ai::StimulusInfo,
+    ) {
+        use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
+
+        let ai = self.engine.ai(self.owner, "patrol coordinate owner");
+        if ai.patrol_chief.is_none() {
+            return;
+        }
+        let StimulusInfo::Position(target) = *info else {
+            return;
+        };
+        match ai.current_substate {
+            Substate::DefaultInMacro
+            | Substate::DefaultEnroute
+            | Substate::DefaultGotoPost
+            | Substate::DefaultGotoPostTurn
+            | Substate::DefaultOnPost
+            | Substate::DefaultGotoChief
+            | Substate::DefaultOnPostLookingSidewards => {
+                self.stop_ai_owner();
+            }
+            Substate::DefaultPatrolEnroute
+            | Substate::DefaultPatrolEnrouteRunning
+            | Substate::DefaultPatrolEnrouteWaiting => {}
+            _ => return,
+        }
+
+        let position = self.engine.live_ai_position(self.owner);
+        let chief = self
+            .engine
+            .ai(self.owner, "patrol coordinate owner")
+            .patrol_chief
+            .expect("patrol chief disappeared during stop");
+        let chief_position = self.engine.live_ai_position(chief);
+        let to_point = [target.x - position.x, target.y - position.y];
+        let to_chief = [chief_position.x - position.x, chief_position.y - position.y];
+        let distance = (to_point[0] * to_point[0] + to_point[1] * to_point[1]).sqrt();
+        let speed = crate::ai::PATROL_SPEED_BASE + distance / crate::ai::PATROL_SPEED_DIVISOR;
+        let inverse_aspect = crate::position_interface::INVERSE_ASPECT_RATIO;
+        if distance <= 30.0
+            && to_chief[0] * to_point[0]
+                + to_chief[1] * inverse_aspect * to_point[1] * inverse_aspect
+                < 0.0
+        {
+            let direction = crate::position_interface::vector_to_sector_0_to_15(
+                to_chief[0] * crate::position_interface::ASPECT_RATIO,
+                to_chief[1],
+            ) as u16;
+            self.duty_face_direction(direction);
+            return;
+        }
+
+        let walking = speed <= 2.0;
+        let substate = if walking {
+            Substate::DefaultPatrolEnroute
+        } else {
+            Substate::DefaultPatrolEnrouteRunning
+        };
+        self.duty_set_state(AiState::Default, substate);
+        let (flags, speed) = if walking {
+            let flags = self
+                .engine
+                .ai(self.owner, "patrol walking flags")
+                .default_path_walking_flags;
+            (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
+        } else {
+            (
+                GotoFlags::RUN | GotoFlags::NO_HALT | GotoFlags::DONT_STOP,
+                1.0,
+            )
+        };
+        self.duty_go_to_speed(target, flags, speed);
     }
 }

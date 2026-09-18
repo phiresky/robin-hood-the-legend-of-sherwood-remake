@@ -25,10 +25,6 @@ impl EngineInner {
         &self.orders.sequence_manager
     }
 
-    pub(crate) fn seq_mut(&mut self) -> &mut SequenceManager {
-        &mut self.orders.sequence_manager
-    }
-
     /// Required AI controller of `id`.
     #[track_caller]
     pub(crate) fn ai(&self, id: EntityId, context: &str) -> &AiController {

@@ -40,50 +40,6 @@ fn shifted(position: Position, vector: MapVec, scale: f32) -> Position {
 }
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_ai_phalanx_instruction(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let ai = self.enemy_ai_mut(owner, "phalanx gather instruction");
-        ai.shield_bearer_direction = ai.gather_direction;
-        ai.base.seek_position = ai.gather_position;
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            crate::ai::AiState::Attacking,
-            Substate::AttackingRunningToPhalanx,
-        );
-        let position = self
-            .ai(owner, "phalanx instructed destination")
-            .seek_position;
-        self.duty_go_to(sim, assets, owner, position, crate::ai::GotoFlags::RUN);
-        if let Some(archer) = self
-            .enemy_ai(owner, "phalanx instructed archer")
-            .archer_behind_me
-        {
-            let archer = self.expect_human_id_for_ai_handle(archer.get(), "protected archer");
-            if matches!(
-                self.world
-                    .entities
-                    .expect_ai_controller(archer, format_args!("protected archer state"))
-                    .current_substate,
-                Substate::AttackingBowShooting
-                    | Substate::AttackingBowLoading
-                    | Substate::AttackingBowAiming
-            ) {
-                self.execute_ai_callback(
-                    sim,
-                    assets,
-                    archer,
-                    &Stimulus::new(StimulusType::CallCoordinate),
-                );
-            }
-        }
-    }
-
     fn phalanx_neighbour(&self, owner: EntityId, right: bool) -> Option<EntityId> {
         let ai = self.enemy_ai(owner, "phalanx neighbour owner");
         let handle = if right {
@@ -246,26 +202,7 @@ impl EngineInner {
         tell_right: bool,
         tell_left: bool,
     ) {
-        if tell_left {
-            if let Some(left) = self.phalanx_neighbour(owner, false) {
-                self.execute_ai_break_phalanx(sim, assets, left, false, true);
-            } else {
-                self.reinitialize_live_phalanx_enemies(assets, owner);
-            }
-        }
-        if tell_right && let Some(right) = self.phalanx_neighbour(owner, true) {
-            self.execute_ai_break_phalanx(sim, assets, right, true, false);
-        }
-        let right = self
-            .enemy_ai(owner, "break right link")
-            .right_combat_neighbour;
-        self.apply_update_right_combat_neighbour(owner.index(), right, None);
-        let left = self
-            .enemy_ai(owner, "break left link")
-            .left_combat_neighbour;
-        self.apply_update_left_combat_neighbour(owner.index(), left, None);
-        self.enemy_ai_mut(owner, "abandon phalanx").phalanx_aborted = true;
-        self.execute_battle_decisions(sim, assets, owner);
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_break_phalanx(tell_right, tell_left)
     }
 
     fn phalanx_line_accessible(
@@ -317,114 +254,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        self.ai_mut(owner, "phalanx emoticon").clear_emoticon();
-
-        if let Some(target) = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty())
-        {
-            let target = self.expect_human_id_for_ai_handle(target.get(), "phalanx close threat");
-            if self.protection_square_distance(owner, target)
-                < (archer::PHALANX_ATTACK_DISTANCE as f32).powi(2)
-            {
-                self.execute_ai_break_phalanx(sim, assets, owner, true, true);
-                return true;
-            }
-        }
-        if self.phalanx_neighbour(owner, false).is_some() {
-            return false;
-        }
-        self.reinitialize_live_phalanx_enemies(assets, owner);
-        if self.enemy_ai(owner, "phalanx enemies").list_them.is_empty() {
-            self.execute_ai_get_battle_overview(sim, assets, owner, 0);
-            return true;
-        }
-        self.refresh_retained_shield_obstacle(assets, owner);
-
-        // This membership list deliberately survives the callbacks that issue moves.
-        let mut members = Vec::new();
-        let mut current = owner;
-        loop {
-            members.push(current);
-            let primary = self.ai(owner, "phalanx leader target").primary_target;
-            let ai = self.enemy_ai_mut(current, "phalanx member readiness");
-            ai.base.primary_target = primary;
-            if ai.base.current_substate != Substate::AttackingPhalanx {
-                return false;
-            }
-            let Some(next) = self.phalanx_neighbour(current, true) else {
-                break;
-            };
-            current = next;
-        }
-        let size = members.len();
-        if size == 1 {
-            return false;
-        }
-        let center = self.live_ai_position(members[size / 2]);
-        let primary = self
-            .ai(owner, "phalanx geometry target")
-            .primary_target
-            .expect("phalanx geometry requires target");
-        let target = self.live_ai_position(
-            self.expect_human_id_for_ai_handle(primary.get(), "phalanx geometry enemy"),
-        );
-        let owner_position = self.live_ai_position(owner);
-        let last = self.live_ai_position(members[size - 1]);
-        let direction = |from: Position, to: Position| {
-            crate::position_interface::vector_to_sector_0_to_15_iso(to.x - from.x, to.y - from.y)
-                as u16
-        };
-        let ideal = direction(center, target);
-        let real = (direction(last, owner_position) + 4) & 15;
-        let difference = ideal.wrapping_sub(real) & 15;
-        if matches!(difference, 0 | 1 | 15) {
-            if self.live_phalanx_encircled(owner, center, ideal) {
-                self.execute_ai_break_phalanx(sim, assets, owner, true, true);
-                return true;
-            }
-            if self.live_phalanx_protects_archers(owner)
-                || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::PhalanxAdvance, 0..3) != 0
-            {
-                return false;
-            }
-            let (forward, right) = phalanx_advance_vectors(target.map_point() - center.map_point());
-            let new_center = shifted(center, forward, 1.0);
-            let new_left = shifted(new_center, right, -((size / 2) as f32));
-            let new_right = shifted(new_center, right, (size - 1 - size / 2) as f32);
-            if !self.phalanx_line_accessible(owner, new_left, new_right, center.level)
-                || !(self.phalanx_line_accessible(owner, owner_position, new_left, center.level)
-                    || self.phalanx_line_accessible(owner, last, new_right, center.level)
-                    || self.phalanx_line_accessible(owner, center, new_center, center.level))
-            {
-                return false;
-            }
-            self.instruct_live_phalanx(sim, assets, &members, new_left, right, ideal);
-            true
-        } else {
-            let [x, y] = crate::shadow_polygon::sector_to_direction(((ideal + 4) & 15) as i16);
-            let right = MapVec::new(
-                x * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
-                (y * ASPECT_RATIO) * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
-            );
-            for index in 0..size {
-                let pivot = if (2..=8).contains(&difference) {
-                    size - index - 1
-                } else {
-                    index
-                };
-                let left = shifted(
-                    self.live_ai_position(members[pivot]),
-                    right,
-                    -(pivot as f32),
-                );
-                let last = shifted(left, right, (size - 1) as f32);
-                if self.phalanx_line_accessible(owner, left, last, last.level) {
-                    self.instruct_live_phalanx(sim, assets, &members, left, right, ideal);
-                    return true;
-                }
-            }
-            self.execute_ai_break_phalanx(sim, assets, owner, true, true);
-            true
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).reconsider_live_phalanx()
     }
 
     pub(in crate::engine) fn execute_ai_phalanx_timer(
@@ -477,6 +307,253 @@ impl EngineInner {
             } else {
                 self.execute_ai_get_battle_overview(sim, assets, owner, 0);
             }
+        }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_phalanx_instruction(&mut self) {
+        let ai = self
+            .engine
+            .enemy_ai_mut(self.owner, "phalanx gather instruction");
+        ai.shield_bearer_direction = ai.gather_direction;
+        ai.base.seek_position = ai.gather_position;
+        self.duty_set_state(
+            crate::ai::AiState::Attacking,
+            Substate::AttackingRunningToPhalanx,
+        );
+        let position = self
+            .engine
+            .ai(self.owner, "phalanx instructed destination")
+            .seek_position;
+        self.duty_go_to(position, crate::ai::GotoFlags::RUN);
+        if let Some(archer) = self
+            .engine
+            .enemy_ai(self.owner, "phalanx instructed archer")
+            .archer_behind_me
+        {
+            let archer = self
+                .engine
+                .expect_human_id_for_ai_handle(archer.get(), "protected archer");
+            if matches!(
+                self.engine
+                    .world
+                    .entities
+                    .expect_ai_controller(archer, format_args!("protected archer state"))
+                    .current_substate,
+                Substate::AttackingBowShooting
+                    | Substate::AttackingBowLoading
+                    | Substate::AttackingBowAiming
+            ) {
+                self.engine.execute_ai_callback(
+                    self.sim,
+                    self.assets,
+                    archer,
+                    &Stimulus::new(StimulusType::CallCoordinate),
+                );
+            }
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_break_phalanx(
+        &mut self,
+        tell_right: bool,
+        tell_left: bool,
+    ) {
+        if tell_left {
+            if let Some(left) = self.engine.phalanx_neighbour(self.owner, false) {
+                self.engine
+                    .execute_ai_break_phalanx(self.sim, self.assets, left, false, true);
+            } else {
+                self.engine
+                    .reinitialize_live_phalanx_enemies(self.assets, self.owner);
+            }
+        }
+        if tell_right && let Some(right) = self.engine.phalanx_neighbour(self.owner, true) {
+            self.engine
+                .execute_ai_break_phalanx(self.sim, self.assets, right, true, false);
+        }
+        let right = self
+            .engine
+            .enemy_ai(self.owner, "break right link")
+            .right_combat_neighbour;
+        self.engine
+            .apply_update_right_combat_neighbour(self.owner.index(), right, None);
+        let left = self
+            .engine
+            .enemy_ai(self.owner, "break left link")
+            .left_combat_neighbour;
+        self.engine
+            .apply_update_left_combat_neighbour(self.owner.index(), left, None);
+        self.engine
+            .enemy_ai_mut(self.owner, "abandon phalanx")
+            .phalanx_aborted = true;
+        self.execute_battle_decisions();
+    }
+
+    pub(in crate::engine) fn reconsider_live_phalanx(&mut self) -> bool {
+        self.engine
+            .ai_mut(self.owner, "phalanx emoticon")
+            .clear_emoticon();
+
+        if let Some(target) = self
+            .engine
+            .select_live_ai_primary_target(self.owner, PrimaryTargetFlags::empty())
+        {
+            let target = self
+                .engine
+                .expect_human_id_for_ai_handle(target.get(), "phalanx close threat");
+            if self.engine.protection_square_distance(self.owner, target)
+                < (archer::PHALANX_ATTACK_DISTANCE as f32).powi(2)
+            {
+                self.execute_ai_break_phalanx(true, true);
+                return true;
+            }
+        }
+        if self.engine.phalanx_neighbour(self.owner, false).is_some() {
+            return false;
+        }
+        self.engine
+            .reinitialize_live_phalanx_enemies(self.assets, self.owner);
+        if self
+            .engine
+            .enemy_ai(self.owner, "phalanx enemies")
+            .list_them
+            .is_empty()
+        {
+            self.execute_ai_get_battle_overview(0);
+            return true;
+        }
+        self.engine
+            .refresh_retained_shield_obstacle(self.assets, self.owner);
+
+        // This membership list deliberately survives the callbacks that issue moves.
+        let mut members = Vec::new();
+        let mut current = self.owner;
+        loop {
+            members.push(current);
+            let primary = self
+                .engine
+                .ai(self.owner, "phalanx leader target")
+                .primary_target;
+            let ai = self
+                .engine
+                .enemy_ai_mut(current, "phalanx member readiness");
+            ai.base.primary_target = primary;
+            if ai.base.current_substate != Substate::AttackingPhalanx {
+                return false;
+            }
+            let Some(next) = self.engine.phalanx_neighbour(current, true) else {
+                break;
+            };
+            current = next;
+        }
+        let size = members.len();
+        if size == 1 {
+            return false;
+        }
+        let center = self.engine.live_ai_position(members[size / 2]);
+        let primary = self
+            .engine
+            .ai(self.owner, "phalanx geometry target")
+            .primary_target
+            .expect("phalanx geometry requires target");
+        let target = self.engine.live_ai_position(
+            self.engine
+                .expect_human_id_for_ai_handle(primary.get(), "phalanx geometry enemy"),
+        );
+        let owner_position = self.engine.live_ai_position(self.owner);
+        let last = self.engine.live_ai_position(members[size - 1]);
+        let direction = |from: Position, to: Position| {
+            crate::position_interface::vector_to_sector_0_to_15_iso(to.x - from.x, to.y - from.y)
+                as u16
+        };
+        let ideal = direction(center, target);
+        let real = (direction(last, owner_position) + 4) & 15;
+        let difference = ideal.wrapping_sub(real) & 15;
+        if matches!(difference, 0 | 1 | 15) {
+            if self
+                .engine
+                .live_phalanx_encircled(self.owner, center, ideal)
+            {
+                self.execute_ai_break_phalanx(true, true);
+                return true;
+            }
+            if self.engine.live_phalanx_protects_archers(self.owner)
+                || crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::PhalanxAdvance, 0..3) != 0
+            {
+                return false;
+            }
+            let (forward, right) = phalanx_advance_vectors(target.map_point() - center.map_point());
+            let new_center = shifted(center, forward, 1.0);
+            let new_left = shifted(new_center, right, -((size / 2) as f32));
+            let new_right = shifted(new_center, right, (size - 1 - size / 2) as f32);
+            if !self
+                .engine
+                .phalanx_line_accessible(self.owner, new_left, new_right, center.level)
+                || !(self.engine.phalanx_line_accessible(
+                    self.owner,
+                    owner_position,
+                    new_left,
+                    center.level,
+                ) || self.engine.phalanx_line_accessible(
+                    self.owner,
+                    last,
+                    new_right,
+                    center.level,
+                ) || self.engine.phalanx_line_accessible(
+                    self.owner,
+                    center,
+                    new_center,
+                    center.level,
+                ))
+            {
+                return false;
+            }
+            self.engine.instruct_live_phalanx(
+                self.sim,
+                self.assets,
+                &members,
+                new_left,
+                right,
+                ideal,
+            );
+            true
+        } else {
+            let [x, y] = crate::shadow_polygon::sector_to_direction(((ideal + 4) & 15) as i16);
+            let right = MapVec::new(
+                x * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+                (y * ASPECT_RATIO) * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+            );
+            for index in 0..size {
+                let pivot = if (2..=8).contains(&difference) {
+                    size - index - 1
+                } else {
+                    index
+                };
+                let left = shifted(
+                    self.engine.live_ai_position(members[pivot]),
+                    right,
+                    -(pivot as f32),
+                );
+                let last = shifted(left, right, (size - 1) as f32);
+                if self
+                    .engine
+                    .phalanx_line_accessible(self.owner, left, last, last.level)
+                {
+                    self.engine.instruct_live_phalanx(
+                        self.sim,
+                        self.assets,
+                        &members,
+                        left,
+                        right,
+                        ideal,
+                    );
+                    return true;
+                }
+            }
+            self.execute_ai_break_phalanx(true, true);
+            true
         }
     }
 }

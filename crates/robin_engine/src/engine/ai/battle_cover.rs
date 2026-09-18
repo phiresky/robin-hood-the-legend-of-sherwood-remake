@@ -20,22 +20,6 @@ impl EngineInner {
         self.expect_human_id_for_ai_handle(target.get(), "cover primary entity")
     }
 
-    fn cover_face_primary(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let target = self.cover_primary(owner);
-        let position = self.live_ai_position(target);
-        let elevation = self
-            .expect_entity(target, "cover facing elevation")
-            .element_data()
-            .position()
-            .z;
-        self.duty_face_position_at_elevation(sim, assets, owner, position, elevation);
-    }
-
     fn cover_focus_primary(&mut self, owner: EntityId) {
         let ai = self.ai_mut(owner, "cover focus");
         let target = ai.primary_target;
@@ -179,6 +163,7 @@ impl EngineInner {
         false
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_battle_too_proud(
         &mut self,
         sim: &SimulationContext,
@@ -186,100 +171,7 @@ impl EngineInner {
         owner: EntityId,
         old_substate: Substate,
     ) -> ControlFlow<bool, Decision> {
-        let target = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::VIPS_ALLOWED);
-        self.ai_mut(owner, "proud execution target").primary_target = target;
-        let Some(_) = target else {
-            tracing::warn!(?owner, "proud observer lost its primary target; reserving");
-            return ControlFlow::Continue(Decision::Reserve);
-        };
-        let position = self.live_ai_position(self.cover_primary(owner));
-        let me = self.live_ai_position(owner);
-        let dx = position.x - me.x;
-        let dy = (position.y - me.y) / crate::position_interface::ASPECT_RATIO;
-        let distance = (dx * dx + dy * dy).sqrt();
-        if distance < crate::parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
-            let Some(goal) = self.cover_step_back_goal(
-                owner,
-                position,
-                crate::parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE,
-                crate::parameters_ai::PROUD_OBSERVER_MIN_DISTANCE,
-            ) else {
-                return ControlFlow::Continue(Decision::Fight);
-            };
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingTooProudToAttackRetire,
-            );
-            self.duty_go_to(sim, assets, owner, goal, GotoFlags::empty());
-        } else if distance > crate::parameters_ai::PROUD_OBSERVER_MAX_DISTANCE as f32 {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingTooProudToAttackApproach,
-            );
-            let position = self.live_ai_position(self.cover_primary(owner));
-            self.duty_go_near(
-                sim,
-                assets,
-                owner,
-                position,
-                crate::parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE as i32,
-                GotoFlags::empty(),
-            );
-            let ai = self.ai_mut(owner, "proud approach completion");
-            if ai.already_on_point {
-                ai.already_on_point = false;
-                self.cover_face_primary(sim, assets, owner);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingTooProudToAttack,
-                );
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("proud timer"))
-                    .launch_timer(20, self.control.frame_counter);
-            }
-        } else {
-            self.cover_face_primary(sim, assets, owner);
-            self.cover_focus_primary(owner);
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingTooProudToAttack,
-            );
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("proud observer timer"))
-                .launch_timer(20, self.control.frame_counter);
-        }
-        if matches!(
-            old_substate,
-            Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning
-        ) {
-            let ai = self.enemy_ai_mut(owner, "proud remark");
-            let remark = if ai.is_vip {
-                Remark::VipProudDontFight
-            } else {
-                Remark::ProudDontFight
-            };
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt { remark, flags: 0 },
-            );
-        }
-        ControlFlow::Break(true)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_battle_too_proud(old_substate)
     }
 
     pub(in crate::engine) fn execute_ai_battle_archer_step_back(
@@ -316,61 +208,6 @@ impl EngineInner {
             Substate::AttackingArcherRetireFromCombat,
         );
         self.duty_go_to(sim, assets, owner, goal, GotoFlags::RUN);
-        ControlFlow::Break(true)
-    }
-
-    pub(in crate::engine) fn execute_ai_battle_archer_observe(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> ControlFlow<bool, Decision> {
-        let target = self.select_live_ai_primary_target(
-            owner,
-            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
-        );
-        self.ai_mut(owner, "archer observer target").primary_target = target;
-        self.cover_focus_primary(owner);
-        if self
-            .expect_entity(owner, "archer observer action")
-            .actor_data()
-            .expect("archer observer actor")
-            .action_state
-            .is_bow()
-        {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingBowObserving,
-            );
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("archer observing timer"))
-                .launch_timer(50, self.control.frame_counter);
-        } else {
-            self.stop_ai_owner(sim, assets, owner);
-            let ai = self.enemy_ai_mut(owner, "archer observer equip");
-            let command = if ai.enemy_seen_below {
-                crate::element::Command::EquipBowDown
-            } else {
-                crate::element::Command::EquipBow
-            };
-            self.launch_element(
-                sim,
-                assets,
-                crate::sequence::SequenceElement::new(1, command, Some(owner)),
-            );
-
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingBowObservingLoading,
-            );
-        }
         ControlFlow::Break(true)
     }
 
@@ -476,6 +313,150 @@ impl EngineInner {
                 flags: 0,
             },
         );
+        ControlFlow::Break(true)
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    fn cover_face_primary(&mut self) {
+        let target = self.engine.cover_primary(self.owner);
+        let position = self.engine.live_ai_position(target);
+        let elevation = self
+            .engine
+            .expect_entity(target, "cover facing elevation")
+            .element_data()
+            .position()
+            .z;
+        self.duty_face_position_at_elevation(position, elevation);
+    }
+
+    pub(in crate::engine) fn execute_ai_battle_too_proud(
+        &mut self,
+        old_substate: Substate,
+    ) -> ControlFlow<bool, Decision> {
+        let target = self
+            .engine
+            .select_live_ai_primary_target(self.owner, PrimaryTargetFlags::VIPS_ALLOWED);
+        self.engine
+            .ai_mut(self.owner, "proud execution target")
+            .primary_target = target;
+        let Some(_) = target else {
+            tracing::warn!(owner = ?self.owner, "proud observer lost its primary target; reserving");
+            return ControlFlow::Continue(Decision::Reserve);
+        };
+        let position = self
+            .engine
+            .live_ai_position(self.engine.cover_primary(self.owner));
+        let me = self.engine.live_ai_position(self.owner);
+        let dx = position.x - me.x;
+        let dy = (position.y - me.y) / crate::position_interface::ASPECT_RATIO;
+        let distance = (dx * dx + dy * dy).sqrt();
+        if distance < crate::parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
+            let Some(goal) = self.engine.cover_step_back_goal(
+                self.owner,
+                position,
+                crate::parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE,
+                crate::parameters_ai::PROUD_OBSERVER_MIN_DISTANCE,
+            ) else {
+                return ControlFlow::Continue(Decision::Fight);
+            };
+            self.duty_set_state(
+                AiState::Attacking,
+                Substate::AttackingTooProudToAttackRetire,
+            );
+            self.duty_go_to(goal, GotoFlags::empty());
+        } else if distance > crate::parameters_ai::PROUD_OBSERVER_MAX_DISTANCE as f32 {
+            self.duty_set_state(
+                AiState::Attacking,
+                Substate::AttackingTooProudToAttackApproach,
+            );
+            let position = self
+                .engine
+                .live_ai_position(self.engine.cover_primary(self.owner));
+            self.duty_go_near(
+                position,
+                crate::parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE as i32,
+                GotoFlags::empty(),
+            );
+            let ai = self.engine.ai_mut(self.owner, "proud approach completion");
+            if ai.already_on_point {
+                ai.already_on_point = false;
+                self.cover_face_primary();
+                self.duty_set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
+                self.engine
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(self.owner, format_args!("proud timer"))
+                    .launch_timer(20, self.engine.control.frame_counter);
+            }
+        } else {
+            self.cover_face_primary();
+            self.engine.cover_focus_primary(self.owner);
+            self.duty_set_state(AiState::Attacking, Substate::AttackingTooProudToAttack);
+            self.engine
+                .world
+                .entities
+                .expect_ai_controller_mut(self.owner, format_args!("proud observer timer"))
+                .launch_timer(20, self.engine.control.frame_counter);
+        }
+        if matches!(
+            old_substate,
+            Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning
+        ) {
+            let ai = self.engine.enemy_ai_mut(self.owner, "proud remark");
+            let remark = if ai.is_vip {
+                Remark::VipProudDontFight
+            } else {
+                Remark::ProudDontFight
+            };
+            self.execute_ai_speech(crate::ai::AiSpeechAttempt { remark, flags: 0 });
+        }
+        ControlFlow::Break(true)
+    }
+
+    pub(in crate::engine) fn execute_ai_battle_archer_observe(
+        &mut self,
+    ) -> ControlFlow<bool, Decision> {
+        let target = self.engine.select_live_ai_primary_target(
+            self.owner,
+            PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
+        );
+        self.engine
+            .ai_mut(self.owner, "archer observer target")
+            .primary_target = target;
+        self.engine.cover_focus_primary(self.owner);
+        if self
+            .engine
+            .expect_entity(self.owner, "archer observer action")
+            .actor_data()
+            .expect("archer observer actor")
+            .action_state
+            .is_bow()
+        {
+            self.duty_set_state(AiState::Attacking, Substate::AttackingBowObserving);
+            self.engine
+                .world
+                .entities
+                .expect_ai_controller_mut(self.owner, format_args!("archer observing timer"))
+                .launch_timer(50, self.engine.control.frame_counter);
+        } else {
+            self.stop_ai_owner();
+            let ai = self
+                .engine
+                .enemy_ai_mut(self.owner, "archer observer equip");
+            let command = if ai.enemy_seen_below {
+                crate::element::Command::EquipBowDown
+            } else {
+                crate::element::Command::EquipBow
+            };
+            self.engine.launch_element(
+                self.sim,
+                self.assets,
+                crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
+            );
+
+            self.duty_set_state(AiState::Attacking, Substate::AttackingBowObservingLoading);
+        }
         ControlFlow::Break(true)
     }
 }

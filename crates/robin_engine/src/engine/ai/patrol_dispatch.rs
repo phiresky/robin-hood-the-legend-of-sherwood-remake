@@ -8,52 +8,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        use crate::ai::{AiState, StimulusType, Substate};
-
-        if stimulus.to_whole_patrol {
-            return false;
-        }
-        let ai = self.enemy_ai(owner, "patrol dispatch owner");
-        if matches!(
-            stimulus.stimulus_type,
-            StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
-        ) && ai
-            .last_stimulus_dispatched_to_patrol
-            .as_ref()
-            .is_some_and(|last| last.is_similar(stimulus))
-        {
-            return true;
-        }
-        match ai.base.current_state {
-            AiState::Default
-                if ai.base.current_substate != Substate::DefaultPatrolEnrouteRunning => {}
-            AiState::Wondering => {}
-            _ => return false,
-        }
-        if let Some(chief) = ai.base.patrol_chief {
-            if matches!(
-                self.world
-                    .entities
-                    .expect_entity(chief, format_args!("patrol chief")),
-                Entity::Soldier(_)
-            ) && self.patrol_member_visible(assets, owner, chief)
-            {
-                return self.dispatch_live_stimulus_to_patrol(sim, assets, chief, stimulus);
-            }
-        }
-
-        let ai = self.enemy_ai_mut(owner, "patrol dispatch owner");
-        ai.last_stimulus_dispatched_to_patrol = Some(*stimulus);
-        if ai.base.patrol.is_empty() {
-            return false;
-        }
-        // This call intentionally retains membership before recursively
-        // processing the chief, which can rebuild the live patrol list.
-        let members = ai.base.patrol.iter().map(|member| member.index()).collect();
-        let mut forwarded = *stimulus;
-        forwarded.to_whole_patrol = true;
-        self.execute_ai_patrol_broadcast(sim, assets, owner, forwarded, members);
-        true
+        AiOwnerCtx::new(self, sim, assets, owner).dispatch_live_stimulus_to_patrol(stimulus)
     }
 
     pub(in crate::engine) fn execute_ai_patrol_broadcast(
@@ -104,5 +59,75 @@ impl EngineInner {
 
             self.execute_ai_callback(sim, assets, member_id, stimulus);
         }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn dispatch_live_stimulus_to_patrol(
+        &mut self,
+        stimulus: &crate::ai::Stimulus,
+    ) -> bool {
+        use crate::ai::{AiState, StimulusType, Substate};
+
+        if stimulus.to_whole_patrol {
+            return false;
+        }
+        let ai = self.engine.enemy_ai(self.owner, "patrol dispatch owner");
+        if matches!(
+            stimulus.stimulus_type,
+            StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
+        ) && ai
+            .last_stimulus_dispatched_to_patrol
+            .as_ref()
+            .is_some_and(|last| last.is_similar(stimulus))
+        {
+            return true;
+        }
+        match ai.base.current_state {
+            AiState::Default
+                if ai.base.current_substate != Substate::DefaultPatrolEnrouteRunning => {}
+            AiState::Wondering => {}
+            _ => return false,
+        }
+        if let Some(chief) = ai.base.patrol_chief {
+            if matches!(
+                self.engine
+                    .world
+                    .entities
+                    .expect_entity(chief, format_args!("patrol chief")),
+                Entity::Soldier(_)
+            ) && self
+                .engine
+                .patrol_member_visible(self.assets, self.owner, chief)
+            {
+                return self.engine.dispatch_live_stimulus_to_patrol(
+                    self.sim,
+                    self.assets,
+                    chief,
+                    stimulus,
+                );
+            }
+        }
+
+        let ai = self
+            .engine
+            .enemy_ai_mut(self.owner, "patrol dispatch owner");
+        ai.last_stimulus_dispatched_to_patrol = Some(*stimulus);
+        if ai.base.patrol.is_empty() {
+            return false;
+        }
+        // This call intentionally retains membership before recursively
+        // processing the chief, which can rebuild the live patrol list.
+        let members = ai.base.patrol.iter().map(|member| member.index()).collect();
+        let mut forwarded = *stimulus;
+        forwarded.to_whole_patrol = true;
+        self.engine.execute_ai_patrol_broadcast(
+            self.sim,
+            self.assets,
+            self.owner,
+            forwarded,
+            members,
+        );
+        true
     }
 }

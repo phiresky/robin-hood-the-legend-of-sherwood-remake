@@ -185,7 +185,13 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).run();
+        AiOwnerCtx::new(self, sim, assets, owner).run_ai_macro()
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn run_ai_macro(&mut self) {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).run();
     }
 }
 
@@ -230,30 +236,18 @@ impl AiOwnerCtx<'_> {
     }
 
     fn set_macro_state(&mut self, substate: Substate) {
-        self.engine.duty_set_state(
-            self.sim,
-            self.assets,
-            self.owner,
-            AiState::Default,
-            substate,
-        );
+        self.duty_set_state(AiState::Default, substate);
     }
 
     fn callback(&mut self, event: StimulusType) {
-        self.engine
-            .execute_ai_callback(self.sim, self.assets, self.owner, &Stimulus::new(event));
+        self.execute_ai_callback(&Stimulus::new(event));
     }
 
     fn speak(&mut self, remark: Remark) {
-        self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
-            self.owner,
-            AiSpeechAttempt {
-                remark,
-                flags: SpeechFlags::empty().bits(),
-            },
-        );
+        self.execute_ai_speech(AiSpeechAttempt {
+            remark,
+            flags: SpeechFlags::empty().bits(),
+        });
     }
 
     fn consume_macro_operand(&mut self) {
@@ -607,12 +601,7 @@ impl AiOwnerCtx<'_> {
                         self.controller().me
                     );
                 }
-                self.engine.execute_ai_look_sidewards(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    LookDirection::Left,
-                );
+                self.execute_ai_look_sidewards(LookDirection::Left);
 
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.controller_mut().macro_started_in_this_frame = false;
@@ -626,12 +615,7 @@ impl AiOwnerCtx<'_> {
                         self.controller().me
                     );
                 }
-                self.engine.execute_ai_look_sidewards(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    LookDirection::Right,
-                );
+                self.execute_ai_look_sidewards(LookDirection::Right);
 
                 self.set_macro_state(Substate::DefaultInMacroWaitingForDone);
                 self.controller_mut().macro_started_in_this_frame = false;
@@ -649,12 +633,7 @@ impl AiOwnerCtx<'_> {
                         self.controller().me
                     );
                 }
-                self.engine.execute_ai_look_sidewards(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    LookDirection::Down,
-                );
+                self.execute_ai_look_sidewards(LookDirection::Down);
                 self.controller_mut()
                     .launch_macro_timer(frames as u32, ctx.frame);
                 self.debug_macro_lifecycle(ctx, "timer_started", "bend");

@@ -8,30 +8,6 @@ use crate::ai_enemy::SeekFlags;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_finish_exhausted_search(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let enemy = self.enemy_ai(owner, "completed search");
-        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
-            && !enemy
-                .seek_flags
-                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
-        {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                AiSpeechAttempt {
-                    remark: Remark::EndsSearch,
-                    flags: 0,
-                },
-            );
-        }
-    }
-
     pub(in crate::engine) fn execute_kill_nearby_sleeping_enemies(
         &mut self,
         sim: &SimulationContext,
@@ -146,6 +122,22 @@ impl EngineInner {
         let target = self.expect_entity(target, "sleeping enemy authorization target");
         (!vip || matches!(target, Entity::Pc(pc) if pc.pc.robin))
             && (matches!(target, Entity::Pc(_)) || !target.is_vip())
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_finish_exhausted_search(&mut self) {
+        let enemy = self.engine.enemy_ai(self.owner, "completed search");
+        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
+            && !enemy
+                .seek_flags
+                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
+        {
+            self.execute_ai_speech(AiSpeechAttempt {
+                remark: Remark::EndsSearch,
+                flags: 0,
+            });
+        }
     }
 }
 

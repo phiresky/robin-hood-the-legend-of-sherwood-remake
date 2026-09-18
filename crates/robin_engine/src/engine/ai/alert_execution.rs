@@ -148,35 +148,7 @@ impl EngineInner {
             self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
         }
     }
-
-    pub(in crate::engine) fn execute_ai_run_and_alert_soldiers(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).run_and_alert_soldiers(center)
-    }
-    pub(in crate::engine) fn execute_ai_officer_look_for_soldier(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        reason: crate::ai::ReportType,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).officer_look_for_soldier(reason);
-    }
-    pub(in crate::engine) fn execute_ai_tower_guard_alert(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).tower_guard_alert(center);
-        self.execute_battle_decisions(sim, assets, owner);
-    }
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_alert_officer_for_caller(
         &mut self,
         sim: &SimulationContext,
@@ -184,107 +156,19 @@ impl EngineInner {
         owner: EntityId,
         caller: crate::ai::OfficerAlertCaller,
     ) {
-        use crate::ai::OfficerAlertCaller;
-        let accepted = self.execute_ai_alert_officer(sim, assets, owner);
-        match caller {
-            OfficerAlertCaller::Ignore => return,
-            OfficerAlertCaller::TowerGuardCalled => {
-                self.enemy_ai_mut(owner, "tower guard alert priority")
-                    .current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
-                return;
-            }
-            OfficerAlertCaller::ReturnToDuty => {
-                if !accepted {
-                    self.execute_ai_return_to_duty(
-                        sim,
-                        assets,
-                        owner,
-                        crate::ai::DutyFlags::empty(),
-                    );
-                }
-                return;
-            }
-            _ if accepted => return,
-            _ => {}
-        }
-        match caller {
-            OfficerAlertCaller::SeekBody { center, radius } => self.execute_failed_ai_alert(
-                sim,
-                assets,
-                owner,
-                crate::ai::AlertSoldiersFailureContinuation::SeekBody { center, radius },
-            ),
-            OfficerAlertCaller::SeekMissedCharly { .. } => self.execute_failed_ai_alert(
-                sim,
-                assets,
-                owner,
-                crate::ai::AlertSoldiersFailureContinuation::SeekMissedCharly {
-                    center: self.live_ai_position(owner),
-                },
-            ),
-            _ => unreachable!(),
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_officer_for_caller(caller)
     }
+
     pub(in crate::engine) fn execute_ai_alert_officer(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).alert_officer()
-    }
-    fn execute_failed_ai_alert(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        failure: crate::ai::AlertSoldiersFailureContinuation,
-    ) {
-        use crate::ai::AlertSoldiersFailureContinuation as Failure;
-        use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-        let (center, radius, flags) = match failure {
-            Failure::None => return,
-            Failure::ReturnToDuty => {
-                self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
-                return;
-            }
-            Failure::SeekBody { center, radius } => (
-                center,
-                radius,
-                SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
-            ),
-            Failure::SeekMissedCharly { .. } => {
-                let checkpoint = self
-                    .ai(owner, "missing checkpoint seek")
-                    .checkpoint_charly
-                    .expect("missing checkpoint seek requires a checkpoint");
-                let checkpoint =
-                    self.expect_human_id_for_ai_handle(checkpoint.get(), "missing checkpoint seek");
-                let has_path = self
-                    .ai(checkpoint, "missing checkpoint path")
-                    .has_patrol_path;
-                (
-                    self.live_ai_position(owner),
-                    if has_path {
-                        crate::parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
-                    } else {
-                        crate::parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
-                    },
-                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
-                )
-            }
-        };
-        self.execute_ai_seek_area(
-            sim,
-            assets,
-            owner,
-            center,
-            radius,
-            flags,
-            UNDEFINED_DIRECTION,
-        );
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_officer()
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_alert_soldiers(
         &mut self,
         sim: &SimulationContext,
@@ -293,67 +177,7 @@ impl EngineInner {
         center: Position,
         flags: u16,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).alert_soldiers(center, flags)
-    }
-    pub(in crate::engine) fn execute_maybe_officer_sees_me_fighting(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        if self
-            .enemy_ai(owner, "brawl owner")
-            .profile(&assets.profile_manager)
-            .rank
-            != ProfileRank::Soldier
-        {
-            return;
-        }
-        let camp = self.expect_entity(owner, "brawl camp").camp();
-        let count = self.world.soldier_registry.camp(camp).len();
-        for index in 0..count {
-            let handle = self.world.soldier_registry.camp(camp)[index];
-            let candidate = EntityId::Soldier(crate::entity_id::SoldierId(handle));
-            let Some(Entity::Soldier(soldier)) = self.entities().get(candidate) else {
-                continue;
-            };
-            if soldier.soldier.cached_camp != camp {
-                continue;
-            }
-            let enemy = soldier
-                .npc
-                .ai_brain
-                .enemy()
-                .expect("officer candidate has no brain");
-            if enemy.profile(&assets.profile_manager).rank != ProfileRank::Officer
-                || !(enemy.base.current_state == AiState::Default
-                    || enemy.base.current_substate == Substate::WonderingMoneyReactiontime)
-            {
-                continue;
-            }
-            let observer = soldier.element.position();
-            let actor = self
-                .expect_entity(owner, "brawl actor")
-                .element_data()
-                .position();
-            let dx = observer.x - actor.x;
-            let dy = (observer.y - actor.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = observer.z - actor.z;
-            let distance = dx * dx + dy * dy + dz * dz;
-            let reacts = if distance < 200.0 * 200.0 {
-                true
-            } else if distance < 350.0 * 350.0 {
-                self.live_ai_detects_180(assets, candidate, owner)
-            } else {
-                self.npc_is_detecting_human(assets, candidate, owner, self.control.frame_counter)
-            };
-            if reacts {
-                let mut stimulus = Stimulus::new(StimulusType::EventSeesBrawl);
-                stimulus.info = StimulusInfo::Human(AiEntityHandle::new(owner.index()));
-                self.execute_ai_callback(sim, assets, candidate, &stimulus);
-                return;
-            }
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_soldiers(center, flags)
     }
 
     pub(in crate::engine) fn execute_ai_command_soldiers_to_attack(
@@ -364,6 +188,184 @@ impl EngineInner {
         center: Position,
     ) -> bool {
         AiOwnerCtx::new(self, sim, assets, owner).command_soldiers_to_attack(center)
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_run_and_alert_soldiers(
+        &mut self,
+        center: Position,
+    ) -> bool {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+            .run_and_alert_soldiers(center)
+    }
+
+    pub(in crate::engine) fn execute_ai_officer_look_for_soldier(
+        &mut self,
+        reason: crate::ai::ReportType,
+    ) {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+            .officer_look_for_soldier(reason);
+    }
+
+    pub(in crate::engine) fn execute_ai_tower_guard_alert(&mut self, center: Position) {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).tower_guard_alert(center);
+        self.execute_battle_decisions();
+    }
+
+    pub(in crate::engine) fn execute_ai_alert_officer_for_caller(
+        &mut self,
+        caller: crate::ai::OfficerAlertCaller,
+    ) {
+        use crate::ai::OfficerAlertCaller;
+        let accepted = self.execute_ai_alert_officer();
+        match caller {
+            OfficerAlertCaller::Ignore => return,
+            OfficerAlertCaller::TowerGuardCalled => {
+                self.engine
+                    .enemy_ai_mut(self.owner, "tower guard alert priority")
+                    .current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
+                return;
+            }
+            OfficerAlertCaller::ReturnToDuty => {
+                if !accepted {
+                    self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
+                }
+                return;
+            }
+            _ if accepted => return,
+            _ => {}
+        }
+        match caller {
+            OfficerAlertCaller::SeekBody { center, radius } => self.execute_failed_ai_alert(
+                crate::ai::AlertSoldiersFailureContinuation::SeekBody { center, radius },
+            ),
+            OfficerAlertCaller::SeekMissedCharly { .. } => self.execute_failed_ai_alert(
+                crate::ai::AlertSoldiersFailureContinuation::SeekMissedCharly {
+                    center: self.engine.live_ai_position(self.owner),
+                },
+            ),
+            _ => unreachable!(),
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_alert_officer(&mut self) -> bool {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).alert_officer()
+    }
+
+    fn execute_failed_ai_alert(&mut self, failure: crate::ai::AlertSoldiersFailureContinuation) {
+        use crate::ai::AlertSoldiersFailureContinuation as Failure;
+        use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
+        let (center, radius, flags) = match failure {
+            Failure::None => return,
+            Failure::ReturnToDuty => {
+                self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
+                return;
+            }
+            Failure::SeekBody { center, radius } => (
+                center,
+                radius,
+                SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
+            ),
+            Failure::SeekMissedCharly { .. } => {
+                let checkpoint = self
+                    .engine
+                    .ai(self.owner, "missing checkpoint seek")
+                    .checkpoint_charly
+                    .expect("missing checkpoint seek requires a checkpoint");
+                let checkpoint = self
+                    .engine
+                    .expect_human_id_for_ai_handle(checkpoint.get(), "missing checkpoint seek");
+                let has_path = self
+                    .engine
+                    .ai(checkpoint, "missing checkpoint path")
+                    .has_patrol_path;
+                (
+                    self.engine.live_ai_position(self.owner),
+                    if has_path {
+                        crate::parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS as u16
+                    } else {
+                        crate::parameters_ai::AI_FIX_CHARLY_SEEK_RADIUS as u16
+                    },
+                    SeekFlags::LOCATION_FIRST | SeekFlags::CHARLY_SEEK,
+                )
+            }
+        };
+        self.execute_ai_seek_area(center, radius, flags, UNDEFINED_DIRECTION);
+    }
+
+    pub(in crate::engine) fn execute_ai_alert_soldiers(
+        &mut self,
+        center: Position,
+        flags: u16,
+    ) -> bool {
+        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+            .alert_soldiers(center, flags)
+    }
+
+    pub(in crate::engine) fn execute_maybe_officer_sees_me_fighting(&mut self) {
+        if self
+            .engine
+            .enemy_ai(self.owner, "brawl owner")
+            .profile(&self.assets.profile_manager)
+            .rank
+            != ProfileRank::Soldier
+        {
+            return;
+        }
+        let camp = self.engine.expect_entity(self.owner, "brawl camp").camp();
+        let count = self.engine.world.soldier_registry.camp(camp).len();
+        for index in 0..count {
+            let handle = self.engine.world.soldier_registry.camp(camp)[index];
+            let candidate = EntityId::Soldier(crate::entity_id::SoldierId(handle));
+            let Some(Entity::Soldier(soldier)) = self.engine.entities().get(candidate) else {
+                continue;
+            };
+            if soldier.soldier.cached_camp != camp {
+                continue;
+            }
+            let enemy = soldier
+                .npc
+                .ai_brain
+                .enemy()
+                .expect("officer candidate has no brain");
+            if enemy.profile(&self.assets.profile_manager).rank != ProfileRank::Officer
+                || !(enemy.base.current_state == AiState::Default
+                    || enemy.base.current_substate == Substate::WonderingMoneyReactiontime)
+            {
+                continue;
+            }
+            let observer = soldier.element.position();
+            let actor = self
+                .engine
+                .expect_entity(self.owner, "brawl actor")
+                .element_data()
+                .position();
+            let dx = observer.x - actor.x;
+            let dy = (observer.y - actor.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = observer.z - actor.z;
+            let distance = dx * dx + dy * dy + dz * dz;
+            let reacts = if distance < 200.0 * 200.0 {
+                true
+            } else if distance < 350.0 * 350.0 {
+                self.engine
+                    .live_ai_detects_180(self.assets, candidate, self.owner)
+            } else {
+                self.engine.npc_is_detecting_human(
+                    self.assets,
+                    candidate,
+                    self.owner,
+                    self.engine.control.frame_counter,
+                )
+            };
+            if reacts {
+                let mut stimulus = Stimulus::new(StimulusType::EventSeesBrawl);
+                stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
+                self.engine
+                    .execute_ai_callback(self.sim, self.assets, candidate, &stimulus);
+                return;
+            }
+        }
     }
 }
 
@@ -476,13 +478,7 @@ impl AiOwnerCtx<'_> {
         self.enemy_mut().base.my_door_index =
             Some(crate::gate::DoorIndex::new(index as u32).expect("door index"));
         self.state(AiState::Fleeing, Substate::FleeingRunToAlertSoldiers);
-        self.engine.duty_go_to(
-            self.sim,
-            self.assets,
-            self.owner,
-            position,
-            crate::ai::GotoFlags::RUN,
-        );
+        self.duty_go_to(position, crate::ai::GotoFlags::RUN);
         true
     }
     fn officer_look_for_soldier(&mut self, reason: crate::ai::ReportType) {
@@ -578,13 +574,7 @@ impl AiOwnerCtx<'_> {
                 .expect_entity(id, "officer facing soldier")
                 .position_iface()
                 .get_elevation();
-            self.engine.duty_face_position_at_elevation(
-                self.sim,
-                self.assets,
-                self.owner,
-                target,
-                elevation,
-            );
+            self.duty_face_position_at_elevation(target, elevation);
         } else {
             let direction = (self
                 .engine
@@ -593,8 +583,7 @@ impl AiOwnerCtx<'_> {
                 .direction() as u16
                 + 5)
                 % 16;
-            self.engine
-                .duty_face_direction(self.sim, self.assets, self.owner, direction);
+            self.duty_face_direction(direction);
         }
         self.timer(20);
     }
@@ -623,15 +612,10 @@ impl AiOwnerCtx<'_> {
             seek_flags: 0,
             who_tells_me: AiEntityHandle::new(self.owner.index()),
         };
-        self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
-            self.owner,
-            crate::ai::AiSpeechAttempt {
-                remark: crate::ai::Remark::CryAlert,
-                flags: 0,
-            },
-        );
+        self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+            remark: crate::ai::Remark::CryAlert,
+            flags: 0,
+        });
         let camp = self
             .engine
             .expect_entity(self.owner, "tower guard camp")
@@ -766,14 +750,7 @@ impl AiOwnerCtx<'_> {
                     self.state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
                     self.enemy_mut().base.set_emoticon(EmoticonType::None);
                     let target = self.engine.live_ai_position(target);
-                    self.engine.duty_go_near(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        target,
-                        40,
-                        GotoFlags::RUN,
-                    );
+                    self.duty_go_near(target, 40, GotoFlags::RUN);
                     self.timer(20);
                     self.enemy_mut()
                         .seek_flags
@@ -859,10 +836,7 @@ impl AiOwnerCtx<'_> {
 
         let position = self.forecast(officer);
         self.enemy_mut().gather_position = position;
-        self.engine.duty_go_near(
-            self.sim,
-            self.assets,
-            self.owner,
+        self.duty_go_near(
             position,
             crate::parameters_ai::AI_TALK_DISTANCE,
             GotoFlags::RUN,
@@ -1151,7 +1125,7 @@ impl AiOwnerCtx<'_> {
         if !self.inside() {
             use crate::element::Command;
             use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
-            self.engine.stop_ai_owner(self.sim, self.assets, self.owner);
+            self.stop_ai_owner();
             let mut sequence = Sequence::new();
             let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(self.owner));
             turn.set_property(
@@ -1170,15 +1144,10 @@ impl AiOwnerCtx<'_> {
             ));
             self.engine.launch_sequence(self.sim, self.assets, sequence);
 
-            self.engine.execute_ai_speech(
-                self.sim,
-                self.assets,
-                self.owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: Remark::OfficerCallsGroup,
-                    flags: 0,
-                },
-            );
+            self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                remark: Remark::OfficerCallsGroup,
+                flags: 0,
+            });
             let frame = self.engine.control.frame_counter;
             self.enemy_mut()
                 .base
@@ -1329,7 +1298,7 @@ impl AiOwnerCtx<'_> {
             target_world.x - owner_world.x,
             target_world.y - owner_world.y,
         ) as u16;
-        self.engine.stop_ai_owner(self.sim, self.assets, self.owner);
+        self.stop_ai_owner();
         use crate::element::Command;
         use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
         let mut sequence = Sequence::new();

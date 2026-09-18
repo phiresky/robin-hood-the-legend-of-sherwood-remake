@@ -6,9 +6,11 @@ use crate::ai::{
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_body_reaction(
         &mut self,
         sim: &SimulationContext,
@@ -16,95 +18,7 @@ impl EngineInner {
         owner: EntityId,
         operation: BodyReaction,
     ) {
-        match operation {
-            BodyReaction::Seen { body } => self.execute_ai_seen_body(sim, assets, owner, body),
-            BodyReaction::ReactionTimer => self.execute_ai_body_reaction_timer(sim, assets, owner),
-            BodyReaction::Examine { body } => {
-                let body = self.expect_human_id_for_ai_handle(body, "body examination target");
-                self.execute_seek_body(sim, assets, owner, body);
-            }
-            BodyReaction::BodyTimer => {
-                let body = self.body_target(owner);
-                let entity = self.expect_entity(body, "body timer target");
-                if entity.human_life_points() > 0
-                    && !entity.is_unconscious()
-                    && self.npc_is_detecting_human(assets, owner, body, self.control.frame_counter)
-                {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                } else {
-                    self.body_timer(owner, 10);
-                }
-            }
-            BodyReaction::Arrival => self.execute_body_arrival(sim, assets, owner),
-            BodyReaction::DeadBodyTimer => {
-                if self
-                    .expect_entity(owner, "body observer")
-                    .soldier_data()
-                    .is_some_and(|s| s.rider)
-                {
-                    let center = self.live_ai_position(owner);
-                    self.body_seek(sim, assets, owner, center, SeekFlags::BODY_SEEK);
-                } else {
-                    if !self.seek_enemy(owner).seen_dead_body {
-                        let ai = self.seek_enemy_mut(owner);
-                        ai.seen_dead_body = true;
-                        self.execute_ai_speech(
-                            sim,
-                            assets,
-                            owner,
-                            crate::ai::AiSpeechAttempt {
-                                remark: Remark::BahIlBougePus,
-                                flags: 0,
-                            },
-                        );
-                    }
-                    if self.execute_seek_other_bodies(sim, assets, owner) {
-                        let center = self.live_ai_position(owner);
-                        self.seek_enemy_mut(owner)
-                            .base
-                            .my_reconnaissance_report
-                            .update(ReportType::DeadBody, center);
-                    } else {
-                        let center = self.live_ai_position(owner);
-                        self.execute_dead_body_alert(sim, assets, owner, center);
-                    }
-                }
-            }
-            BodyReaction::SleeperTimer => {
-                if !self.execute_seek_other_bodies(sim, assets, owner) {
-                    let report = &self.seek_enemy(owner).base.my_reconnaissance_report;
-                    if report.report_type == ReportType::DeadBody {
-                        let center = report.seek_position;
-                        self.execute_dead_body_alert(sim, assets, owner, center);
-                    } else {
-                        self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                    }
-                }
-            }
-            BodyReaction::NetDone => {
-                let body = self.body_target(owner);
-                let entity = self.expect_entity(body, "uncovered body");
-                let stuck = entity
-                    .human_data()
-                    .expect("uncovered body must be human")
-                    .stuck_under_nets_counter
-                    > 0;
-                if stuck || entity.human_life_points() <= 0 || entity.is_unconscious() {
-                    self.execute_seek_body(sim, assets, owner, body);
-                } else {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            BodyReaction::Unreachable => {
-                if !self.execute_seek_other_bodies(sim, assets, owner) {
-                    let center = self.live_ai_position(owner);
-                    self.body_seek(sim, assets, owner, center, SeekFlags::empty());
-                }
-            }
-            BodyReaction::DeadBodyAlert { center } => {
-                self.execute_dead_body_alert(sim, assets, owner, center)
-            }
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_body_reaction(operation)
     }
 
     fn body_target(&self, owner: EntityId) -> EntityId {
@@ -123,18 +37,116 @@ impl EngineInner {
             .launch_timer(duration, frame);
     }
 
-    fn body_seek(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-        flags: SeekFlags,
-    ) {
+    fn body_alert_radius(&self, assets: &LevelAssets, owner: EntityId) -> u16 {
+        if self.seek_enemy(owner).profile(&assets.profile_manager).duty {
+            parameters_ai::AI_SOD_DEAD_BODY_SEEK_RADIUS as u16
+        } else {
+            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16
+        }
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_body_reaction(&mut self, operation: BodyReaction) {
+        match operation {
+            BodyReaction::Seen { body } => self.execute_ai_seen_body(body),
+            BodyReaction::ReactionTimer => self.execute_ai_body_reaction_timer(),
+            BodyReaction::Examine { body } => {
+                let body = self
+                    .engine
+                    .expect_human_id_for_ai_handle(body, "body examination target");
+                self.execute_seek_body(body);
+            }
+            BodyReaction::BodyTimer => {
+                let body = self.engine.body_target(self.owner);
+                let entity = self.engine.expect_entity(body, "body timer target");
+                if entity.human_life_points() > 0
+                    && !entity.is_unconscious()
+                    && self.engine.npc_is_detecting_human(
+                        self.assets,
+                        self.owner,
+                        body,
+                        self.engine.control.frame_counter,
+                    )
+                {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                } else {
+                    self.engine.body_timer(self.owner, 10);
+                }
+            }
+            BodyReaction::Arrival => self.execute_body_arrival(),
+            BodyReaction::DeadBodyTimer => {
+                if self
+                    .engine
+                    .expect_entity(self.owner, "body observer")
+                    .soldier_data()
+                    .is_some_and(|s| s.rider)
+                {
+                    let center = self.engine.live_ai_position(self.owner);
+                    self.body_seek(center, SeekFlags::BODY_SEEK);
+                } else {
+                    if !self.engine.seek_enemy(self.owner).seen_dead_body {
+                        let ai = self.engine.seek_enemy_mut(self.owner);
+                        ai.seen_dead_body = true;
+                        self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                            remark: Remark::BahIlBougePus,
+                            flags: 0,
+                        });
+                    }
+                    if self.execute_seek_other_bodies() {
+                        let center = self.engine.live_ai_position(self.owner);
+                        self.engine
+                            .seek_enemy_mut(self.owner)
+                            .base
+                            .my_reconnaissance_report
+                            .update(ReportType::DeadBody, center);
+                    } else {
+                        let center = self.engine.live_ai_position(self.owner);
+                        self.execute_dead_body_alert(center);
+                    }
+                }
+            }
+            BodyReaction::SleeperTimer => {
+                if !self.execute_seek_other_bodies() {
+                    let report = &self
+                        .engine
+                        .seek_enemy(self.owner)
+                        .base
+                        .my_reconnaissance_report;
+                    if report.report_type == ReportType::DeadBody {
+                        let center = report.seek_position;
+                        self.execute_dead_body_alert(center);
+                    } else {
+                        self.execute_ai_return_to_duty(DutyFlags::empty());
+                    }
+                }
+            }
+            BodyReaction::NetDone => {
+                let body = self.engine.body_target(self.owner);
+                let entity = self.engine.expect_entity(body, "uncovered body");
+                let stuck = entity
+                    .human_data()
+                    .expect("uncovered body must be human")
+                    .stuck_under_nets_counter
+                    > 0;
+                if stuck || entity.human_life_points() <= 0 || entity.is_unconscious() {
+                    self.execute_seek_body(body);
+                } else {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            BodyReaction::Unreachable => {
+                if !self.execute_seek_other_bodies() {
+                    let center = self.engine.live_ai_position(self.owner);
+                    self.body_seek(center, SeekFlags::empty());
+                }
+            }
+            BodyReaction::DeadBodyAlert { center } => self.execute_dead_body_alert(center),
+        }
+    }
+
+    fn body_seek(&mut self, center: Position, flags: SeekFlags) {
         self.execute_ai_seek_area(
-            sim,
-            assets,
-            owner,
             center,
             parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
             flags,
@@ -142,78 +154,79 @@ impl EngineInner {
         );
     }
 
-    fn execute_body_arrival(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        self.seek_enemy_mut(owner)
+    fn execute_body_arrival(&mut self) {
+        self.engine
+            .seek_enemy_mut(self.owner)
             .base
             .set_emoticon(EmoticonType::XMark);
 
-        let body = self.body_target(owner);
+        let body = self.engine.body_target(self.owner);
         let delta = self
+            .engine
             .expect_entity(body, "body arrival target")
             .element_data()
             .position()
             - self
-                .expect_entity(owner, "body arrival owner")
+                .engine
+                .expect_entity(self.owner, "body arrival owner")
                 .element_data()
                 .position();
         let disappeared = delta.x.abs().max(delta.y.abs()).max(delta.z.abs())
             > (2 * parameters_ai::AI_STOP_BEFORE_BODY_STEPS) as f32;
         if disappeared {
-            if !self.execute_seek_other_bodies(sim, assets, owner) {
-                let body = self.body_target(owner);
-                let entity = self.expect_entity(body, "missing body");
+            if !self.execute_seek_other_bodies() {
+                let body = self.engine.body_target(self.owner);
+                let entity = self.engine.expect_entity(body, "missing body");
                 if entity.is_unconscious() || entity.human_life_points() <= 0 {
-                    self.execute_ai_add_detectable(
-                        owner,
+                    self.engine.execute_ai_add_detectable(
+                        self.owner,
                         body,
                         crate::element::DetectableType::Body,
                     );
                 }
-                self.seek_enemy_mut(owner)
+                self.engine
+                    .seek_enemy_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
 
-                match self.seek_enemy(owner).get_rank(&assets.profile_manager) {
+                match self
+                    .engine
+                    .seek_enemy(self.owner)
+                    .get_rank(&self.assets.profile_manager)
+                {
                     ProfileRank::Officer => {
-                        let center = self.live_ai_position(owner);
-                        if self.execute_ai_alert_soldiers(sim, assets, owner, center, 0) {
+                        let center = self.engine.live_ai_position(self.owner);
+                        if self.execute_ai_alert_soldiers(center, 0) {
                             return;
                         }
                     }
                     ProfileRank::Soldier | ProfileRank::Knight => {}
                     ProfileRank::None => return,
                 }
-                let flags = SeekFlags::LOCATION_FIRST | self.seek_enemy(owner).seek_flags;
-                let center = self.live_ai_position(owner);
-                self.body_seek(sim, assets, owner, center, flags);
+                let flags =
+                    SeekFlags::LOCATION_FIRST | self.engine.seek_enemy(self.owner).seek_flags;
+                let center = self.engine.live_ai_position(self.owner);
+                self.body_seek(center, flags);
             }
             return;
         }
         let rider = self
-            .expect_entity(owner, "body arrival owner")
+            .engine
+            .expect_entity(self.owner, "body arrival owner")
             .soldier_data()
             .is_some_and(|s| s.rider);
-        let body = self.body_target(owner);
-        let entity = self.expect_entity(body, "body classification");
+        let body = self.engine.body_target(self.owner);
+        let entity = self.engine.expect_entity(body, "body classification");
         if rider || entity.human_life_points() <= 0 {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingBodyLookingDeadBody,
-            );
-            let body = self.body_target(owner);
-            self.seek_enemy_mut(owner)
+            self.duty_set_state(AiState::Seeking, Substate::SeekingBodyLookingDeadBody);
+            let body = self.engine.body_target(self.owner);
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .already_seen_bodies
                 .push(body.index());
-            self.body_timer(owner, 50);
-            self.seek_enemy_mut(owner)
+            self.engine.body_timer(self.owner, 50);
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .base
                 .set_emoticon(EmoticonType::XMark);
         } else if entity.element_data().posture() == crate::element::Posture::Tied
@@ -221,100 +234,74 @@ impl EngineInner {
                 .ai_controller()
                 .is_some_and(|ai| ai.current_substate == Substate::SleepingUnconscious)
         {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: Remark::AwakensSleeperr,
-                    flags: 0,
-                },
-            );
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingBodyAwakeningSleeperr,
-            );
-            self.stop_ai_owner(sim, assets, owner);
-            let body = self.body_target(owner);
+            self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                remark: Remark::AwakensSleeperr,
+                flags: 0,
+            });
+            self.duty_set_state(AiState::Seeking, Substate::SeekingBodyAwakeningSleeperr);
+            self.stop_ai_owner();
+            let body = self.engine.body_target(self.owner);
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(crate::sequence::SequenceElement::new_interaction(
                 1,
                 crate::element::Command::WakeUp,
-                Some(owner),
+                Some(self.owner),
                 Some(body),
             ));
-            self.launch_sequence(sim, assets, sequence);
+            self.engine.launch_sequence(self.sim, self.assets, sequence);
 
-            self.body_timer(owner, 50);
-            self.seek_enemy_mut(owner).base.clear_emoticon();
+            self.engine.body_timer(self.owner, 50);
+            self.engine.seek_enemy_mut(self.owner).base.clear_emoticon();
         } else {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(DutyFlags::empty());
         }
     }
 
-    fn execute_dead_body_alert(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        center: Position,
-    ) {
-        self.seek_enemy_mut(owner)
+    fn execute_dead_body_alert(&mut self, center: Position) {
+        self.engine
+            .seek_enemy_mut(self.owner)
             .base
             .my_reconnaissance_report
             .update(ReportType::DeadBody, center);
-        match self.seek_enemy(owner).get_rank(&assets.profile_manager) {
+        match self
+            .engine
+            .seek_enemy(self.owner)
+            .get_rank(&self.assets.profile_manager)
+        {
             ProfileRank::Soldier => {
-                let entity = self.expect_entity(owner, "body alert owner");
-                let ai = self.seek_enemy(owner);
+                let entity = self.engine.expect_entity(self.owner, "body alert owner");
+                let ai = self.engine.seek_enemy(self.owner);
                 let seek_first = ai.base.blood_alcohol as i32
                     <= parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
                     && entity.is_active()
-                    && !self.entity_data_in_building_sector(entity.element_data())
-                    && ai.profile(&assets.profile_manager).initiative >= 50
+                    && !self
+                        .engine
+                        .entity_data_in_building_sector(entity.element_data())
+                    && ai.profile(&self.assets.profile_manager).initiative >= 50
                     && ai.base.antagonist.is_none();
                 let flags = if seek_first {
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK | SeekFlags::LOOK_FOR_HELP_AFTER
                 } else {
-                    if self.execute_ai_alert_officer(sim, assets, owner) {
+                    if self.execute_ai_alert_officer() {
                         return;
                     }
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
                 };
-                let radius = self.body_alert_radius(assets, owner);
-                self.execute_ai_seek_area(
-                    sim,
-                    assets,
-                    owner,
-                    center,
-                    radius,
-                    flags,
-                    UNDEFINED_DIRECTION,
-                );
+                let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                self.execute_ai_seek_area(center, radius, flags, UNDEFINED_DIRECTION);
             }
             ProfileRank::Officer => {
                 let direction = self
-                    .expect_entity(owner, "body alert facing")
+                    .engine
+                    .expect_entity(self.owner, "body alert facing")
                     .element_data()
                     .direction() as u16
                     ^ 8;
-                self.duty_face_direction(sim, assets, owner, direction);
-                let position = self.live_ai_position(owner);
-                if !self.execute_ai_alert_soldiers(
-                    sim,
-                    assets,
-                    owner,
-                    position,
-                    SeekFlags::BODY_SEEK.bits(),
-                ) {
-                    let radius = self.body_alert_radius(assets, owner);
+                self.duty_face_direction(direction);
+                let position = self.engine.live_ai_position(self.owner);
+                if !self.execute_ai_alert_soldiers(position, SeekFlags::BODY_SEEK.bits()) {
+                    let radius = self.engine.body_alert_radius(self.assets, self.owner);
                     self.execute_ai_seek_area(
-                        sim,
-                        assets,
-                        owner,
                         center,
                         radius,
                         SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
@@ -323,12 +310,9 @@ impl EngineInner {
                 }
             }
             ProfileRank::Knight => {
-                let position = self.live_ai_position(owner);
-                let radius = self.body_alert_radius(assets, owner);
+                let position = self.engine.live_ai_position(self.owner);
+                let radius = self.engine.body_alert_radius(self.assets, self.owner);
                 self.execute_ai_seek_area(
-                    sim,
-                    assets,
-                    owner,
                     position,
                     radius,
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK,
@@ -336,14 +320,6 @@ impl EngineInner {
                 );
             }
             ProfileRank::None => {}
-        }
-    }
-
-    fn body_alert_radius(&self, assets: &LevelAssets, owner: EntityId) -> u16 {
-        if self.seek_enemy(owner).profile(&assets.profile_manager).duty {
-            parameters_ai::AI_SOD_DEAD_BODY_SEEK_RADIUS as u16
-        } else {
-            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16
         }
     }
 }

@@ -133,114 +133,6 @@ impl EngineInner {
         crate::position_interface::vector_square_norm_iso(vector.x, vector.y) < distance * distance
     }
 
-    pub(in crate::engine) fn execute_ai_battle_run_for_arrows(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> ControlFlow<bool, Decision> {
-        let position = self.live_ai_position(owner);
-        let entity = self.expect_entity(owner, "arrow reserve owner");
-        let building = self.entity_building_sector(entity.element_data().sector());
-        let raw_sector = entity.element_data().sector();
-        let layer = entity.element_data().layer();
-        let auth = entity.actor_auth_info();
-        let camp = entity.camp();
-        let mut nearest = None;
-        let mut minimum = u16::MAX;
-        for (index, door) in self.script_domains.interactables.doors.iter().enumerate() {
-            if door.gate_type != crate::gate::GateType::Door
-                || door.door_type != crate::gate::DoorType::Building
-                || building.map(u16::from) == Some(u16::from(door.sector_in))
-                || !door.is_actor_authorized(
-                    true,
-                    &auth,
-                    self.building_sector_is_authorized(door.sector_in),
-                    false,
-                )
-            {
-                continue;
-            }
-            let building = self
-                .grid_sector_by_number(door.sector_in)
-                .expect("arrow reserve door requires building sector")
-                .building_index
-                .expect("arrow reserve building identity");
-            let building = usize::from(building.get());
-            if !self.script_domains.buildings.arrow_reserves[building] {
-                continue;
-            }
-            let distance = crate::ai_enemy::legacy_nearest_door_distance(
-                door.point_out.x - position.x,
-                door.point_out.y - position.y,
-                raw_sector.map(u16::from) != Some(u16::from(door.sector_out)),
-                layer != door.layer_out,
-            );
-            if distance < minimum {
-                let dangerous = camp == Camp::Lacklandists
-                    && self.script_domains.buildings.occupants[building]
-                        .iter()
-                        .any(|&handle| {
-                            matches!(
-                                self.expect_entity_id_for_index(
-                                    handle as u32,
-                                    "arrow reserve occupant"
-                                ),
-                                EntityId::Pc(_)
-                            )
-                        });
-                if !dangerous {
-                    minimum = distance;
-                    nearest = Some(index);
-                }
-            }
-        }
-        self.execute_ai_speech(
-            sim,
-            assets,
-            owner,
-            AiSpeechAttempt {
-                remark: Remark::OutOfAmmunition,
-                flags: 0,
-            },
-        );
-        let Some(index) = nearest else {
-            return ControlFlow::Continue(Decision::Cassos);
-        };
-        let target = self.ai(owner, "arrow return target").primary_target;
-        let position = self.live_ai_position(
-            target
-                .map(|target| {
-                    self.expect_human_id_for_ai_handle(target.get(), "arrow return target")
-                })
-                .unwrap_or(owner),
-        );
-        self.ai_mut(owner, "arrow return position").seek_position = position;
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Fleeing,
-            Substate::FleeingRunForArrowReserves,
-        );
-        self.ai_mut(owner, "arrow reserve emoticon")
-            .set_transient_emoticon(EmoticonType::XMark, 100, 0);
-        let door = &self.script_domains.interactables.doors[index];
-        let mut sector = crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
-            .expect("building sector");
-        if let Some(arena) = door.sector_in_index {
-            sector = sector.with_arena_index(arena);
-        }
-        let position = Position {
-            x: door.point_in.x,
-            y: door.point_in.y,
-            sector: Some(sector),
-            level: door.layer_in,
-        };
-        self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
-        ControlFlow::Break(true)
-    }
-
     pub(in crate::engine) fn execute_ai_battle_archery_point(
         &mut self,
         sim: &SimulationContext,
@@ -305,6 +197,119 @@ impl EngineInner {
                 GotoFlags::RUN | GotoFlags::DONT_STOP
             },
         );
+        ControlFlow::Break(true)
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_battle_run_for_arrows(
+        &mut self,
+    ) -> ControlFlow<bool, Decision> {
+        let position = self.engine.live_ai_position(self.owner);
+        let entity = self.engine.expect_entity(self.owner, "arrow reserve owner");
+        let building = self
+            .engine
+            .entity_building_sector(entity.element_data().sector());
+        let raw_sector = entity.element_data().sector();
+        let layer = entity.element_data().layer();
+        let auth = entity.actor_auth_info();
+        let camp = entity.camp();
+        let mut nearest = None;
+        let mut minimum = u16::MAX;
+        for (index, door) in self
+            .engine
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .enumerate()
+        {
+            if door.gate_type != crate::gate::GateType::Door
+                || door.door_type != crate::gate::DoorType::Building
+                || building.map(u16::from) == Some(u16::from(door.sector_in))
+                || !door.is_actor_authorized(
+                    true,
+                    &auth,
+                    self.engine.building_sector_is_authorized(door.sector_in),
+                    false,
+                )
+            {
+                continue;
+            }
+            let building = self
+                .engine
+                .grid_sector_by_number(door.sector_in)
+                .expect("arrow reserve door requires building sector")
+                .building_index
+                .expect("arrow reserve building identity");
+            let building = usize::from(building.get());
+            if !self.engine.script_domains.buildings.arrow_reserves[building] {
+                continue;
+            }
+            let distance = crate::ai_enemy::legacy_nearest_door_distance(
+                door.point_out.x - position.x,
+                door.point_out.y - position.y,
+                raw_sector.map(u16::from) != Some(u16::from(door.sector_out)),
+                layer != door.layer_out,
+            );
+            if distance < minimum {
+                let dangerous = camp == Camp::Lacklandists
+                    && self.engine.script_domains.buildings.occupants[building]
+                        .iter()
+                        .any(|&handle| {
+                            matches!(
+                                self.engine.expect_entity_id_for_index(
+                                    handle as u32,
+                                    "arrow reserve occupant"
+                                ),
+                                EntityId::Pc(_)
+                            )
+                        });
+                if !dangerous {
+                    minimum = distance;
+                    nearest = Some(index);
+                }
+            }
+        }
+        self.execute_ai_speech(AiSpeechAttempt {
+            remark: Remark::OutOfAmmunition,
+            flags: 0,
+        });
+        let Some(index) = nearest else {
+            return ControlFlow::Continue(Decision::Cassos);
+        };
+        let target = self
+            .engine
+            .ai(self.owner, "arrow return target")
+            .primary_target;
+        let position = self.engine.live_ai_position(
+            target
+                .map(|target| {
+                    self.engine
+                        .expect_human_id_for_ai_handle(target.get(), "arrow return target")
+                })
+                .unwrap_or(self.owner),
+        );
+        self.engine
+            .ai_mut(self.owner, "arrow return position")
+            .seek_position = position;
+        self.duty_set_state(AiState::Fleeing, Substate::FleeingRunForArrowReserves);
+        self.engine
+            .ai_mut(self.owner, "arrow reserve emoticon")
+            .set_transient_emoticon(EmoticonType::XMark, 100, 0);
+        let door = &self.engine.script_domains.interactables.doors[index];
+        let mut sector = crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
+            .expect("building sector");
+        if let Some(arena) = door.sector_in_index {
+            sector = sector.with_arena_index(arena);
+        }
+        let position = Position {
+            x: door.point_in.x,
+            y: door.point_in.y,
+            sector: Some(sector),
+            level: door.layer_in,
+        };
+        self.duty_go_to(position, GotoFlags::RUN);
         ControlFlow::Break(true)
     }
 }

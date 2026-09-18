@@ -224,28 +224,13 @@ impl AiOwnerCtx<'_> {
             .expect_entity(target, "officer facing")
             .position_iface()
             .get_elevation() as i16 as f32;
-        self.engine.duty_face_position_at_elevation(
-            self.sim,
-            self.assets,
-            self.owner,
-            position,
-            elevation,
-        );
+        self.duty_face_position_at_elevation(position, elevation);
     }
     fn point(&mut self, position: Position) {
-        self.engine
-            .duty_point_to(self.sim, self.assets, self.owner, position);
+        self.duty_point_to(position);
     }
     fn seek(&mut self, point: Position, radius: u16, flags: SeekFlags) {
-        self.engine.execute_ai_seek_area(
-            self.sim,
-            self.assets,
-            self.owner,
-            point,
-            radius,
-            flags,
-            crate::ai_enemy::UNDEFINED_DIRECTION,
-        );
+        self.execute_ai_seek_area(point, radius, flags, crate::ai_enemy::UNDEFINED_DIRECTION);
     }
     fn group_officer_waiting(&self) -> bool {
         matches!(
@@ -324,12 +309,7 @@ impl AiOwnerCtx<'_> {
                     point.x - body.x,
                     point.y - body.y,
                 );
-                self.engine.duty_face_direction(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    direction as u16,
-                );
+                self.duty_face_direction(direction as u16);
                 self.seek_state(SeekingGetAlertingReportFromCivilianLook);
                 self.timer(30);
             }
@@ -355,13 +335,7 @@ impl AiOwnerCtx<'_> {
                 _ => {}
             },
             SeekingOfficerGetAlertingReportFromSoldier if event == EventTimer => {
-                if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().base.seek_position,
-                    0,
-                ) {
+                if !self.execute_ai_alert_soldiers(self.enemy().base.seek_position, 0) {
                     self.duty();
                 }
             }
@@ -429,13 +403,7 @@ impl AiOwnerCtx<'_> {
                             self.enemy().missed_soldier_timer.wrapping_add(1);
                         if self.enemy().missed_soldier_timer > 100 {
                             let position = self.engine.live_ai_position(self.owner);
-                            if !self.engine.execute_ai_alert_soldiers(
-                                self.sim,
-                                self.assets,
-                                self.owner,
-                                position,
-                                0,
-                            ) {
+                            if !self.execute_ai_alert_soldiers(position, 0) {
                                 let position = self.engine.live_ai_position(self.owner);
                                 self.seek(
                                     position,
@@ -450,14 +418,7 @@ impl AiOwnerCtx<'_> {
             },
             SeekingSoldierCalledByOfficer if event == EventTimer => {
                 let position = self.engine.live_ai_position(self.target());
-                self.engine.duty_go_near(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    position,
-                    40,
-                    GotoFlags::empty(),
-                );
+                self.duty_go_near(position, 40, GotoFlags::empty());
                 self.seek_state(SeekingSoldierGoToOfficer);
                 self.timer(20);
             }
@@ -547,10 +508,7 @@ impl AiOwnerCtx<'_> {
                 _ => {}
             },
             SeekingOfficerCallGroup if event == EventTimer => {
-                if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
+                if !self.execute_ai_alert_soldiers(
                     self.enemy().base.seek_position,
                     self.enemy().seek_flags.bits(),
                 ) {
@@ -601,21 +559,10 @@ impl AiOwnerCtx<'_> {
             }
             SeekingOfficerWaitInsideHouseToInstructGroup if event == EventTimer => {
                 self.seek_state(SeekingOfficerLeavingHouseToInstructGroup);
-                self.engine.duty_go_to(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().gather_position,
-                    GotoFlags::empty(),
-                );
+                self.duty_go_to(self.enemy().gather_position, GotoFlags::empty());
             }
             SeekingOfficerLeavingHouseToInstructGroup => match event {
-                EventReachPoint => self.engine.duty_face_direction(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().gather_direction,
-                ),
+                EventReachPoint => self.duty_face_direction(self.enemy().gather_direction),
                 EventDone => {
                     self.seek_state(SeekingOfficerWaitForGroup);
                     self.timer(1);
@@ -624,23 +571,10 @@ impl AiOwnerCtx<'_> {
             },
             SeekingGroupCalledByOfficer if event == EventTimer => {
                 if self.enemy().gather_position_instructed {
-                    self.engine.duty_go_to(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        self.enemy().gather_position,
-                        GotoFlags::RUN,
-                    );
+                    self.duty_go_to(self.enemy().gather_position, GotoFlags::RUN);
                 } else {
                     let position = self.engine.live_ai_position(self.target());
-                    self.engine.duty_go_near(
-                        self.sim,
-                        self.assets,
-                        self.owner,
-                        position,
-                        parameters_ai::AI_TALK_DISTANCE,
-                        GotoFlags::RUN,
-                    );
+                    self.duty_go_near(position, parameters_ai::AI_TALK_DISTANCE, GotoFlags::RUN);
                 }
                 self.seek_state(SeekingGroupGoToOfficer);
                 self.timer(20);
@@ -655,12 +589,7 @@ impl AiOwnerCtx<'_> {
                 }
                 EventReachPoint => {
                     if self.enemy().gather_position_instructed {
-                        self.engine.duty_face_direction(
-                            self.sim,
-                            self.assets,
-                            self.owner,
-                            self.enemy().gather_direction,
-                        );
+                        self.duty_face_direction(self.enemy().gather_direction);
                     } else {
                         self.face_target();
                     }
@@ -727,14 +656,7 @@ impl AiOwnerCtx<'_> {
         .resolve(self.sim)
         .position;
         self.enemy_mut().gather_position = destination;
-        self.engine.duty_go_near(
-            self.sim,
-            self.assets,
-            self.owner,
-            destination,
-            parameters_ai::AI_TALK_DISTANCE,
-            GotoFlags::RUN,
-        );
+        self.duty_go_near(destination, parameters_ai::AI_TALK_DISTANCE, GotoFlags::RUN);
     }
 
     fn running_to_officer(&mut self, event: StimulusType) {
@@ -818,13 +740,7 @@ impl AiOwnerCtx<'_> {
                         0,
                         SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
                     );
-                } else if !self.engine.execute_ai_alert_soldiers(
-                    self.sim,
-                    self.assets,
-                    self.owner,
-                    self.enemy().base.seek_position,
-                    0,
-                ) {
+                } else if !self.execute_ai_alert_soldiers(self.enemy().base.seek_position, 0) {
                     self.duty();
                 }
             }
