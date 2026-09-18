@@ -3415,25 +3415,7 @@ impl EngineInner {
                 crate::ai::StimulusInfo::Human(human) => Some(human),
                 _ => None,
             };
-            let expected_class = matches!(
-                stimulus.stimulus_type,
-                crate::ai::StimulusType::EventReachPoint
-                    | crate::ai::StimulusType::EventDone
-                    | crate::ai::StimulusType::EventTimer
-                    | crate::ai::StimulusType::EventSyncCharly
-                    | crate::ai::StimulusType::CallCoordinate
-                    | crate::ai::StimulusType::CallInstruction
-                    | crate::ai::StimulusType::CallReport
-                    | crate::ai::StimulusType::EventGaloppLoopEnd
-                    | crate::ai::StimulusType::EventMyTalk0
-                    | crate::ai::StimulusType::EventMyTalk1
-                    | crate::ai::StimulusType::EventMyTalk2
-                    | crate::ai::StimulusType::EventMyTalk3
-                    | crate::ai::StimulusType::CallYourTalk0
-                    | crate::ai::StimulusType::CallYourTalk1
-                    | crate::ai::StimulusType::CallYourTalk2
-                    | crate::ai::StimulusType::CallYourTalk3
-            );
+            let expected_class = stimulus.stimulus_type.is_expected_class();
             eprintln!(
                 "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} event={:?} code={} expected_class={} source={source:?} stimulus_owner={:?} ai_antagonist={:?} state={:?} substate={:?} locks={:?} script_locked={} recursion={} stimulus_queue={:?} rng_cursor={rng_cursor:?}",
                 engine.control.frame_counter,

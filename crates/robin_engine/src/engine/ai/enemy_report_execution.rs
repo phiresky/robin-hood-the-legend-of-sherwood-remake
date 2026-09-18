@@ -19,25 +19,7 @@ impl EngineInner {
         let enemy = self.world.entities.get(owner)?.enemy_ai()?;
         let substate = enemy.base.current_substate;
         let kind = stimulus.stimulus_type;
-        if !matches!(
-            kind,
-            StimulusType::EventReachPoint
-                | StimulusType::EventDone
-                | StimulusType::EventTimer
-                | StimulusType::EventSyncCharly
-                | StimulusType::CallCoordinate
-                | StimulusType::CallInstruction
-                | StimulusType::CallReport
-                | StimulusType::EventGaloppLoopEnd
-                | StimulusType::EventMyTalk0
-                | StimulusType::EventMyTalk1
-                | StimulusType::EventMyTalk2
-                | StimulusType::EventMyTalk3
-                | StimulusType::CallYourTalk0
-                | StimulusType::CallYourTalk1
-                | StimulusType::CallYourTalk2
-                | StimulusType::CallYourTalk3
-        ) {
+        if !kind.is_expected_class() {
             return None;
         }
         match substate {

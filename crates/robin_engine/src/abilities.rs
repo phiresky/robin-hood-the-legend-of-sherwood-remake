@@ -1034,35 +1034,18 @@ pub fn begin_throw_net(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities.get_mut(actor_id) {
-        Some(e) => e,
-        None => return BeginResult::Impossible,
-    };
-    if actor_entity.is_dead() || !actor_entity.is_pc() {
-        return BeginResult::Impossible;
-    }
-
-    let order_id = alloc_order_id(order_id_counter);
-    let actor = match actor_entity.actor_data_mut() {
-        Some(a) => a,
-        None => return BeginResult::Impossible,
-    };
-    actor.action_state = ActionState::Waiting;
-
-    let mut order = Order::new(OrderType::ThrowingNet, target_pos.x, target_pos.y, order_id);
-    order.compute_direction = false;
-
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face the target position.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
-
-    BeginResult::Started
+    begin_throw(
+        entities,
+        sequence_manager,
+        actor_id,
+        target_pos,
+        None,
+        seq_id,
+        elem_idx,
+        order_id_counter,
+        OrderType::ThrowingNet,
+        true,
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1134,8 +1117,39 @@ pub fn begin_throw_stone_at_ground(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
+    begin_throw(
+        entities,
+        sequence_manager,
+        actor_id,
+        target_pos,
+        None,
+        seq_id,
+        elem_idx,
+        order_id_counter,
+        OrderType::ThrowingStone,
+        true,
+    )
+}
+
+/// Shared begin path for every throw.  Entity-targeted throws (apple, stone)
+/// store the antagonist on the order so the completion handler can compute
+/// the target's eyes / center as the trajectory endpoint; ground throws leave
+/// it empty.  `set_waiting` eagerly forces the actor's action state to
+/// `Waiting` before the order is pushed.
+fn begin_throw(
+    entities: &mut Entities,
+    sequence_manager: &mut SequenceManager,
+    actor_id: EntityId,
+    target_pos: MapPoint,
+    antagonist: Option<EntityId>,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    order_id_counter: &mut u32,
+    order_type: OrderType,
+    set_waiting: bool,
+) -> BeginResult {
     let actor_entity = match entities.get_mut(actor_id) {
-        Some(entity) => entity,
+        Some(e) => e,
         None => return BeginResult::Impossible,
     };
     if actor_entity.is_dead() || !actor_entity.is_pc() {
@@ -1143,35 +1157,33 @@ pub fn begin_throw_stone_at_ground(
     }
 
     let order_id = alloc_order_id(order_id_counter);
-    let actor = match actor_entity.actor_data_mut() {
-        Some(actor) => actor,
-        None => return BeginResult::Impossible,
-    };
-    actor.action_state = ActionState::Waiting;
+    if set_waiting {
+        let actor = match actor_entity.actor_data_mut() {
+            Some(a) => a,
+            None => return BeginResult::Impossible,
+        };
+        actor.action_state = ActionState::Waiting;
+    }
 
-    let mut order = Order::new(
-        OrderType::ThrowingStone,
-        target_pos.x,
-        target_pos.y,
-        order_id,
-    );
+    let mut order = Order::new(order_type, target_pos.x, target_pos.y, order_id);
+    order.antagonist = antagonist;
     order.compute_direction = false;
+
     sequence_manager.push_order_on(seq_id, elem_idx, order);
 
+    // Face the target position.
     let actor_pos = actor_entity.element_data().position_map();
+    let dx = target_pos.x - actor_pos.x;
+    let dy = target_pos.y - actor_pos.y;
     actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(
-            target_pos.x - actor_pos.x,
-            target_pos.y - actor_pos.y,
-        ),
+        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
     );
+
     BeginResult::Started
 }
 
-/// Shared begin path for entity-targeted throws (apple, stone).  The
-/// antagonist entity is stored on the order so the
-/// completion handler can compute the target's eyes / center as the
-/// trajectory endpoint.
+/// Entity-targeted throws (apple, stone) aim at the target's current
+/// position and record it as the order antagonist.
 fn begin_throw_at_entity(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1186,34 +1198,18 @@ fn begin_throw_at_entity(
         Some(e) => e.element_data().position_map(),
         None => return BeginResult::Impossible,
     };
-    let actor_entity = match entities.get_mut(actor_id) {
-        Some(e) => e,
-        None => return BeginResult::Impossible,
-    };
-    if actor_entity.is_dead() || !actor_entity.is_pc() {
-        return BeginResult::Impossible;
-    }
-    let order_id = alloc_order_id(order_id_counter);
-    let actor = match actor_entity.actor_data_mut() {
-        Some(a) => a,
-        None => return BeginResult::Impossible,
-    };
-    actor.action_state = ActionState::Waiting;
-
-    let mut order = Order::new(order_type, target_pos.x, target_pos.y, order_id);
-    order.antagonist = Some(target_id);
-    order.compute_direction = false;
-
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
-
-    BeginResult::Started
+    begin_throw(
+        entities,
+        sequence_manager,
+        actor_id,
+        target_pos,
+        Some(target_id),
+        seq_id,
+        elem_idx,
+        order_id_counter,
+        order_type,
+        true,
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1236,39 +1232,18 @@ pub fn begin_throw_wasp_nest(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities.get_mut(actor_id) {
-        Some(e) => e,
-        None => return BeginResult::Impossible,
-    };
-    if actor_entity.is_dead() || !actor_entity.is_pc() {
-        return BeginResult::Impossible;
-    }
-    let order_id = alloc_order_id(order_id_counter);
-    let actor = match actor_entity.actor_data_mut() {
-        Some(a) => a,
-        None => return BeginResult::Impossible,
-    };
-    actor.action_state = ActionState::Waiting;
-
-    let mut order = Order::new(
+    begin_throw(
+        entities,
+        sequence_manager,
+        actor_id,
+        target_pos,
+        None,
+        seq_id,
+        elem_idx,
+        order_id_counter,
         OrderType::ThrowingWaspNest,
-        target_pos.x,
-        target_pos.y,
-        order_id,
-    );
-    order.compute_direction = false;
-
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face the target position.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
-
-    BeginResult::Started
+        true,
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1291,40 +1266,24 @@ pub fn begin_throw_purse(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities.get_mut(actor_id) {
-        Some(e) => e,
-        None => return BeginResult::Impossible,
-    };
-    if actor_entity.is_dead() || !actor_entity.is_pc() {
-        return BeginResult::Impossible;
-    }
-    let order_id = alloc_order_id(order_id_counter);
     // Purse throwing requires Waiting, but the original game's action transition owns
     // that state change.  In particular, a Bored actor remains Bored while
     // `WAITING_UPRIGHT_BORED_WAITING_UPRIGHT` is playing and becomes Waiting
     // only when that prefix completes.
     // TODO(original-parity): audit the equivalent eager Waiting writes in
     // the sibling throw/pay begin paths before changing their behavior.
-
-    let mut order = Order::new(
+    begin_throw(
+        entities,
+        sequence_manager,
+        actor_id,
+        target_pos,
+        None,
+        seq_id,
+        elem_idx,
+        order_id_counter,
         OrderType::ThrowingPurse,
-        target_pos.x,
-        target_pos.y,
-        order_id,
-    );
-    order.compute_direction = false;
-
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
-
-    // Face the target position.
-    let actor_pos = actor_entity.element_data().position_map();
-    let dx = target_pos.x - actor_pos.x;
-    let dy = target_pos.y - actor_pos.y;
-    actor_entity.element_data_mut().set_direction_instantly(
-        crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-    );
-
-    BeginResult::Started
+        false,
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════

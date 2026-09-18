@@ -1482,6 +1482,73 @@ fn make_posture_transition_actor(
     true
 }
 
+/// One subclass-specific posture arm layered over the base actor
+/// transition: standing in `posture`, an upright requirement not excused by
+/// `allowed_by` pushes `stand_up` and lands `Upright`.
+struct SubclassPostureArm {
+    posture: Posture,
+    /// `None` for an arm that only claims the posture when the command
+    /// requires upright, and otherwise defers down the chain.
+    allowed_by: Option<CP>,
+    stand_up: OrderType,
+}
+
+/// Soldier, NPC and human arms, most derived first. Each subclass consults
+/// its own arm and then every arm after it before reaching the base actor.
+const SUBCLASS_POSTURE_ARMS: [SubclassPostureArm; 3] = [
+    // The soldier owns the complete LEANING_OUT arm.  In particular LEAN_OUT
+    // itself carries both MUST_BE_UPRIGHT and CAN_BE_LEANING_OUT, so
+    // delegating that case to the base actor would feed a soldier-only
+    // posture into the base switch (and hit its unhandled-state assertion).
+    SubclassPostureArm {
+        posture: Posture::LeaningOut,
+        allowed_by: Some(CP::CAN_BE_LEANING_OUT),
+        stand_up: OrderType::TransitionLeaningOutWaitingAlerted,
+    },
+    // Only `SITTING` is handled by the NPC; `LYING` / `DODGED` are deferred
+    // to the base.
+    SubclassPostureArm {
+        posture: Posture::Sitting,
+        allowed_by: None,
+        stand_up: OrderType::TransitionSittingWaitingUpright,
+    },
+    SubclassPostureArm {
+        posture: Posture::Leisure,
+        allowed_by: Some(CP::CAN_BE_LEISURING),
+        stand_up: OrderType::TransitionSpecialWaitingUpright,
+    },
+];
+
+fn make_posture_transition_subclass(
+    engine: &mut EngineInner,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    owner: EntityId,
+    flags: CP,
+    arms: &[SubclassPostureArm],
+) -> bool {
+    let posture = transition_owner(engine, owner).element_data().posture();
+
+    for arm in arms {
+        if posture != arm.posture {
+            continue;
+        }
+        let must_stand_up = flags.contains(CP::MUST_BE_UPRIGHT)
+            && arm
+                .allowed_by
+                .is_none_or(|allowed| !flags.contains(allowed));
+        if must_stand_up {
+            push_anim_order_no_dir(engine, seq_id, elem_idx, arm.stand_up);
+            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+        }
+        if must_stand_up || arm.allowed_by.is_some() {
+            return true;
+        }
+    }
+
+    make_posture_transition_actor(engine, seq_id, elem_idx, flags)
+}
+
 fn make_posture_transition_human(
     engine: &mut EngineInner,
     seq_id: SequenceId,
@@ -1489,26 +1556,10 @@ fn make_posture_transition_human(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = transition_owner(engine, owner).element_data().posture();
-
-    if posture == Posture::Leisure {
-        if flags.contains(CP::MUST_BE_UPRIGHT) && !flags.contains(CP::CAN_BE_LEISURING) {
-            push_anim_order_no_dir(
-                engine,
-                seq_id,
-                elem_idx,
-                OrderType::TransitionSpecialWaitingUpright,
-            );
-            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
-        }
-        return true;
-    }
-
-    make_posture_transition_actor(engine, seq_id, elem_idx, flags)
+    let arms = &SUBCLASS_POSTURE_ARMS[2..];
+    make_posture_transition_subclass(engine, seq_id, elem_idx, owner, flags, arms)
 }
 
-/// Only `SITTING` is handled here; `LYING` / `DODGED` are deferred
-/// to the base.
 fn make_posture_transition_npc(
     engine: &mut EngineInner,
     seq_id: SequenceId,
@@ -1516,20 +1567,8 @@ fn make_posture_transition_npc(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = transition_owner(engine, owner).element_data().posture();
-
-    if posture == Posture::Sitting && flags.contains(CP::MUST_BE_UPRIGHT) {
-        push_anim_order_no_dir(
-            engine,
-            seq_id,
-            elem_idx,
-            OrderType::TransitionSittingWaitingUpright,
-        );
-        set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
-        return true;
-    }
-
-    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
+    let arms = &SUBCLASS_POSTURE_ARMS[1..];
+    make_posture_transition_subclass(engine, seq_id, elem_idx, owner, flags, arms)
 }
 
 fn make_posture_transition_soldier(
@@ -1539,28 +1578,14 @@ fn make_posture_transition_soldier(
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    let posture = transition_owner(engine, owner).element_data().posture();
-
-    if posture == Posture::LeaningOut {
-        if flags.contains(CP::MUST_BE_UPRIGHT) && !flags.contains(CP::CAN_BE_LEANING_OUT) {
-            push_anim_order_no_dir(
-                engine,
-                seq_id,
-                elem_idx,
-                OrderType::TransitionLeaningOutWaitingAlerted,
-            );
-            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
-        }
-
-        // Original-game soldier posture transitions own the complete
-        // LEANING_OUT arm.  In particular LEAN_OUT itself carries both
-        // MUST_BE_UPRIGHT and CAN_BE_LEANING_OUT, so delegating that case
-        // to the base actor would feed a soldier-only posture into the
-        // base switch (and hit its unhandled-state assertion).
-        return true;
-    }
-
-    make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_subclass(
+        engine,
+        seq_id,
+        elem_idx,
+        owner,
+        flags,
+        &SUBCLASS_POSTURE_ARMS,
+    )
 }
 
 fn make_posture_transition_pc(

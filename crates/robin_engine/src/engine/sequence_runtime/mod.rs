@@ -1937,66 +1937,60 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        match command {
-            Command::TieCmd => {
+        // Every arm either bails out through `element_impossible` /
+        // `element_terminated`, or picks the begin function whose result the
+        // shared tail below reports.
+        type TargetedBegin = fn(
+            &mut crate::entities::Entities,
+            &mut crate::sequence::SequenceManager,
+            EntityId,
+            EntityId,
+            crate::sequence::SequenceId,
+            usize,
+            &mut u32,
+        ) -> AbilityBeginResult;
+        type UntargetedBegin = fn(
+            &mut crate::entities::Entities,
+            &mut crate::sequence::SequenceManager,
+            EntityId,
+            crate::sequence::SequenceId,
+            usize,
+            &mut u32,
+        ) -> AbilityBeginResult;
+        type GroundBegin = fn(
+            &mut crate::entities::Entities,
+            &mut crate::sequence::SequenceManager,
+            EntityId,
+            crate::coordinates::MapPoint,
+            crate::sequence::SequenceId,
+            usize,
+            &mut u32,
+        ) -> AbilityBeginResult;
+
+        let result = match command {
+            Command::TieCmd
+            | Command::Untie
+            | Command::HealCmd
+            | Command::HitCmd
+            | Command::StrangleCmd => {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return;
                 };
-                let result = abilities::begin_tie(
-                    &mut self.world.entities,
-                    &mut self.orders.sequence_manager,
-                    owner,
-                    target,
-                    seq_id,
-                    elem_idx,
-                    &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
-            Command::Untie => {
-                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return;
-                };
-                let result = abilities::begin_untie(
-                    &mut self.world.entities,
-                    &mut self.orders.sequence_manager,
-                    owner,
-                    target,
-                    seq_id,
-                    elem_idx,
-                    &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
-            Command::HealCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return;
-                };
-                if !ammo_available {
+                if command == Command::HealCmd && !ammo_available {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return;
                 }
-                let result = abilities::begin_heal(
+                let begin: TargetedBegin = match command {
+                    Command::TieCmd => abilities::begin_tie,
+                    Command::Untie => abilities::begin_untie,
+                    Command::HealCmd => abilities::begin_heal,
+                    Command::HitCmd => abilities::begin_hit,
+                    Command::StrangleCmd => abilities::begin_strangle,
+                    _ => unreachable!(),
+                };
+                begin(
                     &mut self.world.entities,
                     &mut self.orders.sequence_manager,
                     owner,
@@ -2004,141 +1998,59 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                     &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
                 )
             }
-            Command::WhistleCmd => {
-                let result = abilities::begin_whistle(
-                    &mut self.world.entities,
-                    &mut self.orders.sequence_manager,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
-            Command::EatCmd => {
-                if !ammo_available {
+            Command::WhistleCmd | Command::EatCmd | Command::ReceivePurse => {
+                if command == Command::EatCmd && !ammo_available {
                     self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
                     return;
                 }
-                let result = abilities::begin_eat(
-                    &mut self.world.entities,
-                    &mut self.orders.sequence_manager,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
-            Command::HitCmd | Command::StrangleCmd => {
-                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return;
-                };
-                let result = match command {
-                    Command::HitCmd => abilities::begin_hit(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    Command::StrangleCmd => abilities::begin_strangle(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
+                let begin: UntargetedBegin = match command {
+                    Command::WhistleCmd => abilities::begin_whistle,
+                    Command::EatCmd => abilities::begin_eat,
+                    Command::ReceivePurse => abilities::begin_receive_purse,
                     _ => unreachable!(),
                 };
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
-            Command::ReceivePurse => {
-                let result = abilities::begin_receive_purse(
+                begin(
                     &mut self.world.entities,
                     &mut self.orders.sequence_manager,
                     owner,
                     seq_id,
                     elem_idx,
                     &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
                 )
             }
-            Command::EnterListen => {
-                let result = abilities::begin_listen(
-                    &mut self.world.entities,
-                    &assets.profile_manager,
-                    &mut self.orders.sequence_manager,
-                    owner,
-                    seq_id,
-                    elem_idx,
-                    &mut self.orders.next_order_id,
-                );
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
-            }
+            Command::EnterListen => abilities::begin_listen(
+                &mut self.world.entities,
+                &assets.profile_manager,
+                &mut self.orders.sequence_manager,
+                owner,
+                seq_id,
+                elem_idx,
+                &mut self.orders.next_order_id,
+            ),
             Command::LeaveListen => {
                 // EnterListen is NON_INTERRUPTABLE in Original, so production
                 // arbitration postpones LeaveListen until the complete
                 // entry/listening/exit chain has restored Waiting. Re-dispatch
                 // then fails MUST_BE_LISTENING and is Impossible.
                 self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                return;
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
-                let field = match command {
-                    Command::ThrowNet => crate::sequence::Field::NetTarget,
-                    Command::ThrowPurse => crate::sequence::Field::PurseTarget,
-                    Command::ThrowWaspNest => crate::sequence::Field::WaspNestTarget,
+                let (field, begin): (_, GroundBegin) = match command {
+                    Command::ThrowNet => (
+                        crate::sequence::Field::NetTarget,
+                        abilities::begin_throw_net,
+                    ),
+                    Command::ThrowPurse => (
+                        crate::sequence::Field::PurseTarget,
+                        abilities::begin_throw_purse,
+                    ),
+                    Command::ThrowWaspNest => (
+                        crate::sequence::Field::WaspNestTarget,
+                        abilities::begin_throw_wasp_nest,
+                    ),
                     _ => unreachable!(),
                 };
                 let Some(target) = self
@@ -2154,43 +2066,14 @@ impl EngineInner {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return;
                 }
-                let result = match command {
-                    Command::ThrowNet => abilities::begin_throw_net(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    Command::ThrowPurse => abilities::begin_throw_purse(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    Command::ThrowWaspNest => abilities::begin_throw_wasp_nest(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    _ => unreachable!(),
-                };
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
+                begin(
+                    &mut self.world.entities,
+                    &mut self.orders.sequence_manager,
+                    owner,
+                    target,
                     seq_id,
                     elem_idx,
+                    &mut self.orders.next_order_id,
                 )
             }
             Command::ThrowApple | Command::ThrowStone => {
@@ -2198,9 +2081,8 @@ impl EngineInner {
                     self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
                     return;
                 }
-                if command == Command::ThrowStone
-                    && let Some(target) = self
-                        .orders
+                let ground_target = if command == Command::ThrowStone {
+                    self.orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .and_then(|element| {
@@ -2216,8 +2098,11 @@ impl EngineInner {
                                 None => None,
                             }
                         })
-                {
-                    let result = abilities::begin_throw_stone_at_ground(
+                } else {
+                    None
+                };
+                if let Some(target) = ground_target {
+                    abilities::begin_throw_stone_at_ground(
                         &mut self.world.entities,
                         &mut self.orders.sequence_manager,
                         owner,
@@ -2225,53 +2110,32 @@ impl EngineInner {
                         seq_id,
                         elem_idx,
                         &mut self.orders.next_order_id,
-                    );
-                    return self.sequence_ability_finish_begin(
-                        sim,
-                        assets,
-                        active_scripts,
-                        result,
+                    )
+                } else {
+                    let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
+                    else {
+                        self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                        return;
+                    };
+                    let begin: TargetedBegin = match command {
+                        Command::ThrowApple => abilities::begin_throw_apple,
+                        Command::ThrowStone => abilities::begin_throw_stone,
+                        _ => unreachable!(),
+                    };
+                    begin(
+                        &mut self.world.entities,
+                        &mut self.orders.sequence_manager,
+                        owner,
+                        target,
                         seq_id,
                         elem_idx,
-                    );
+                        &mut self.orders.next_order_id,
+                    )
                 }
-                let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
-                else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
-                    return;
-                };
-                let result = match command {
-                    Command::ThrowApple => abilities::begin_throw_apple(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    Command::ThrowStone => abilities::begin_throw_stone(
-                        &mut self.world.entities,
-                        &mut self.orders.sequence_manager,
-                        owner,
-                        target,
-                        seq_id,
-                        elem_idx,
-                        &mut self.orders.next_order_id,
-                    ),
-                    _ => unreachable!(),
-                };
-                self.sequence_ability_finish_begin(
-                    sim,
-                    assets,
-                    active_scripts,
-                    result,
-                    seq_id,
-                    elem_idx,
-                )
             }
             _ => unreachable!("non-direct ability passed to direct ability context"),
-        }
+        };
+        self.sequence_ability_finish_begin(sim, assets, active_scripts, result, seq_id, elem_idx)
     }
 
     fn sequence_ability_interaction_target(
