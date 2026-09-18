@@ -505,9 +505,9 @@ impl EngineInner {
         let dx = me.x - position.x;
         let dy = me.y - position.y;
         let my_distance = dx * dx + dy * dy;
-        let count = self.world.entities.len();
+        let count = self.entities().len();
         for index in 0..count {
-            let Some((id, entity)) = self.world.entities.get_legacy_slot(index as u32) else {
+            let Some((id, entity)) = self.entities().get_legacy_slot(index as u32) else {
                 continue;
             };
             if id == owner || !entity.is_npc() {

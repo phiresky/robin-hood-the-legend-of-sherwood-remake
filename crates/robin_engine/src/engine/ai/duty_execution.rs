@@ -15,8 +15,7 @@ impl EngineInner {
         flags: DutyFlags,
     ) {
         if self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("duty owner"))
             .enemy_ai()
             .is_some()
@@ -24,8 +23,7 @@ impl EngineInner {
             AiOwnerCtx::new(self, sim, assets, owner).enemy_duty(flags);
             return;
         }
-        self.world
-            .entities
+        self.entities_mut()
             .expect_entity_mut(owner, format_args!("friendly duty owner"))
             .friendly_ai_mut()
             .expect("duty owner has neither enemy nor friendly AI")
@@ -68,8 +66,7 @@ impl AiOwnerCtx<'_> {
     fn camp_soldiers(&self) -> impl Iterator<Item = EntityId> + '_ {
         let camp = self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(self.owner, format_args!("duty camp owner"))
             .camp();
         self.engine
@@ -143,8 +140,7 @@ impl AiOwnerCtx<'_> {
         }
         let has_missed_friend = !self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(self.owner, format_args!("duty missed-friend owner"))
             .ai_actor_data()
             .expect("duty owner has no AI actor data")
@@ -165,8 +161,7 @@ impl AiOwnerCtx<'_> {
         if substate.is_take_money() || substate.is_fight_for_money() {
             let owner = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(self.owner, format_args!("duty money owner"));
             let takes_money = self.enemy().base.blood_alcohol as i32
                 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
@@ -281,8 +276,7 @@ impl AiOwnerCtx<'_> {
             let handle = self.enemy().other_seen_money[index];
             let active = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(self.object_id(handle), format_args!("remembered coin"))
                 .is_active();
             if active {
@@ -294,8 +288,7 @@ impl AiOwnerCtx<'_> {
         if let Some(object) = self.enemy().base.interesting_object
             && !self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(
                     self.object_id(object.get()),
                     format_args!("interesting coin"),
@@ -322,8 +315,7 @@ impl AiOwnerCtx<'_> {
                 .max((position.y - owner_position.y).abs()) as u16;
             if self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(id, format_args!("coin layer"))
                 .element_data()
                 .layer()
@@ -347,8 +339,7 @@ impl AiOwnerCtx<'_> {
         for id in self.camp_soldiers() {
             let entity = self
                 .engine
-                .world
-                .entities
+                .entities()
                 .expect_entity(id, format_args!("officer candidate"));
             let ai = entity
                 .enemy_ai()
@@ -361,8 +352,7 @@ impl AiOwnerCtx<'_> {
                 {
                     let owner_element = self
                         .engine
-                        .world
-                        .entities
+                        .entities()
                         .expect_entity(self.owner, format_args!("officer search owner"))
                         .element_data();
                     let element = entity.element_data();
@@ -427,14 +417,10 @@ impl AiOwnerCtx<'_> {
 
         let entity = self
             .engine
-            .world
-            .entities
+            .entities()
             .expect_entity(officer, format_args!("selected officer"));
-        let passing_door = selected_actor_is_passing_door(
-            &self.engine.world.entities,
-            &self.engine.orders.sequence_manager,
-            officer,
-        );
+        let passing_door =
+            selected_actor_is_passing_door(&self.engine.entities(), &self.engine.seq(), officer);
         let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("officer forecast requires an actor");
         let destination = crate::ai::forecast_destination_for_ia(

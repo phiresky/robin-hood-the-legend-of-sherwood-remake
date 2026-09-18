@@ -98,7 +98,10 @@ mod tests {
     #[test]
     fn observation_multiplicity_requires_attacking_state_and_reads_live_target() {
         let (mut engine, assets, owner, friend, enemy) = combatants();
-        let ai = engine.enemy_ai_mut(friend, "test ally");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(friend, format_args!("test ally"));
         ai.base.current_state = AiState::Default;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(enemy.index()));
@@ -111,7 +114,12 @@ mod tests {
                 .get(&enemy.index()),
             Some(&0)
         );
-        engine.enemy_ai_mut(friend, "test ally").base.current_state = AiState::Attacking;
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(friend, format_args!("test ally"))
+            .base
+            .current_state = AiState::Attacking;
         engine.rebuild_live_observation_lists(&assets, owner);
         assert_eq!(
             engine
@@ -153,7 +161,10 @@ mod tests {
             .unwrap()
             .opponents
             .add_principal(enemy, None);
-        let ai = engine.enemy_ai_mut(owner, "test owner");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test owner"));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(previous.index()));
@@ -257,7 +268,10 @@ mod tests {
             .unwrap()
             .opponents
             .add_principal(owner, None);
-        let ai = engine.enemy_ai_mut(owner, "test swordfight");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test swordfight"));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -294,7 +308,10 @@ mod tests {
             entity.element_data_mut().active = false;
             crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
             engage(&mut engine, owner, target);
-            let ai = engine.enemy_ai_mut(owner, "test lost target");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("test lost target"));
             ai.company_number = company;
             ai.base.primary_target = Some(AiEntityHandle::new(previous.index()));
             let expected_center = engine.live_ai_position(target);
@@ -305,7 +322,10 @@ mod tests {
                 owner,
                 false,
             );
-            let ai = engine.enemy_ai(owner, "test lost outcome");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("test lost outcome"));
             assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(target.index())));
             assert!(ai.pc_missed);
             assert_eq!(ai.base.seek_position, expected_center);
@@ -390,10 +410,9 @@ impl EngineInner {
             ai.base.launch_timer(20, frame);
         }
         if self
-            .orders
-            .sequence_manager
+            .seq()
             .element_is_about_to_be_launched_or_postponed_by_current(
-                &self.world.entities,
+                &self.entities(),
                 owner,
                 crate::element::Command::EnterSwordfight,
             )
@@ -492,11 +511,7 @@ impl EngineInner {
         let input = extract_exact_forecast_input(
             self,
             entity,
-            selected_actor_is_passing_door(
-                &self.world.entities,
-                &self.orders.sequence_manager,
-                target,
-            ),
+            selected_actor_is_passing_door(&self.entities(), &self.seq(), target),
         )
         .expect("lost swordfight forecast requires an actor");
         let forecast = crate::ai::prepare_forecast_destination_for_ia(

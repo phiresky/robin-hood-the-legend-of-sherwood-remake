@@ -769,7 +769,10 @@ mod tests {
         assets.navigation.hiking_paths = std::sync::Arc::new(paths);
         assets.navigation.hiking_waypoint_sectors =
             Some(std::sync::Arc::new(vec![vec![sector; 3]]));
-        let ai = engine.ai_mut(owner, "test macro owner");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("test macro owner"));
         ai.current_state = AiState::Default;
         ai.current_substate = Substate::DefaultInMacro;
         ai.has_patrol_path = true;
@@ -785,7 +788,10 @@ mod tests {
         let (mut engine, assets, owner) =
             macro_owner(vec![MacroOpcode::GotoPoint as u8, 2, 0], GotoFlags::empty());
         engine.run_ai_macro(&crate::sim_rng::test_context(), &assets, owner);
-        let ai = engine.ai(owner, "completed macro");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("completed macro"));
         assert_eq!(ai.patrol_path.as_ref().unwrap().current_waypoint_index, 2);
         assert_eq!(ai.macro_command_offset, 1);
     }
@@ -795,7 +801,10 @@ mod tests {
         let (mut engine, assets, owner) =
             macro_owner(vec![MacroOpcode::Run as u8], GotoFlags::BACK);
         engine.run_ai_macro(&crate::sim_rng::test_context(), &assets, owner);
-        let ai = engine.ai(owner, "completed macro");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("completed macro"));
         assert!(ai.last_goto_flags.contains(GotoFlags::RUN));
         assert!(ai.last_goto_flags.contains(GotoFlags::BACK));
         assert_eq!(ai.default_path_walking_flags, GotoFlags::RUN);

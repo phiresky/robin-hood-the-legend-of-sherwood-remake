@@ -381,13 +381,9 @@ impl EngineInner {
             return;
         }
         let creation_order = self.world.original_creation_order(owner);
-        let current = self
-            .world
-            .entities
-            .current_element_for_actor(owner)
-            .and_then(|(sequence_id, element_index)| {
-                self.orders
-                    .sequence_manager
+        let current = self.entities().current_element_for_actor(owner).and_then(
+            |(sequence_id, element_index)| {
+                self.seq()
                     .get_element(sequence_id, element_index)
                     .map(|element| {
                         (
@@ -398,16 +394,15 @@ impl EngineInner {
                             element.current_order().map(|order| order.order_id),
                         )
                     })
-            });
+            },
+        );
         let (installed, last_execute, sprite_order) = self
-            .world
-            .entities
+            .entities()
             .get(owner)
             .and_then(Entity::actor_data)
             .map(|actor| {
                 let sprite_order = self
-                    .world
-                    .entities
+                    .entities()
                     .get(owner)
                     .map(|entity| entity.sprite().last_processed_order_id);
                 (
@@ -418,14 +413,12 @@ impl EngineInner {
             })
             .unwrap_or((None, None, None));
         let deferred_turns = self
-            .orders
-            .sequence_manager
+            .seq()
             .deferred_elements_to_go()
             .iter()
             .copied()
             .filter_map(|(sequence_id, element_index)| {
-                self.orders
-                    .sequence_manager
+                self.seq()
                     .get_element(sequence_id, element_index)
                     .filter(|element| {
                         element.owner == Some(owner)
@@ -454,8 +447,7 @@ impl EngineInner {
             return;
         }
         let is_turn = self
-            .orders
-            .sequence_manager
+            .seq()
             .get_element(sequence_id, element_index)
             .is_some_and(|element| {
                 matches!(
@@ -765,7 +757,10 @@ mod panic_boundary_tests {
                 });
                 let mut assets = LevelAssets::new();
                 crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-                let ai = engine.ai_mut(owner, "repeated panic fixture");
+                let ai = engine
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("repeated panic fixture"));
                 ai.current_state = crate::ai::AiState::Fleeing;
                 ai.current_substate = crate::ai::Substate::FleeingPanic;
                 ai.lasting_panic_runs = 11;
@@ -789,7 +784,10 @@ mod panic_boundary_tests {
                         crate::ai::AlertLevel::Yellow,
                     )
                 });
-                let ai = engine.ai(owner, "repeated panic result");
+                let ai = engine
+                    .world
+                    .entities
+                    .expect_ai_controller(owner, format_args!("repeated panic result"));
                 assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
                 assert_eq!(ai.lasting_panic_runs, 11);
                 assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
@@ -1046,7 +1044,7 @@ fn subjective_hear_volume(modified_volume: f32, distance: f32, deafness: u16) ->
 #[cfg(test)]
 pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
-    for (id, entity) in engine.world.entities.humans() {
+    for (id, entity) in engine.entities().humans() {
         // The original game walks the complete engine element array during AI initialization and
         // tests only human/PC identity and camp; it does not gate this bootstrap list
         // on whether the element is active. Authored rescue PCs commonly
@@ -2080,9 +2078,9 @@ impl EngineInner {
             "live AI position unavailable for {id:?}"
         );
         resolve_ai_position_with(
-            &self.world.entities,
+            &self.entities(),
             &self.script_domains.interactables.doors,
-            &self.orders.sequence_manager,
+            &self.seq(),
             id,
             |position_id| {
                 let element = self
@@ -2573,7 +2571,7 @@ impl EngineInner {
     ) {
         // Find the source NPC's building sector.
         let source_sector = {
-            let Some(entity) = self.world.entities.get(source) else {
+            let Some(entity) = self.entities().get(source) else {
                 return;
             };
             let sector = entity.element_data().sector();
@@ -2612,7 +2610,7 @@ impl EngineInner {
             let eid = self.entity_id_for_actor_handle(handle).unwrap_or_else(|| {
                 panic!("building {building_sector_num} occupant handle {handle} has no live actor")
             });
-            let Some(entity) = self.world.entities.get(eid) else {
+            let Some(entity) = self.entities().get(eid) else {
                 continue;
             };
             match entity {
@@ -2743,8 +2741,7 @@ impl EngineInner {
     }
 
     pub(in crate::engine) fn execute_ai_direction_goal(&mut self, owner: EntityId, direction: u16) {
-        self.world
-            .entities
+        self.entities_mut()
             .expect_entity_mut(owner, format_args!("AI direction owner"))
             .element_data_mut()
             .set_direction_goal((direction & 15) as i16);
@@ -2800,10 +2797,10 @@ impl EngineInner {
             .ground_position();
         let radius = f32::from(self.ai.standard_view_polygon_radius);
         let radius_y = radius * crate::position_interface::ASPECT_RATIO;
-        let count = self.world.entities.len();
+        let count = self.entities().len();
         for index in 0..count {
             let Some((npc_id, Entity::Civilian(civilian))) =
-                self.world.entities.get_legacy_slot(index as u32)
+                self.entities().get_legacy_slot(index as u32)
             else {
                 continue;
             };
@@ -3149,7 +3146,7 @@ impl EngineInner {
             describe(civilian_ids),
         );
         for &eid in occupant_ids {
-            let Some(entity) = self.world.entities.get(eid) else {
+            let Some(entity) = self.entities().get(eid) else {
                 continue;
             };
             let detail = match entity {
@@ -3261,7 +3258,7 @@ impl EngineInner {
             // Not new: upgrade-only bump of `lasting_panic_runs`
             // (`if lasting_panic_runs < runs`).  No state change, no
             // `say()`, no self-fire.
-            let ai = self.world.entities.expect_ai_controller_mut(
+            let ai = self.entities_mut().expect_ai_controller_mut(
                 npc_id,
                 format_args!("panic owner {} has no AI", npc_id.index()),
             );
@@ -3295,8 +3292,7 @@ impl EngineInner {
     /// this bool, but the lock/freeze/special-state side effects still occur.
     pub(super) fn start_script_ai_native_think_post_filter(&mut self, npc_id: EntityId) -> bool {
         let (self_is_dead, self_is_unconscious) = self
-            .world
-            .entities
+            .entities()
             .get(npc_id)
             .map(|entity| (entity.is_dead(), entity.is_unconscious()))
             .unwrap_or_else(|| {
@@ -3306,8 +3302,7 @@ impl EngineInner {
                 )
             });
         let static_ai_frozen = self.ai.global.freeze;
-        self.world
-            .entities
+        self.entities_mut()
             .expect_ai_controller_mut(
                 npc_id,
                 format_args!(

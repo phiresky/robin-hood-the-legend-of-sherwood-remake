@@ -24,7 +24,11 @@ mod tests {
             .collect();
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.ai_mut(ids[0], "patrol chief").theoretical_patrol = ids[1..].to_vec();
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(ids[0], format_args!("patrol chief"))
+            .theoretical_patrol = ids[1..].to_vec();
         (engine, assets, ids)
     }
 
@@ -267,7 +271,10 @@ mod tests {
             let (owner, chief) = (*owner, *chief);
             let mut assets = LevelAssets::new();
             crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-            let ai = engine.enemy_ai_mut(owner, "coordinate test");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("coordinate test"));
             ai.base.patrol_chief = Some(chief);
             ai.base.current_state = AiState::Default;
             ai.base.current_substate = if attentive {
@@ -296,7 +303,10 @@ mod tests {
                 }),
             );
 
-            let ai = engine.enemy_ai(owner, "coordinate test");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("coordinate test"));
             assert_eq!(ai.base.current_state, AiState::Default);
             assert_eq!(ai.base.current_substate, expected_substate);
             assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
@@ -398,8 +408,7 @@ impl EngineInner {
         direction: u16,
     ) {
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(member, format_args!("patrol direction member"));
         let current_direction = entity.element_data().direction() as u16;
         let action_state = entity
@@ -456,12 +465,7 @@ impl EngineInner {
         if self.actors_frozen() || self.is_very_very_busy(owner) {
             return;
         }
-        let Some(ai) = self
-            .world
-            .entities
-            .get(owner)
-            .and_then(Entity::ai_controller)
-        else {
+        let Some(ai) = self.entities().get(owner).and_then(Entity::ai_controller) else {
             return;
         };
         if !ai.needs_patrol_reinit && ai.patrol.is_empty() && ai.missed_patrol_members.is_empty() {

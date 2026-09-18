@@ -8,7 +8,11 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId) {
     ));
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine.ai_mut(owner, "path fixture").script_locked = true;
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("path fixture"))
+        .script_locked = true;
     (engine, assets, owner)
 }
 
@@ -17,7 +21,10 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
     use crate::ai::{PathId, PatrolAssignment};
 
     let (mut engine, assets, owner) = fixture();
-    let ai = engine.ai_mut(owner, "assignment fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assignment fixture"));
     ai.has_patrol_path = false;
     ai.macro_in_progress = true;
     ai.macro_timer_is_running = true;
@@ -29,7 +36,10 @@ fn invalid_patrol_assignment_preserves_original_partial_mutation() {
         PatrolAssignment::Index(PathId::new(3).unwrap()),
         false,
     );
-    let ai = engine.ai(owner, "assigned owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned owner"));
 
     assert!(!assigned);
     assert!(
@@ -87,7 +97,10 @@ fn detached_patrol_status_preserves_original_cursor_history_across_reassignment(
     path.history = history.clone();
 
     let (mut engine, assets, owner) = fixture();
-    let ai = engine.ai_mut(owner, "assignment fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assignment fixture"));
     ai.has_patrol_path = true;
     ai.patrol_path = Some(path);
     ai.detach_patrol_path(None, false);
@@ -108,7 +121,10 @@ fn detached_patrol_status_preserves_original_cursor_history_across_reassignment(
         PatrolAssignment::Index(path_id),
         false
     ));
-    let ai = engine.ai(owner, "assigned owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned owner"));
     let restored = ai.patrol_path.as_ref().unwrap();
     assert_eq!(restored.current_waypoint_index, 0);
     assert_eq!(restored.last_waypoint_index, 9);
@@ -140,7 +156,10 @@ fn script_way_assignment_keeps_special_action() {
     }];
 
     let (mut engine, assets, owner) = fixture();
-    let ai = engine.ai_mut(owner, "assignment fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assignment fixture"));
     ai.special_action = true;
     ai.likes_to_sit_around = true;
     let mut assets = assets;
@@ -152,7 +171,10 @@ fn script_way_assignment_keeps_special_action() {
         PatrolAssignment::ScriptWay(PathId::new(0).unwrap()),
         true,
     );
-    let ai = engine.ai(owner, "assigned owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned owner"));
     assert!(assigned);
     assert!(ai.has_patrol_path);
     assert!(
@@ -163,7 +185,10 @@ fn script_way_assignment_keeps_special_action() {
 
     // The waypoint-macro index overload clears both flags.
     let (mut engine, assets, owner) = fixture();
-    let ai = engine.ai_mut(owner, "assignment fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("assignment fixture"));
     ai.special_action = true;
     ai.likes_to_sit_around = true;
     let mut assets = assets;
@@ -175,7 +200,10 @@ fn script_way_assignment_keeps_special_action() {
         PatrolAssignment::Index(PathId::new(0).unwrap()),
         false,
     );
-    let ai = engine.ai(owner, "assigned owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("assigned owner"));
     assert!(assigned);
     assert!(
         !ai.special_action,

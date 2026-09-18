@@ -613,12 +613,18 @@ mod tests {
             .view_radius = 500;
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let ai = engine.enemy_ai_mut(owner, "battle fixture owner");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("battle fixture owner"));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingOverviewLookRight;
         ai.list_them = vec![personal.index()];
         ai.forced_next_battle_decision = crate::ai::Decision::Reserve;
-        let ai = engine.enemy_ai_mut(ally, "battle fixture ally");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("battle fixture ally"));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(contributed.index()));
@@ -628,7 +634,10 @@ mod tests {
     #[test]
     fn live_predecision_reads_current_pride_with_uword_wrap_and_conditional_rng() {
         let (mut engine, mut assets, owner, personal, _, _) = battle_fixture();
-        let ai = engine.enemy_ai_mut(owner, "predecision fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("predecision fixture"));
         ai.base.list_us = vec![owner.index()];
         ai.list_them = vec![personal.index(); 2];
         ai.is_archer_unit = false;
@@ -638,7 +647,10 @@ mod tests {
         for (pride, draws) in [(0, true), (1000, false), (u16::MAX, true)] {
             crate::engine::test_support::actors::edit_enemy_profile(
                 &mut assets,
-                engine.enemy_ai_mut(owner, "live pride"),
+                engine
+                    .world
+                    .entities
+                    .expect_enemy_ai_mut(owner, format_args!("live pride")),
                 |profile| profile.pride = pride,
             );
             let sim = crate::sim_rng::SimulationContext::with_seed(19);
@@ -660,7 +672,9 @@ mod tests {
             );
         }
         engine
-            .enemy_ai_mut(owner, "fleeing predecision")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("fleeing predecision"))
             .base
             .current_state = AiState::Fleeing;
         let sim = crate::sim_rng::SimulationContext::with_seed(19);
@@ -696,7 +710,10 @@ mod tests {
                 .unwrap()
                 .element_data_mut()
                 .set_position_map(MapPoint::new(250.0, 100.0));
-            let ai = engine.enemy_ai_mut(owner, "proud fixture");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("proud fixture"));
             ai.base.current_substate = entry;
             ai.previous_substate = StoredEnumWord::new(previous);
             ai.is_vip = false;
@@ -710,7 +727,10 @@ mod tests {
                 false,
             );
             assert_eq!(result, Some(Decision::TooProudToAttack));
-            let ai = engine.enemy_ai(owner, "proud result");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("proud result"));
             assert_eq!(
                 ai.base.current_substate,
                 Substate::AttackingTooProudToAttack
@@ -739,12 +759,17 @@ mod tests {
         for has_target in [false, true] {
             let (mut engine, assets, owner, target, bearer, _) = battle_fixture();
             engine.ai.standard_view_polygon_radius = 10;
-            let ai = engine.enemy_ai_mut(owner, "covered archer");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("covered archer"));
             ai.is_archer_unit = true;
             ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
             let old_position = ai.base.seek_position;
             engine
-                .enemy_ai_mut(bearer, "bearer target")
+                .world
+                .entities
+                .expect_enemy_ai_mut(bearer, format_args!("bearer target"))
                 .base
                 .primary_target = has_target.then_some(AiEntityHandle::new(target.index()));
             let (anchor, direction) = engine.live_shield_bearer_position(bearer);
@@ -762,7 +787,10 @@ mod tests {
                 bearer.index(),
             );
             assert_eq!(outcome, std::ops::ControlFlow::Continue(Decision::Shoot));
-            let ai = engine.enemy_ai(owner, "rejected cover");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("rejected cover"));
             assert_eq!(ai.shield_bearer_before_me, None);
             assert_eq!(
                 ai.base.primary_target,
@@ -929,7 +957,10 @@ mod tests {
             .primary_target_multiplicity_scratch
             .insert(contributed.index(), 4);
         let (_, inputs, _) = engine.prepare_live_battle_decisions(&assets, owner);
-        let ai = engine.enemy_ai(owner, "battle result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("battle result"));
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(personal.index()))
@@ -952,7 +983,10 @@ mod tests {
     #[test]
     fn alerting_soldier_admission_is_captured_in_the_battle_scan() {
         let (mut engine, assets, owner, _, ally, _) = battle_fixture();
-        let ai = engine.enemy_ai_mut(ally, "alerting ally");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("alerting ally"));
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingRunningToOfficer;
         let (_, admitted, _) = engine.prepare_live_battle_decisions(&assets, owner);
@@ -984,8 +1018,11 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(position);
-        engine.enemy_ai_mut(owner, "selection targets").list_them =
-            vec![first.index(), second.index()];
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("selection targets"))
+            .list_them = vec![first.index(), second.index()];
         use crate::ai_enemy::PrimaryTargetFlags;
         assert_eq!(
             engine.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty()),
@@ -1034,7 +1071,12 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(WorldPoint3D::new(230.0, 200.0, 0.0));
-        engine.enemy_ai_mut(ally, "busy ally").base.current_state = AiState::Sleeping;
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("busy ally"))
+            .base
+            .current_state = AiState::Sleeping;
         engine.prepare_live_battle_decisions(&assets, owner);
         assert_eq!(
             engine
@@ -1051,11 +1093,16 @@ mod tests {
     fn swordfighting_friend_counts_without_a_personal_primary() {
         let (mut engine, assets, owner, _, _, contributed) = battle_fixture();
         engine
-            .enemy_ai_mut(owner, "empty personal list")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("empty personal list"))
             .list_them
             .clear();
         let (_, inputs, _) = engine.prepare_live_battle_decisions(&assets, owner);
-        let ai = engine.enemy_ai(owner, "friend-only result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("friend-only result"));
         assert_eq!(ai.base.primary_target, None);
         assert_eq!(ai.list_them, vec![contributed.index()]);
         assert_eq!(inputs.num_enemies_i_can_see, 0);
@@ -1076,11 +1123,15 @@ mod tests {
             pc.pc.cached_camp = Camp::Lacklandists;
         }
         engine
-            .enemy_ai_mut(owner, "registry owner")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("registry owner"))
             .list_them
             .clear();
         engine
-            .enemy_ai_mut(ally, "registry ally")
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("registry ally"))
             .base
             .primary_target = None;
         engine.prepare_live_battle_decisions(&assets, owner);
@@ -1104,10 +1155,22 @@ mod tests {
     fn cleanup_removes_friends_without_consuming_personal_count() {
         let (mut engine, assets, owner, _, ally, _) = battle_fixture();
         engine.control.frame_counter = 700;
-        engine.enemy_ai_mut(ally, "idle ally").base.primary_target = None;
-        engine.enemy_ai_mut(owner, "stale friend").list_them = vec![ally.index()];
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("idle ally"))
+            .base
+            .primary_target = None;
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("stale friend"))
+            .list_them = vec![ally.index()];
         engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
-        let ai = engine.enemy_ai(owner, "reserve result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("reserve result"));
         assert!(ai.list_them.is_empty());
         assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
         assert!(ai.base.timer_is_running);
@@ -1117,7 +1180,12 @@ mod tests {
     #[test]
     fn cleanup_consumes_unable_personal_count_and_retains_sleeping_ids() {
         let (mut engine, assets, owner, personal, ally, _) = battle_fixture();
-        engine.enemy_ai_mut(ally, "idle ally").base.primary_target = None;
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("idle ally"))
+            .base
+            .primary_target = None;
         engine
             .get_entity_mut(personal)
             .unwrap()
@@ -1140,9 +1208,17 @@ mod tests {
     #[test]
     fn battle_keeps_persistent_personal_targets() {
         let (mut engine, assets, owner, personal, ally, contributed) = battle_fixture();
-        engine.enemy_ai_mut(ally, "idle ally").base.primary_target = None;
-        engine.enemy_ai_mut(owner, "personal targets").list_them =
-            vec![personal.index(), contributed.index()];
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(ally, format_args!("idle ally"))
+            .base
+            .primary_target = None;
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("personal targets"))
+            .list_them = vec![personal.index(), contributed.index()];
         let (_, inputs, _) = engine.prepare_live_battle_decisions(&assets, owner);
         assert_eq!(inputs.num_enemies_i_can_see, 2);
         assert_eq!(
@@ -1159,7 +1235,11 @@ mod tests {
     #[should_panic]
     fn absent_initial_battle_target_is_an_invariant_failure() {
         let (mut engine, assets, owner, _, _, _) = battle_fixture();
-        engine.enemy_ai_mut(owner, "missing target").list_them = vec![u32::MAX];
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("missing target"))
+            .list_them = vec![u32::MAX];
         engine.prepare_live_battle_decisions(&assets, owner);
     }
 }

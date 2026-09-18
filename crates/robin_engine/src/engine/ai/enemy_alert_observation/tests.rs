@@ -6,7 +6,10 @@ use crate::profiles::ProfileRank;
 fn fixture(state: AiState, substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let (mut engine, mut assets, owner, target) =
         crate::engine::ai::battle_decision_observation_tests::fixture(false);
-    let ai = engine.enemy_ai_mut(owner, "hearing fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("hearing fixture"));
     ai.base.current_state = state;
     ai.base.current_substate = substate;
     ai.base.primary_target = None;
@@ -77,7 +80,10 @@ fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
         turn_directions(&engine, owner).contains(&11),
         "ground projection selects11 while substituting recorded elevation selects10"
     );
-    let ai = engine.enemy_ai(owner, "noise result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("noise result"));
     assert_eq!(
         ai.base.current_substate,
         Substate::SeekingHeardstepsReactiontime
@@ -107,7 +113,10 @@ fn zonk_keeps_absent_sector_and_layer_impact() {
     let mut noise = noise(NoiseType::Zonk, position);
     noise.elevation = 480;
     engine.execute_ai_heard_noise(&crate::sim_rng::test_context(), &assets, owner, &noise);
-    let ai = engine.enemy_ai(owner, "impact result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("impact result"));
     assert_eq!(ai.base.seek_position, position);
     assert_eq!(ai.base.current_substate, Substate::WonderingWatching);
     assert_eq!(ai.base.when_does_timer_ring, 150);
@@ -128,7 +137,10 @@ fn distraction_noise_records_impact_before_investigation() {
         owner,
         &noise(NoiseType::Distraction, position),
     );
-    let ai = engine.enemy_ai(owner, "distraction result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("distraction result"));
     assert!(ai.investigating_distraction);
     assert_eq!(ai.base.seek_position, position);
     assert_eq!(
@@ -168,7 +180,10 @@ fn logs_and_drawbridge_draw_cooldown_only_from_default_state() {
                     .count(),
                 usize::from(state == AiState::Default)
             );
-            let ai = engine.enemy_ai(owner, "noise cooldown");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("noise cooldown"));
             if state == AiState::Default {
                 assert_eq!(ai.base.current_substate, Substate::WonderingWatching);
                 assert!((170..230).contains(&ai.base.when_does_timer_ring));
@@ -188,7 +203,11 @@ fn look_there_and_combat_alert_keep_distinct_macro_behavior() {
             y: 500.0,
             ..engine.live_ai_position(owner)
         };
-        engine.ai_mut(owner, "alert macro").macro_in_progress = true;
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("alert macro"))
+            .macro_in_progress = true;
         if combat {
             engine.execute_ai_combat_alert_reaction(
                 &crate::sim_rng::test_context(),
@@ -204,7 +223,10 @@ fn look_there_and_combat_alert_keep_distinct_macro_behavior() {
                 position,
             );
         }
-        let ai = engine.enemy_ai(owner, "alert result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("alert result"));
         assert_eq!(ai.base.seek_position, position);
         assert_eq!(ai.base.macro_in_progress, combat);
         assert_eq!(
@@ -235,7 +257,10 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
             y: 500.0,
             ..engine.live_ai_position(owner)
         };
-        let ai = engine.enemy_ai_mut(owner, "tower alert rank");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("tower alert rank"));
         crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
             profile.rank = rank
         });
@@ -250,7 +275,10 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
                 seek_flags: 0,
             },
         );
-        let ai = engine.enemy_ai(owner, "tower alert result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("tower alert result"));
         assert_eq!(
             ai.base.current_substate,
             if rank == ProfileRank::Knight {

@@ -26,7 +26,12 @@ mod tests {
             Decision::TowerGuardObserve,
         ] {
             let (mut engine, assets, owner, _) = fixture(false);
-            engine.enemy_ai_mut(owner, "empty battle").list_them.clear();
+            engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("empty battle"))
+                .list_them
+                .clear();
             let result = engine.execute_live_battle_decision(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -37,7 +42,10 @@ mod tests {
                 false,
             );
             assert_eq!(result, Some(Decision::Reserve));
-            let ai = engine.enemy_ai(owner, "reserve fallback");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("reserve fallback"));
             assert_eq!(ai.base.primary_target, None);
             assert!(!ai.base.friends_are_alerted);
             assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
@@ -49,7 +57,10 @@ mod tests {
     #[test]
     fn forced_tower_decision_retains_force_and_reads_current_exact_target_position() {
         let (mut engine, assets, owner, target) = fixture(false);
-        let ai = engine.enemy_ai_mut(owner, "forced tower");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("forced tower"));
         ai.base.owner_entity_id = Some(owner);
         ai.tower_guard = true;
         ai.forced_next_battle_decision = Decision::TowerGuardAlert;
@@ -63,7 +74,10 @@ mod tests {
                 .set_position_map(MapPoint::new(x, y));
             let expected = engine.live_ai_position(target);
             engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
-            let ai = engine.enemy_ai(owner, "tower outcome");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai(owner, format_args!("tower outcome"));
             assert_eq!(ai.base.seek_position, expected);
             assert_eq!(
                 ai.base.primary_target,
@@ -270,11 +284,7 @@ impl EngineInner {
                 let input = extract_exact_forecast_input(
                     self,
                     self.expect_entity(target, "missed battle forecast"),
-                    selected_actor_is_passing_door(
-                        &self.world.entities,
-                        &self.orders.sequence_manager,
-                        target,
-                    ),
+                    selected_actor_is_passing_door(&self.entities(), &self.seq(), target),
                 )
                 .expect("forecast actor");
                 let forecast = crate::ai::prepare_forecast_destination_for_ia(
@@ -524,8 +534,7 @@ impl EngineInner {
                             let direction = (self.live_ai_position(target).map_point()
                                 - self.live_ai_position(owner).map_point())
                             .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
-                            self.world
-                                .entities
+                            self.entities_mut()
                                 .expect_entity_mut(
                                     owner,
                                     format_args!("instant AI direction owner"),
@@ -761,9 +770,9 @@ impl EngineInner {
         if !trainer && self.ai(owner, "observe route result").couldnt_reachpoint {
             let target = self.battle_primary(owner).expect("observe roof target");
             let wait = precompute_avenger_on_roof_wait_position(
-                &self.world.entities,
+                &self.entities(),
                 self.script_domains.interactables.doors.as_slice(),
-                &self.orders.sequence_manager,
+                &self.seq(),
                 owner,
                 target,
                 |element| super::ai_view_position_sector(self, element),

@@ -34,7 +34,10 @@ fn fixture() -> (EngineInner, LevelAssets, [EntityId; 3]) {
             seen_now: true,
             ..Default::default()
         }];
-    let ai = engine.enemy_ai_mut(owner, "out-of-view fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("out-of-view fixture"));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingSwordfight;
     ai.base.primary_target = Some(AiEntityHandle::new(primary.index()));
@@ -117,7 +120,10 @@ fn perpendicular_non_primary_loss_rebuilds_from_current_detectables() {
         owner,
         &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
     );
-    let ai = engine.enemy_ai(owner, "processed loss");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("processed loss"));
     assert_eq!(ai.list_them, vec![primary.index()]);
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(lost.index())));
     assert!(ai.pc_missed);
@@ -127,7 +133,9 @@ fn perpendicular_non_primary_loss_rebuilds_from_current_detectables() {
 fn removed_detectable_forecasts_the_current_stimulus_target_lazily() {
     let (mut engine, assets, [owner, primary, lost]) = fixture();
     engine
-        .enemy_ai_mut(owner, "stationary observation")
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("stationary observation"))
         .base
         .current_substate = Substate::AttackingObserve;
     let point = WorldPoint3D::new(1226.1754, 315.8716, 0.0);
@@ -146,7 +154,10 @@ fn removed_detectable_forecasts_the_current_stimulus_target_lazily() {
         owner,
         &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
     );
-    let ai = engine.enemy_ai(owner, "live target forecast");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("live target forecast"));
     assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(lost.index())));
     assert_eq!(ai.base.seek_position, expected);
     assert_eq!(

@@ -42,7 +42,10 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     }
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
         [crate::weapons::WeaponDistance::Maximal as usize] = 50;
-    let ai = engine.enemy_ai_mut(ids[0], "pride fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(ids[0], format_args!("pride fixture"));
     crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
         profile.pride = 1
     });
@@ -179,7 +182,10 @@ fn rejected_cover_keeps_computed_goal_and_clears_both_protection_links() {
         (200.0, 200.0),
     ]);
     let (owner, bearer, target, old_bearer) = (ids[0], ids[1], ids[2], ids[3]);
-    let ai = engine.enemy_ai_mut(owner, "covered archer");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("covered archer"));
     ai.is_archer_unit = true;
     ai.shield_bearer_before_me = Some(AiEntityHandle::new(old_bearer.index()));
     ai.base.seek_position = Position {
@@ -188,10 +194,15 @@ fn rejected_cover_keeps_computed_goal_and_clears_both_protection_links() {
         ..Default::default()
     };
     engine
-        .enemy_ai_mut(old_bearer, "previous cover")
+        .world
+        .entities
+        .expect_enemy_ai_mut(old_bearer, format_args!("previous cover"))
         .archer_behind_me = Some(AiEntityHandle::new(owner.index()));
-    engine.ai_mut(bearer, "cover target").primary_target =
-        Some(AiEntityHandle::new(target.index()));
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(bearer, format_args!("cover target"))
+        .primary_target = Some(AiEntityHandle::new(target.index()));
     let (anchor, direction) = engine.live_shield_bearer_position(bearer);
     let [x, y] = crate::shadow_polygon::sector_to_direction(direction as i16);
     let distance = archer::DISTANCE_SHIELD_BEARER_ARCHER as f32;
@@ -210,7 +221,10 @@ fn rejected_cover_keeps_computed_goal_and_clears_both_protection_links() {
         ),
         ControlFlow::Continue(Decision::Shoot)
     );
-    let ai = engine.enemy_ai(owner, "rejected cover");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("rejected cover"));
     assert_eq!(ai.base.seek_position.x.to_bits(), expected.x.to_bits());
     assert_eq!(ai.base.seek_position.y.to_bits(), expected.y.to_bits());
     assert_eq!(

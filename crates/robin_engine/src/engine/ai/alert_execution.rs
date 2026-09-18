@@ -314,7 +314,7 @@ impl EngineInner {
         for index in 0..count {
             let handle = self.world.soldier_registry.camp(camp)[index];
             let candidate = EntityId::Soldier(crate::entity_id::SoldierId(handle));
-            let Some(Entity::Soldier(soldier)) = self.world.entities.get(candidate) else {
+            let Some(Entity::Soldier(soldier)) = self.entities().get(candidate) else {
                 continue;
             };
             if soldier.soldier.cached_camp != camp {
@@ -719,11 +719,7 @@ impl AiOwnerCtx<'_> {
             self.engine,
             self.engine
                 .expect_entity(target, "officer destination forecast"),
-            selected_actor_is_passing_door(
-                &self.engine.world.entities,
-                &self.engine.orders.sequence_manager,
-                target,
-            ),
+            selected_actor_is_passing_door(&self.engine.entities(), &self.engine.seq(), target),
         )
         .expect("officer forecast requires an actor");
         crate::ai::prepare_forecast_destination_for_ia(
@@ -793,7 +789,7 @@ impl AiOwnerCtx<'_> {
             for index in 0..count {
                 let handle = self.engine.world.soldier_registry.camp(camp)[index];
                 let id = EntityId::Soldier(crate::entity_id::SoldierId(handle));
-                let Some(Entity::Soldier(soldier)) = self.engine.world.entities.get(id) else {
+                let Some(Entity::Soldier(soldier)) = self.engine.entities().get(id) else {
                     continue;
                 };
                 if soldier.soldier.cached_camp != camp {
@@ -982,8 +978,7 @@ impl AiOwnerCtx<'_> {
             let dz = target_world.z - owner_world.z;
             let distance = dx * dx + dy * dy + dz * dz;
             self.engine
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(target, format_args!("alert sorting key"))
                 .human_data_mut()
                 .expect("soldier human data")

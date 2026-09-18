@@ -337,9 +337,7 @@ impl EngineInner {
                     {
                         let already_quitting = self
                             .current_sequence_element_for_actor(owner)
-                            .and_then(|(sequence, index)| {
-                                self.orders.sequence_manager.get_element(sequence, index)
-                            })
+                            .and_then(|(sequence, index)| self.seq().get_element(sequence, index))
                             .is_some_and(|element| {
                                 element.command == crate::element::Command::QuitSwordfight
                             });

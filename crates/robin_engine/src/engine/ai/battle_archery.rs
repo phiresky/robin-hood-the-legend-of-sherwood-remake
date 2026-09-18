@@ -329,8 +329,11 @@ mod tests {
                 .element_data_mut()
                 .set_sector(crate::position_interface::SectorHandle::new(1));
         }
-        engine.ai_mut(owner, "archery test target").primary_target =
-            Some(AiEntityHandle::new(target.index()));
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("archery test target"))
+            .primary_target = Some(AiEntityHandle::new(target.index()));
         let position = engine.live_ai_position(owner);
         let point = |x, shooting| PointArchery {
             position: Position { x, ..position },
@@ -354,7 +357,10 @@ mod tests {
     #[test]
     fn shooting_path_rejects_a_point_claimed_after_selection() {
         let (mut engine, assets, owner, target) = archery_fixture();
-        let ai = engine.enemy_ai_mut(owner, "archery cursor");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("archery cursor"));
         ai.my_archery_sector_index = 0;
         ai.my_archery_point_index = crate::sector::ArcheryPointIdx(1);
         engine.ai.global.archery_sectors[0].points[1].owner = Some(target);

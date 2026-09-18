@@ -15,8 +15,7 @@ impl EngineInner {
     ) -> Option<bool> {
         let frame = self.control.frame_counter;
         let substate = self
-            .world
-            .entities
+            .entities()
             .get(owner)?
             .friendly_ai()?
             .base
@@ -445,8 +444,7 @@ impl EngineInner {
     }
 
     fn clear_civilian_alert_friends(&mut self, owner: EntityId) {
-        self.world
-            .entities
+        self.entities_mut()
             .expect_entity_mut(owner, format_args!("alert friend cleanup"))
             .npc_data_mut()
             .expect("civilian lacks NPC data")
@@ -505,8 +503,7 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
     ) -> &mut crate::ai_friendly::FriendlyAi {
-        self.world
-            .entities
+        self.entities_mut()
             .get_mut(owner)
             .and_then(Entity::friendly_ai_mut)
             .expect("reporting civilian lost its brain")
@@ -604,12 +601,8 @@ impl EngineInner {
     ) {
         let target = self.reporting_target(owner);
         let entity = self.expect_entity(target, "civilian approach forecast");
-        let passing_door = selected_pass_door_movement(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            target,
-        )
-        .is_some();
+        let passing_door =
+            selected_pass_door_movement(&self.entities(), &self.seq(), target).is_some();
         let input = extract_exact_forecast_input(self, entity, passing_door)
             .expect("soldier forecast requires an actor");
         let position = crate::ai::forecast_destination_for_ia(
@@ -741,7 +734,9 @@ mod tests {
         let (mut engine, assets, owner, soldiers) = alert_fixture();
         for soldier in soldiers {
             engine
-                .ai_mut(soldier, "locked route candidate")
+                .world
+                .entities
+                .expect_ai_controller_mut(soldier, format_args!("locked route candidate"))
                 .script_locked = true;
         }
         let position = engine.live_ai_position(owner);
@@ -872,7 +867,9 @@ mod tests {
             Some(second)
         );
         engine
-            .ai_mut(second, "locked alert candidate")
+            .world
+            .entities
+            .expect_ai_controller_mut(second, format_args!("locked alert candidate"))
             .script_locked = true;
         assert_eq!(
             engine.select_civilian_alert_soldier(&assets, owner, false),
@@ -894,7 +891,11 @@ mod tests {
     #[test]
     fn alerted_friend_uses_current_activity_and_real_view_radius() {
         let (mut engine, assets, owner, [first, second]) = alert_fixture();
-        engine.ai_mut(second, "alerted friend").current_state = AiState::Attacking;
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(second, format_args!("alerted friend"))
+            .current_state = AiState::Attacking;
         engine
             .world
             .entities
@@ -1085,7 +1086,9 @@ mod tests {
         let (mut engine, owner, soldier) =
             reporting_pair(Substate::SeekingCivilianRunningToSoldierSeen);
         engine
-            .ai_mut(soldier, "test report listener")
+            .world
+            .entities
+            .expect_ai_controller_mut(soldier, format_args!("test report listener"))
             .current_substate = Substate::SeekingWaitForAlertingCivilian;
         assert_eq!(
             engine.execute_friendly_callback(

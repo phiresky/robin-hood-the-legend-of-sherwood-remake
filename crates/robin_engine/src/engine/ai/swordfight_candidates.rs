@@ -33,8 +33,11 @@ mod tests {
         let second = add(&mut engine, 1220.2673, 1886.527, 0.0, 8);
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.ai_mut(owner, "test allies").list_us =
-            vec![owner.index(), first.index(), second.index()];
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("test allies"))
+            .list_us = vec![owner.index(), first.index(), second.index()];
         assert_eq!(
             engine.live_combat_neighbour(&assets, owner, None, true),
             None
@@ -53,8 +56,11 @@ mod tests {
         let second = add(&mut engine, 420.18027, 1757.8624, 4.382771, 12);
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine.ai_mut(owner, "test allies").list_us =
-            vec![owner.index(), first.index(), second.index()];
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("test allies"))
+            .list_us = vec![owner.index(), first.index(), second.index()];
         assert_eq!(
             engine.live_combat_neighbour(&assets, owner, None, true),
             Some(AiEntityHandle::new(first.index()))
@@ -63,8 +69,11 @@ mod tests {
             engine.live_combat_neighbour(&assets, owner, None, false),
             None
         );
-        engine.ai_mut(owner, "test reorder").list_us =
-            vec![owner.index(), second.index(), first.index()];
+        engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("test reorder"))
+            .list_us = vec![owner.index(), second.index(), first.index()];
         assert_eq!(
             engine.live_combat_neighbour(&assets, owner, None, true),
             Some(AiEntityHandle::new(second.index()))

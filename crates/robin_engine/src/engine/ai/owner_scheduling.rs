@@ -40,8 +40,7 @@ impl EngineInner {
 
         // The script may change the owner's state before this continuation.
         let script_driven = self
-            .world
-            .entities
+            .entities()
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_none_or(|ai| ai.current_substate == crate::ai::Substate::DefaultScriptDriven);
@@ -169,8 +168,7 @@ impl EngineInner {
             let dy = (world.y - chief_world.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
             let dz = world.z - chief_world.z;
             let distance = dx * dx + dy * dy + dz * dz;
-            self.world
-                .entities
+            self.entities_mut()
                 .expect_entity_mut(id, format_args!("patrol sorting key"))
                 .human_data_mut()
                 .expect("patrol member human data")
@@ -467,8 +465,7 @@ impl EngineInner {
             self.ai_mut(npc_id, "periodic watchdog reset").stuck_counter = 0;
         } else if stuck_command {
             let pending = self
-                .orders
-                .sequence_manager
+                .seq()
                 .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
             let ai = self.ai_mut(npc_id, "periodic watchdog counter");
             if pending {

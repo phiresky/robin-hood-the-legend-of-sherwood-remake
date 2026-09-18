@@ -46,8 +46,7 @@ impl EngineInner {
     ) {
         // The civilian role has no friend-check implementation.
         if self
-            .world
-            .entities
+            .entities()
             .get(owner)
             .and_then(Entity::enemy_ai)
             .is_none()

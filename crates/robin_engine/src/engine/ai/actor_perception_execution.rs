@@ -157,16 +157,25 @@ mod tests {
         let first = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let second = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(first.index())));
-        let list = &engine.ai_actor(owner, "checkpoint test").detectable_lists
-            [DetectableType::MissedFriend as usize];
+        let list = &engine
+            .world
+            .entities
+            .expect_ai_actor_data(owner, format_args!("checkpoint test"))
+            .detectable_lists[DetectableType::MissedFriend as usize];
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].element, Some(first));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(second.index())));
-        let list = &engine.ai_actor(owner, "checkpoint test").detectable_lists
-            [DetectableType::MissedFriend as usize];
+        let list = &engine
+            .world
+            .entities
+            .expect_ai_actor_data(owner, format_args!("checkpoint test"))
+            .detectable_lists[DetectableType::MissedFriend as usize];
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].element, Some(second));
-        let ai = engine.ai_mut(owner, "checkpoint test");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("checkpoint test"));
         ai.sorrow_level = 15;
         ai.macro_command = vec![10, 20, 30, 40, 50];
         ai.macro_command_offset = 3;
@@ -174,7 +183,10 @@ mod tests {
         ai.macro_in_progress = true;
         ai.macro_timer_is_running = true;
         engine.execute_ai_break_macro(owner);
-        let ai = engine.ai(owner, "checkpoint test");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("checkpoint test"));
         assert_eq!(ai.sorrow_level, 0);
         assert_eq!(ai.checkpoint_charly, None);
         assert!(!ai.macro_in_progress);
@@ -199,7 +211,10 @@ mod tests {
         let target = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         engine.execute_ai_focus(owner, Some(AiEntityHandle::new(target.index())));
         engine.execute_ai_unfocus(owner);
-        let npc = engine.ai_actor(owner, "focus test");
+        let npc = engine
+            .world
+            .entities
+            .expect_ai_actor_data(owner, format_args!("focus test"));
         assert_eq!(npc.follow_target, Some(target));
         assert_eq!(npc.eye_status, crate::element::EyeStatus::LookForward);
     }

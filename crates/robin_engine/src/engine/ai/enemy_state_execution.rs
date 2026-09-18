@@ -19,8 +19,7 @@ impl EngineInner {
         if ai.base.current_state == AiState::Menacing && state != AiState::Menacing {
             if let Some(pc) = ai.guarded_pc.take() {
                 let entity = self
-                    .world
-                    .entities
+                    .entities_mut()
                     .expect_entity_mut(EntityId::Pc(pc), format_args!("released guarded PC"));
                 let Entity::Pc(pc) = entity else {
                     unreachable!("typed PC guard")

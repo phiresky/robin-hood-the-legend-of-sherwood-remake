@@ -199,7 +199,10 @@ mod tests {
             .view_radius = 500;
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let enemy = engine.enemy_ai_mut(owner, "test sleeper observer");
+        let enemy = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test sleeper observer"));
         enemy.base.initial_position = crate::ai::Position {
             x: 1377.2015,
             y: 252.88869,
@@ -233,7 +236,10 @@ mod tests {
     fn trainer_sleeping_enemy_scan_runs_after_completed_duty() {
         let (mut engine, assets, owner, targets) =
             sleeping_pair(MapPoint::new(1380.0, 252.0), MapPoint::new(1400.0, 252.0));
-        let enemy = engine.enemy_ai_mut(owner, "test trainer");
+        let enemy = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test trainer"));
         enemy.combat_trainer = true;
         enemy.base.current_state = AiState::Attacking;
         enemy.base.current_substate = Substate::AttackingBowObserving;
@@ -244,7 +250,10 @@ mod tests {
             owner,
             Camp::Lacklandists,
         );
-        let enemy = engine.enemy_ai(owner, "test trainer after scan");
+        let enemy = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("test trainer after scan"));
         assert_eq!(
             enemy.base.current_substate,
             Substate::AttackingApproachingSleepingEnemy
@@ -268,7 +277,10 @@ mod tests {
             owner,
             targets.map(|id| id.index()).to_vec(),
         );
-        let enemy = engine.enemy_ai(owner, "test selected sleeper");
+        let enemy = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("test selected sleeper"));
         assert_eq!(
             enemy.base.primary_target,
             Some(AiEntityHandle::new(targets[1].index()))
@@ -289,8 +301,11 @@ mod tests {
     fn sleeping_enemy_selection_keeps_nearest_and_registration_ties() {
         let (mut engine, _, owner, targets) =
             sleeping_pair(MapPoint::new(1417.0, 250.0), MapPoint::new(1500.0, 400.0));
-        engine.enemy_ai_mut(owner, "test sleeper order").list_them =
-            targets.map(|id| id.index()).to_vec();
+        engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test sleeper order"))
+            .list_them = targets.map(|id| id.index()).to_vec();
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
         let first_position = engine
             .get_entity(targets[0])

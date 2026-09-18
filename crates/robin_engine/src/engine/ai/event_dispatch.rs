@@ -11,8 +11,7 @@ impl EngineInner {
     ) {
         use crate::ai::{AlertFlags, AlertLevel};
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("alert owner"));
         let soldier = entity.is_soldier();
         let forced_attentive = soldier
@@ -101,8 +100,7 @@ impl EngineInner {
     #[cfg(test)]
     fn observe_galopp_dispatch(&self, owner: EntityId) {
         let owned_elements = self
-            .orders
-            .sequence_manager
+            .seq()
             .sequences_iter()
             .flat_map(|sequence| {
                 sequence
@@ -144,7 +142,7 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         // Panic text is asserted by `galopp_execute_callback_rejects_missing_selected_owner`.
-        let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
+        let entity = self.entities().get(entity_id).unwrap_or_else(|| {
             panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
         });
         let soldier = entity.soldier_data().unwrap_or_else(|| {
@@ -339,9 +337,8 @@ impl EngineInner {
     /// so only NPC slots after this PC may observe the new volume this frame.
     pub(in crate::engine) fn refresh_pc_produced_noise_for(&mut self, pc_id: EntityId) {
         let order_type = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, pc_id)
+            .seq()
+            .current_order_for_actor(&self.entities(), pc_id)
             .map(|(_, _, order)| order.order_type)
             .unwrap_or(crate::order::OrderType::Invalid);
         self.refresh_pc_produced_noise_for_with_order(pc_id, order_type);
@@ -426,8 +423,7 @@ impl EngineInner {
     /// NPCs. The remaining PC walk must use stable Original creation order.
     pub(crate) fn refresh_legacy_loaded_produced_noise(&mut self) {
         let pc_ids = self
-            .world
-            .entities
+            .entities()
             .occupied()
             .filter_map(|(id, entity)| entity.is_pc().then_some(id))
             .collect::<Vec<_>>();
@@ -518,8 +514,7 @@ impl EngineInner {
         }
 
         let should_broadcast = self
-            .world
-            .entities
+            .entities_mut()
             .get_mut(npc_id)
             .and_then(Entity::ai_actor_data_mut)
             .is_some_and(|npc| {
@@ -566,7 +561,7 @@ impl EngineInner {
         // `get_worst_detected_type` never climbs past DETECTABLE_FRIEND
         // for civilians, dropping their emoticon / alert reactions to
         // nearby bodies.
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         let det_idx = DetectableType::Body as usize;
         for friend_id in npc_ids {
             if friend_id == body_id {
@@ -672,7 +667,7 @@ impl EngineInner {
         } else {
             0
         };
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         for friend_id in npc_ids {
             let mutation_owner_creation_order = if mutation_debug_enabled
                 && detection::detectable_mutation_debug_owner_slot_matches(friend_id.index())
@@ -738,7 +733,7 @@ impl EngineInner {
         use crate::element_kinds::ObjectType;
 
         let mut to_add = Vec::new();
-        for (entity_id, entity) in self.world.entities.objects() {
+        for (entity_id, entity) in self.entities().objects() {
             if !entity.is_active() {
                 continue;
             }
@@ -756,7 +751,7 @@ impl EngineInner {
             }
         }
 
-        let npc = self.world.entities.expect_ai_actor_data_mut(
+        let npc = self.entities_mut().expect_ai_actor_data_mut(
             npc_id,
             format_args!(
                 "recovery owner {} lost AI actor data before RestoreDetectableObjects",
@@ -794,12 +789,12 @@ impl EngineInner {
     pub(in crate::engine) fn broadcast_resurrection(&mut self, resurrected_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         for friend_id in npc_ids {
             if friend_id == resurrected_id {
                 continue;
             }
-            let Some(entity) = self.world.entities.get_mut(friend_id) else {
+            let Some(entity) = self.entities_mut().get_mut(friend_id) else {
                 continue;
             };
             let Some(npc) = entity.ai_actor_data_mut() else {
@@ -817,26 +812,20 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
-        let Some(npc) = self
-            .world
-            .entities
-            .get(npc_id)
-            .and_then(Entity::ai_actor_data)
-        else {
+        let Some(npc) = self.entities().get(npc_id).and_then(Entity::ai_actor_data) else {
             return;
         };
         // Resolve the other actor at this owner's turn, after earlier actors'
         // synchronous callbacks and before later actors move.
         let follow_target_position = npc.follow_target.and_then(|target_id| {
-            self.world.entities.get(target_id).map(|target| {
+            self.entities().get(target_id).map(|target| {
                 let position = target.element_data().position();
                 crate::coordinates::GroundPoint::new(position.x, position.y)
             })
         });
         let animation = self
-            .orders
-            .sequence_manager
-            .current_order_for_actor(&self.world.entities, npc_id)
+            .seq()
+            .current_order_for_actor(&self.entities(), npc_id)
             .map(|(_, _, order)| order.order_type);
         let difficulty = self.control.sim_config.difficulty.rules();
         self.debug_refresh_view_lifecycle("refresh_view_before", npc_id, None);
@@ -1480,8 +1469,7 @@ impl EngineInner {
         let completions = std::mem::take(&mut self.feedback.sound_sim.finished_exclamations);
         for (actor_slot, completed_id) in completions {
             let actor_id = self
-                .world
-                .entities
+                .entities()
                 .id_at_legacy_slot(actor_slot)
                 .unwrap_or_else(|| {
                     panic!(

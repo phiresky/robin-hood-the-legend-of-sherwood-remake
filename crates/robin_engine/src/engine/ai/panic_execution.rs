@@ -256,8 +256,7 @@ impl EngineInner {
                     self.observation_ai_mut(owner)
                         .base
                         .non_script_lock(crate::ai::AiLockFlags::FREEZE);
-                    self.world
-                        .entities
+                    self.entities_mut()
                         .expect_entity_mut(owner, format_args!("forest exit actor"))
                         .element_data_mut()
                         .active = false;
@@ -282,8 +281,7 @@ impl EngineInner {
                 let no_runs = ai.lasting_panic_runs == 0;
                 if no_runs {
                     let entity = self
-                        .world
-                        .entities
+                        .entities_mut()
                         .expect_entity_mut(owner, format_args!("panic counter"));
                     if let Some(friendly) = entity.friendly_ai_mut() {
                         friendly.fleeing_seen_enemy_counter = 0;

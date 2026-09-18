@@ -309,8 +309,7 @@ impl EngineInner {
             let dy = (there.y - here.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
             let dz = there.z - here.z;
             let square_distance = dx * dx + dy * dy + dz * dz;
-            self.world
-                .entities
+            self.entities_mut()
                 .expect_entity_mut(target, format_args!("money victim sorting key"))
                 .human_data_mut()
                 .expect("soldier human data")

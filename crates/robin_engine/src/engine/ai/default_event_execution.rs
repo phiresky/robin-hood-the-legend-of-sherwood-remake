@@ -55,7 +55,7 @@ impl EngineInner {
                 .expect("boredom requires actor")
                 .installed_order
                 .is_some_and(|order| {
-                    order.resolve(&self.orders.sequence_manager).order_type
+                    order.resolve(&self.seq()).order_type
                         == crate::order::OrderType::WaitingUprightBoredRandom
                 })
             || ai.likes_to_sit_around
@@ -192,8 +192,7 @@ impl EngineInner {
                         None
                     };
                     if let Some(posture) = posture {
-                        self.world
-                            .entities
+                        self.entities_mut()
                             .expect_entity_mut(owner, format_args!("post arrival posture"))
                             .set_posture(posture);
                     }
@@ -566,7 +565,9 @@ mod tests {
             ai.directed_panic = true;
             ai.lasting_panic_runs = 0;
             engine
-                .ai_actor_mut(owner, "visible enemy fixture")
+                .world
+                .entities
+                .expect_ai_actor_data_mut(owner, format_args!("visible enemy fixture"))
                 .detectable_lists[crate::element::DetectableType::Enemy as usize]
                 .push(crate::element::Detectable {
                     element: Some(owner),

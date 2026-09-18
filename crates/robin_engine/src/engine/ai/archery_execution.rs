@@ -54,7 +54,10 @@ mod tests {
         engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
             "beggar_test.scs",
         ));
-        let ai = engine.enemy_ai_mut(owner, "beggar fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("beggar fixture"));
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingSeekpointIdentifyingBeggar1;
         ai.beggar_to_examine = Some(AiEntityHandle::new(beggar.index()));
@@ -69,7 +72,10 @@ mod tests {
             (true, crate::element::Command::EquipBow, 100),
         ] {
             let (mut engine, assets, owner, _) = beggar_fixture(false);
-            let ai = engine.enemy_ai_mut(owner, "beggar arrival setup");
+            let ai = engine
+                .world
+                .entities
+                .expect_enemy_ai_mut(owner, format_args!("beggar arrival setup"));
             ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
             ai.is_archer_unit = archer;
             assert!(engine.execute_ai_archery_expected_event(
@@ -121,7 +127,10 @@ mod tests {
                     .any(|element| element.owner == Some(beggar)
                         && element.command == crate::element::Command::BeggarShowFace))
         );
-        let ai = engine.ai(owner, "identified beggar result");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("identified beggar result"));
         assert_eq!(
             ai.current_substate,
             Substate::SeekingSeekpointIdentifyingBeggar2
@@ -141,10 +150,14 @@ mod tests {
             profile.shooting_weapon_id = 1;
         }
         engine
-            .ai_actor_mut(owner, "false beggar arrows")
+            .world
+            .entities
+            .expect_ai_actor_data_mut(owner, format_args!("false beggar arrows"))
             .number_of_arrows = 10;
         engine
-            .enemy_ai_mut(owner, "false beggar archer")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("false beggar archer"))
             .is_archer_unit = true;
         assert!(engine.execute_ai_archery_expected_event(
             &crate::sim_rng::test_context(),
@@ -152,7 +165,10 @@ mod tests {
             owner,
             StimulusType::EventTimer
         ));
-        let ai = engine.enemy_ai(owner, "false beggar result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("false beggar result"));
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(beggar.index()))
@@ -205,7 +221,9 @@ mod tests {
             .set_position(crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0));
         assert!(engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
         engine
-            .enemy_ai_mut(owner, "proximity shield link")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("proximity shield link"))
             .shield_bearer_before_me = Some(AiEntityHandle::new(target.index()));
         assert!(!engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
     }
@@ -216,7 +234,10 @@ mod tests {
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         engine.control.frame_counter = 123;
-        let ai = engine.ai_mut(owner, "cover test setup");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("cover test setup"));
         ai.current_state = AiState::Attacking;
         ai.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
         ai.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -226,7 +247,10 @@ mod tests {
             owner,
             StimulusType::EventDone
         ));
-        let ai = engine.ai(owner, "cover test timer");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("cover test timer"));
         assert_eq!(ai.when_does_timer_ring, 128);
         assert!(ai.timer_is_running);
         assert_eq!(

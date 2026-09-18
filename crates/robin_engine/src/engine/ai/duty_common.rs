@@ -990,8 +990,7 @@ impl EngineInner {
             Some(self.begin_live_enemy_state(assets, owner, state, substate))
         } else {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(owner, format_args!("state-change owner"));
             let ai = entity
                 .friendly_ai_mut()
@@ -1025,8 +1024,7 @@ impl EngineInner {
             self.finish_live_enemy_state(sim, assets, owner, state, substate, forced_attentive);
         } else {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(owner, format_args!("state-change callback owner"));
             let ai = entity
                 .ai_controller_mut()
@@ -1044,8 +1042,7 @@ impl EngineInner {
         direction: u16,
     ) {
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("duty facing owner"));
         let current_direction = entity.element_data().direction() as u16;
         let action_state = entity
@@ -1289,8 +1286,7 @@ impl EngineInner {
         self.execute_ai_set_alert_status(assets, owner, AlertLevel::Green, AlertFlags::empty());
         {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(owner, format_args!("common duty owner"));
             let no_friends = entity
                 .ai_actor_data()

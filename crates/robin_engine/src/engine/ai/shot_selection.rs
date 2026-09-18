@@ -70,14 +70,13 @@ impl EngineInner {
             let point = self.live_ai_position(id);
             let dx = point.x - position.x;
             let dy = (point.y - position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
-            self.world
-                .entities
+            self.entities_mut()
                 .expect_entity_mut(id, format_args!("shot friend sorting key"))
                 .human_data_mut()
                 .expect("shot friend human data")
                 .sorting_distance = dx * dx + dy * dy;
             angles.push(vector_angle(nose[0], nose[1], dx, dy));
-            if let Some(Entity::Soldier(soldier)) = self.world.entities.get(id) {
+            if let Some(Entity::Soldier(soldier)) = self.entities().get(id) {
                 let ai = soldier.npc.ai_brain.enemy().expect("shot friend brain");
                 if matches!(
                     ai.base.current_substate,

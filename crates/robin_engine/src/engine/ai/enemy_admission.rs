@@ -12,8 +12,7 @@ impl EngineInner {
     pub(super) fn admit_ai_think_live(&mut self, owner: EntityId, stimulus: &Stimulus) -> bool {
         let frozen = self.ai.global.freeze;
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("live Think admission"));
         let unconscious = entity.is_unconscious();
         let dead = entity.is_dead();

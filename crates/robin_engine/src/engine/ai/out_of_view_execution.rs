@@ -132,11 +132,7 @@ impl EngineInner {
         let input = extract_exact_forecast_input(
             self,
             self.expect_entity(target, "visibility loss forecast target"),
-            selected_actor_is_passing_door(
-                &self.world.entities,
-                &self.orders.sequence_manager,
-                target,
-            ),
+            selected_actor_is_passing_door(&self.entities(), &self.seq(), target),
         )
         .expect("visibility loss forecast requires an actor");
         let direction = self
@@ -219,8 +215,7 @@ impl EngineInner {
             let direction = (self.live_ai_position(missed).map_point()
                 - self.live_ai_position(owner).map_point())
             .sector_with_aspect(crate::position_interface::ASPECT_RATIO);
-            self.world
-                .entities
+            self.entities_mut()
                 .expect_entity_mut(owner, format_args!("instant AI direction owner"))
                 .element_data_mut()
                 .set_direction_instantly(direction as i16);

@@ -265,10 +265,10 @@ impl EngineInner {
         owner: EntityId,
         charly: EntityId,
     ) {
-        let count = self.world.entities.len();
+        let count = self.entities().len();
         for index in 0..count {
             let Some((candidate, Entity::Soldier(_))) =
-                self.world.entities.get_legacy_slot(index as u32)
+                self.entities().get_legacy_slot(index as u32)
             else {
                 continue;
             };

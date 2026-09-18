@@ -16,7 +16,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        let enemy = self.world.entities.get(owner)?.enemy_ai()?;
+        let enemy = self.entities().get(owner)?.enemy_ai()?;
         let substate = enemy.base.current_substate;
         let kind = stimulus.stimulus_type;
         if !matches!(
@@ -517,7 +517,9 @@ mod tests {
         let donor = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
         let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         engine
-            .ai_mut(donor, "body report donor")
+            .world
+            .entities
+            .expect_ai_controller_mut(donor, format_args!("body report donor"))
             .my_reconnaissance_report
             .add_seen_body(pc.index());
         engine
@@ -554,7 +556,10 @@ mod tests {
     fn civilian_report_does_not_fabricate_enemy_data_when_sender_is_missing() {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
-        let ai = engine.ai_mut(owner, "test listener");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("test listener"));
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingWaitForAlertingCivilian;
         engine.execute_enemy_report_callback(
@@ -585,16 +590,22 @@ mod tests {
                 ..Default::default()
             });
         engine
-            .ai_mut(recipient, "report recipient fixture")
+            .world
+            .entities
+            .expect_ai_controller_mut(recipient, format_args!("report recipient fixture"))
             .my_reconnaissance_report
             .charly_seen = true;
         engine
-            .ai_mut(donor, "report donor fixture")
+            .world
+            .entities
+            .expect_ai_controller_mut(donor, format_args!("report donor fixture"))
             .my_reconnaissance_report
             .charly = Some(AiEntityHandle::new(charly.index()));
         engine.consider_live_ai_report(recipient, donor, 2);
         let report = &engine
-            .ai(recipient, "transferred report")
+            .world
+            .entities
+            .expect_ai_controller(recipient, format_args!("transferred report"))
             .my_reconnaissance_report;
         assert_eq!(report.charly, Some(AiEntityHandle::new(charly.index())));
         assert!(!report.charly_seen);
@@ -614,7 +625,10 @@ mod tests {
     fn report_substate_dispatch_does_not_depend_on_state_field() {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
-        let ai = engine.ai_mut(owner, "report substate fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("report substate fixture"));
         ai.current_state = AiState::Default;
         ai.current_substate = Substate::SeekingSoldierGiveReportToOfficer;
         assert_eq!(
@@ -648,7 +662,10 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position_map(MapPoint::new(2_006.434_9, 1_735.375_2));
-        let ai = engine.enemy_ai_mut(owner, "test reporter");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test reporter"));
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingSoldierReturnToOfficer;
         ai.base.antagonist = Some(AiEntityHandle::new(civilian.index()));
@@ -667,7 +684,10 @@ mod tests {
             ),
             Some(false)
         );
-        let ai = engine.enemy_ai(owner, "test reporter result");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("test reporter result"));
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(
             ai.base.current_substate,

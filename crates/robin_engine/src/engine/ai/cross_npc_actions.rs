@@ -10,7 +10,7 @@ impl EngineInner {
         // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
         // AI-controlled hero therefore has to retain its ActorPc entity kind here.
         let target_id = self.expect_human_id_for_ai_handle(target, operation);
-        self.world.entities.expect_enemy_ai_mut(
+        self.entities_mut().expect_enemy_ai_mut(
             target_id,
             format_args!("cross-NPC {operation} target human {target}"),
         )
@@ -44,7 +44,7 @@ impl EngineInner {
                 .get(index)
                 .expect("RemoveAllSubordinates callback shortened the captured patrol prefix");
             let should_return = {
-                let ai = self.world.entities.expect_ai_controller_mut(
+                let ai = self.entities_mut().expect_ai_controller_mut(
                     member,
                     format_args!(
                         "RemoveAllSubordinates chief {} references missing NPC member {}",
@@ -63,8 +63,7 @@ impl EngineInner {
             // close-post latch available for the actor's actual completion.
         }
 
-        self.world
-            .entities
+        self.entities_mut()
             .get_mut(chief)
             .and_then(Entity::ai_controller_mut)
             .expect("validated RemoveAllSubordinates chief vanished")
@@ -97,7 +96,7 @@ impl EngineInner {
         // also drops authored elevation. Only inherit it when the supplied
         // source still describes this exact noise origin.
         let origin_sector = source_entity
-            .and_then(|id| self.world.entities.get(id))
+            .and_then(|id| self.entities().get(id))
             .filter(|entity| {
                 entity.element_data().position_map() == origin
                     && entity.element_data().optional_layer() == origin_layer
@@ -132,7 +131,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
 
         let (npc_pos, npc_world) = {
-            let entity = self.world.entities.get(npc_id)?;
+            let entity = self.entities().get(npc_id)?;
             let include = match entity {
                 Entity::Civilian(_) => true,
                 Entity::Soldier(s) => self.camps_are_hostile(
@@ -190,8 +189,7 @@ impl EngineInner {
             .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_world.z);
         let frame = self.control.frame_counter;
         let deafness = self
-            .world
-            .entities
+            .entities_mut()
             .expect_ai_actor_data_mut(
                 npc_id,
                 format_args!(
@@ -325,8 +323,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> bool {
         let had_ai_at_entry = self
-            .world
-            .entities
+            .entities()
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();

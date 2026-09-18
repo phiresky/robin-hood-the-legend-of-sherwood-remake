@@ -94,7 +94,7 @@ impl EngineInner {
             // original still enters each NPC's busy/ladder/speech/lock gate,
             // where all three deadlines are extended before returning.
             if run_owner_envelope {
-                let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+                let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
                 for npc_id in npc_ids {
                     self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
                 }
@@ -116,7 +116,7 @@ impl EngineInner {
 
         // Test drivers explicitly choose either a complete NPC envelope or
         // detection alone. Geometry arguments never select scheduling phases.
-        let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let owners: Vec<_> = self.entities().ai_owner_ids().collect();
         for npc_id in owners {
             if run_owner_envelope {
                 self.tick_inform_my_friends_for_npc(npc_id);

@@ -51,7 +51,7 @@ impl EngineInner {
             return;
         }
         let command = self.actor_command(npc_id);
-        let ai = self.world.entities.expect_ai_controller(
+        let ai = self.entities().expect_ai_controller(
             npc_id,
             format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
         );
@@ -206,13 +206,13 @@ impl EngineInner {
             if stimulus
                 .info
                 .live_target()
-                .is_some_and(|target| self.world.entities.get_legacy_slot(target.get()).is_none())
+                .is_some_and(|target| self.entities().get_legacy_slot(target.get()).is_none())
             {
                 tracing::warn!(npc = npc_id.index(), info = ?stimulus.info,
                     "dropping detached detection stimulus after its target left the live world");
                 continue;
             }
-            if self.world.entities.get(npc_id).is_none() {
+            if self.entities().get(npc_id).is_none() {
                 break;
             }
             match stimulus.info {
@@ -300,7 +300,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
         }

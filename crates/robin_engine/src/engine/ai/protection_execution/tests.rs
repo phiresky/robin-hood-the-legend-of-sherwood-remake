@@ -72,12 +72,18 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .as_mut()
         .unwrap()
         .bind_actor(ScriptHandleCodec::actor_handle(owner), "MoveShieldTarget");
-    let ai = engine.enemy_ai_mut(owner, "arrival owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("arrival owner"));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingRunningToPhalanx;
     ai.left_combat_neighbour = Some(AiEntityHandle::new(neighbour.index()));
-    engine.ai_mut(neighbour, "arrival neighbour").primary_target =
-        Some(AiEntityHandle::new(target.index()));
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(neighbour, format_args!("arrival neighbour"))
+        .primary_target = Some(AiEntityHandle::new(target.index()));
     assert!(engine.execute_ai_shield_expected_event(
         &crate::sim_rng::test_context(),
         &assets,
@@ -202,7 +208,10 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
     doors[113].layer_out = 2;
     doors[113].layer_in = 1;
     engine.script_domains.interactables.doors = doors.clone();
-    let ai = engine.enemy_ai_mut(owner, "advancing shield owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("advancing shield owner"));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
@@ -212,7 +221,10 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
         owner,
         crate::ai::StimulusType::EventDone
     ));
-    let ai = engine.ai(owner, "shield destination");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("shield destination"));
     let destination = ai.last_goto_destination;
     assert_eq!(destination, target);
     assert!(
@@ -353,7 +365,10 @@ fn live_shield_replacement_is_assigned_before_bow_rng() {
             .actor_data_mut()
             .unwrap()
             .action_state = crate::element::ActionState::AimingWithBow;
-        let ai = engine.enemy_ai_mut(owner, "shield replacement fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("shield replacement fixture"));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingProtectingWithShield;
         ai.base.primary_target = None;
@@ -371,7 +386,10 @@ fn live_shield_replacement_is_assigned_before_bow_rng() {
             owner,
             StimulusType::EventTimer
         ));
-        let ai = engine.enemy_ai(owner, "assigned shield target");
+        let ai = engine
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("assigned shield target"));
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(target.index()))
@@ -391,20 +409,33 @@ fn live_phalanx_neighbour_selection_preserves_null_and_skips_pc() {
     let pc = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
         crate::element::Posture::Upright,
     ));
-    let ai = engine.enemy_ai_mut(owner, "neighbour fixture");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("neighbour fixture"));
     ai.left_combat_neighbour = Some(AiEntityHandle::new(left.index()));
     ai.right_combat_neighbour = Some(AiEntityHandle::new(right.index()));
     ai.list_them = vec![pc.index()];
-    engine.ai_mut(right, "right target").primary_target = Some(AiEntityHandle::new(pc.index()));
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(right, format_args!("right target"))
+        .primary_target = Some(AiEntityHandle::new(pc.index()));
     assert_eq!(engine.live_phalanx_neighbour_target(owner), Some(None));
     engine
-        .enemy_ai_mut(owner, "non-soldier neighbour")
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("non-soldier neighbour"))
         .left_combat_neighbour = Some(AiEntityHandle::new(pc.index()));
     assert_eq!(
         engine.live_phalanx_neighbour_target(owner),
         Some(Some(AiEntityHandle::new(pc.index())))
     );
-    engine.ai_mut(right, "right target cleared").primary_target = None;
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(right, format_args!("right target cleared"))
+        .primary_target = None;
     assert_eq!(engine.live_phalanx_neighbour_target(owner), Some(None));
 }
 
@@ -420,9 +451,16 @@ fn live_cover_position_preserves_aspect_then_distance_rounding() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(10);
-    engine.ai_mut(bearer, "cover target").primary_target =
-        Some(AiEntityHandle::new(target.index()));
-    engine.enemy_ai_mut(owner, "cover archer").is_archer_unit = true;
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(bearer, format_args!("cover target"))
+        .primary_target = Some(AiEntityHandle::new(target.index()));
+    engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("cover archer"))
+        .is_archer_unit = true;
     engine.ai.standard_view_polygon_radius = 1;
     assert_eq!(
         engine.execute_ai_battle_cover(
@@ -433,7 +471,11 @@ fn live_cover_position_preserves_aspect_then_distance_rounding() {
         ),
         std::ops::ControlFlow::Continue(crate::ai::Decision::Shoot)
     );
-    let cover = engine.ai(owner, "cover candidate").seek_position;
+    let cover = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("cover candidate"))
+        .seek_position;
     assert_eq!(cover.x.to_bits(), 0x4488_bad1);
     assert_eq!(cover.y.to_bits(), 0x4268_b9b6);
 }
@@ -457,7 +499,10 @@ fn live_already_in_cover_decision_does_not_require_a_route() {
         .ai_actor_data_mut()
         .unwrap()
         .number_of_arrows = 1;
-    let ai = engine.enemy_ai_mut(owner, "already covered archer");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("already covered archer"));
     ai.base.current_state = AiState::Attacking;
     ai.is_archer_unit = true;
     crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
@@ -551,7 +596,11 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         0,
     );
     assert_eq!(engine.live_ai_position(passing).x, 277.0);
-    engine.enemy_ai_mut(owner, "selector list").list_them = vec![near.index(), passing.index()];
+    engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("selector list"))
+        .list_them = vec![near.index(), passing.index()];
     engine
         .ai
         .global
@@ -572,7 +621,9 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         Some(AiEntityHandle::new(near.index()))
     );
     engine
-        .enemy_ai_mut(owner, "empty selector list")
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("empty selector list"))
         .list_them
         .clear();
     assert_eq!(engine.select_live_ai_primary_target(owner, flags), None);
@@ -593,17 +644,23 @@ fn protection_counts_inactive_archer_but_keeps_state_and_strict_radius_gates() {
         .element_data_mut()
         .active = false;
     engine
-        .enemy_ai_mut(orphan, "seeking orphan")
+        .world
+        .entities
+        .expect_enemy_ai_mut(orphan, format_args!("seeking orphan"))
         .base
         .current_state = AiState::Seeking;
     assert_eq!(engine.live_archers_needing_protection(&assets, owner), 1);
     engine
-        .enemy_ai_mut(orphan, "default orphan")
+        .world
+        .entities
+        .expect_enemy_ai_mut(orphan, format_args!("default orphan"))
         .base
         .current_state = AiState::Default;
     assert_eq!(engine.live_archers_needing_protection(&assets, owner), 0);
     engine
-        .enemy_ai_mut(orphan, "seeking orphan")
+        .world
+        .entities
+        .expect_enemy_ai_mut(orphan, format_args!("seeking orphan"))
         .base
         .current_state = AiState::Seeking;
     engine
@@ -623,12 +680,18 @@ fn protection_reads_reciprocal_unlink_after_state_change() {
     };
     let (owner, orphan) = (*owner, *orphan);
     make_archers(&mut assets);
-    let ai = engine.enemy_ai_mut(owner, "linked shield");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("linked shield"));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingPhalanx;
     ai.archer_behind_me = Some(AiEntityHandle::new(orphan.index()));
     ai.tower_guard = true;
-    let ai = engine.enemy_ai_mut(orphan, "protected archer");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(orphan, format_args!("protected archer"));
     ai.base.current_state = AiState::Attacking;
     ai.shield_bearer_before_me = Some(AiEntityHandle::new(owner.index()));
     assert_eq!(engine.live_archers_needing_protection(&assets, owner), 0);
@@ -662,11 +725,16 @@ fn phalanx_uses_raw_distance_and_running_members_future_anchor() {
     };
     let (owner, farther, nearest) = (*owner, *farther, *nearest);
     engine
-        .enemy_ai_mut(farther, "farther shield")
+        .world
+        .entities
+        .expect_enemy_ai_mut(farther, format_args!("farther shield"))
         .base
         .current_substate = Substate::AttackingProtectingWithShield;
     let sector = crate::ai::SectorHandle::new(0).unwrap();
-    let ai = engine.enemy_ai_mut(nearest, "running shield");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(nearest, format_args!("running shield"));
     ai.base.current_substate = Substate::AttackingRunningToPhalanx;
     ai.base.seek_position = Position {
         x: 1310.3472,
@@ -717,7 +785,10 @@ fn close_phalanx_slot_with_different_sector_needs_no_movement_order() {
         destination,
         GotoFlags::RUN,
     );
-    let ai = engine.ai(owner, "close formation destination");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("close formation destination"));
     assert!(ai.already_on_point);
     assert!(
         engine
@@ -737,10 +808,14 @@ fn phalanx_walks_the_complete_live_chain_and_observes_relinks() {
     let (mut engine, _, ids) = fixture(&positions);
     for pair in ids.windows(2) {
         engine
-            .enemy_ai_mut(pair[0], "right chain")
+            .world
+            .entities
+            .expect_enemy_ai_mut(pair[0], format_args!("right chain"))
             .right_combat_neighbour = Some(AiEntityHandle::new(pair[1].index()));
         engine
-            .enemy_ai_mut(pair[1], "left chain")
+            .world
+            .entities
+            .expect_enemy_ai_mut(pair[1], format_args!("left chain"))
             .left_combat_neighbour = Some(AiEntityHandle::new(pair[0].index()));
     }
     assert_eq!(engine.live_phalanx_end(ids[0], false), ids[19]);
@@ -802,12 +877,18 @@ fn periodic_phalanx_fixture(
     };
     target.soldier.cached_camp = crate::element::Camp::Royalists;
     target.actor.action_state = crate::element::ActionState::AimingWithBow;
-    let ai = engine.enemy_ai_mut(owner, "periodic shield owner");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("periodic shield owner"));
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontime;
     ai.base.stuck_counter = 2;
     ai.list_them = vec![enemy.index()];
-    let npc = engine.ai_actor_mut(owner, "periodic visible enemy");
+    let npc = engine
+        .world
+        .entities
+        .expect_ai_actor_data_mut(owner, format_args!("periodic visible enemy"));
     npc.detectable_lists[crate::element::DetectableType::Enemy as usize].push(
         crate::element::Detectable {
             element: Some(enemy),
@@ -818,7 +899,9 @@ fn periodic_phalanx_fixture(
     );
     engine.control.frame_counter = u32::from(npc.register_number) + 100;
     engine
-        .enemy_ai_mut(neighbour, "periodic phalanx anchor")
+        .world
+        .entities
+        .expect_enemy_ai_mut(neighbour, format_args!("periodic phalanx anchor"))
         .base
         .current_substate = Substate::AttackingPhalanx;
     let selected = engine.orders.sequence_manager.insert_element(
@@ -845,7 +928,10 @@ fn periodic_phalanx_move_is_registered_before_idle_stuck_check() {
     let (mut engine, assets, owner) =
         periodic_phalanx_fixture(500.0, crate::element::Command::Wait);
     engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
-    let ai = engine.enemy_ai(owner, "periodic movement result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("periodic movement result"));
     assert_eq!(
         ai.base.current_substate,
         Substate::AttackingRunningToPhalanx
@@ -874,11 +960,16 @@ fn periodic_phalanx_move_keeps_attentive_command_classification() {
     let (mut engine, assets, owner) =
         periodic_phalanx_fixture(500.0, crate::element::Command::EnterAttentiveMode);
     engine
-        .enemy_ai_mut(owner, "attentive counter")
+        .world
+        .entities
+        .expect_enemy_ai_mut(owner, format_args!("attentive counter"))
         .base
         .stuck_counter = 0;
     engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
-    let ai = engine.enemy_ai(owner, "attentive periodic result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("attentive periodic result"));
     assert_eq!(
         ai.base.current_substate,
         Substate::AttackingRunningToPhalanx
@@ -909,9 +1000,16 @@ fn periodic_phalanx_already_on_point_does_not_register_a_move() {
         periodic_phalanx_fixture(575.0, crate::element::Command::Wait);
     // Script lock discards the synchronous arrival decision so the watchdog
     // observes the movement result before any face-and-raise sequence.
-    engine.ai_mut(owner, "locked arrival").script_locked = true;
+    engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("locked arrival"))
+        .script_locked = true;
     engine.tick_periodic_ai_for_npc(&crate::sim_rng::test_context(), owner, &assets);
-    let ai = engine.enemy_ai(owner, "already-on-point result");
+    let ai = engine
+        .world
+        .entities
+        .expect_enemy_ai(owner, format_args!("already-on-point result"));
     assert_eq!(
         ai.base.current_substate,
         Substate::AttackingRunningToPhalanx

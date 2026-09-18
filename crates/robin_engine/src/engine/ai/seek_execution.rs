@@ -14,8 +14,7 @@ impl EngineInner {
             .expect("area search requires enemy AI")
     }
     pub(super) fn seek_enemy_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
-        self.world
-            .entities
+        self.entities_mut()
             .expect_entity_mut(owner, format_args!("area-search owner"))
             .enemy_ai_mut()
             .expect("area search requires enemy AI")
@@ -96,8 +95,7 @@ impl EngineInner {
             && !self.seek_enemy(owner).combat_trainer
         {
             let mut beggars: Vec<_> = self
-                .world
-                .entities
+                .entities()
                 .occupied()
                 .filter_map(|(id, entity)| {
                     let beggar = match entity {
@@ -137,7 +135,7 @@ impl EngineInner {
             let position = self.live_ai_position(owner);
             let mut seeking_friends = 0usize;
             let mut clears_help = false;
-            for (id, soldier) in self.world.entities.soldiers() {
+            for (id, soldier) in self.entities().soldiers() {
                 let id = EntityId::Soldier(id);
                 if id == owner {
                     continue;
@@ -187,8 +185,7 @@ impl EngineInner {
             self.seek_enemy_mut(owner).seek_center = adjusted;
         }
         let ai = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("personal seek points"))
             .enemy_ai_mut()
             .expect("personal seek points require enemy AI");
@@ -463,7 +460,7 @@ impl EngineInner {
         let position = self.live_ai_position(owner);
         let mut nearest = None;
         let mut distance = f32::INFINITY;
-        for (id, net) in self.world.entities.nets() {
+        for (id, net) in self.entities().nets() {
             if !net.element.active || !net.net.victims.contains(&victim) {
                 continue;
             }

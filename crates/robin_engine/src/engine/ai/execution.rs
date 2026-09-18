@@ -16,7 +16,10 @@ mod after_script_tests {
         let (mut engine, assets, owner, _) =
             super::super::battle_decision_observation_tests::fixture(false);
         let outer_frames = engine.ai.think_call_stack.clone();
-        let ai = engine.ai_mut(owner, "retained events fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("retained events fixture"));
         ai.current_state = AiState::Wondering;
         ai.current_substate = Substate::WonderingOfficerSeeingBrawl;
         ai.stimulus_queue = vec![
@@ -30,7 +33,10 @@ mod after_script_tests {
             owner,
             &Stimulus::new(StimulusType::EventAfterScriptGoOn)
         ));
-        let ai = engine.ai(owner, "retained events result");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("retained events result"));
         assert!(ai.stimulus_queue.is_empty());
         assert_eq!(ai.current_substate, Substate::WonderingOfficerSeeingBrawl);
         assert_eq!(engine.ai.think_call_stack, outer_frames);
@@ -129,8 +135,7 @@ impl EngineInner {
     ) -> bool {
         use crate::ai::AiRole;
         if self
-            .world
-            .entities
+            .entities()
             .get(owner)
             .and_then(Entity::ai_controller)
             .is_none()
@@ -143,8 +148,7 @@ impl EngineInner {
         ai.register_log_line(crate::ai::LogLineType::Event, stimulus.stimulus_type as u16);
         self.enter_ai_think_frame(owner);
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("decision pre-filter"));
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.start_think_pre_filter(stimulus);
@@ -257,8 +261,7 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
         let enemy_owner = self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("admitted decision owner"))
             .enemy_ai()
             .is_some();
@@ -405,8 +408,7 @@ impl EngineInner {
     ) -> bool {
         // Direct human interactions can address a PC without an AI brain.
         if self
-            .world
-            .entities
+            .entities()
             .get(owner)
             .and_then(Entity::ai_controller)
             .is_none()
@@ -416,8 +418,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let original_creation_order = Some(self.world.original_creation_order(owner));
         let admitted = if self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("Think admission"))
             .enemy_ai()
             .is_some()
@@ -438,7 +439,7 @@ impl EngineInner {
             self.execute_ai_handler_body(sim, assets, owner, stimulus)
         };
         self.execute_ai_end_think(sim, assets, owner);
-        if let Some(enemy) = self.world.entities.get(owner).and_then(Entity::enemy_ai) {
+        if let Some(enemy) = self.entities().get(owner).and_then(Entity::enemy_ai) {
             enemy.base.debug_macro_lifecycle_at(
                 frame,
                 original_creation_order,
@@ -459,7 +460,9 @@ mod tests {
     fn enter(engine: &mut EngineInner, owner: EntityId) {
         engine.enter_ai_think_frame(owner);
         engine
-            .enemy_ai_mut(owner, "test decision owner")
+            .world
+            .entities
+            .expect_enemy_ai_mut(owner, format_args!("test decision owner"))
             .start_think_pre_filter(&crate::ai::Stimulus::new(StimulusType::EventTimer));
     }
 
@@ -485,7 +488,10 @@ mod tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
         enter(&mut engine, owner);
-        let ai = engine.ai_mut(owner, "completion fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("completion fixture"));
         ai.current_state = crate::ai::AiState::Sleeping;
         ai.current_substate = crate::ai::Substate::SleepingUnconscious;
         ai.couldnt_reachpoint = true;
@@ -496,7 +502,10 @@ mod tests {
             &LevelAssets::default(),
             owner,
         );
-        let ai = engine.ai(owner, "completed fixture");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("completed fixture"));
         let events: Vec<_> = ai
             .ai_log
             .iter()
@@ -517,7 +526,10 @@ mod tests {
             enter(&mut engine, caller);
         }
         enter(&mut engine, owner);
-        let ai = engine.ai_mut(owner, "deep completion");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("deep completion"));
         ai.couldnt_reachpoint = true;
         ai.already_on_point = true;
         ai.already_turned = true;
@@ -526,7 +538,10 @@ mod tests {
             &LevelAssets::default(),
             owner,
         );
-        let ai = engine.ai(owner, "deep completion result");
+        let ai = engine
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("deep completion result"));
         assert!(
             ai.ai_log.is_empty(),
             "depth-limited completion must not call Think"
