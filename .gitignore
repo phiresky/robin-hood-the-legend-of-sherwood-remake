@@ -2,6 +2,8 @@
 /output/
 /build/
 /target/
+# nested Cargo projects (e.g. scripts/dover_splat_renderer)
+target/
 /android/.gradle/
 /android/build/
 /android/app/build/
@@ -85,3 +87,7 @@ __pycache__/
 /mods/*
 !/mods/multi-team-demos/
 !/mods/timed-ambience-demo/
+
+# local scratch files
+/a
+/test.json
