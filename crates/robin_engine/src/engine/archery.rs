@@ -3025,11 +3025,7 @@ mod tests {
                 ..Default::default()
             },
         }));
-        engine
-            .get_entity_mut(projectile_id)
-            .expect("inserted projectile")
-            .element_data_mut()
-            .clear_layer();
+        engine.elem_mut(projectile_id).clear_layer();
 
         engine.maybe_splash_on_landing(
             &crate::sim_rng::test_context(),
@@ -3436,7 +3432,7 @@ mod tests {
         profiles.soldiers[0].hth_weapon_id = 1;
         profiles.hth_weapons[0].shield = shield_weapon;
 
-        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+        let Entity::Soldier(target) = engine.ent_mut(target_id) else {
             unreachable!()
         };
         target.actor.action_state = ActionState::HoldingShield;
@@ -3458,14 +3454,7 @@ mod tests {
                 Some(target_id),
             ));
         engine.orders.sequence_manager.start_sequence_level(lower);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            target_id,
-            lower,
-            0,
-        );
+        engine.t_instruct_owner(&assets, target_id, lower, 0);
         assert_eq!(
             engine
                 .orders
@@ -3570,7 +3559,7 @@ mod tests {
     fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
-        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(target) else {
             unreachable!()
         };
         soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
@@ -3619,12 +3608,7 @@ mod tests {
         carrier.pc_data_mut().unwrap().carried = Some(target_id);
         carrier.element_data_mut().set_position_map(carrier_pos);
         let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
+        engine.human_mut(target_id).carrier = Some(carrier_id);
         (engine, carrier_id, target_id)
     }
 
@@ -3665,18 +3649,12 @@ mod tests {
         let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine.place(target_id, cached_position);
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
-            .set_position(cached_position);
-        engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .set_material(crate::element::GameMaterial::Grass);
         {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let carrier = engine.ent_mut(carrier_id);
             let elem = carrier.element_data_mut();
             elem.set_layer(1);
             elem.set_obstacle_index(Some(obstacle), Some(plane));
@@ -3693,7 +3671,7 @@ mod tests {
             15,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().layer(), 1);
         assert_eq!(
@@ -3705,12 +3683,10 @@ mod tests {
         assert_eq!(target.element_data().position(), cached_position);
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(
             target.element_data().position().z.to_bits(),
@@ -3728,14 +3704,10 @@ mod tests {
         let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         {
-            let target = engine.get_entity_mut(target_id).unwrap();
+            let target = engine.ent_mut(target_id);
             target.element_data_mut().set_position(carried_position);
         }
-        let carried_map = engine
-            .get_entity(target_id)
-            .unwrap()
-            .element_data()
-            .position_map();
+        let carried_map = engine.map_pos_of(target_id);
 
         let assets = engine.test_runtime_assets();
         engine.apply_completed_corpse_drop(
@@ -3748,7 +3720,7 @@ mod tests {
             0,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position(), carried_position);
         assert_eq!(target.element_data().position_map(), carried_map);
@@ -3756,12 +3728,10 @@ mod tests {
         assert_eq!(target.position_iface().get_plane(), None);
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must commit its delayed position next frame");
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(
             target.element_data().position().z.to_bits(),
@@ -3775,7 +3745,7 @@ mod tests {
         let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
         {
-            let target = engine.get_entity_mut(target_id).unwrap();
+            let target = engine.ent_mut(target_id);
             target.element_data_mut().set_position_map(carried_position);
             assert_eq!(
                 target
@@ -3809,7 +3779,7 @@ mod tests {
             0,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position_map(), carried_position);
         assert!(target.human_data().unwrap().small_repulsive_radius);
@@ -3823,9 +3793,7 @@ mod tests {
         );
 
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .apply_next_delayed_position()
             .expect("outdoor corpse drop must retain its delayed destination");
         assert_eq!(
@@ -3851,12 +3819,10 @@ mod tests {
         let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
         install_corpse_drop_building_sector(&mut engine, 7);
         engine
-            .get_entity_mut(target_id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(target_id)
             .set_material(crate::element::GameMaterial::Leaves);
         {
-            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let carrier = engine.ent_mut(carrier_id);
             let elem = carrier.element_data_mut();
             elem.set_layer(3);
             elem.set_sector(Some(sector));
@@ -3874,7 +3840,7 @@ mod tests {
             4,
         );
 
-        let target = engine.get_entity(target_id).unwrap();
+        let target = engine.ent(target_id);
         assert!(!target.element_data().position_map_delayed);
         assert_eq!(target.element_data().position_map(), carrier_pos);
         assert_eq!(target.element_data().layer(), 3);
@@ -3986,12 +3952,7 @@ mod tests {
         };
         carrier_pc.pc.carried = Some(victim_id);
         let carrier_id = engine.add_test_entity(carrier);
-        engine
-            .get_entity_mut(victim_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .carrier = Some(carrier_id);
+        engine.human_mut(victim_id).carrier = Some(carrier_id);
 
         // A flat solid slab from z=60 through z=70 intersects the exact
         // Shoulder-carry eligibility's vertical segment (z=50..90) at the default
@@ -4115,12 +4076,7 @@ mod tests {
         ));
         element.state = SequenceState::InProgress;
         let sequence = engine.orders.sequence_manager.insert_element(element);
-        engine
-            .get_entity_mut(carrier_id)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .selected_sequence_element =
+        engine.actor_mut(carrier_id).selected_sequence_element =
             Some(crate::sequence::SequenceElementRef::new(sequence, 0));
         let executed =
             engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &assets, carrier_id);
@@ -4154,12 +4110,7 @@ mod tests {
         ));
         let sequence = engine.orders.sequence_manager.insert_element(element);
         let selected = crate::sequence::SequenceElementRef::new(sequence, 0);
-        engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .selected_sequence_element = Some(selected);
+        engine.actor_mut(carrier).selected_sequence_element = Some(selected);
 
         crate::abilities::initialize_carry_relationship(
             &mut engine.world.entities,
@@ -4168,13 +4119,13 @@ mod tests {
         );
         engine.apply_ability_carry_done(carrier, target);
 
-        let carrier = engine.get_entity(carrier).unwrap();
+        let carrier = engine.ent(carrier);
         assert_eq!(carrier.pc_data().unwrap().carried, Some(target));
         assert_eq!(
             carrier.actor_data().unwrap().selected_sequence_element,
             Some(selected)
         );
-        let target = engine.get_entity(target).unwrap();
+        let target = engine.ent(target);
         assert_eq!(target.posture(), Posture::Carried);
         assert_eq!(
             target.actor_data().unwrap().action_state,
@@ -4199,13 +4150,13 @@ mod tests {
         let (mut engine, assets, helper, climber) = blocked_shoulder_pair();
         let helper_position = crate::coordinates::MapPoint::new(80.0, 96.0);
         {
-            let helper = engine.get_entity_mut(helper).unwrap();
+            let helper = engine.ent_mut(helper);
             helper.element_data_mut().set_position_map(helper_position);
             helper.element_data_mut().set_direction_instantly(6);
             helper.actor_data_mut().unwrap().execution_frozen = true;
         }
         {
-            let climber_entity = engine.get_entity_mut(climber).unwrap();
+            let climber_entity = engine.ent_mut(climber);
             climber_entity.actor_data_mut().unwrap().execution_frozen = true;
             climber_entity.element_data_mut().sprite.display_order_ref = Some(helper);
             climber_entity
@@ -4221,7 +4172,7 @@ mod tests {
             helper,
         );
 
-        let climber_entity = engine.get_entity(climber).unwrap();
+        let climber_entity = engine.ent(climber);
         assert_eq!(climber_entity.posture(), Posture::Upright);
         assert_eq!(climber_entity.human_data().unwrap().carrier, None);
         assert!(!climber_entity.actor_data().unwrap().execution_frozen);
@@ -4233,7 +4184,7 @@ mod tests {
         assert_eq!(climber_entity.sprite().display_order_ref, Some(helper));
         assert!(climber_entity.sprite().behind_display_order_ref);
         assert_eq!(climber_entity.sprite().display_depth, 0.0);
-        let helper_entity = engine.get_entity(helper).unwrap();
+        let helper_entity = engine.ent(helper);
         assert_eq!(helper_entity.posture(), Posture::HelpingToClimb);
         assert_eq!(helper_entity.pc_data().unwrap().carried, None);
         assert!(!helper_entity.actor_data().unwrap().execution_frozen);

@@ -59,8 +59,8 @@ fn retired_seek_crossing_preserves_increment_and_direction() {
         if state == SequenceState::InProgress {
             engine.select_sequence_element(owner, Some((seq_id, 0)));
         }
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
-        let pi = engine.get_entity(owner).unwrap().position_iface();
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
+        let pi = engine.ent(owner).position_iface();
         if state == SequenceState::Terminated {
             assert_eq!(pi.raw_increment_map(), MapVec::new(1.0, 0.0));
             assert_eq!(pi.get_direction_goal().as_u8(), 4);

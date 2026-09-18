@@ -67,11 +67,10 @@ mod tests {
             (102.0, 100.0, 0.0),
             (103.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[3])
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0));
+        engine.place(
+            ids[3],
+            crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0),
+        );
         engine.initialize_patrol_for_npc(&assets, ids[0]);
         assert_eq!(
             engine
@@ -136,13 +135,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(ids[2], Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         assert_eq!(
             engine.live_ai_position(ids[2]).map_point(),
             MapPoint::new(100.0, 99.0)
@@ -178,19 +171,9 @@ mod tests {
             (130.0, 100.0, 0.0),
             (140.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[1])
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .current_state = AiState::Attacking;
-        engine
-            .get_entity_mut(ids[2])
-            .unwrap()
-            .element_data_mut()
-            .active = false;
-        let dead = engine.get_entity_mut(ids[4]).unwrap();
+        engine.enemy_mut(ids[1]).base.current_state = AiState::Attacking;
+        engine.set_active(ids[2], false);
+        let dead = engine.ent_mut(ids[4]);
         dead.element_data_mut().active = false;
         dead.npc_data_mut().unwrap().life_points = 0;
         crate::sight_obstacle::begin_parity_visibility_capture();

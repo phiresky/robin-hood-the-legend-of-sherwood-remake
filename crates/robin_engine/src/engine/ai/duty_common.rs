@@ -152,7 +152,7 @@ mod tests {
     fn facing_a_fractionally_elevated_target_registers_the_integral_direction() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(
@@ -194,7 +194,7 @@ mod tests {
     fn facing_elevation_sentinel_resolves_target_ground_height() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(1000.0, 500.0, 0.0));
@@ -366,13 +366,7 @@ mod tests {
                 .sequence_manager
                 .start_sequence_level(sequence);
             engine.select_sequence_element(chief, Some((sequence, 0)));
-            engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                &mut Vec::new(),
-                sequence,
-                0,
-            );
+            engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
             enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
             engine.execute_common_ai_duty(
                 &crate::sim_rng::test_context(),
@@ -827,8 +821,7 @@ mod tests {
         ai.forced_attentive = true;
         ai.base.current_state = AiState::Sleeping;
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .ai_actor_data_mut()
             .unwrap()
             .eye_status = crate::element::EyeStatus::Closed;
@@ -916,7 +909,7 @@ mod tests {
             let (mut engine, mut assets, ids) = fixture(3);
             let (archer, bearer) = (ids[0], ids[1]);
             std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].shield = true;
-            let entity = engine.get_entity_mut(bearer).unwrap();
+            let entity = engine.ent_mut(bearer);
             let mut conversion = (*entity.element_data().sprite.conversion).clone();
             conversion.resize(
                 conversion

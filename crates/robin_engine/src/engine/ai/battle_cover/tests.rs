@@ -35,9 +35,7 @@ fn fixture(points: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for &id in &ids {
         engine
-            .get_entity_mut(id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(id)
             .set_sector_topology(Some(sector), sector.arena_index());
     }
     std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
@@ -116,13 +114,7 @@ fn pride_range_uses_close_body_during_door_pass() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(target, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     assert_eq!(
         engine.live_ai_position(target).map_point(),
         MapPoint::new(2301.0, 381.0)

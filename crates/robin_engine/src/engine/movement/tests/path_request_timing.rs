@@ -118,8 +118,7 @@ mod suite {
         route.append_element(pass);
         route.append_element(route_assert);
         route.append_element(route_move);
-        let route_id =
-            engine.launch_sequence(&crate::sim_rng::test_context(), &LevelAssets::new(), route);
+        let route_id = engine.t_launch_sequence(&LevelAssets::new(), route);
 
         assert!(
             engine
@@ -128,20 +127,8 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            0,
-        );
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, route_id, 0);
+        engine.t_element_terminated(&assets, route_id, 0);
         assert!(
             engine
                 .orders
@@ -149,20 +136,8 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_some()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            1,
-        );
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            route_id,
-            1,
-        );
+        engine.t_element_in_progress(&assets, route_id, 1);
+        engine.t_element_terminated(&assets, route_id, 1);
 
         let mut postponed =
             SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
@@ -180,11 +155,7 @@ mod suite {
         *layer = 2;
         *sector = crate::position_interface::SectorHandle::new(88);
         *tolerance = 30.0;
-        let postponed_id = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            postponed,
-        );
+        let postponed_id = engine.t_launch_element(&LevelAssets::new(), postponed);
 
         assert!(has_deferred_post_door_route_continuation(
             &engine.orders.sequence_manager,

@@ -35,7 +35,7 @@ fn ale_competition_uses_first_qualifying_npc_registration_and_one_los_query() {
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let sector = engine.live_ai_position(owner).sector;
     for (id, x) in [(first, 200.0), (second, 300.0)] {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity
             .element_data_mut()
@@ -47,7 +47,7 @@ fn ale_competition_uses_first_qualifying_npc_registration_and_one_los_query() {
         ai.current_substate = Substate::WonderingAleReactiontime;
         ai.interesting_object = Some(AiEntityHandle::new(bottle.index()));
     }
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity.element_data_mut().active = true;
     entity.element_data_mut().set_direction_instantly(
         crate::position_interface::vector_to_sector_0_to_15_iso(1.0, 0.0),
@@ -78,11 +78,7 @@ fn ale_competition_uses_first_qualifying_npc_registration_and_one_los_query() {
 fn inactive_ale_approach_faces_current_bottle_position() {
     let (mut engine, assets, owner, _) = fixture();
     let bottle = add_ale(&mut engine, owner, 400.0, 300.0);
-    engine
-        .get_entity_mut(bottle)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(bottle, false);
     let ai = engine.observation_ai_mut(owner);
     ai.base.current_state = AiState::Wondering;
     ai.base.current_substate = Substate::WonderingApproachingAle;
@@ -255,11 +251,7 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
 }
 
 fn place(engine: &mut EngineInner, id: EntityId, point: WorldPoint3D) {
-    engine
-        .get_entity_mut(id)
-        .unwrap()
-        .element_data_mut()
-        .set_position(point);
+    engine.place(id, point);
 }
 
 fn door_position(engine: &mut EngineInner, actor: EntityId, point: MapPoint) {
@@ -303,13 +295,7 @@ fn door_position(engine: &mut EngineInner, actor: EntityId, point: MapPoint) {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 }
 
 #[test]
@@ -359,12 +345,7 @@ fn moving_sighting_approach_radius_uses_raw_stretched_world_distance() {
         if let Some(point) = door {
             door_position(&mut engine, owner, point);
         }
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .action_state = ActionState::MovingFast;
+        engine.set_action_state_of(owner, ActionState::MovingFast);
         engine.execute_ai_seen_enemy(
             &crate::sim_rng::test_context(),
             &assets,
@@ -526,18 +507,8 @@ fn moving_sighting_rereads_target_after_state_callback() {
     use crate::natives::{NativeFn, ScriptHandleCodec};
     use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, owner, target) = fixture();
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::MovingFast;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .script_class = "MoveObserved".into();
+    engine.set_action_state_of(owner, ActionState::MovingFast);
+    engine.actor_mut(owner).script_class = "MoveObserved".into();
     assets.scripts.location_count = 1;
     assets.scripts.point_count = 1;
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);

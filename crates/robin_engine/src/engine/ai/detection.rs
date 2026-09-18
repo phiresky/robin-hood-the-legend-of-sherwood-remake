@@ -2501,13 +2501,7 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
         engine.select_sequence_element(target, Some((sequence, 0)));
         assert!(selected_actor_is_passing_door(

@@ -669,7 +669,7 @@ mod tests {
             (ally, 230.0),
             (contributed, 210.0),
         ] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity.element_data_mut().set_sector(Some(sector));
             entity
                 .element_data_mut()
@@ -677,8 +677,7 @@ mod tests {
             entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         }
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .ai_actor_data_mut()
             .unwrap()
             .view_radius = 500;
@@ -885,11 +884,7 @@ mod tests {
     #[test]
     fn observe_selection_keeps_the_fractional_courage_threshold() {
         let (mut engine, mut assets, owner, personal, _, _) = battle_fixture();
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.forced_next_battle_decision = Decision::None;
         ai.base.list_us = vec![owner.index()];
         ai.list_them = vec![personal.index()];
@@ -925,20 +920,9 @@ mod tests {
             .global
             .primary_target_multiplicity_scratch
             .insert(contributed.index(), 7);
-        engine
-            .get_entity_mut(ally)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(personal);
+        engine.human_mut(ally).opponents.push(personal);
         // The first owner's personal reset touches only its actual enemy list.
-        engine
-            .get_entity_mut(ally)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .list_them = vec![contributed.index()];
+        engine.enemy_mut(ally).list_them = vec![contributed.index()];
         engine.prepare_live_battle_decisions(&assets, ally);
         assert_eq!(
             engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
@@ -959,8 +943,7 @@ mod tests {
     fn rejected_shot_rebuilds_live_claims_before_the_next_selector() {
         let (mut engine, mut assets, owner, personal, ally, contributed) = battle_fixture();
         let physical_profile = engine
-            .get_entity(owner)
-            .unwrap()
+            .ent(owner)
             .soldier_data()
             .unwrap()
             .soldier_profile_index;
@@ -969,11 +952,7 @@ mod tests {
         profiles.bows.resize_with(1, Default::default);
         profiles.bows[0].has_long_shoot = false;
         profiles.bows[0].normal_shoot.range = 0;
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.list_them = vec![personal.index(), contributed.index()];
         ai.base.list_us = vec![owner.index(), ally.index()];
         engine
@@ -996,13 +975,7 @@ mod tests {
             engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
             0
         );
-        engine
-            .get_entity_mut(ally)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .current_substate = Substate::AttackingBowAiming;
+        engine.enemy_mut(ally).base.current_substate = Substate::AttackingBowAiming;
         assert_eq!(engine.propose_live_shot_target(&sim, &assets, owner), None);
         assert_eq!(
             engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
@@ -1084,11 +1057,7 @@ mod tests {
             .expect_entity(first, "first target")
             .element_data()
             .position();
-        engine
-            .get_entity_mut(second)
-            .unwrap()
-            .element_data_mut()
-            .set_position(position);
+        engine.place(second, position);
         engine
             .world
             .entities
@@ -1122,11 +1091,7 @@ mod tests {
     #[test]
     fn ally_admission_reads_current_positions_and_state() {
         let (mut engine, assets, owner, _, ally, contributed) = battle_fixture();
-        engine
-            .get_entity_mut(ally)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(1500.0, 200.0, 0.0));
+        engine.place(ally, WorldPoint3D::new(1500.0, 200.0, 0.0));
         let (_, inputs, _) = engine.prepare_live_battle_decisions(&assets, owner);
         assert_eq!(inputs.friends_nearer_to_enemy, 0);
         assert!(
@@ -1137,11 +1102,7 @@ mod tests {
                 .list_them
                 .contains(&contributed.index())
         );
-        engine
-            .get_entity_mut(ally)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(230.0, 200.0, 0.0));
+        engine.place(ally, WorldPoint3D::new(230.0, 200.0, 0.0));
         engine
             .world
             .entities
@@ -1188,7 +1149,7 @@ mod tests {
     fn live_ally_scan_preserves_interleaved_pc_and_soldier_registration() {
         let (mut engine, assets, owner, first_pc, ally, second_pc) = battle_fixture();
         for id in [first_pc, second_pc] {
-            let Entity::Pc(pc) = engine.get_entity_mut(id).unwrap() else {
+            let Entity::Pc(pc) = engine.ent_mut(id) else {
                 unreachable!()
             };
             pc.pc.cached_camp = Camp::Lacklandists;
@@ -1257,12 +1218,7 @@ mod tests {
             .expect_enemy_ai_mut(ally, format_args!("idle ally"))
             .base
             .primary_target = None;
-        engine
-            .get_entity_mut(personal)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .unconscious = true;
+        engine.human_mut(personal).unconscious = true;
         let (_, inputs, unconscious) = engine.prepare_live_battle_decisions(&assets, owner);
         assert_eq!(inputs.num_enemies_i_can_see, 0);
         assert_eq!(unconscious, vec![personal.index()]);

@@ -59,13 +59,7 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(target, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
         assert_eq!(
             engine.live_ai_position(target).map_point(),
             MapPoint::new(1158.0, 1627.0)

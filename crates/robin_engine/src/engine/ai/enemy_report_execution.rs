@@ -703,18 +703,14 @@ mod tests {
         engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
         let civilian = engine.add_test_entity(make_test_civilian(crate::element::Posture::Upright));
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
-        let Entity::Civilian(actor) = engine.get_entity_mut(civilian).unwrap() else {
+        let Entity::Civilian(actor) = engine.ent_mut(civilian) else {
             unreachable!()
         };
         let mut friendly = crate::ai_friendly::FriendlyAi::new(civilian.index());
         friendly.base.current_state = AiState::Fleeing;
         friendly.base.current_substate = Substate::FleeingHiding;
         actor.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(friendly));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(MapPoint::new(2_006.434_9, 1_735.375_2));
+        engine.place_map(owner, MapPoint::new(2_006.434_9, 1_735.375_2));
         let ai = engine
             .world
             .entities

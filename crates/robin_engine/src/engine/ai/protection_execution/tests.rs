@@ -313,7 +313,7 @@ fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for &id in &ids {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_sector_topology(Some(sector), sector.arena_index());
@@ -588,13 +588,7 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(passing, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     assert_eq!(engine.live_ai_position(passing).x, 277.0);
     engine
         .world
@@ -912,13 +906,7 @@ fn periodic_phalanx_fixture(
         .sequence_manager
         .start_sequence_level(selected);
     engine.select_sequence_element(owner, Some((selected, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        selected,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), selected, 0);
     engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
     (engine, assets, owner)
 }

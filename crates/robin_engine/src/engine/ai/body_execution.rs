@@ -377,7 +377,7 @@ mod tests {
             engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         let body = engine.add_test_entity(make_test_civilian(Posture::Leisure));
         for (id, x) in [(owner, 100.0), (body, 400.0)] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity
                 .element_data_mut()
                 .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -421,7 +421,7 @@ mod tests {
         element.kind = ElementKind::ObjectNet;
         element.active = active;
         element.set_position(WorldPoint3D::new(x, 100.0, 0.0));
-        element.set_sector(engine.get_entity(victim).unwrap().element_data().sector());
+        element.set_sector(engine.sector_of(victim));
         engine.add_test_entity(Entity::Net(ElementNet {
             element,
             object: ObjectData {
@@ -441,12 +441,7 @@ mod tests {
     fn examine_body_selects_live_covering_net_and_current_radius() {
         for crumpled in [false, true] {
             let (mut engine, assets, owner, body) = fixture();
-            engine
-                .get_entity_mut(body)
-                .unwrap()
-                .human_data_mut()
-                .unwrap()
-                .stuck_under_nets_counter = 1;
+            engine.human_mut(body).stuck_under_nets_counter = 1;
             covering_net(&mut engine, body, 125.0, false, false);
             let farther = covering_net(&mut engine, body, 450.0, true, false);
             let chosen = covering_net(&mut engine, body, 350.0, true, crumpled);
@@ -501,8 +496,7 @@ mod tests {
         let mut down = make_test_ai_soldier(crate::element::Camp::Lacklandists);
         down.element_data_mut()
             .set_position(WorldPoint3D::new(658.0, 100.0, 0.0));
-        down.element_data_mut()
-            .set_sector(engine.get_entity(owner).unwrap().element_data().sector());
+        down.element_data_mut().set_sector(engine.sector_of(owner));
         down.human_data_mut().unwrap().unconscious = true;
         let down = engine.add_test_entity(down);
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -529,7 +523,7 @@ mod tests {
     fn net_completion_distinguishes_awake_civilians_from_dead_or_unconscious_bodies() {
         for (dead, unconscious) in [(false, false), (true, false), (false, true)] {
             let (mut engine, assets, owner, body) = fixture();
-            let entity = engine.get_entity_mut(body).unwrap();
+            let entity = engine.ent_mut(body);
             entity.human_data_mut().unwrap().unconscious = unconscious;
             entity.npc_data_mut().unwrap().life_points = if dead { 0 } else { 50 };
             engine.execute_ai_body_reaction(
@@ -558,12 +552,7 @@ mod tests {
     #[test]
     fn net_completion_rechecks_remaining_covering_nets_before_body_classification() {
         let (mut engine, assets, owner, body) = fixture();
-        engine
-            .get_entity_mut(body)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .stuck_under_nets_counter = 1;
+        engine.human_mut(body).stuck_under_nets_counter = 1;
         let net = covering_net(&mut engine, body, 350.0, true, false);
         engine.execute_ai_body_reaction(
             &crate::sim_rng::test_context(),
@@ -605,8 +594,7 @@ mod tests {
                 |profile| profile.duty = duty,
             );
             let profile = engine
-                .get_entity(owner)
-                .unwrap()
+                .ent(owner)
                 .soldier_data()
                 .unwrap()
                 .soldier_profile_index;

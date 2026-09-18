@@ -35,16 +35,8 @@ mod tests {
             make_test_pc(crate::element::Posture::SimulatingBeggar)
         });
         for (id, x) in [(owner, 100.0), (beggar, 140.0)] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_sector(Some(sector));
+            engine.place(id, crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
+            engine.elem_mut(id).set_sector(Some(sector));
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -206,19 +198,14 @@ mod tests {
         let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         let assets = LevelAssets::new();
         for (id, x) in [(owner, 100.0), (target, 1000.0)] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
+            engine.place(id, crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
         }
         let position = engine.live_ai_position(owner);
         assert!(!engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0));
+        engine.place(
+            target,
+            crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0),
+        );
         assert!(engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
         engine
             .world

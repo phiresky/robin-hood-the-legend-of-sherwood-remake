@@ -50,20 +50,15 @@ fn turn_directions(engine: &EngineInner, owner: EntityId) -> Vec<u32> {
 #[test]
 fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
     let (mut engine, assets, owner, _) = fixture(AiState::Seeking, Substate::SeekingSeekpoint);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(
+    engine.place(
+        owner,
+        WorldPoint3D::new(
             f32::from_bits(0x4326_9901),
             f32::from_bits(0x43a1_5511),
             f32::from_bits(0x4210_0107),
-        ));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(4);
+        ),
+    );
+    engine.face(owner, 4);
     let position = Position {
         x: f32::from_bits(0x428b_1027),
         y: f32::from_bits(0x43af_c940),
@@ -94,16 +89,8 @@ fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
 #[test]
 fn zonk_keeps_absent_sector_and_layer_impact() {
     let (mut engine, assets, owner, _) = fixture(AiState::Default, Substate::DefaultOnPost);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(317.8, 1196.001, 480.00104));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(4);
+    engine.place(owner, WorldPoint3D::new(317.8, 1196.001, 480.00104));
+    engine.face(owner, 4);
     let position = Position {
         x: 341.81934,
         y: 716.62885,
@@ -305,17 +292,8 @@ fn tower_alert_faces_caller_moved_by_state_callback() {
     use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, owner, caller) =
         fixture(AiState::Default, Substate::DefaultOnPost);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .script_class = "MoveCaller".into();
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(0);
+    engine.actor_mut(owner).script_class = "MoveCaller".into();
+    engine.face(owner, 0);
     assets.scripts.location_count = 1;
     assets.scripts.point_count = 1;
     assets.scripts.location_positions = std::sync::Arc::new(vec![(100.0, 600.0)]);

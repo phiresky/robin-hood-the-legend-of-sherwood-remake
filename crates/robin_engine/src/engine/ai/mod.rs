@@ -878,7 +878,7 @@ mod panic_boundary_tests {
             crate::ai::AlertLevel::Red,
         );
 
-        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        let ai = engine.ai_ctrl(npc_id);
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.current_substate, crate::ai::Substate::FleeingHiding);
         assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Yellow);
@@ -892,11 +892,7 @@ mod panic_boundary_tests {
         let mut engine = EngineInner::new();
         let npc_id = engine.add_test_entity(enemy_soldier());
         {
-            let ai = engine
-                .get_entity_mut(npc_id)
-                .unwrap()
-                .ai_controller_mut()
-                .unwrap();
+            let ai = engine.ai_ctrl_mut(npc_id);
             ai.current_state = crate::ai::AiState::Fleeing;
             ai.current_substate = crate::ai::Substate::FleeingPanic;
             ai.view_alert_status = crate::ai::AlertLevel::Red;
@@ -913,7 +909,7 @@ mod panic_boundary_tests {
             crate::ai::AlertLevel::Red,
         );
 
-        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        let ai = engine.ai_ctrl(npc_id);
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
         assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
         assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
@@ -953,7 +949,7 @@ mod panic_boundary_tests {
                     .all(|site| *site == crate::sim_rng::RngSite::AiPanic),
             "the synchronous call must retain Panic's direction/distance draws: {draws:?}"
         );
-        let ai = engine.get_entity(npc_id).unwrap().ai_controller().unwrap();
+        let ai = engine.ai_ctrl(npc_id);
         assert_eq!(ai.current_state, crate::ai::AiState::Fleeing);
     }
 }
@@ -2262,7 +2258,7 @@ mod ai_view_position_sector_tests {
             position.sector.unwrap().arena_index(),
             SectorIndex::new(second)
         );
-        let interface = engine.get_entity(target).unwrap().position_iface();
+        let interface = engine.ent(target).position_iface();
         assert_eq!(interface.get_sector_topology().1, SectorIndex::new(second));
         assert_eq!(
             interface.get_goal_sector_topology().1,
@@ -2322,10 +2318,7 @@ mod ai_view_position_sector_tests {
             human: Default::default(),
             pc: Default::default(),
         }));
-        let element = engine
-            .get_entity_mut(target)
-            .expect("test PC exists")
-            .element_data_mut();
+        let element = engine.elem_mut(target);
         element.active = true;
         element.set_position_map(MapPoint::new(150.0, 150.0));
         element.set_layer(2);
@@ -2343,12 +2336,8 @@ mod ai_view_position_sector_tests {
                 .and_then(|sector| sector.arena_index()),
             SectorIndex::new(goal)
         );
-        let forecast_input = extract_exact_forecast_input(
-            &engine,
-            engine.get_entity(target).expect("test PC exists"),
-            false,
-        )
-        .expect("PC has forecast input");
+        let forecast_input = extract_exact_forecast_input(&engine, engine.ent(target), false)
+            .expect("PC has forecast input");
         assert_eq!(
             forecast_input
                 .sector_handle
@@ -2436,10 +2425,7 @@ mod ai_view_position_sector_tests {
             human: Default::default(),
             pc: Default::default(),
         }));
-        let target_element = engine
-            .get_entity_mut(target)
-            .expect("test PC exists")
-            .element_data_mut();
+        let target_element = engine.elem_mut(target);
         target_element.set_position_map(MapPoint::new(150.0, 150.0));
         target_element.set_layer(2);
         target_element.set_sector(crate::position_interface::SectorHandle::new(88));
@@ -2450,12 +2436,8 @@ mod ai_view_position_sector_tests {
                 .and_then(|sector| sector.arena_index()),
             None
         );
-        let forecast_input = extract_exact_forecast_input(
-            &engine,
-            engine.get_entity(target).expect("test PC exists"),
-            false,
-        )
-        .expect("PC has forecast input");
+        let forecast_input = extract_exact_forecast_input(&engine, engine.ent(target), false)
+            .expect("PC has forecast input");
         assert_eq!(
             forecast_input
                 .sector_handle

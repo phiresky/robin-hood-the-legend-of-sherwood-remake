@@ -204,7 +204,7 @@ mod tests {
             (targets[0], first),
             (targets[1], second),
         ] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity.element_data_mut().set_sector(Some(sector));
             entity
                 .element_data_mut()
@@ -213,8 +213,7 @@ mod tests {
             entity.human_data_mut().unwrap().unconscious = id != owner;
         }
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .ai_actor_data_mut()
             .unwrap()
             .view_radius = 500;
@@ -310,11 +309,7 @@ mod tests {
             enemy.base.current_substate,
             Substate::AttackingApproachingSleepingEnemy
         );
-        engine
-            .get_entity_mut(targets[0])
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(1378.0, 252.0, 0.0));
+        engine.place(targets[0], WorldPoint3D::new(1378.0, 252.0, 0.0));
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 
@@ -328,16 +323,8 @@ mod tests {
             .expect_enemy_ai_mut(owner, format_args!("test sleeper order"))
             .list_them = targets.map(|id| id.index()).to_vec();
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
-        let first_position = engine
-            .get_entity(targets[0])
-            .unwrap()
-            .element_data()
-            .position();
-        engine
-            .get_entity_mut(targets[1])
-            .unwrap()
-            .element_data_mut()
-            .set_position(first_position);
+        let first_position = engine.pos_of(targets[0]);
+        engine.place(targets[1], first_position);
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
     }
 }

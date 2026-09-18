@@ -81,16 +81,12 @@ fn give_flight(
     inc_y: f32,
     frames: u16,
 ) {
-    engine
-        .get_entity_mut(flyer)
-        .expect("test flight owner exists")
-        .element_data_mut()
-        .sprite
-        .scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
-        frame_ids: vec![0, 1],
-        ..Default::default()
-    }]);
-    let flyer_pos = engine.get_entity(flyer).unwrap().element_data().position();
+    engine.elem_mut(flyer).sprite.scripts =
+        std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![0, 1],
+            ..Default::default()
+        }]);
+    let flyer_pos = engine.pos_of(flyer);
 
     // Combat flight belongs to the live falling order's execution
     // arm after its START edge has changed posture to Flying.
@@ -124,13 +120,7 @@ fn give_flight(
         .unwrap()
         .antagonist = Some(antagonist);
     engine.select_sequence_element(flyer, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::default(), sequence, 0);
     engine.publish_selected_order_as_installed(flyer);
 
     if let Some(entity) = engine.world.entities.get_mut(flyer) {
@@ -184,7 +174,7 @@ fn initialized_hit_flight_delta(
     engine: &EngineInner,
     victim: EntityId,
 ) -> crate::coordinates::MapPoint {
-    let victim = engine.get_entity(victim).unwrap();
+    let victim = engine.ent(victim);
     let goal = victim.position_iface().world_goal();
     let position = victim.element_data().position_map();
     crate::coordinates::MapPoint::new(goal.x - position.x, goal.y - goal.z - position.y)
@@ -193,13 +183,9 @@ fn initialized_hit_flight_delta(
 fn authorize_test_hit_flight(engine: &mut EngineInner, victim: EntityId) {
     engine.world.fast_grid_mut().size_map(4, 4);
     engine.world.fast_grid_mut().allocate_layers(1);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .position_iface_mut()
-        .set_move_box(crate::coordinates::MoveBox::from_coords(
-            -5.0, -5.0, 5.0, 5.0,
-        ));
+    engine.ent_mut(victim).position_iface_mut().set_move_box(
+        crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
+    );
 }
 
 fn assets_with_sword_profile(energy: u16, max_distance: u16) -> LevelAssets {
@@ -246,7 +232,7 @@ fn make_enemy_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
     let target = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
 
     {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(attacker) else {
             unreachable!()
         };
         soldier.actor.action_state = ActionState::WaitingSword;
@@ -260,7 +246,7 @@ fn make_enemy_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
         ai.hth_weapon_id = 1;
     }
     {
-        let target_entity = engine.get_entity_mut(target).unwrap();
+        let target_entity = engine.ent_mut(target);
         target_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         target_entity
             .human_data_mut()
@@ -293,7 +279,7 @@ fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, Entity
         (attacker, target, crate::element::Camp::Custom(2)),
         (target, attacker, crate::element::Camp::Custom(3)),
     ] {
-        let Entity::Pc(pc) = engine.get_entity_mut(owner).unwrap() else {
+        let Entity::Pc(pc) = engine.ent_mut(owner) else {
             unreachable!()
         };
         pc.actor.action_state = ActionState::WaitingSword;
@@ -364,10 +350,7 @@ fn assets_with_nonstraight_profile(
 }
 
 fn soldier_life(engine: &EngineInner, soldier_id: EntityId) -> i16 {
-    match engine
-        .get_entity(soldier_id)
-        .expect("test soldier must remain present")
-    {
+    match engine.ent(soldier_id) {
         Entity::Soldier(soldier) => soldier.npc.life_points,
         _ => panic!("test victim must be a soldier"),
     }
@@ -401,13 +384,7 @@ fn install_test_melee_order(
         .sequence_manager
         .push_order_on(sequence, 0, order);
     engine.select_sequence_element(attacker, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::default(), sequence, 0);
 
     let script = crate::sprite_script::SpriteScript {
         action_id: order_type as u16,
@@ -421,7 +398,7 @@ fn install_test_melee_order(
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[order_type as usize] = 0;
-    let entity = engine.get_entity_mut(attacker).unwrap();
+    let entity = engine.ent_mut(attacker);
     let position_iface = entity.element_data().sprite.position_iface.clone();
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -529,13 +506,7 @@ fn dispatch_crowded_cross_sector_swordfight(
     for index in 0..crowding {
         let fighter =
             engine.add_test_entity(make_soldier(wp(index as f32 * 10.0, 120.0), owner_sector));
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(fighter);
+        engine.human_mut(opponent).opponents.push(fighter);
     }
     assert_eq!(
         number_of_table_swordfight_opponents(

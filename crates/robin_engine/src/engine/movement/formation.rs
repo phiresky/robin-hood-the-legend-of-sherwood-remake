@@ -2153,13 +2153,11 @@ mod shared_resolution_tests {
             // A previous actor's synchronous move may alter the next actor's
             // live box before that actor is dispatched.
             engine
-                .get_entity_mut(actors[1])
-                .unwrap()
+                .ent_mut(actors[1])
                 .position_iface_mut()
                 .set_move_box(MoveBox::from_coords(8.0, -2.0, 12.0, 2.0));
             engine
-                .get_entity_mut(actors[1])
-                .unwrap()
+                .ent_mut(actors[1])
                 .position_iface_mut()
                 .set_map_position(MapPoint::new(100.0 + spacing, 100.0));
             let after = resolve(&engine);

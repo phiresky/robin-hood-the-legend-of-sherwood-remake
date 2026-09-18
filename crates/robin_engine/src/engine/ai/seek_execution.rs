@@ -699,7 +699,7 @@ mod tests {
             } else {
                 vec![]
             }];
-            let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+            let Entity::Soldier(soldier) = engine.ent_mut(owner) else {
                 unreachable!()
             };
             soldier.soldier.rider = rider;
@@ -832,11 +832,7 @@ mod tests {
         actor.element_data_mut().set_sector(Some(test_sector()));
         let owner = engine.add_test_entity(actor);
         ai.base.me = owner.index();
-        *engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap() = ai;
+        *engine.enemy_mut(owner) = ai;
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(

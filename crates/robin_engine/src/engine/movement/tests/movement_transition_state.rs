@@ -57,11 +57,7 @@ mod suite {
         );
         post_seek.append_element(enter);
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.seek_target = Some(target);
             actor.post_seek_sequence = Some(post_seek.into_post_seek());
         }
@@ -72,11 +68,7 @@ mod suite {
             Some(owner),
             OrderType::WalkingWithSword,
         );
-        let movement_sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let movement_sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         assert!(
             engine
                 .orders
@@ -91,13 +83,7 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_none()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            movement_sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, movement_sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -381,18 +367,8 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, goal.x, goal.y, order_id));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -414,7 +390,7 @@ mod suite {
                 order_id,
             }),
         );
-        let pi = engine.get_entity(owner).unwrap().position_iface();
+        let pi = engine.ent(owner).position_iface();
         (pi.get_direction().as_u8(), pi.get_direction_goal().as_u8())
     }
 
@@ -576,18 +552,8 @@ mod suite {
         let mut order = Order::new(action, destination.x, destination.y, order_id);
         order.compute_direction = false;
         movement.orders.push_back(order);
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -609,7 +575,7 @@ mod suite {
                 order_id,
             }),
         );
-        let sprite = &engine.get_entity(owner).unwrap().element_data().sprite;
+        let sprite = &engine.elem(owner).sprite;
         assert_eq!(sprite.position_iface.get_direction().as_u8(), 15);
         assert_eq!(sprite.current_row, 15);
     }
@@ -692,18 +658,8 @@ mod suite {
             second_destination.y,
             second_order_id,
         ));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -715,12 +671,8 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
-        let first_tick_forecast = engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .get_forecasted_movement();
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
+        let first_tick_forecast = engine.ent(owner).position_iface().get_forecasted_movement();
         assert_ne!(
             first_tick_forecast,
             crate::coordinates::WorldVec3D::ZERO,
@@ -748,7 +700,7 @@ mod suite {
             first_order_id
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
         assert_eq!(
             engine
                 .get_entity(owner)
@@ -760,7 +712,7 @@ mod suite {
             "the transition remains nonterminal while its turning slowdown leaves the goal ahead"
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
         assert_eq!(
             engine
@@ -958,18 +910,8 @@ mod suite {
             old_goal.y,
             engine.orders.allocate_order_id(),
         ));
-        let outgoing_sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            outgoing,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            outgoing_sequence,
-            0,
-        );
+        let outgoing_sequence = engine.t_launch_element(&LevelAssets::new(), outgoing);
+        engine.t_element_in_progress(&assets, outgoing_sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -981,7 +923,7 @@ mod suite {
             Some((outgoing_sequence, 0)),
         );
         {
-            let entity = engine.get_entity_mut(owner).unwrap();
+            let entity = engine.ent_mut(owner);
             entity.position_iface_mut().set_map_goal(old_goal);
         }
         outgoing_sequence
@@ -1214,11 +1156,7 @@ mod suite {
             "fixture must select the authored destination endpoint, not the source-side transition-distance continuation"
         );
         engine.tick_actor_owner_envelopes(sim, assets);
-        let installed_goal = engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal();
+        let installed_goal = engine.ent(owner).position_iface().map_goal();
         assert!(
             (installed_goal.x - new_goal.x).abs() <= 0.02
                 && (installed_goal.y - new_goal.y).abs() <= 0.02,
@@ -1334,11 +1272,7 @@ mod suite {
                 OrderType::WalkingUpright,
             );
             stale_movement.state = SequenceState::Terminated;
-            let stale_sequence = engine.launch_element(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                stale_movement,
-            );
+            let stale_sequence = engine.t_launch_element(&LevelAssets::new(), stale_movement);
             let mut completed_callback =
                 SequenceElement::new(2, Command::SpeakHeroReachDestination, Some(owner));
             completed_callback.state = SequenceState::Terminated;
@@ -1370,23 +1304,11 @@ mod suite {
             *destination = MapPoint::new(1381.2336, 427.18604);
             *layer = 1;
             *sector = Some(crate::position_interface::SectorHandle::new(1).unwrap());
-            let incoming_sequence = engine.launch_element(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                incoming,
-            );
-            engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .element_data_mut()
-                .sprite
-                .last_action = OrderType::TransitionWalkingUprightWaitingUpright;
+            let incoming_sequence = engine.t_launch_element(&LevelAssets::new(), incoming);
+            engine.elem_mut(owner).sprite.last_action =
+                OrderType::TransitionWalkingUprightWaitingUpright;
 
-            engine.hourglass_phase_sequences(
-                &crate::sim_rng::test_context(),
-                &mut HostDisplayState::default(),
-                &LevelAssets::new(),
-            );
+            engine.t_hourglass_phase_sequences(&LevelAssets::new());
 
             assert_eq!(engine.actor_command(owner), Command::MoveWaiting);
             assert_eq!(engine.actor_order_type(owner), Some(OrderType::Freezing));
@@ -1461,11 +1383,7 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, 500.0, 428.0, order_id));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         assert!(
             engine
                 .orders
@@ -1480,13 +1398,7 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_none()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -1514,12 +1426,12 @@ mod suite {
 
         // Orientation processing runs before the next engine frame and turns once;
         // the transition's Execute performs the second turn before terminating.
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity.element_data_mut().set_direction_goal(4);
         entity.position_iface_mut().turn();
         engine.tick_actor_owner_envelopes(&sim, &assets);
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(i16::from(entity.position_iface().get_direction()), 4);
         assert_eq!(
             i16::from(entity.position_iface().get_direction_goal()),
@@ -1601,11 +1513,7 @@ mod suite {
             destination.y,
             order_id,
         ));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         assert!(
             engine
                 .orders
@@ -1620,13 +1528,7 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_none()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -1638,9 +1540,9 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(
             entity.element_data().sprite.last_processed_order_id,
             order_id.get(),
@@ -1704,7 +1606,7 @@ mod suite {
             },
             &LevelAssets::new(),
         );
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
 
         assert_eq!(entity.position_iface().map_goal(), MapPoint::ZERO);
         assert_eq!(
@@ -1842,11 +1744,7 @@ mod suite {
             Some(owner),
             Some(target),
         ));
-        let actor = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
+        let actor = engine.actor_mut(owner);
         actor.seek_target = Some(target);
         actor.last_seek_target_position = MapPoint::new(100.0 + distance, 100.0);
         actor.post_seek_sequence = Some(interaction.into_post_seek());
@@ -1882,11 +1780,7 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, 100.0, 100.0, order_id));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         assert!(
             engine
                 .orders
@@ -1901,13 +1795,7 @@ mod suite {
                 .pop_next_hourglass_action()
                 .is_none()
         );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -1931,14 +1819,7 @@ mod suite {
                 &mut crate::engine::HostDisplayState::default(),
                 &assets,
             );
-            if engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .post_seek_sequence
-                .is_none()
-            {
+            if engine.actor(owner).post_seek_sequence.is_none() {
                 return;
             }
         }
@@ -1960,14 +1841,12 @@ mod suite {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 55.8);
         finish_terminal_seek_tick(&mut engine, owner);
         assert_ne!(engine.actor_order_type(owner), Some(OrderType::Hitting));
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert!(actor.post_seek_sequence.is_none());
         assert!(actor.seek_target.is_none());
         let expected = vector_to_sector_0_to_15(
-            engine.get_entity(target).unwrap().ground_position().x
-                - engine.get_entity(owner).unwrap().ground_position().x,
-            engine.get_entity(target).unwrap().ground_position().y
-                - engine.get_entity(owner).unwrap().ground_position().y,
+            engine.ent(target).ground_position().x - engine.ent(owner).ground_position().x,
+            engine.ent(target).ground_position().y - engine.ent(owner).ground_position().y,
         );
         assert_eq!(
             i16::from(
@@ -1992,7 +1871,7 @@ mod suite {
     fn terminal_non_seek_move_does_not_launch_stale_actor_post_seek() {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 16.0);
         let (seq_id, elem_idx) = {
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             let selected = actor.selected_sequence_element.unwrap();
             (selected.sequence_id, selected.element_index)
         };
@@ -2033,7 +1912,7 @@ mod suite {
                 .get_element(seq_id, elem_idx)
                 .is_none_or(|element| element.state != SequenceState::InProgress)
         );
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert!(
             actor.post_seek_sequence.is_some(),
             "ordinary Move must not consume stale actor-owned post-seek state"
@@ -2045,7 +1924,7 @@ mod suite {
     fn looped_seek_stop_transition_rechecks_final_order_after_deleting_followers() {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         let (seq_id, elem_idx) = {
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             let selected = actor.selected_sequence_element.unwrap();
             (selected.sequence_id, selected.element_index)
         };
@@ -2098,17 +1977,13 @@ mod suite {
     fn looped_seek_start_transition_refreshes_before_copied_stop_transition() {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HealCmd, 70.0);
         let (seq_id, elem_idx) = {
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             let selected = actor.selected_sequence_element.unwrap();
             (selected.sequence_id, selected.element_index)
         };
         let stale_target = MapPoint::new(140.0, 100.0);
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.last_seek_target_position = stale_target;
             actor.wait_time = 22;
         }
@@ -2151,19 +2026,12 @@ mod suite {
         let assets = LevelAssets::new();
         for _ in 0..8 {
             engine.tick_actor_owner_envelopes(&sim, &assets);
-            if engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time
-                == 25
-            {
+            if engine.actor(owner).wait_time == 25 {
                 break;
             }
         }
 
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert_eq!(actor.wait_time, 25);
         assert_eq!(
             actor.last_seek_target_position,
@@ -2185,15 +2053,11 @@ mod suite {
     fn terminal_pc_hit_in_live_range_precedes_expired_stale_seek_refresh() {
         let (mut engine, owner, target) = install_terminal_interaction_seek(Command::HitCmd, 20.0);
         let (seq_id, elem_idx) = {
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             let selected = actor.selected_sequence_element.unwrap();
             (selected.sequence_id, selected.element_index)
         };
-        let target_position = engine
-            .get_entity(target)
-            .unwrap()
-            .element_data()
-            .position_map();
+        let target_position = engine.map_pos_of(target);
         let stale_position = MapPoint::new(target_position.x + 100.0, target_position.y);
         let SequenceElementData::Movement {
             element,
@@ -2211,11 +2075,7 @@ mod suite {
         *element = Some(target);
         *destination = stale_position;
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.wait_time = 0;
             actor.last_seek_target_position = stale_position;
         }
@@ -2247,7 +2107,7 @@ mod suite {
         finish_terminal_seek_tick(&mut engine, owner);
 
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::Tying));
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         let actor = entity.actor_data().unwrap();
         assert!(actor.post_seek_sequence.is_none());
         assert!(actor.seek_target.is_none());
@@ -2270,11 +2130,7 @@ mod suite {
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         let seek_sector = crate::position_interface::SectorHandle::new(2).unwrap();
         let (sequence_id, element_index) = {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.seek_target = None;
             actor.continuation.seek_to_point = true;
             actor.continuation.seek_layer = 0;
@@ -2322,7 +2178,7 @@ mod suite {
                 .get_element(sequence_id, element_index)
                 .is_none_or(|element| element.state != SequenceState::InProgress)
         );
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert!(
             actor.post_seek_sequence.is_some(),
             "a stop transition ending outside the point seek's sector must not launch its stale post-seek"
@@ -2335,24 +2191,18 @@ mod suite {
         let assets = LevelAssets::new();
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
         let (old_sequence, old_index) = {
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             let selected = actor.selected_sequence_element.unwrap();
             (selected.sequence_id, selected.element_index)
         };
-        engine.element_interrupted(
-            &crate::sim_rng::test_context(),
+        engine.t_element_interrupted(
             &assets,
-            &mut Vec::new(),
             old_sequence,
             old_index,
             crate::sequence::CascadeFlags::FOLLOWING,
         );
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.post_seek_sequence = None;
         }
 
@@ -2379,15 +2229,14 @@ mod suite {
         *layer = seek_layer;
         *post_seek_sequence = Some(post_seek.into_post_seek());
 
-        let transient =
-            engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), seek);
+        let transient = engine.t_launch_element(&LevelAssets::new(), seek);
         engine.hourglass_phase_sequences(
             &crate::sim_rng::test_context(),
             &mut crate::engine::HostDisplayState::default(),
             &LevelAssets::new(),
         );
 
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert!(actor.continuation.seek_to_point);
         assert_eq!(actor.continuation.seek_layer, seek_layer);
         assert_eq!(
@@ -2451,12 +2300,12 @@ mod suite {
             .unwrap()
             .append_element(SequenceElement::new(2, Command::Wait, Some(owner)));
         {
-            let entity = engine.get_entity_mut(owner).unwrap();
+            let entity = engine.ent_mut(owner);
             entity.position_iface_mut().set_map_goal(destination);
         }
 
         finish_terminal_seek_tick(&mut engine, owner);
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         assert!(actor.post_seek_sequence.is_none());
         assert_eq!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
     }

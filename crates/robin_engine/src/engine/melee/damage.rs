@@ -3787,17 +3787,9 @@ mod net_publication_tests {
                 .build(),
         );
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.ai_ctrl_mut(victim).knocked_out_in_money_fight = true;
         engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .knocked_out_in_money_fight = true;
-        engine
-            .get_entity_mut(friend)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
+            .enemy_mut(friend)
             .money_fight_enemies
             .push(victim.index());
 
@@ -3812,12 +3804,8 @@ mod net_publication_tests {
                 .already_detectable_body
         );
         for owner in [victim, friend] {
-            let list = &engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[crate::element::DetectableType::Body as usize];
+            let list =
+                &engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize];
             assert_eq!(
                 list.iter()
                     .filter(|entry| entry.element == Some(victim))
@@ -3837,12 +3825,8 @@ mod net_publication_tests {
         // Once published, another announcement preserves the existing entries.
         engine.add_detectable_for_all_npc(victim, crate::element::DetectableType::Body);
         for owner in [victim, friend] {
-            let list = &engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[crate::element::DetectableType::Body as usize];
+            let list =
+                &engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize];
             assert_eq!(
                 list.iter()
                     .filter(|entry| entry.element == Some(victim))

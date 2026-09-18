@@ -460,10 +460,7 @@ mod tests {
             pc: PcData::default(),
         }));
 
-        engine
-            .get_entity_mut(corpse)
-            .unwrap()
-            .set_posture(Posture::Upright);
+        engine.ent_mut(corpse).set_posture(Posture::Upright);
         assert_eq!(
             engine.get_entity(corpse).unwrap().element_data().posture(),
             Posture::DeadBack,
@@ -710,10 +707,7 @@ mod tests {
         let removed = engine.add_test_entity(Entity::Civilian(removed));
         let later = engine.add_test_entity(Entity::Civilian(later));
 
-        engine
-            .get_entity_mut(removed)
-            .unwrap()
-            .set_posture(Posture::Upright);
+        engine.ent_mut(removed).set_posture(Posture::Upright);
         engine.update_intersecting_corpses(removed, false);
 
         assert!(
@@ -785,14 +779,8 @@ mod tests {
         let first = engine.add_test_entity(Entity::Civilian(first));
         let second = engine.add_test_entity(Entity::Civilian(second));
 
-        engine
-            .get_entity_mut(first)
-            .unwrap()
-            .set_posture(Posture::Dead);
-        engine
-            .get_entity_mut(second)
-            .unwrap()
-            .set_posture(Posture::Dead);
+        engine.ent_mut(first).set_posture(Posture::Dead);
+        engine.ent_mut(second).set_posture(Posture::Dead);
         engine.process_corpse_intersection_updates();
 
         assert!(
@@ -823,13 +811,10 @@ mod tests {
         standing.actor.is_ignored_for_anti_collision = true;
         let standing = engine.add_test_entity(Entity::Civilian(standing));
 
-        engine
-            .get_entity_mut(standing)
-            .unwrap()
-            .set_posture(Posture::Upright);
+        engine.ent_mut(standing).set_posture(Posture::Upright);
         engine.process_corpse_intersection_update_for(standing);
 
-        let entity = engine.get_entity(standing).unwrap();
+        let entity = engine.ent(standing);
         assert_eq!(
             entity
                 .human_data()

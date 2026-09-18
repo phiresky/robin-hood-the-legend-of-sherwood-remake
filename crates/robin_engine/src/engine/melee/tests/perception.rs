@@ -5,7 +5,7 @@ fn enemy_ai_hero_knockout_runs_shared_ai_cleanup() {
     let mut engine = make_engine();
     let (victim, _) = make_enemy_ai_hero_strike_pair(&mut engine);
     {
-        let entity = engine.get_entity_mut(victim).unwrap();
+        let entity = engine.ent_mut(victim);
         let human = entity.human_data_mut().unwrap();
         human.unconscious = true;
         human.concussion_of_the_brain = 25;
@@ -73,7 +73,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
     let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let opponent = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
 
-    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
+    let Entity::Pc(pc_entity) = engine.ent_mut(pc) else {
         unreachable!()
     };
     pc_entity.human.opponents = vec![opponent].into();
@@ -89,12 +89,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
         ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
         ..Default::default()
     }));
-    engine
-        .get_entity_mut(opponent)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .hth_weapon_id = 1;
+    engine.enemy_mut(opponent).hth_weapon_id = 1;
 
     let mut profiles = ProfileManager::new();
     profiles.hth_weapons.push(HtHWeaponProfile::default());
@@ -114,7 +109,7 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
 
     assert!(engine.delete_opponent(&sim, &assets, pc, opponent));
 
-    let ai = engine.get_entity(pc).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(pc);
     assert_eq!(ai.current_substate, Substate::AttackingQuittingSwordfight);
     assert!(ai.ai_log.iter().any(|entry| {
         entry.line_type == LogLineType::Event

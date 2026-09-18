@@ -347,7 +347,7 @@ mod tests {
                 super::super::battle_decision_observation_tests::fixture(false);
             let installed = installed.map(|action| engine.install_test_order(owner, action));
             engine.install_actor_order(owner, installed);
-            let entity = engine.get_entity_mut(owner).unwrap();
+            let entity = engine.ent_mut(owner);
             entity.sprite_mut().last_action = displayed;
             let actor = entity.actor_data_mut().unwrap();
             actor.action_state = crate::element::ActionState::HoldingShield;

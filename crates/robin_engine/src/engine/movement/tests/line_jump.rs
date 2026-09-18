@@ -318,18 +318,8 @@ mod suite {
             goal.x,
             goal.y,
         ));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -342,15 +332,11 @@ mod suite {
         );
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
         let captures =
             crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
 
-        let position = engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map();
+        let position = engine.map_pos_of(owner);
         let capture = captures
             .into_iter()
             .filter(|capture| capture.entity == owner)
@@ -449,18 +435,8 @@ mod suite {
         movement
             .orders
             .push_back(Order::test_new(OrderType::RunningStairs, goal.x, goal.y));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -473,7 +449,7 @@ mod suite {
         );
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
         let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
@@ -569,18 +545,8 @@ mod suite {
             goal.x - 20.0,
             goal.y + 20.0,
         ));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -629,7 +595,7 @@ mod suite {
         engine.world.static_sight_obstacle_active = vec![true];
 
         crate::movement_diagnostics::begin_parity_movement_capture();
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
         let capture: Vec<_> = crate::movement_diagnostics::take_parity_movement_capture()
             .expect("capture started")
             .into_iter()
@@ -671,7 +637,7 @@ mod suite {
             "the post-first position used by the old Rust code must miss the bond"
         );
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(
             entity
                 .element_data()
@@ -718,7 +684,7 @@ mod suite {
                 .is_empty()
         );
         assert!(engine.world.fast_grid.level.lines[usize::from(line_index)].is_elevation);
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(entity.element_data().obstacle_index(), None);
         assert_eq!(entity.position_iface().get_position().z, 0.0);
     }
@@ -927,18 +893,8 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(transition, position.x, position.y, order_id));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -950,7 +906,7 @@ mod suite {
             Some((sequence, 0)),
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
         assert_eq!(
             engine
@@ -1210,11 +1166,7 @@ mod suite {
         owner_entity.position_iface_mut().set_map_position(start);
         let owner = engine.add_test_entity(owner_entity);
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.continuation.seek_to_point = true;
             actor.continuation.seek_layer = 7;
             actor.continuation.seek_sector = Some(crate::actor_state::ActorSeekSector::Position(
@@ -1278,17 +1230,9 @@ mod suite {
         } else {
             *flags |= MoveFlags::MAP;
         }
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
 
-        let before = engine
-            .get_entity(owner)
-            .expect("fixture owner exists before dispatch")
-            .element_data()
-            .position_map();
+        let before = engine.map_pos_of(owner);
         let _ = engine.dispatch_ordered_move_seek_instruct(
             &crate::sim_rng::test_context(),
             &extraction_test_assets(),
@@ -1297,11 +1241,7 @@ mod suite {
             sequence,
             0,
         );
-        let after = engine
-            .get_entity(owner)
-            .expect("fixture owner exists after dispatch")
-            .element_data()
-            .position_map();
+        let after = engine.map_pos_of(owner);
         let state = engine
             .orders
             .sequence_manager
@@ -1318,7 +1258,7 @@ mod suite {
                         element.owner == Some(owner) && element.command == Command::Wait
                     })
             });
-        let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+        let actor = engine.actor(owner);
         (
             before,
             after,

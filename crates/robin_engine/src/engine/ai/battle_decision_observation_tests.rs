@@ -52,7 +52,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
             target_sector,
         ),
     ] {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -64,11 +64,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
         "battle_observe.scs",
     ));
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingReactiontimeRunning;
     ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -86,12 +82,7 @@ pub(super) fn fixture(disconnected: bool) -> (EngineInner, LevelAssets, EntityId
 fn stop_on_state(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId) {
     use crate::engine::test_support::asm::*;
     use crate::natives::NativeFn;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .script_class = "ObserveStop".into();
+    engine.actor_mut(owner).script_class = "ObserveStop".into();
     let quads = vec![
         q_begin_function(0, 3),
         q_native_call(NativeFn::ThisActor as u32),
@@ -170,13 +161,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
             y: 350.0,
             ..engine.live_ai_position(owner)
         };
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .seek_position = previous_seek;
+        engine.enemy_mut(owner).base.seek_position = previous_seek;
         if stops_move {
             stop_on_state(&mut engine, &assets, owner);
         }
@@ -190,7 +175,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
             false,
         );
         assert_eq!(decision, Some(Decision::Observe));
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(target.index()))
@@ -267,7 +252,7 @@ fn failed_fight_executes_observe_on_the_same_think_stack() {
         false,
     );
     assert_eq!(decision, Some(Decision::Observe));
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.primary_target,
         Some(AiEntityHandle::new(target.index()))

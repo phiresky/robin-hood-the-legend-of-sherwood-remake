@@ -7,11 +7,7 @@ use crate::profiles::ProfileRank;
 fn fixture(substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let (mut engine, mut assets, owner, target) =
         super::battle_decision_observation_tests::fixture(false);
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.base.current_state = substate.ai_state_family().unwrap();
     ai.base.current_substate = substate;
     ai.base.primary_target = None;
@@ -29,21 +25,13 @@ fn soldier(engine: &mut EngineInner, assets: &mut LevelAssets, substate: Substat
         Camp::Lacklandists,
     ));
     let sector = engine.world.fast_grid.level.sectors[0].sector_number;
-    engine
-        .get_entity_mut(id)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(140.0, 100.0, 0.0));
-    engine
-        .get_entity_mut(id)
-        .unwrap()
-        .element_data_mut()
-        .set_sector_topology(
-            crate::position_interface::SectorHandle::new(sector.get() as u16),
-            Some(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
-        );
+    engine.place(id, WorldPoint3D::new(140.0, 100.0, 0.0));
+    engine.elem_mut(id).set_sector_topology(
+        crate::position_interface::SectorHandle::new(sector.get() as u16),
+        Some(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+    );
     crate::engine::complete_test_runtime_fixture(engine, assets);
-    let ai = engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap();
+    let ai = engine.enemy_mut(id);
     ai.base.current_state = substate.ai_state_family().unwrap();
     ai.base.current_substate = substate;
     crate::engine::test_support::actors::edit_enemy_profile(assets, ai, |profile| {
@@ -85,7 +73,7 @@ fn repeated_view_during_battle_preserves_first_enemy_insertion_order() {
                 &stimulus,
             );
         }
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.list_them,
             vec![first.index(), second.index()],
@@ -106,7 +94,7 @@ fn misses_charly_notification_does_not_start_a_search() {
             &Stimulus::new(StimulusType::EventMissesCharly),
         );
         assert!(!handled);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, substate);
         assert!(!ai.seeking_charly);
         assert!(commands(&engine, owner).is_empty());
@@ -157,14 +145,9 @@ fn officer_wait_retains_each_search_family_and_prunes_taken_nets() {
             fixture(Substate::SeekingOfficerWaitForInstructedGroup);
         let member = soldier(&mut engine, &mut assets, state);
         engine.control.frame_counter = 7915;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .alerted_us = vec![member.index()];
+        engine.enemy_mut(owner).alerted_us = vec![member.index()];
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         if state == Substate::SeekingTakingNet {
             assert!(ai.alerted_us.is_empty());
             assert_ne!(
@@ -193,15 +176,11 @@ fn officer_waits_for_approaching_charly_but_finishes_when_search_ends() {
         let (mut engine, mut assets, owner, _) =
             fixture(Substate::SeekingOfficerWaitForInstructedGroup);
         let charly = soldier(&mut engine, &mut assets, state);
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
         ai.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(charly.index()));
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.current_substate == Substate::SeekingOfficerWaitForInstructedGroup,
             wait
@@ -217,23 +196,14 @@ fn officer_missing_unconscious_reporter_increments_without_rearming_timer() {
     let (mut engine, mut assets, owner, _) =
         fixture(Substate::SeekingOfficerWaitForInstructedSoldier);
     let member = soldier(&mut engine, &mut assets, Substate::SeekingSeekpoint);
-    engine
-        .get_entity_mut(member)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    engine.human_mut(member).unconscious = true;
+    let ai = engine.enemy_mut(owner);
     ai.base.antagonist = Some(AiEntityHandle::new(member.index()));
     ai.missed_soldier_timer = 11;
     ai.base.timer_is_running = false;
     ai.base.when_does_timer_ring = 0;
     event(&mut engine, &assets, owner, StimulusType::EventTimer);
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.missed_soldier_timer, 12);
     assert!(!ai.base.timer_is_running);
     assert_eq!(ai.base.when_does_timer_ring, 0);
@@ -242,11 +212,7 @@ fn officer_missing_unconscious_reporter_increments_without_rearming_timer() {
 #[test]
 fn goto_post_registers_facing_before_leaving_attentive_mode() {
     let (mut engine, assets, owner, _) = fixture(Substate::DefaultGotoPost);
-    let ai = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.base.initial_view_direction = 4;
     ai.attentive = true;
     ai.will_be_attentive = true;
@@ -278,7 +244,7 @@ fn unrelated_arrow_and_combat_alert_events_do_not_start_search() {
     ] {
         let (mut engine, assets, owner, _) = fixture(state);
         event(&mut engine, &assets, owner, stimulus);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, state);
         assert!(!ai.base.timer_is_running);
         assert!(commands(&engine, owner).is_empty());
@@ -293,18 +259,13 @@ fn normal_parry_timer_stops_only_normal_parry_and_rearms_twenty_frames() {
         (ActionState::ParryingSwordLow, false),
     ] {
         let (mut engine, assets, owner, _) = fixture(Substate::AttackingSwordfightParade);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .action_state = action;
+        engine.set_action_state_of(owner, action);
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
         assert_eq!(
             commands(&engine, owner).contains(&Command::StopParrySword),
             stop
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.base.when_does_timer_ring, 120);
     }
@@ -327,7 +288,7 @@ fn go_to_officer_call_accepts_default_and_rejects_combat() {
             ),
             accepted
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         if accepted {
             assert_eq!(
                 ai.base.current_substate,
@@ -358,19 +319,11 @@ fn call_alert_keeps_running_macro_for_each_caller_role() {
         if role == 0 {
             crate::engine::test_support::actors::edit_enemy_profile(
                 &mut assets,
-                engine
-                    .get_entity_mut(caller)
-                    .unwrap()
-                    .enemy_ai_mut()
-                    .unwrap(),
+                engine.enemy_mut(caller),
                 |profile| profile.rank = ProfileRank::Officer,
             );
         }
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         if role == 2 {
             crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
                 profile.rank = ProfileRank::Officer
@@ -385,7 +338,7 @@ fn call_alert_keeps_running_macro_for_each_caller_role() {
             owner,
             &Stimulus::with_human(StimulusType::CallAlert, caller.index())
         ));
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert!(ai.base.macro_in_progress);
         assert!(ai.base.macro_timer_is_running);
         assert_eq!(ai.base.when_does_macro_timer_ring, 10054);
@@ -415,7 +368,7 @@ fn rejected_civilian_alert_still_replaces_antagonist() {
         owner,
         &Stimulus::with_human(StimulusType::CallAlert, caller.index())
     ));
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.antagonist,
         Some(AiEntityHandle::new(caller.index()))
@@ -431,7 +384,7 @@ fn group_arrival_compares_raw_direction_before_registering_a_turn() {
         (ActionState::Waiting, 13, 29, true),
     ] {
         let (mut engine, assets, owner, _) = fixture(Substate::SeekingGroupGoToOfficer);
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity.actor_data_mut().unwrap().action_state = action;
         entity
             .position_iface_mut()
@@ -475,20 +428,8 @@ fn group_arrival_compares_raw_direction_before_registering_a_turn() {
 fn apple_interrupt_rule_uses_actual_combat_relationship() {
     for interrupt in [false, true] {
         let (mut engine, assets, owner, target) = fixture(Substate::AttackingSwordfight);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(target);
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(owner);
+        engine.human_mut(owner).opponents.push(target);
+        engine.human_mut(target).opponents.push(owner);
         let mut config = crate::engine::SimConfig {
             item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
             ..Default::default()
@@ -501,7 +442,7 @@ fn apple_interrupt_rule_uses_actual_combat_relationship() {
             owner,
             &Stimulus::with_position(StimulusType::EventApple, Position::default()),
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.current_substate,
             if interrupt {
@@ -531,13 +472,7 @@ fn apple_interrupt_rule_uses_actual_combat_relationship() {
 fn engaged_hit_ignores_existing_opponent_and_friendly_attacker() {
     for friend in [false, true] {
         let (mut engine, mut assets, owner, target) = fixture(Substate::AttackingSwordfight);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(target);
+        engine.human_mut(owner).opponents.push(target);
         let attacker = if friend {
             soldier(&mut engine, &mut assets, Substate::DefaultOnPost)
         } else {
@@ -575,7 +510,7 @@ fn menacing_hit_sets_direction_without_a_turn_sequence() {
         owner,
         &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
     );
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(
         entity.enemy_ai().unwrap().base.current_substate,
         Substate::AttackingReturnToOtherPcAfterMenacing
@@ -596,8 +531,8 @@ fn menacing_hit_sets_direction_without_a_turn_sequence() {
 fn body_arrival_uses_live_distance_and_does_not_turn_toward_a_nearby_corpse() {
     for (distance, dead) in [(20.0, true), (200.0, true), (20.0, false)] {
         let (mut engine, assets, owner, body) = fixture(Substate::SeekingBody);
-        let here = engine.get_entity(owner).unwrap().element_data().position();
-        let entity = engine.get_entity_mut(body).unwrap();
+        let here = engine.pos_of(owner);
+        let entity = engine.ent_mut(body);
         entity.element_data_mut().set_position(WorldPoint3D::new(
             here.x + distance,
             here.y,
@@ -612,15 +547,11 @@ fn body_arrival_uses_live_distance_and_does_not_turn_toward_a_nearby_corpse() {
             pc.pc.life_points = if dead { 0 } else { 100 };
         }
         let body_position = engine.live_ai_position(body);
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.detected_body = Some(AiEntityHandle::new(body.index()));
         ai.base.seek_position = body_position;
         event(&mut engine, &assets, owner, StimulusType::EventReachPoint);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         if dead && distance < 60.0 {
             assert_eq!(
                 ai.base.current_substate,
@@ -656,15 +587,9 @@ fn body_arrival_uses_live_distance_and_does_not_turn_toward_a_nearby_corpse() {
 fn arrow_timer_launches_plain_running_movement_without_near_tolerance() {
     let (mut engine, assets, owner, target) = fixture(Substate::SeekingArrowReactiontime);
     let destination = engine.live_ai_position(target);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .base
-        .seek_position = destination;
+    engine.enemy_mut(owner).base.seek_position = destination;
     event(&mut engine, &assets, owner, StimulusType::EventTimer);
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.base.current_substate, Substate::SeekingArrow);
     assert_eq!(ai.base.last_goto_flags, crate::ai::GotoFlags::RUN);
     assert_eq!(ai.base.last_goto_destination, destination);
@@ -679,15 +604,11 @@ fn bow_transition_states_ignore_coordinate_and_preserve_timer() {
         Substate::AttackingBowAiming,
     ] {
         let (mut engine, assets, owner, _) = fixture(state);
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.timer_is_running = true;
         ai.base.when_does_timer_ring = 777;
         event(&mut engine, &assets, owner, StimulusType::CallCoordinate);
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, state);
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 777);
@@ -717,7 +638,7 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
         let observer = soldier(&mut engine, &mut assets, Substate::SeekingSeekpoint);
         let beggar = civilian(&mut engine);
         let position = engine.live_ai_position(owner);
-        let entity = engine.get_entity_mut(beggar).unwrap();
+        let entity = engine.ent_mut(beggar);
         entity.element_data_mut().active = true;
         entity
             .element_data_mut()
@@ -727,12 +648,7 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
             position.sector.and_then(|s| s.arena_index()),
         );
         for id in [owner, observer] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .npc_data_mut()
-                .unwrap()
-                .detectable_lists[crate::element::DetectableType::Beggar as usize]
+            engine.npc_mut(id).detectable_lists[crate::element::DetectableType::Beggar as usize]
                 .push(crate::element::Detectable {
                     element: Some(beggar),
                     detectable_type: crate::element::DetectableType::Beggar,
@@ -740,12 +656,7 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
                 });
         }
         if already_examining {
-            engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap()
-                .beggar_to_examine = Some(AiEntityHandle::new(beggar.index()));
+            engine.enemy_mut(owner).beggar_to_examine = Some(AiEntityHandle::new(beggar.index()));
         }
         engine.execute_ai_enemy_event(
             &crate::sim_rng::test_context(),
@@ -753,7 +664,7 @@ fn civilian_beggar_sighting_scrubs_every_observer_without_requeuing_current_begg
             owner,
             &Stimulus::with_human(StimulusType::EventSeesBeggar, beggar.index()),
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.beggars_to_control,
             if already_examining {
@@ -810,11 +721,7 @@ fn ale_eligibility_requires_outdoor_beer_preference_or_enabled_reliable_rule() {
                 ..Default::default()
             },
         }));
-        let ai = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         crate::engine::test_support::actors::edit_enemy_profile(&mut assets, ai, |profile| {
             profile.beer = beer
         });
@@ -860,26 +767,16 @@ fn check_instructed_soldier_body_registration(already_registered: bool) {
         Substate::SeekingOfficerWaitForInstructedSoldier,
     );
     let position = engine.live_ai_position(officer);
-    let ai = engine
-        .get_entity_mut(officer)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    let ai = engine.enemy_mut(officer);
     ai.base.detected_body = Some(AiEntityHandle::new(body.index()));
     ai.base.alert_soldiers_point = position;
     ai.base.antagonist = Some(AiEntityHandle::new(owner.index()));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap()
-        .base
-        .antagonist = Some(AiEntityHandle::new(officer.index()));
+    engine.enemy_mut(owner).base.antagonist = Some(AiEntityHandle::new(officer.index()));
     if already_registered {
         engine.execute_ai_add_detectable(owner, body, crate::element::DetectableType::Body);
     }
     event(&mut engine, &assets, owner, StimulusType::EventMyTalk2);
-    let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.base.alert_soldiers_point, position);
     assert_eq!(ai.officers_position, position);
     assert_eq!(
@@ -919,19 +816,15 @@ fn unengaged_hit_uses_live_relationship_instead_of_stale_swordfight_state() {
         for weapon in &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons {
             weapon.distance[crate::weapons::WeaponDistance::Uber as usize] = 70;
         }
-        let here = engine.get_entity(owner).unwrap().element_data().position();
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(here.x + 10.0, here.y, here.z));
+        let here = engine.pos_of(owner);
+        engine.place(target, WorldPoint3D::new(here.x + 10.0, here.y, here.z));
         engine.execute_ai_combat_impact_event(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
             &Stimulus::with_human(StimulusType::EventGotHit, target.index()),
         );
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(
             entity.enemy_ai().unwrap().base.primary_target,
             Some(AiEntityHandle::new(target.index()))
@@ -967,19 +860,9 @@ fn engaged_hit_adds_a_new_hostile_attacker_inline() {
     for weapon in &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons {
         weapon.distance[crate::weapons::WeaponDistance::Uber as usize] = 70;
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents
-        .push(previous);
-    let here = engine.get_entity(owner).unwrap().element_data().position();
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(here.x + 10.0, here.y, here.z));
+    engine.human_mut(owner).opponents.push(previous);
+    let here = engine.pos_of(owner);
+    engine.place(target, WorldPoint3D::new(here.x + 10.0, here.y, here.z));
     engine.execute_ai_combat_impact_event(
         &crate::sim_rng::test_context(),
         &assets,

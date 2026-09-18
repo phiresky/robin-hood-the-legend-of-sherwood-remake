@@ -648,13 +648,7 @@ mod movement_tests {
     #[test]
     fn boredom_outside_on_post_does_not_read_a_retired_order() {
         let (mut engine, assets, owner) = fixture(OrderType::WaitingUpright);
-        let installed = engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order
-            .unwrap();
+        let installed = engine.actor(owner).installed_order.unwrap();
         let orders = &mut engine
             .orders
             .sequence_manager
@@ -668,12 +662,7 @@ mod movement_tests {
         // short circuit independently of the normal installed-order lifetime.
         orders.release_slot(installed.slot);
         orders.clear();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .current_substate = Substate::DefaultGotoPost;
+        engine.ai_ctrl_mut(owner).current_substate = Substate::DefaultGotoPost;
 
         assert!(!engine.default_bored_live(&crate::sim_rng::test_context(), &assets, owner));
     }
@@ -1050,13 +1039,7 @@ mod movement_tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(owner, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
         assert_eq!(
             engine.live_ai_position(owner).map_point(),
             MapPoint::new(500.0, 500.0)
