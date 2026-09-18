@@ -46,23 +46,14 @@ part of campaign provenance.
 - `run_corpus_work_supervised.sh`: bounded supervision of corpus work.
 - `run_distributed_replay_worker.sh`: execute a worker's assigned replay cases.
 - `run_replay_refill_controller.sh`: refill available replay worker capacity.
-- `run_schema16_existing_corpora_orchestrator.sh`: coordinate already captured corpora.
-- `run_schema16_final_validation.sh`: final validation and evidence publication.
-- `run_schema16_onward_corpus_controller.sh`: advance capture/validation campaigns.
-- `run_schema16_onward_handoff_watcher.sh`: watch and hand off completed capture work.
 - `test_parity_orchestration.sh`: aggregate orchestration regression suite.
 - `test_parity_result.py`, `test_replay_state_db.py`, `test_run_*.py`, `test_run_*.sh`: isolated module/driver regressions.
 
-The completed schema16 capture supervisors are archived with their campaign:
-`parity-campaigns/schema16-20260824/run_schema16_corpus_ladder.sh`
-(restart-aware sequential capture ladder) and
-`parity-campaigns/schema16-20260824/run_schema16_distributed_capture.sh`
-(disjoint local/remote save-shard capture and collection). They are campaign
-provenance, not live callers of each other or of the scripts above. Their
-historical recorder hashes and seed defaults are not permission to capture
-arbitrary new inputs. Their workspace defaults resolve from the script
-location; override `SCHEMA16_*_WORKSPACE` and audit directories explicitly for
-a different checkout/campaign.
+The completed schema16 campaign's orchestrators, controllers and capture
+supervisors were removed; recover them from Git history if their provenance is
+needed. `parity-campaigns/schema16-20260824.json` stays as the frozen manifest
+fixture for `parity_campaign.py`, whose script identities name those removed
+drivers, so `--freeze-workspace` needs a checkout that still contains them.
 
 The completed motion-state worktree driver and fixed 98-case schema15 replacement
 validator were removed. Use the current manifest/evidence-based drivers above;
