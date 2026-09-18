@@ -1627,8 +1627,7 @@ mod tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            sequence_id,
-            0,
+            SequenceElementRef::new(sequence_id, 0),
         );
 
         engine.select_pc(
@@ -1785,8 +1784,7 @@ mod tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            shooting_sequence,
-            0,
+            SequenceElementRef::new(shooting_sequence, 0),
         );
 
         engine.set_pc_action_from_message(

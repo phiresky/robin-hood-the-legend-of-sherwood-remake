@@ -11,6 +11,7 @@ use super::commands::SelectionCommandBatchMode;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::engine::TickCtx;
 use crate::player_command::{PlayerCommand, PlayerInput};
+use crate::sequence::SequenceElementRef;
 
 /// Sprite action-conversion table with every action unmapped; tests then map
 /// the few rows their synthetic scripts provide.
@@ -29,7 +30,7 @@ impl EngineInner {
         let element =
             crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(owner));
         let sequence = self.orders.sequence_manager.insert_element(element);
-        self.push_new_order(sequence, 0, action, 0.0, 0.0);
+        self.push_new_order(SequenceElementRef::new(sequence, 0), action, 0.0, 0.0);
         let installed = crate::element::InstalledActorOrder::new(
             crate::sequence::SequenceElementRef::new(sequence, 0),
             self.orders

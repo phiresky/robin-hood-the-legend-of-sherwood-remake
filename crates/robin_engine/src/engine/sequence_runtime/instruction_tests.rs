@@ -2,6 +2,7 @@ use super::*;
 use crate::element::{ActionState, Posture};
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
@@ -65,8 +66,7 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
-        sequence,
-        0
+        SequenceElementRef::new(sequence, 0)
     ));
     let selected = engine
         .world
@@ -126,8 +126,7 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
-        outgoing,
-        0
+        SequenceElementRef::new(outgoing, 0)
     ));
     let mut pending = SequenceElement::new(1, Command::Generic, Some(owner));
     pending.priority = SequencePriority::Normal;
@@ -142,8 +141,7 @@ fn halt_keeps_selection_order_and_goal_installed_by_termination_callback() {
                     TickCtx::new(&crate::sim_rng::test_context(), &callback_assets),
                     &mut Vec::new(),
                     owner,
-                    nested,
-                    0
+                    SequenceElementRef::new(nested, 0)
                 ));
                 engine
                     .ent_mut(owner)
@@ -205,8 +203,7 @@ fn nested_instruction_selection_survives_outer_callback_return() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            outgoing,
-            0
+            SequenceElementRef::new(outgoing, 0)
         ));
         EngineInner::with_condolation_callback(
             move |engine, card| {
@@ -219,8 +216,7 @@ fn nested_instruction_selection_survives_outer_callback_return() {
                         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                         &mut Vec::new(),
                         owner,
-                        nested,
-                        0,
+                        SequenceElementRef::new(nested, 0),
                     ));
                 }
             },
@@ -229,8 +225,7 @@ fn nested_instruction_selection_survives_outer_callback_return() {
                     TickCtx::new(&sim, &assets),
                     &mut Vec::new(),
                     owner,
-                    incoming,
-                    0
+                    SequenceElementRef::new(incoming, 0)
                 ));
             },
         );

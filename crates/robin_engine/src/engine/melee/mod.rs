@@ -49,6 +49,7 @@ use crate::combat::{angle_to_sector, is_sector_between, sector_to_angle};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::engine::TickCtx;
 use crate::entities::Entities;
+use crate::sequence::SequenceElementRef;
 use crate::weapons::SwordStrike;
 #[cfg(test)]
 use crate::{element::Command, sequence::SequenceElementData};
@@ -139,7 +140,10 @@ impl EngineInner {
                             element
                                 .postponed
                                 .map(|reference| (reference.sequence_id, reference.element_index)),
-                            manager.is_registered_to_go(sequence.id, element_index),
+                            manager.is_registered_to_go(SequenceElementRef::new(
+                                sequence.id,
+                                element_index,
+                            )),
                             element
                                 .orders
                                 .iter()

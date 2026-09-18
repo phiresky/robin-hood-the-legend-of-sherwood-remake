@@ -3,6 +3,7 @@
 use super::*;
 use crate::engine::TickCtx;
 use crate::engine::sequence_runtime::required_canonical_door_mut;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_waiting_upright(
@@ -87,8 +88,7 @@ impl EngineInner {
     ) {
         let (seq_id, elem_idx) = effect;
         self.orders.sequence_manager.set_element_priority(
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             crate::sequence::SequencePriority::NonInterruptable,
         );
     }
@@ -155,7 +155,7 @@ impl EngineInner {
         // `do_next_order` semantics: pop the just-completed
         // order; advance to the next if one exists, otherwise
         // terminate the element.
-        self.do_next_order(tcx, seq_id, elem_idx);
+        self.do_next_order(tcx, SequenceElementRef::new(seq_id, elem_idx));
     }
 
     pub(in crate::engine) fn execute_wasp_next_cycle(
@@ -177,7 +177,7 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
-        self.do_next_order(tcx, seq_id, elem_idx);
+        self.do_next_order(tcx, SequenceElementRef::new(seq_id, elem_idx));
     }
 
     pub(in crate::engine) fn execute_seq_terminate(
@@ -186,7 +186,11 @@ impl EngineInner {
         effect: (crate::sequence::SequenceId, usize),
     ) {
         let (seq_id, elem_idx) = effect;
-        self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(in crate::engine) fn execute_play_anim_frozen(
@@ -231,9 +235,17 @@ impl EngineInner {
             // ABORTED for that unknown action; the release build then
             // sets even this NonInterruptable injury Impossible and
             // synchronously releases its postponed successor.
-            self.element_impossible_from_execute(tcx, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible_from_execute(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         } else {
-            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         }
     }
 
@@ -688,7 +700,11 @@ impl EngineInner {
                     .expect("TakingNet invalidation lost taker actor data")
                     .continuation
                     .motion_state = crate::sprite::MotionState::Aborted;
-                self.element_impossible_from_execute(tcx, &mut Vec::new(), seq_id, elem_idx);
+                self.element_impossible_from_execute(
+                    tcx,
+                    &mut Vec::new(),
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return;
             }
             let taker_point = self

@@ -1,6 +1,7 @@
 //! Registration dispatch and the live manager FIFO.
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl SequenceManager {
     pub(crate) fn start_sequence_level(&mut self, id: SequenceId) -> Vec<usize> {
@@ -10,8 +11,7 @@ impl SequenceManager {
             .next_elements_go()
     }
     pub(super) fn immediate_action_for(
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         elem: &SequenceElement,
     ) -> Option<SequenceAction> {
         match elem.command {
@@ -28,8 +28,8 @@ impl SequenceManager {
             | Command::DeactivateMobile
             | Command::Unblip => Some(SequenceAction::ExecuteImmediateOwner {
                 owner: elem.owner?,
-                sequence_id: seq_id,
-                element_index: elem_idx,
+                sequence_id: elem_ref.sequence_id,
+                element_index: elem_ref.element_index,
             }),
             // Engine-only group: dispatch to engine regardless of owner.
             Command::LockUser
@@ -39,19 +39,19 @@ impl SequenceManager {
             | Command::ActionAvailable
             | Command::CharacterAvailable
             | Command::OpenScroll => Some(SequenceAction::ExecuteImmediateEngine {
-                sequence_id: seq_id,
-                element_index: elem_idx,
+                sequence_id: elem_ref.sequence_id,
+                element_index: elem_ref.element_index,
             }),
             // SendMessage: owner if present, else engine.
             Command::SendMessage => Some(match elem.owner {
                 Some(owner) => SequenceAction::ExecuteImmediateOwner {
                     owner,
-                    sequence_id: seq_id,
-                    element_index: elem_idx,
+                    sequence_id: elem_ref.sequence_id,
+                    element_index: elem_ref.element_index,
                 },
                 None => SequenceAction::ExecuteImmediateEngine {
-                    sequence_id: seq_id,
-                    element_index: elem_idx,
+                    sequence_id: elem_ref.sequence_id,
+                    element_index: elem_ref.element_index,
                 },
             }),
             _ => None,
@@ -82,7 +82,9 @@ impl SequenceManager {
             }
 
             if elem.executed_immediately() {
-                if let Some(action) = Self::immediate_action_for(seq_id, elem_idx, elem) {
+                if let Some(action) =
+                    Self::immediate_action_for(SequenceElementRef::new(seq_id, elem_idx), elem)
+                {
                     return Some(action);
                 } else {
                     tracing::warn!(
@@ -196,13 +198,16 @@ impl crate::engine::EngineInner {
                 },
             }
         } else if element.executed_immediately() {
-            SequenceManager::immediate_action_for(sequence_id, element_index, element)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "owner-only immediate command {:?} has no owner",
-                        element.command
-                    )
-                })
+            SequenceManager::immediate_action_for(
+                SequenceElementRef::new(sequence_id, element_index),
+                element,
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "owner-only immediate command {:?} has no owner",
+                    element.command
+                )
+            })
         } else {
             self.orders
                 .sequence_manager
@@ -213,7 +218,11 @@ impl crate::engine::EngineInner {
         if let Err(mut error) = self.dispatch_script_synchronous_action(tcx, action, active_scripts)
         {
             if !error.sequence_element_failed {
-                self.element_impossible(tcx, active_scripts, sequence_id, element_index);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
                 error.sequence_element_failed = true;
             }
             return Err(error);

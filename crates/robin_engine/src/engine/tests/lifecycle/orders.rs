@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn zoom_dispatch_uses_supplied_camera_display_not_owned_placeholder() {
@@ -690,8 +691,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
                 &mut engine.world.entities,
                 &mut engine.orders.sequence_manager,
                 actor_id,
-                sequence_id,
-                0,
+                SequenceElementRef::new(sequence_id, 0),
                 &mut engine.orders.next_order_id,
             ),
             crate::abilities::BeginResult::Started
@@ -757,8 +757,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
             &mut engine.world.entities,
             &mut engine.orders.sequence_manager,
             owner,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
@@ -1121,8 +1120,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
             &mut engine.orders.sequence_manager,
             attacker,
             victim,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id
         ),
         crate::abilities::BeginResult::Started
@@ -1376,8 +1374,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
             &mut engine.world.entities,
             &mut engine.orders.sequence_manager,
             owner,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id
         ),
         crate::abilities::BeginResult::Started
@@ -1738,8 +1735,7 @@ fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
-        sequence,
-        0
+        SequenceElementRef::new(sequence, 0)
     ));
 
     assert!(engine.human(owner).opponents.is_empty());

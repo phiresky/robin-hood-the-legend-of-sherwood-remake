@@ -9,6 +9,7 @@ use crate::coordinates::GroundPoint;
 use crate::engine::TickCtx;
 use crate::position_interface::SectorHandle;
 use crate::sequence::MoveFlags;
+use crate::sequence::SequenceElementRef;
 
 /// `(position, sector, current gameplay point)` of the FinalTol seek target.
 type LiveSeekTarget = Option<(MapPoint, Option<SectorHandle>, Option<MapPoint>)>;
@@ -927,7 +928,10 @@ impl EngineInner {
                     );
                     let (element, next_order_id) = self
                         .orders
-                        .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                        .element_with_order_ids_mut(SequenceElementRef::new(
+                            selected.seq_id,
+                            selected.elem_idx,
+                        ))
                         .expect("frozen seek lost its selected element");
                     let order = element
                         .orders
@@ -1992,9 +1996,12 @@ impl EngineInner {
     }
 
     fn insert_transition_distance_continuation(&mut self, selected_order: SelectedMovementOrder) {
-        let Some((element, next_order_id)) = self
-            .orders
-            .element_with_order_ids_mut(selected_order.move_seq_id, selected_order.move_elem_idx)
+        let Some((element, next_order_id)) =
+            self.orders
+                .element_with_order_ids_mut(SequenceElementRef::new(
+                    selected_order.move_seq_id,
+                    selected_order.move_elem_idx,
+                ))
         else {
             panic!("terminated movement transition lost its element");
         };
@@ -2098,7 +2105,11 @@ impl EngineInner {
             // strands the actor at a standstill, and the refresh
             // then reads that as a walk rather than the run it was
             // already doing.
-            self.refresh_movement_transition_seek(tcx, eid, move_seq_id, move_elem_idx);
+            self.refresh_movement_transition_seek(
+                tcx,
+                eid,
+                SequenceElementRef::new(move_seq_id, move_elem_idx),
+            );
             return std::ops::ControlFlow::Break(MotionState::InProgress);
         }
         // Motion through the last frame can mutate the order list
@@ -2137,7 +2148,11 @@ impl EngineInner {
             let reach =
                 (f32::from(entity.sprite().distance_for_animation(next_action)) + ft.tol) * 1.05;
             if dx * dx + dy * dy > reach * reach {
-                self.refresh_movement_transition_seek(tcx, eid, move_seq_id, move_elem_idx);
+                self.refresh_movement_transition_seek(
+                    tcx,
+                    eid,
+                    SequenceElementRef::new(move_seq_id, move_elem_idx),
+                );
                 tracing::trace!(
                     ?eid,
                     ?next_action,

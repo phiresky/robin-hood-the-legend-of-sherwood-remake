@@ -29,6 +29,7 @@ use crate::element_kinds::{
 use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElementData, SequenceId};
 use serde::{Deserialize, Serialize};
 
@@ -97,13 +98,12 @@ impl TransitionTarget {
 
 fn transition_element(
     engine: &EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
 ) -> &crate::sequence::SequenceElement {
     engine
         .orders
         .sequence_manager
-        .get_element(seq_id, elem_idx)
+        .get_element_at(elem_ref)
         .expect("validated transition element must remain present within a stage")
 }
 
@@ -732,30 +732,25 @@ fn get_transition_flags(ctx: &TransitionCtx) -> (EX, CP, EA) {
 // ---------------------------------------------------------------------------
 
 /// Push a non-movement animation order onto the sequence element.
-fn push_anim_order(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, anim: OrderType) {
+fn push_anim_order(engine: &mut EngineInner, elem_ref: SequenceElementRef, anim: OrderType) {
     let id = engine.orders.allocate_order_id();
     let order = crate::order::Order::new(anim, 0.0, 0.0, id);
     engine
         .orders
         .sequence_manager
-        .push_order_on(seq_id, elem_idx, order);
+        .push_order_at(elem_ref, order);
 }
 
 /// Push a non-movement animation order with `compute_direction = false`,
 /// used by the posture transitions that must not re-face the actor.
-fn push_anim_order_no_dir(
-    engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
-    anim: OrderType,
-) {
+fn push_anim_order_no_dir(engine: &mut EngineInner, elem_ref: SequenceElementRef, anim: OrderType) {
     let id = engine.orders.allocate_order_id();
     let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
     order.compute_direction = false;
     engine
         .orders
         .sequence_manager
-        .push_order_on(seq_id, elem_idx, order);
+        .push_order_at(elem_ref, order);
 }
 
 fn stand_up_order_for_action_state(action_state: ActionState) -> OrderType {
@@ -768,33 +763,27 @@ fn stand_up_order_for_action_state(action_state: ActionState) -> OrderType {
     }
 }
 
-fn set_posture_after(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, p: Posture) {
+fn set_posture_after(engine: &mut EngineInner, elem_ref: SequenceElementRef, p: Posture) {
     engine
         .orders
         .sequence_manager
-        .get_element_mut(seq_id, elem_idx)
+        .get_element_at_mut(elem_ref)
         .expect("validated transition element must remain present within a stage")
         .posture_after_transition = p;
 }
 
-fn set_action_state_after(
-    engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
-    a: ActionState,
-) {
+fn set_action_state_after(engine: &mut EngineInner, elem_ref: SequenceElementRef, a: ActionState) {
     engine
         .orders
         .sequence_manager
-        .get_element_mut(seq_id, elem_idx)
+        .get_element_at_mut(elem_ref)
         .expect("validated transition element must remain present within a stage")
         .action_state_after_transition = a;
 }
 
 fn push_unequip_bow_transition_orders(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     anonymous: bool,
 ) {
     let (unload, unequip) = if anonymous {
@@ -808,8 +797,8 @@ fn push_unequip_bow_transition_orders(
             OrderType::TransitionUnequipBow,
         )
     };
-    push_anim_order(engine, seq_id, elem_idx, unload);
-    push_anim_order(engine, seq_id, elem_idx, unequip);
+    push_anim_order(engine, elem_ref, unload);
+    push_anim_order(engine, elem_ref, unequip);
 }
 
 /// Build a [`TransitionCtx`] from the current state of `(owner, seq,
@@ -817,14 +806,10 @@ fn push_unequip_bow_transition_orders(
 fn build_ctx(
     engine: &EngineInner,
     owner: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
 ) -> Option<TransitionCtx> {
     let entity = engine.get_entity(owner)?;
-    let elem = engine
-        .orders
-        .sequence_manager
-        .get_element(seq_id, elem_idx)?;
+    let elem = engine.orders.sequence_manager.get_element_at(elem_ref)?;
 
     let movement_action = match &elem.data {
         SequenceElementData::Movement { action, .. } => Some(*action),
@@ -917,8 +902,7 @@ fn make_action_transition_actor(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EX,
 ) -> bool {
@@ -941,7 +925,7 @@ fn make_action_transition_actor(
         return true;
     }
 
-    let command = transition_element(engine, seq_id, elem_idx).command;
+    let command = transition_element(engine, elem_ref).command;
     // When true, skip the transition-order insertion for MOVING /
     // MOVING_FAST arms to avoid injecting spurious stop-walking
     // frames into a composite movement chain.
@@ -953,33 +937,30 @@ fn make_action_transition_actor(
                 if !flags.contains(EX::CAN_BE_BORED) {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionWaitingUprightBoredWaitingUpright,
                     );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::Moving => {
                 if !flags.contains(EX::CAN_BE_MOVING) && !is_part_of_movement {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionWalkingUprightWaitingUpright,
                     );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::MovingFast => {
                 if !flags.contains(EX::CAN_BE_MOVING_FAST) && !is_part_of_movement {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionRunningUprightWaitingUpright,
                     );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::HoldingShield => {
@@ -987,22 +968,21 @@ fn make_action_transition_actor(
                     if command == Command::RaiseShield {
                         // The command is refused because the shield is
                         // already up with no auto-lower path.
-                        engine.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+                        engine.element_terminated(tcx, active_scripts, elem_ref);
                         return false;
                     }
-                    push_anim_order(engine, seq_id, elem_idx, OrderType::LoweringShield);
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    push_anim_order(engine, elem_ref, OrderType::LoweringShield);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::Listening => {
                 if !flags.contains(EX::CAN_BE_LISTENING) {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionListeningWaitingUpright,
                     );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::Waiting => {
@@ -1020,11 +1000,10 @@ fn make_action_transition_actor(
                 if !flags.contains(EX::CAN_BE_MOVING) && !is_part_of_movement {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionWalkingCrouchedWaitingCrouched,
                     );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 }
             }
             ActionState::MovingFast => {
@@ -1046,8 +1025,7 @@ fn make_action_transition_human(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EX,
 ) -> bool {
@@ -1071,25 +1049,20 @@ fn make_action_transition_human(
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_AIMING_BOW) {
                 // Original-game unequip-bow translation: unload then unequip,
                 // with anonymous-posture variants.
-                push_unequip_bow_transition_orders(engine, seq_id, elem_idx, is_anonymous_archer);
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                push_unequip_bow_transition_orders(engine, elem_ref, is_anonymous_archer);
+                set_action_state_after(engine, elem_ref, ActionState::Waiting);
             }
             true
         }
         ActionState::AimingWithBowUp => {
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_AIMING_BOW_UP) {
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoweringBow);
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoweringBow);
                 if !flags.contains(EX::CAN_BE_AIMING_BOW) {
                     // Original-game unequip-bow translation: unload then unequip.
-                    push_unequip_bow_transition_orders(
-                        engine,
-                        seq_id,
-                        elem_idx,
-                        is_anonymous_archer,
-                    );
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                    push_unequip_bow_transition_orders(engine, elem_ref, is_anonymous_archer);
+                    set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 } else {
-                    set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
+                    set_action_state_after(engine, elem_ref, ActionState::AimingWithBow);
                 }
             }
             true
@@ -1101,8 +1074,8 @@ fn make_action_transition_human(
                 // case; non-sword action states fall through to the default
                 // arm below (which would otherwise terminate the sequence
                 // element).
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoweringSword);
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoweringSword);
+                set_action_state_after(engine, elem_ref, ActionState::Waiting);
                 // Original reaches this through
                 // Translate the existing element into a quit-swordfight command,
                 // whose translation leaves swordfight immediately after
@@ -1121,11 +1094,10 @@ fn make_action_transition_human(
                 // Stop-parry-sword transition.
                 push_anim_order(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     OrderType::TransitionParryingSwordWaitingSword,
                 );
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::WaitingSword);
+                set_action_state_after(engine, elem_ref, ActionState::WaitingSword);
             }
             true
         }
@@ -1133,8 +1105,8 @@ fn make_action_transition_human(
         s if s.is_shield() => {
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_HOLDING_SHIELD) {
                 // Lower-shield transition.
-                push_anim_order(engine, seq_id, elem_idx, OrderType::LoweringShield);
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                push_anim_order(engine, elem_ref, OrderType::LoweringShield);
+                set_action_state_after(engine, elem_ref, ActionState::Waiting);
             }
             true
         }
@@ -1144,14 +1116,9 @@ fn make_action_transition_human(
                 // TransitionMenacingWaitingSword then
                 // TransitionLoweringSword — menace exit returns to
                 // upright waiting via the sword-lowering animation.
-                push_anim_order(
-                    engine,
-                    seq_id,
-                    elem_idx,
-                    OrderType::TransitionMenacingWaitingSword,
-                );
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoweringSword);
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                push_anim_order(engine, elem_ref, OrderType::TransitionMenacingWaitingSword);
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoweringSword);
+                set_action_state_after(engine, elem_ref, ActionState::Waiting);
             }
             true
         }
@@ -1159,23 +1126,14 @@ fn make_action_transition_human(
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_SLEEPING) {
                 push_anim_order(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     OrderType::TransitionSleepingWaitingUpright,
                 );
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                set_action_state_after(engine, elem_ref, ActionState::Waiting);
             }
             true
         }
-        _ => make_action_transition_actor(
-            engine,
-            tcx,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            owner,
-            flags,
-        ),
+        _ => make_action_transition_actor(engine, tcx, active_scripts, elem_ref, owner, flags),
     }
 }
 
@@ -1183,11 +1141,14 @@ fn make_action_transition_soldier(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EX,
 ) -> bool {
+    let SequenceElementRef {
+        sequence_id: seq_id,
+        element_index: elem_idx,
+    } = elem_ref;
     let entity = transition_owner(engine, owner);
     let attentive = entity.enemy_ai().is_some_and(|ai| ai.attentive);
     let action_state = entity
@@ -1221,12 +1182,15 @@ fn make_action_transition_soldier(
         if posture_after == crate::element::Posture::Upright {
             push_anim_order_no_dir(
                 engine,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 OrderType::TransitionWaitingAlertedWaitingUpright,
             );
         } else {
-            engine.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+            engine.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -1244,87 +1208,82 @@ fn make_action_transition_soldier(
             // Raise-bow-lean-out transition + optional Unequip Bow.
             push_anim_order(
                 engine,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 OrderType::TransitionRaisingBowLeaningOut,
             );
             if !flags.contains(EX::CAN_BE_AIMING_BOW) {
                 // The original game translates unequip-bow here, so preserve
                 // the unload frame before unequipping.
-                push_unequip_bow_transition_orders(engine, seq_id, elem_idx, false);
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
+                push_unequip_bow_transition_orders(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    false,
+                );
+                set_action_state_after(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    ActionState::Waiting,
+                );
             } else {
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
+                set_action_state_after(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    ActionState::AimingWithBow,
+                );
             }
         }
         return true;
     }
 
-    make_action_transition_human(engine, tcx, active_scripts, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(
+        engine,
+        tcx,
+        active_scripts,
+        SequenceElementRef::new(seq_id, elem_idx),
+        owner,
+        flags,
+    )
 }
 
 fn make_action_transition_pc(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EX,
 ) -> bool {
     if flags.contains(EX::MUST_BE_LISTENING) {
         // PC requires ListeningState; refuse if the scheduled state
         // doesn't already match.
-        let action_state_after =
-            transition_element(engine, seq_id, elem_idx).action_state_after_transition;
+        let action_state_after = transition_element(engine, elem_ref).action_state_after_transition;
         if action_state_after != ActionState::Listening {
             return false;
         }
     }
-    make_action_transition_human(engine, tcx, active_scripts, seq_id, elem_idx, owner, flags)
+    make_action_transition_human(engine, tcx, active_scripts, elem_ref, owner, flags)
 }
 
 fn dispatch_make_action_transition(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EX,
 ) -> bool {
     let kind = transition_owner(engine, owner).kind();
     match kind {
         ElementKind::ActorPc => {
-            make_action_transition_pc(engine, tcx, active_scripts, seq_id, elem_idx, owner, flags)
+            make_action_transition_pc(engine, tcx, active_scripts, elem_ref, owner, flags)
         }
-        ElementKind::ActorSoldier => make_action_transition_soldier(
-            engine,
-            tcx,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            owner,
-            flags,
-        ),
-        ElementKind::ActorCivilian => make_action_transition_human(
-            engine,
-            tcx,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            owner,
-            flags,
-        ),
-        _ => make_action_transition_actor(
-            engine,
-            tcx,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            owner,
-            flags,
-        ),
+        ElementKind::ActorSoldier => {
+            make_action_transition_soldier(engine, tcx, active_scripts, elem_ref, owner, flags)
+        }
+        ElementKind::ActorCivilian => {
+            make_action_transition_human(engine, tcx, active_scripts, elem_ref, owner, flags)
+        }
+        _ => make_action_transition_actor(engine, tcx, active_scripts, elem_ref, owner, flags),
     }
 }
 
@@ -1338,12 +1297,16 @@ fn dispatch_make_action_transition(
 /// this base for every posture they don't handle.
 fn make_posture_transition_actor(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     flags: CP,
 ) -> bool {
-    let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
-    let command = transition_element(engine, seq_id, elem_idx).command;
+    let SequenceElementRef {
+        sequence_id: seq_id,
+        element_index: elem_idx,
+    } = elem_ref;
+    let posture_after = transition_element(engine, SequenceElementRef::new(seq_id, elem_idx))
+        .posture_after_transition;
+    let command = transition_element(engine, SequenceElementRef::new(seq_id, elem_idx)).command;
 
     if flags.contains(CP::MUST_BE_UPRIGHT) {
         return match posture_after {
@@ -1355,8 +1318,16 @@ fn make_posture_transition_actor(
                         tracing::debug!("posture transition: CROUCH_DOWN from Crouched — refused");
                         return false;
                     }
-                    push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingUp);
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    push_anim_order(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        OrderType::TransitionCrouchingUp,
+                    );
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1366,10 +1337,19 @@ fn make_posture_transition_actor(
                     // animation (direction computation disabled) chosen from
                     // the post-transition action state.
                     let action_state_after =
-                        transition_element(engine, seq_id, elem_idx).action_state_after_transition;
+                        transition_element(engine, SequenceElementRef::new(seq_id, elem_idx))
+                            .action_state_after_transition;
                     let stand_up = stand_up_order_for_action_state(action_state_after);
-                    push_anim_order_no_dir(engine, seq_id, elem_idx, stand_up);
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    push_anim_order_no_dir(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        stand_up,
+                    );
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1380,11 +1360,14 @@ fn make_posture_transition_actor(
                 if !flags.contains(CP::CAN_BE_HELPING_TO_CLIMB) {
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionHelpingClimbingWaitingUpright,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1392,11 +1375,14 @@ fn make_posture_transition_actor(
                 if !flags.contains(CP::CAN_BE_SIMULATING_BEGGAR) {
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionSimulatingBeggarWaitingUpright,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1428,8 +1414,16 @@ fn make_posture_transition_actor(
                     );
                     return false;
                 }
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingDown);
-                set_posture_after(engine, seq_id, elem_idx, Posture::Crouched);
+                push_anim_order(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    OrderType::TransitionCrouchingDown,
+                );
+                set_posture_after(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    Posture::Crouched,
+                );
                 true
             }
             Posture::Crouched => true,
@@ -1490,8 +1484,7 @@ const SUBCLASS_POSTURE_ARMS: [SubclassPostureArm; 3] = [
 
 fn make_posture_transition_subclass(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
     arms: &[SubclassPostureArm],
@@ -1507,81 +1500,79 @@ fn make_posture_transition_subclass(
                 .allowed_by
                 .is_none_or(|allowed| !flags.contains(allowed));
         if must_stand_up {
-            push_anim_order_no_dir(engine, seq_id, elem_idx, arm.stand_up);
-            set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+            push_anim_order_no_dir(engine, elem_ref, arm.stand_up);
+            set_posture_after(engine, elem_ref, Posture::Upright);
         }
         if must_stand_up || arm.allowed_by.is_some() {
             return true;
         }
     }
 
-    make_posture_transition_actor(engine, seq_id, elem_idx, flags)
+    make_posture_transition_actor(engine, elem_ref, flags)
 }
 
 fn make_posture_transition_human(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
 ) -> bool {
     let arms = &SUBCLASS_POSTURE_ARMS[2..];
-    make_posture_transition_subclass(engine, seq_id, elem_idx, owner, flags, arms)
+    make_posture_transition_subclass(engine, elem_ref, owner, flags, arms)
 }
 
 fn make_posture_transition_npc(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
 ) -> bool {
     let arms = &SUBCLASS_POSTURE_ARMS[1..];
-    make_posture_transition_subclass(engine, seq_id, elem_idx, owner, flags, arms)
+    make_posture_transition_subclass(engine, elem_ref, owner, flags, arms)
 }
 
 fn make_posture_transition_soldier(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
 ) -> bool {
-    make_posture_transition_subclass(
-        engine,
-        seq_id,
-        elem_idx,
-        owner,
-        flags,
-        &SUBCLASS_POSTURE_ARMS,
-    )
+    make_posture_transition_subclass(engine, elem_ref, owner, flags, &SUBCLASS_POSTURE_ARMS)
 }
 
 fn make_posture_transition_pc(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
 ) -> bool {
+    let SequenceElementRef {
+        sequence_id: seq_id,
+        element_index: elem_idx,
+    } = elem_ref;
     if flags.contains(CP::MUST_BE_CARRYING_CORPSE) {
-        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
+        let posture_after = transition_element(engine, SequenceElementRef::new(seq_id, elem_idx))
+            .posture_after_transition;
         return posture_after == Posture::CarryingCorpse;
     }
 
     if flags.contains(CP::MUST_BE_UPRIGHT) {
-        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
+        let posture_after = transition_element(engine, SequenceElementRef::new(seq_id, elem_idx))
+            .posture_after_transition;
         let handled = match posture_after {
             Posture::HelpingToClimb => {
                 if !flags.contains(CP::CAN_BE_HELPING_TO_CLIMB) {
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionHelpingClimbingWaitingUpright,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1597,14 +1588,12 @@ fn make_posture_transition_pc(
                         // PC, then leave the helping-climb stance.
                         push_anim_order_no_dir(
                             engine,
-                            seq_id,
-                            elem_idx,
+                            SequenceElementRef::new(seq_id, elem_idx),
                             OrderType::TransitionHelpingClimbingDown,
                         );
                         push_anim_order_no_dir(
                             engine,
-                            seq_id,
-                            elem_idx,
+                            SequenceElementRef::new(seq_id, elem_idx),
                             OrderType::TransitionHelpingClimbingWaitingUpright,
                         );
                         // TransitionHelpingClimbingDown init freezes
@@ -1617,12 +1606,15 @@ fn make_posture_transition_pc(
                         // carried actor attached.
                         push_anim_order_no_dir(
                             engine,
-                            seq_id,
-                            elem_idx,
+                            SequenceElementRef::new(seq_id, elem_idx),
                             OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright,
                         );
                     }
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1650,11 +1642,14 @@ fn make_posture_transition_pc(
                     // boundary and advances the owner a manager phase early.
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionCarryingCorpseWaitingUpright,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
@@ -1665,11 +1660,14 @@ fn make_posture_transition_pc(
                     // orders run.
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::ClimbingDownFromShoulders,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                     // ClimbingDownFromShoulders init freezes the
                     // carrier PC while the carried plays the dismount
                     // animation.
@@ -1687,19 +1685,21 @@ fn make_posture_transition_pc(
                 if !flags.contains(CP::CAN_BE_SIMULATING_BEGGAR) {
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionSimulatingBeggarWaitingUpright,
                     );
-                    set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                    set_posture_after(
+                        engine,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        Posture::Upright,
+                    );
                 }
                 true
             }
             Posture::Spy => {
                 push_anim_order_no_dir(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                     OrderType::TransitionWaitingCapeWaitingUpright,
                 );
                 true
@@ -1707,19 +1707,21 @@ fn make_posture_transition_pc(
             Posture::Cloaked => {
                 push_anim_order_no_dir(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                     OrderType::TransitionWaitingCapeWaitingUpright,
                 );
-                set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
+                set_posture_after(
+                    engine,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                    Posture::Upright,
+                );
                 true
             }
             Posture::AnonymousArcher => {
                 if !flags.contains(CP::CAN_BE_ANONYMOUS_ARCHER) {
                     push_anim_order_no_dir(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        SequenceElementRef::new(seq_id, elem_idx),
                         OrderType::TransitionWaitingCapeWaitingUpright,
                     );
                 }
@@ -1728,8 +1730,7 @@ fn make_posture_transition_pc(
             Posture::Tree => {
                 push_anim_order_no_dir(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                     OrderType::TransitionWaitingHiddenWaitingUpright,
                 );
                 true
@@ -1742,35 +1743,36 @@ fn make_posture_transition_pc(
     }
 
     if flags.contains(CP::MUST_BE_ON_SHOULDERS) {
-        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
+        let posture_after = transition_element(engine, SequenceElementRef::new(seq_id, elem_idx))
+            .posture_after_transition;
         if posture_after != Posture::OnShoulders {
             return false;
         }
     }
 
-    make_posture_transition_human(engine, seq_id, elem_idx, owner, flags)
+    make_posture_transition_human(
+        engine,
+        SequenceElementRef::new(seq_id, elem_idx),
+        owner,
+        flags,
+    )
 }
 
 fn dispatch_make_posture_transition(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: CP,
 ) -> bool {
     let kind = transition_owner(engine, owner).kind();
     match kind {
-        ElementKind::ActorPc => {
-            make_posture_transition_pc(engine, tcx, seq_id, elem_idx, owner, flags)
-        }
+        ElementKind::ActorPc => make_posture_transition_pc(engine, tcx, elem_ref, owner, flags),
         ElementKind::ActorSoldier => {
-            make_posture_transition_soldier(engine, seq_id, elem_idx, owner, flags)
+            make_posture_transition_soldier(engine, elem_ref, owner, flags)
         }
-        ElementKind::ActorCivilian => {
-            make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
-        }
-        _ => make_posture_transition_actor(engine, seq_id, elem_idx, flags),
+        ElementKind::ActorCivilian => make_posture_transition_npc(engine, elem_ref, owner, flags),
+        _ => make_posture_transition_actor(engine, elem_ref, flags),
     }
 }
 
@@ -1780,11 +1782,10 @@ fn dispatch_make_posture_transition(
 
 fn make_final_action_transition_actor(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     flags: EA,
 ) -> bool {
-    let elem = transition_element(engine, seq_id, elem_idx);
+    let elem = transition_element(engine, elem_ref);
     let (posture_after, action_after) = (
         elem.posture_after_transition,
         elem.action_state_after_transition,
@@ -1792,14 +1793,13 @@ fn make_final_action_transition_actor(
 
     if flags.contains(EA::MUST_BE_BORED) {
         if posture_after == Posture::Upright && action_after == ActionState::Waiting {
-            push_anim_order(engine, seq_id, elem_idx, OrderType::WaitingUpright);
+            push_anim_order(engine, elem_ref, OrderType::WaitingUpright);
             push_anim_order(
                 engine,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 OrderType::TransitionWaitingUprightWaitingUprightBored,
             );
-            set_action_state_after(engine, seq_id, elem_idx, ActionState::Bored);
+            set_action_state_after(engine, elem_ref, ActionState::Bored);
         }
         return true;
     }
@@ -1809,21 +1809,19 @@ fn make_final_action_transition_actor(
             Posture::Upright => match action_after {
                 ActionState::Waiting => push_anim_order(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     OrderType::TransitionWaitingUprightWalkingUpright,
                 ),
                 ActionState::MovingFast => push_anim_order(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     OrderType::TransitionRunningUprightWalkingUpright,
                 ),
                 other => tracing::warn!(?other, "final moving transition: unhandled action"),
             },
             other => tracing::warn!(?other, "final moving transition: unhandled posture"),
         }
-        set_action_state_after(engine, seq_id, elem_idx, ActionState::Moving);
+        set_action_state_after(engine, elem_ref, ActionState::Moving);
         return true;
     }
 
@@ -1833,28 +1831,25 @@ fn make_final_action_transition_actor(
                 ActionState::Waiting => {
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionWaitingUprightWalkingUpright,
                     );
                     push_anim_order(
                         engine,
-                        seq_id,
-                        elem_idx,
+                        elem_ref,
                         OrderType::TransitionWalkingUprightRunningUpright,
                     );
                 }
                 ActionState::MovingFast => push_anim_order(
                     engine,
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     OrderType::TransitionWalkingUprightRunningUpright,
                 ),
                 other => tracing::warn!(?other, "final fast-movement transition: unhandled action"),
             },
             other => tracing::warn!(?other, "final fast-movement transition: unhandled posture"),
         }
-        set_action_state_after(engine, seq_id, elem_idx, ActionState::MovingFast);
+        set_action_state_after(engine, elem_ref, ActionState::MovingFast);
         return true;
     }
 
@@ -1862,9 +1857,9 @@ fn make_final_action_transition_actor(
         // Equip-bow expansion: insert both the take-bow and load-bow
         // animations.  Non-anonymous branch covers the base-actor case
         // — there is no AnonymousArcher arm on non-human kinds.
-        push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionEquipBow);
-        push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoadingBow);
-        set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
+        push_anim_order(engine, elem_ref, OrderType::TransitionEquipBow);
+        push_anim_order(engine, elem_ref, OrderType::TransitionLoadingBow);
+        set_action_state_after(engine, elem_ref, ActionState::AimingWithBow);
     }
 
     true
@@ -1872,14 +1867,13 @@ fn make_final_action_transition_actor(
 
 fn make_final_action_transition_human(
     engine: &mut EngineInner,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     flags: EA,
 ) -> bool {
     let (action_after, owner) = engine
         .orders
         .sequence_manager
-        .get_element(seq_id, elem_idx)
+        .get_element_at(elem_ref)
         .map(|e| (e.action_state_after_transition, e.owner))
         .expect("validated transition element must remain present within a stage");
 
@@ -1925,19 +1919,19 @@ fn make_final_action_transition_human(
             ActionState::Waiting => {
                 if !already_aiming {
                     // Equip-bow: EquipBow + LoadingBow.
-                    push_anim_order(engine, seq_id, elem_idx, equip_bow);
-                    push_anim_order(engine, seq_id, elem_idx, loading_bow);
+                    push_anim_order(engine, elem_ref, equip_bow);
+                    push_anim_order(engine, elem_ref, loading_bow);
                 }
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
+                set_action_state_after(engine, elem_ref, ActionState::AimingWithBow);
             }
             ActionState::AimingWithBow => {
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
+                set_action_state_after(engine, elem_ref, ActionState::AimingWithBow);
             }
             ActionState::AimingWithBowUp => {
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBowUp);
+                set_action_state_after(engine, elem_ref, ActionState::AimingWithBowUp);
             }
             ActionState::AimingWithBowDown => {
-                set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBowDown);
+                set_action_state_after(engine, elem_ref, ActionState::AimingWithBowDown);
             }
             other => tracing::warn!(
                 ?other,
@@ -1951,21 +1945,21 @@ fn make_final_action_transition_human(
         match action_after {
             ActionState::Waiting => {
                 if !already_aiming {
-                    push_anim_order(engine, seq_id, elem_idx, equip_bow);
-                    push_anim_order(engine, seq_id, elem_idx, loading_bow);
+                    push_anim_order(engine, elem_ref, equip_bow);
+                    push_anim_order(engine, elem_ref, loading_bow);
                 }
-                push_anim_order(engine, seq_id, elem_idx, raise_bow);
+                push_anim_order(engine, elem_ref, raise_bow);
             }
             ActionState::AimingWithBowUp => {}
             ActionState::AimingWithBow | ActionState::AimingWithBowDown => {
-                push_anim_order(engine, seq_id, elem_idx, raise_bow);
+                push_anim_order(engine, elem_ref, raise_bow);
             }
             other => tracing::warn!(
                 ?other,
                 "final raised-bow transition: unhandled subsequent action"
             ),
         }
-        set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBowUp);
+        set_action_state_after(engine, elem_ref, ActionState::AimingWithBowUp);
         return true;
     }
 
@@ -1974,7 +1968,7 @@ fn make_final_action_transition_human(
         return true;
     }
 
-    make_final_action_transition_actor(engine, seq_id, elem_idx, flags)
+    make_final_action_transition_actor(engine, elem_ref, flags)
 }
 
 /// Soldier-specific "alerted" auto-insert — a soldier receiving a
@@ -1985,8 +1979,7 @@ fn make_final_action_transition_soldier(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EA,
 ) -> bool {
@@ -2005,16 +1998,15 @@ fn make_final_action_transition_soldier(
         // waiting→alerted transition animation only plays when the
         // element's stamped posture is upright.  Any other posture
         // terminates the element and flips the attentive pose silently.
-        let posture_after = transition_element(engine, seq_id, elem_idx).posture_after_transition;
+        let posture_after = transition_element(engine, elem_ref).posture_after_transition;
         if posture_after == crate::element::Posture::Upright {
             push_anim_order_no_dir(
                 engine,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 OrderType::TransitionWaitingUprightWaitingAlerted,
             );
         } else {
-            engine.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+            engine.element_terminated(tcx, active_scripts, elem_ref);
             if let Some(enemy) = engine
                 .get_entity_mut(owner)
                 .and_then(crate::element::Entity::enemy_ai_mut)
@@ -2031,27 +2023,16 @@ fn make_final_action_transition_soldier(
     }
 
     if flags.contains(EA::MUST_BE_AIMING_BOW_DOWN) {
-        let action_after =
-            transition_element(engine, seq_id, elem_idx).action_state_after_transition;
+        let action_after = transition_element(engine, elem_ref).action_state_after_transition;
         match action_after {
             ActionState::Waiting => {
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionEquipBow);
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoadingBow);
-                push_anim_order(
-                    engine,
-                    seq_id,
-                    elem_idx,
-                    OrderType::TransitionLoweringBowLeaningOut,
-                );
+                push_anim_order(engine, elem_ref, OrderType::TransitionEquipBow);
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoadingBow);
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoweringBowLeaningOut);
             }
             ActionState::AimingWithBowDown => {}
             ActionState::AimingWithBow | ActionState::AimingWithBowUp => {
-                push_anim_order(
-                    engine,
-                    seq_id,
-                    elem_idx,
-                    OrderType::TransitionLoweringBowLeaningOut,
-                );
+                push_anim_order(engine, elem_ref, OrderType::TransitionLoweringBowLeaningOut);
             }
             other => tracing::warn!(
                 ?other,
@@ -2060,19 +2041,18 @@ fn make_final_action_transition_soldier(
         }
         // AIMING_WITH_BOW_UP is set here (likely a bug — preserved
         // for parity).
-        set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBowUp);
+        set_action_state_after(engine, elem_ref, ActionState::AimingWithBowUp);
         return true;
     }
 
-    make_final_action_transition_human(engine, seq_id, elem_idx, flags)
+    make_final_action_transition_human(engine, elem_ref, flags)
 }
 
 fn dispatch_make_final_action_transition(
     engine: &mut EngineInner,
     tcx: TickCtx<'_>,
     active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     owner: EntityId,
     flags: EA,
 ) -> bool {
@@ -2082,15 +2062,14 @@ fn dispatch_make_final_action_transition(
             engine,
             tcx,
             active_scripts,
-            seq_id,
-            elem_idx,
+            elem_ref,
             owner,
             flags,
         ),
         ElementKind::ActorPc | ElementKind::ActorCivilian => {
-            make_final_action_transition_human(engine, seq_id, elem_idx, flags)
+            make_final_action_transition_human(engine, elem_ref, flags)
         }
-        _ => make_final_action_transition_actor(engine, seq_id, elem_idx, flags),
+        _ => make_final_action_transition_actor(engine, elem_ref, flags),
     }
 }
 
@@ -2110,10 +2089,18 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
-        match self.try_generate_transition(tcx, active_scripts, owner, seq_id, elem_idx) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
+        match self.try_generate_transition(
+            tcx,
+            active_scripts,
+            owner,
+            SequenceElementRef::new(seq_id, elem_idx),
+        ) {
             Ok(allowed) => allowed,
             Err(error) => {
                 tracing::error!(?owner, ?seq_id, elem_idx, %error, "invalid transition target");
@@ -2127,13 +2114,12 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Result<bool, TransitionError> {
         let target = TransitionTarget {
             owner,
-            seq_id,
-            elem_idx,
+            seq_id: elem_ref.sequence_id,
+            elem_idx: elem_ref.element_index,
         };
         target.validate(self)?;
         let entity = transition_owner(self, owner);
@@ -2147,14 +2133,14 @@ impl EngineInner {
         let elem = self
             .orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("target was just validated");
         if elem.posture_after_transition == Posture::Undefined {
             elem.posture_after_transition = actor_posture;
             elem.action_state_after_transition = actor_action_state;
         }
 
-        let ctx = build_ctx(self, owner, seq_id, elem_idx).expect("target was just validated");
+        let ctx = build_ctx(self, owner, elem_ref).expect("target was just validated");
 
         let (exit_flags, mut change_flags, enter_flags) = get_transition_flags(&ctx);
         // The reusable cape has only a stationary idle row. Any actor action
@@ -2171,8 +2157,7 @@ impl EngineInner {
                 engine,
                 tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 owner,
                 exit_flags,
             )
@@ -2181,7 +2166,7 @@ impl EngineInner {
         }
 
         if !target.stage(self, |engine| {
-            dispatch_make_posture_transition(engine, tcx, seq_id, elem_idx, owner, change_flags)
+            dispatch_make_posture_transition(engine, tcx, elem_ref, owner, change_flags)
         })? {
             return Ok(false);
         }
@@ -2191,8 +2176,7 @@ impl EngineInner {
                 engine,
                 tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                elem_ref,
                 owner,
                 enter_flags,
             )
@@ -2205,7 +2189,7 @@ impl EngineInner {
         // from the orders queued by the command itself.
         self.orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("target was just revalidated")
             .initialize_transition_orders();
         Ok(true)

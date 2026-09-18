@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
@@ -46,8 +47,7 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         victim,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     assert_eq!(
@@ -128,8 +128,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         victim,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     assert_eq!(engine.ent(victim).human_life_points(), 80);
@@ -318,8 +317,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 &mut engine.orders.sequence_manager,
                 healer,
                 target,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
                 &mut engine.orders.next_order_id,
             ),
             crate::abilities::BeginResult::Started
@@ -692,8 +690,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
             &mut engine.orders.sequence_manager,
             attacker,
             victim,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
@@ -1019,8 +1016,7 @@ fn launch_initialized_strangle(
             &mut engine.orders.sequence_manager,
             attacker,
             victim,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
@@ -1213,8 +1209,7 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
     engine.element_impossible(
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
-        seq,
-        0,
+        SequenceElementRef::new(seq, 0),
     );
 }
 
@@ -1352,7 +1347,12 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
         .unwrap()
         .postponed = Some(crate::sequence::SequenceElementRef::new(movement, 0));
 
-    engine.dispatch_quit_swordfight(TickCtx::new(&sim, &assets), &mut Vec::new(), owner, quit, 0);
+    engine.dispatch_quit_swordfight(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        SequenceElementRef::new(quit, 0),
+    );
 
     let movement = engine
         .orders
@@ -1447,7 +1447,10 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         victim_entity.set_posture(Posture::Dead);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
     }
-    engine.do_next_order(TickCtx::new(&sim, &assets), damage_sequence, 0);
+    engine.do_next_order(
+        TickCtx::new(&sim, &assets),
+        SequenceElementRef::new(damage_sequence, 0),
+    );
     assert_eq!(
         engine
             .orders
@@ -1475,14 +1478,13 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     // Instruction handling stamps the owner's current posture / action state onto the
     // element before Translate; the dead-hold animation choice reads the
     // stamped action-state-after-transition, not the live actor field.
-    engine.stamp_element_transition_state(victim, wait_sequence, 0);
+    engine.stamp_element_transition_state(victim, SequenceElementRef::new(wait_sequence, 0));
     engine.dispatch_wait_command(
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         victim,
         Command::Wait,
-        wait_sequence,
-        0,
+        SequenceElementRef::new(wait_sequence, 0),
     );
 
     let wait = engine

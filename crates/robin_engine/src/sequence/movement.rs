@@ -1,6 +1,7 @@
 //! Sequence manager movement responsibilities.
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl SequenceManager {
     // ─── Termination ────────────────────────────────────────────
@@ -147,13 +148,13 @@ impl SequenceManager {
     /// Set `action` on the movement element at `(seq_id, elem_idx)` and recurse
     /// through its same-owner following/postponed graph. Callers use this to
     /// force a door-authored movement chain onto one animation.
-    pub fn set_action_recursive(&mut self, seq_id: SequenceId, elem_idx: usize, action: OrderType) {
-        let Some(root) = self.get_element(seq_id, elem_idx) else {
+    pub fn set_action_recursive(&mut self, elem_ref: SequenceElementRef, action: OrderType) {
+        let Some(root) = self.get_element_at(elem_ref) else {
             return;
         };
         let owner = root.owner;
         let mut visited = HashSet::new();
-        let mut pending = vec![(seq_id, elem_idx)];
+        let mut pending = vec![(elem_ref.sequence_id, elem_ref.element_index)];
         while let Some((sid, idx)) = pending.pop() {
             if !visited.insert((sid, idx)) {
                 continue;
@@ -260,16 +261,16 @@ impl SequenceManager {
     /// Returns `true` if the next element (owned by the same entity) is
     /// itself a movement element; `false` if there is no such element
     /// or the owner differs.
-    pub fn is_next_movement(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        self.next_element_in_chain(seq_id, elem_idx)
+    pub fn is_next_movement(&self, elem_ref: SequenceElementRef) -> bool {
+        self.next_element_in_chain(elem_ref)
             .and_then(|(s, i)| self.get_element(s, i))
             .map(|next| next.data.is_movement())
             .unwrap_or(false)
     }
 
     /// As [`Self::is_next_movement`], but also accepts `Command::JumpCmd`.
-    pub fn is_next_movement_or_jump(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        self.next_element_in_chain(seq_id, elem_idx)
+    pub fn is_next_movement_or_jump(&self, elem_ref: SequenceElementRef) -> bool {
+        self.next_element_in_chain(elem_ref)
             .and_then(|(s, i)| self.get_element(s, i))
             .map(|next| next.data.is_movement() || next.command == Command::JumpCmd)
             .unwrap_or(false)
@@ -286,11 +287,11 @@ impl SequenceManager {
     /// non-adjacent.
     pub(super) fn next_element_in_chain(
         &self,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Option<(SequenceId, usize)> {
-        let this = self.get_element(seq_id, elem_idx)?;
-        let (next_seq, next_idx) = self.unsevered_following_ref(seq_id, elem_idx)?;
+        let this = self.get_element_at(elem_ref)?;
+        let (next_seq, next_idx) =
+            self.unsevered_following_ref(elem_ref.sequence_id, elem_ref.element_index)?;
         let next = self.get_element(next_seq, next_idx)?;
         if this.owner == next.owner {
             Some((next_seq, next_idx))
@@ -303,8 +304,8 @@ impl SequenceManager {
     /// this one — i.e. the sequence is effectively done after this
     /// element finishes.  `Wait` and `AssertPosition` are skipped
     /// (treated as non-actions).
-    pub fn is_last_real_action(&self, seq_id: SequenceId, elem_idx: usize) -> bool {
-        let mut cur = (seq_id, elem_idx);
+    pub fn is_last_real_action(&self, elem_ref: SequenceElementRef) -> bool {
+        let mut cur = (elem_ref.sequence_id, elem_ref.element_index);
         loop {
             // The original game recursively checks the last real action for every skipped
             // Wait/AssertPosition, and each invocation checks that node's
@@ -370,8 +371,7 @@ impl crate::engine::EngineInner {
             priority => priority,
         };
         self.orders.sequence_manager.set_element_priority(
-            reference.sequence_id,
-            reference.element_index,
+            SequenceElementRef::new(reference.sequence_id, reference.element_index),
             priority,
         );
         priority
@@ -414,8 +414,7 @@ impl crate::engine::EngineInner {
                         StopElementAction::InterruptSelf => self.element_interrupted(
                             tcx,
                             active_scripts,
-                            reference.sequence_id,
-                            reference.element_index,
+                            SequenceElementRef::new(reference.sequence_id, reference.element_index),
                             CascadeFlags::NEXT_LEVEL,
                         ),
                         StopElementAction::InterruptFollowing
@@ -426,8 +425,10 @@ impl crate::engine::EngineInner {
                                     self.element_interrupted(
                                         tcx,
                                         active_scripts,
-                                        next.sequence_id,
-                                        next.element_index,
+                                        SequenceElementRef::new(
+                                            next.sequence_id,
+                                            next.element_index,
+                                        ),
                                         CascadeFlags::NEXT_LEVEL,
                                     );
                                 } else {
@@ -832,8 +833,7 @@ impl crate::engine::EngineInner {
             self.element_interrupted(
                 tcx,
                 active_scripts,
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
                 CascadeFlags::NEXT_LEVEL,
             );
             changed = true;

@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(in crate::engine) fn launch_live_ai_turn(
@@ -922,7 +923,10 @@ impl EngineInner {
                 // seeking still renews the order before aging its wait scalar.
                 let (element, next_order_id) = self
                     .orders
-                    .element_with_order_ids_mut(selected.seq_id, selected.elem_idx)
+                    .element_with_order_ids_mut(SequenceElementRef::new(
+                        selected.seq_id,
+                        selected.elem_idx,
+                    ))
                     .expect("globally frozen seek lost its selected element");
                 let order = element
                     .orders

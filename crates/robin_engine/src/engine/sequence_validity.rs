@@ -11,6 +11,8 @@
 use crate::element::{Command, Entity, EntityId, Human, ObjectType, Posture};
 use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
+#[cfg(test)]
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{Field, FieldValue, SequenceElement, SequenceElementData};
 
 use super::input::BowTarget;
@@ -2065,8 +2067,7 @@ mod tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine
             .get_entity_mut(shooter)
@@ -2221,8 +2222,7 @@ mod tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
         engine
             .get_entity_mut(pc_id)
@@ -2347,8 +2347,7 @@ mod tests {
             engine.element_in_progress(
                 TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 &mut Vec::new(),
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
             );
             engine.publish_selected_order_as_installed(healer);
 
@@ -2477,8 +2476,7 @@ mod tests {
             &mut engine.orders.sequence_manager,
             shooter,
             target,
-            next_sequence,
-            0,
+            SequenceElementRef::new(next_sequence, 0),
             false,
             1,
             Some(ShootMode::Normal),
@@ -2495,8 +2493,7 @@ mod tests {
     fn non_interruptable_bow_validity_noop_retains_selected_order() {
         let (mut engine, assets, shooter, target, sequence) = bow_execute_fixture();
         engine.orders.sequence_manager.set_element_priority(
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             crate::sequence::SequencePriority::NonInterruptable,
         );
         engine

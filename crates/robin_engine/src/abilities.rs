@@ -14,6 +14,7 @@ use crate::engine::TickCtx;
 use crate::entities::Entities;
 use crate::movement::AbilityKind;
 use crate::order::{Order, OrderType};
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceId, SequenceManager};
 #[cfg(test)]
 use crate::sprite::MotionState as SpriteMotionState;
@@ -116,8 +117,7 @@ pub fn begin_carry(
     sequence_manager: &mut SequenceManager,
     carrier_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if carrier_id == target_id {
@@ -184,7 +184,7 @@ pub fn begin_carry(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     // Unlike the strangle/heal/tie ability inits, the corpse-carry
     // transition does not turn the carrier toward the corpse: the
@@ -268,8 +268,7 @@ pub fn begin_drop(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     carrier_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let carrier = match entities.get_mut(carrier_id) {
@@ -296,7 +295,7 @@ pub fn begin_drop(
     order.antagonist = Some(carried_id);
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -337,8 +336,7 @@ pub fn begin_climb_on_shoulders(
     sequence_manager: &mut SequenceManager,
     climber_id: EntityId,
     helper_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> ClimbResult {
@@ -399,7 +397,7 @@ pub fn begin_climb_on_shoulders(
     order.target_actor = Some(helper_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     ClimbResult::Started
 }
@@ -494,8 +492,7 @@ pub fn begin_climb_down_from_shoulders(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     climber_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     // Validate climber: must be a living PC currently OnShoulders with
@@ -531,7 +528,7 @@ pub fn begin_climb_down_from_shoulders(
     order.target_actor = Some(carrier_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -549,8 +546,7 @@ pub fn begin_tie(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if actor_id == target_id {
@@ -591,7 +587,7 @@ pub fn begin_tie(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -607,8 +603,7 @@ pub fn begin_untie(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if actor_id == target_id {
@@ -648,7 +643,7 @@ pub fn begin_untie(
     order.antagonist = Some(target_id);
     order.compute_direction = false;
     order.reverse = true;
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -667,8 +662,7 @@ pub fn begin_heal(
     sequence_manager: &mut SequenceManager,
     healer_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     // Player-character heal translation only authors the
@@ -715,7 +709,7 @@ pub fn begin_heal(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -736,8 +730,7 @@ pub fn begin_whistle(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities.get_mut(actor_id) {
@@ -763,7 +756,7 @@ pub fn begin_whistle(
     let mut order = Order::new(OrderType::Whistling, 0.0, 0.0, order_id);
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -782,8 +775,7 @@ pub fn begin_eat(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities.get_mut(actor_id) {
@@ -802,7 +794,7 @@ pub fn begin_eat(
     let mut order = Order::new(OrderType::Eating, 0.0, 0.0, order_id);
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -827,8 +819,7 @@ pub fn begin_hit(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if actor_id == target_id {
@@ -869,7 +860,7 @@ pub fn begin_hit(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -892,8 +883,7 @@ pub fn begin_strangle(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if actor_id == target_id {
@@ -938,7 +928,7 @@ pub fn begin_strangle(
     order.target_actor = Some(target_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -954,8 +944,7 @@ pub fn begin_listen(
     profiles: &crate::profiles::ProfileManager,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities.get_mut(actor_id) {
@@ -1000,7 +989,7 @@ pub fn begin_listen(
     );
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
     for order_type in [
         OrderType::Listening,
         OrderType::TransitionListeningWaitingUpright,
@@ -1008,7 +997,7 @@ pub fn begin_listen(
         let mut order = Order::new(order_type, 0.0, 0.0, alloc_order_id(order_id_counter));
         order.compute_direction = false;
 
-        sequence_manager.push_order_on(seq_id, elem_idx, order);
+        sequence_manager.push_order_at(elem_ref, order);
     }
 
     BeginResult::Started
@@ -1032,8 +1021,7 @@ pub fn begin_throw_net(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     begin_throw(
@@ -1042,8 +1030,7 @@ pub fn begin_throw_net(
         actor_id,
         target_pos,
         None,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingNet,
         true,
@@ -1064,8 +1051,7 @@ pub fn begin_throw_apple(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     begin_throw_at_entity(
@@ -1073,8 +1059,7 @@ pub fn begin_throw_apple(
         sequence_manager,
         actor_id,
         target,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingApple,
     )
@@ -1088,8 +1073,7 @@ pub fn begin_throw_stone(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     begin_throw_at_entity(
@@ -1097,8 +1081,7 @@ pub fn begin_throw_stone(
         sequence_manager,
         actor_id,
         target,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingStone,
     )
@@ -1115,8 +1098,7 @@ pub fn begin_throw_stone_at_ground(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     begin_throw(
@@ -1125,8 +1107,7 @@ pub fn begin_throw_stone_at_ground(
         actor_id,
         target_pos,
         None,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingStone,
         true,
@@ -1144,8 +1125,7 @@ fn begin_throw(
     actor_id: EntityId,
     target_pos: MapPoint,
     antagonist: Option<EntityId>,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
     order_type: OrderType,
     set_waiting: bool,
@@ -1171,7 +1151,7 @@ fn begin_throw(
     order.antagonist = antagonist;
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     // Face the target position.
     let actor_pos = actor_entity.element_data().position_map();
@@ -1191,8 +1171,7 @@ fn begin_throw_at_entity(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
     order_type: OrderType,
 ) -> BeginResult {
@@ -1206,8 +1185,7 @@ fn begin_throw_at_entity(
         actor_id,
         target_pos,
         Some(target_id),
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         order_type,
         true,
@@ -1230,8 +1208,7 @@ pub fn begin_throw_wasp_nest(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     begin_throw(
@@ -1240,8 +1217,7 @@ pub fn begin_throw_wasp_nest(
         actor_id,
         target_pos,
         None,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingWaspNest,
         true,
@@ -1264,8 +1240,7 @@ pub fn begin_throw_purse(
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     // Purse throwing requires Waiting, but the original game's action transition owns
@@ -1280,8 +1255,7 @@ pub fn begin_throw_purse(
         actor_id,
         target_pos,
         None,
-        seq_id,
-        elem_idx,
+        elem_ref,
         order_id_counter,
         OrderType::ThrowingPurse,
         false,
@@ -1304,8 +1278,7 @@ pub fn begin_pay(
     sequence_manager: &mut SequenceManager,
     pc_id: EntityId,
     beggar_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     if pc_id == beggar_id {
@@ -1347,7 +1320,7 @@ pub fn begin_pay(
     order.target_actor = Some(beggar_id.index());
     order.compute_direction = false;
 
-    sequence_manager.push_order_on(seq_id, elem_idx, order);
+    sequence_manager.push_order_at(elem_ref, order);
 
     BeginResult::Started
 }
@@ -1368,8 +1341,7 @@ pub fn begin_receive_purse(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     beggar_id: EntityId,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let beggar = match entities.get_mut(beggar_id) {
@@ -1413,7 +1385,7 @@ pub fn begin_receive_purse(
     {
         let mut order = Order::new(order_type, 0.0, 0.0, order_id);
         order.compute_direction = false;
-        sequence_manager.push_order_on(seq_id, elem_idx, order);
+        sequence_manager.push_order_at(elem_ref, order);
     }
     BeginResult::Started
 }
@@ -1898,8 +1870,7 @@ mod tests {
                 &mut manager,
                 carrier,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_order_id,
             ),
             BeginResult::Started
@@ -2004,8 +1975,7 @@ mod tests {
                     &mut manager,
                     carrier,
                     target,
-                    seq_id,
-                    0,
+                    SequenceElementRef::new(seq_id, 0),
                     &mut next_order_id,
                 ),
                 BeginResult::Impossible,
@@ -2246,8 +2216,7 @@ mod tests {
                 &mut manager,
                 pc,
                 beggar,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -2336,8 +2305,7 @@ mod tests {
                 &mut manager,
                 owner,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_order_id,
             ),
             BeginResult::Started
@@ -2439,8 +2407,7 @@ mod tests {
                 &mut manager,
                 owner,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_order_id,
             ),
             BeginResult::Started
@@ -2560,8 +2527,7 @@ mod tests {
                 &mut manager,
                 attacker,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -2639,8 +2605,7 @@ mod tests {
                 &mut manager,
                 attacker,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -2704,8 +2669,7 @@ mod tests {
                 &mut manager,
                 healer,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -2759,8 +2723,7 @@ mod tests {
                 &mut manager,
                 healer,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started,
@@ -2813,8 +2776,7 @@ mod tests {
                 &mut manager,
                 attacker,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -2960,8 +2922,7 @@ mod tests {
                 &profiles,
                 &mut manager,
                 owner,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -3027,8 +2988,7 @@ mod tests {
                 &profiles,
                 &mut manager,
                 owner,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -3168,8 +3128,7 @@ mod tests {
                 &mut manager,
                 carrier,
                 target,
-                seq_id,
-                0,
+                SequenceElementRef::new(seq_id, 0),
                 &mut next_id,
             ),
             BeginResult::Started
@@ -3297,8 +3256,7 @@ mod tests {
                     &mut manager,
                     carrier,
                     target,
-                    seq_id,
-                    0,
+                    SequenceElementRef::new(seq_id, 0),
                     &mut next_id,
                 ),
                 BeginResult::Started
@@ -3344,7 +3302,13 @@ mod tests {
         let mut next_id = 200;
 
         assert_eq!(
-            begin_receive_purse(&mut entities, &mut manager, owner, seq_id, 0, &mut next_id),
+            begin_receive_purse(
+                &mut entities,
+                &mut manager,
+                owner,
+                SequenceElementRef::new(seq_id, 0),
+                &mut next_id
+            ),
             BeginResult::Started
         );
         let mut actual = Vec::new();
@@ -3438,8 +3402,7 @@ mod tests {
             &mut manager,
             climber_id,
             helper_id,
-            seq_id,
-            0,
+            SequenceElementRef::new(seq_id, 0),
             &mut next_order_id,
             ObstacleList {
                 static_obstacles: &[],

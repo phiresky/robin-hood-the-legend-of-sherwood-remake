@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
@@ -37,7 +38,8 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     let ai = engine.ai_ctrl_mut(observer);
     ai.stimulus_queue = queued;
 
-    let request = |owner| PendingPathRequest::test_request(owner, SequenceId(1), 0);
+    let request =
+        |owner| PendingPathRequest::test_request(owner, SequenceElementRef::new(SequenceId(1), 0));
     let mut targeting_removed = request(first);
     targeting_removed.antagonist = Some(removed);
     let requests = vec![

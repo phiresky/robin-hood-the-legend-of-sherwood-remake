@@ -25,7 +25,7 @@ use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::jump_line::JumpLine;
 use crate::order::OrderType;
-use crate::sequence::SequenceId;
+use crate::sequence::SequenceElementRef;
 
 /// PC's vertical reach.  Jumps with `|Δh|` under this threshold run the
 /// long-jump branch; above it they split into `jump-up` / `jump-down`.
@@ -690,12 +690,11 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
         // Read jump-line IDs from the element.
         let (src_id, dst_id) = {
-            let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
+            let elem = match self.orders.sequence_manager.get_element_at(elem_ref) {
                 Some(e) => e,
                 None => return false,
             };
@@ -842,12 +841,12 @@ impl EngineInner {
         let element = self
             .orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("jump element disappeared during translation");
         element.orders.clear();
         element.orders.extend(orders);
         let installed = crate::element::InstalledActorOrder::new(
-            crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
+            crate::sequence::SequenceElementRef::new(elem_ref.sequence_id, elem_ref.element_index),
             element
                 .current_order()
                 .expect("jump translation produced no orders"),
@@ -1615,7 +1614,11 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
 
-        assert!(engine.start_jump(TickCtx::new(&sim, &assets), owner, seq_id, 0));
+        assert!(engine.start_jump(
+            TickCtx::new(&sim, &assets),
+            owner,
+            SequenceElementRef::new(seq_id, 0)
+        ));
         let element = engine
             .orders
             .sequence_manager
@@ -1657,7 +1660,10 @@ mod tests {
             .continuation
             .motion_state = crate::sprite::MotionState::Terminated;
 
-        engine.do_next_order(TickCtx::new(&sim, &assets), seq_id, 0);
+        engine.do_next_order(
+            TickCtx::new(&sim, &assets),
+            SequenceElementRef::new(seq_id, 0),
+        );
 
         let actor = engine
             .world

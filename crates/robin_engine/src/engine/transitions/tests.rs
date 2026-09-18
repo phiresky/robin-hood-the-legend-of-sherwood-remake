@@ -3,6 +3,7 @@ use crate::element::{Camp, Entity};
 use crate::element_kinds::{ActionState as AS, Posture as P};
 use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequencePriority};
 
 /// Enemy AI of a settled soldier. In the running game,
@@ -73,8 +74,7 @@ fn generate_transition(
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
     )
 }
 
@@ -91,8 +91,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            seq_id,
-            elem_idx
+            SequenceElementRef::new(seq_id, elem_idx)
         ),
         Ok(false)
     );
@@ -101,8 +100,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            seq_id,
-            elem_idx + 1
+            SequenceElementRef::new(seq_id, elem_idx + 1)
         ),
         Err(TransitionError::MissingElement {
             seq_id,
@@ -120,8 +118,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            seq_id,
-            elem_idx
+            SequenceElementRef::new(seq_id, elem_idx)
         ),
         Err(TransitionError::OwnerMismatch {
             expected: owner,
@@ -134,8 +131,7 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            seq_id,
-            elem_idx
+            SequenceElementRef::new(seq_id, elem_idx)
         ),
         Err(TransitionError::MissingOwner(owner))
     );
@@ -189,15 +185,27 @@ fn transition_stages_observe_live_state_without_reordering_effects() {
     };
     assert_eq!(
         target.stage(&mut engine, |engine| {
-            push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionCrouchingDown);
-            set_posture_after(engine, seq_id, elem_idx, P::Crouched);
+            push_anim_order(
+                engine,
+                SequenceElementRef::new(seq_id, elem_idx),
+                OrderType::TransitionCrouchingDown,
+            );
+            set_posture_after(
+                engine,
+                SequenceElementRef::new(seq_id, elem_idx),
+                P::Crouched,
+            );
             true
         }),
         Ok(true)
     );
     assert_eq!(
         target.stage(&mut engine, |engine| {
-            make_posture_transition_actor(engine, seq_id, elem_idx, CP::MUST_BE_UPRIGHT)
+            make_posture_transition_actor(
+                engine,
+                SequenceElementRef::new(seq_id, elem_idx),
+                CP::MUST_BE_UPRIGHT,
+            )
         }),
         Ok(true)
     );
@@ -209,7 +217,8 @@ fn transition_stages_observe_live_state_without_reordering_effects() {
         ]
     );
     assert_eq!(
-        transition_element(&engine, seq_id, elem_idx).posture_after_transition,
+        transition_element(&engine, SequenceElementRef::new(seq_id, elem_idx))
+            .posture_after_transition,
         P::Upright
     );
 }
@@ -360,8 +369,7 @@ fn sword_exit_transition_synchronously_quits_the_fight() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             owner,
-            seq,
-            idx
+            SequenceElementRef::new(seq, idx)
         ),
         Ok(true)
     );
@@ -501,8 +509,7 @@ fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
         &mut engine,
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
         owner,
         EA::MUST_BE_AIMING_BOW_DOWN,
     );
@@ -682,8 +689,7 @@ fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
     assert!(dispatch_make_posture_transition(
         &mut engine,
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
         owner,
         change
     ));
@@ -725,8 +731,7 @@ fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
     assert!(dispatch_make_posture_transition(
         &mut engine,
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
         owner,
         change
     ));
@@ -1059,8 +1064,7 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     engine.element_terminated(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        enter,
-        0,
+        SequenceElementRef::new(enter, 0),
     );
 
     engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
@@ -1197,16 +1201,14 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
         &mut engine.orders.sequence_manager,
         owner,
         MapPoint::new(100.0, 100.0),
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
         &mut engine.orders.next_order_id,
     );
     assert_eq!(result, crate::abilities::BeginResult::Started);
     engine.element_in_progress(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        seq,
-        idx,
+        SequenceElementRef::new(seq, idx),
     );
 
     engine.select_sequence_element(owner, Some((seq, idx)));

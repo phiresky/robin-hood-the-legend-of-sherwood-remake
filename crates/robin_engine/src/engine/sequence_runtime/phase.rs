@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     /// Translate one Move/Seek at the exact sequence-processing
@@ -57,7 +58,11 @@ impl EngineInner {
                 element_index,
                 "Move/Seek action has invalid sequence-element data"
             );
-            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(sequence_id, element_index),
+            );
             return;
         };
 
@@ -85,7 +90,11 @@ impl EngineInner {
             {
                 actor.post_seek_sequence = Some(post_seek);
             }
-            self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(sequence_id, element_index),
+            );
             self.start_post_seek_sequence(tcx, active_scripts, owner, None);
             return;
         }
@@ -96,7 +105,11 @@ impl EngineInner {
         // precede seek-refresh/cross-sector lowering: that lowering can consume
         // the wrapper without ever reaching ordinary path dispatch.
         if !self.extract_move_instruction_owner(owner) {
-            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(sequence_id, element_index),
+            );
             return;
         }
 
@@ -121,7 +134,11 @@ impl EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(sequence_id, element_index),
+            );
             return;
         }
 
@@ -237,7 +254,11 @@ impl EngineInner {
                     let Some(resolved) =
                         self.resolve_entity_seek(tcx, owner, target, flags, seek_distance)
                     else {
-                        self.element_impossible(tcx, active_scripts, sequence_id, element_index);
+                        self.element_impossible(
+                            tcx,
+                            active_scripts,
+                            SequenceElementRef::new(sequence_id, element_index),
+                        );
                         return;
                     };
                     if let Some(crate::sequence::SequenceElementData::Movement {
@@ -312,7 +333,11 @@ impl EngineInner {
                     None,
                     "building interior move",
                 );
-                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
                 return;
             }
 
@@ -408,8 +433,7 @@ impl EngineInner {
                 tcx,
                 active_scripts,
                 owner,
-                sequence_id,
-                element_index,
+                SequenceElementRef::new(sequence_id, element_index),
                 replacement,
             );
             return;
@@ -419,8 +443,7 @@ impl EngineInner {
             tcx,
             active_scripts,
             owner,
-            sequence_id,
-            element_index,
+            SequenceElementRef::new(sequence_id, element_index),
             destination,
             action,
         )

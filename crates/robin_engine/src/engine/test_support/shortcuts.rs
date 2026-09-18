@@ -13,6 +13,7 @@ use crate::element::{
 use crate::engine::TickCtx;
 use crate::engine::{EngineInner, HostDisplayState, LevelAssets};
 use crate::position_interface::SectorHandle;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceId};
 
 fn sim() -> crate::sim_rng::SimulationContext {
@@ -227,8 +228,7 @@ impl EngineInner {
         self.element_in_progress(
             TickCtx::new(&sim(), assets),
             &mut Vec::new(),
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         );
     }
 
@@ -241,8 +241,7 @@ impl EngineInner {
         self.element_terminated(
             TickCtx::new(&sim(), assets),
             &mut Vec::new(),
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         );
     }
 
@@ -256,8 +255,7 @@ impl EngineInner {
         self.element_interrupted(
             TickCtx::new(&sim(), assets),
             &mut Vec::new(),
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             flags,
         );
     }
@@ -271,8 +269,7 @@ impl EngineInner {
         self.postpone_element(
             TickCtx::new(&sim(), assets),
             &mut Vec::new(),
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         );
     }
 
@@ -287,8 +284,7 @@ impl EngineInner {
             TickCtx::new(&sim(), assets),
             &mut Vec::new(),
             owner,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
         )
     }
 

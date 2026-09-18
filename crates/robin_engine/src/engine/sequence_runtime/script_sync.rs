@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[cfg(test)]
 mod resumed_instruction_tests {
@@ -110,7 +111,12 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => {
-                self.instruct_owner(tcx, active_scripts, owner, sequence_id, element_index);
+                self.instruct_owner(
+                    tcx,
+                    active_scripts,
+                    owner,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
             }
             SequenceAction::EngineCommand {
                 sequence_id,
@@ -145,8 +151,9 @@ impl EngineInner {
                         format!("missing immediate owner element {sequence_id:?}/{element_index}")
                     })?;
                 if command == Command::SendMessage {
-                    let (message, arg1, arg2) =
-                        self.extract_message_properties(sequence_id, element_index);
+                    let (message, arg1, arg2) = self.extract_message_properties(
+                        SequenceElementRef::new(sequence_id, element_index),
+                    );
                     let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
                     let frame = active_scripts
                         .last()
@@ -160,7 +167,11 @@ impl EngineInner {
                         frame,
                         active_scripts,
                     );
-                    self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                    self.element_terminated(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(sequence_id, element_index),
+                    );
                     // Immediate original-game actor execution returns from
                     // message processing and immediately enters state change, whose
                     // owner card and Ready() complete before the parent VM
@@ -172,8 +183,7 @@ impl EngineInner {
                         tcx,
                         active_scripts,
                         owner,
-                        sequence_id,
-                        element_index,
+                        SequenceElementRef::new(sequence_id, element_index),
                     );
                 }
             }
@@ -242,8 +252,9 @@ impl EngineInner {
             })?;
         match command {
             Command::SendMessage => {
-                let (message, arg1, arg2) =
-                    self.extract_message_properties(sequence_id, element_index);
+                let (message, arg1, arg2) = self.extract_message_properties(
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
                 let frame = active_scripts
                     .last()
                     .map_or_else(crate::natives::ScriptCallFrame::default, |call| call.frame);
@@ -255,15 +266,24 @@ impl EngineInner {
                     frame,
                     active_scripts,
                 );
-                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
                 result?;
             }
             command @ (Command::LockUser | Command::UnlockUser) => {
                 self.apply_script_user_lock(tcx, command);
-                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
             }
             Command::Timer => {
-                let timer = self.timer_immediate_entry(sequence_id, element_index);
+                let timer =
+                    self.timer_immediate_entry(SequenceElementRef::new(sequence_id, element_index));
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Command::CameraJumpTo => {
@@ -284,15 +304,18 @@ impl EngineInner {
                     self.feedback.cutscene_camera.view_position =
                         self.check_location_is_valid_for_camera(position);
                 }
-                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(sequence_id, element_index),
+                );
             }
             command @ (Command::CharacterAvailable | Command::ActionAvailable) => {
                 self.dispatch_availability_immediate(
                     tcx,
                     active_scripts,
                     command,
-                    sequence_id,
-                    element_index,
+                    SequenceElementRef::new(sequence_id, element_index),
                 );
             }
             Command::OpenScroll => {
@@ -325,8 +348,7 @@ impl EngineInner {
                             self.element_terminated(
                                 tcx,
                                 active_scripts,
-                                sequence_id,
-                                element_index,
+                                SequenceElementRef::new(sequence_id, element_index),
                             );
                         }
                         Err(error) if error.sequence_element_failed => {
@@ -338,8 +360,7 @@ impl EngineInner {
                             self.element_terminated(
                                 tcx,
                                 active_scripts,
-                                sequence_id,
-                                element_index,
+                                SequenceElementRef::new(sequence_id, element_index),
                             );
                             return Err(error);
                         }
@@ -353,7 +374,11 @@ impl EngineInner {
                     }
                 } else {
                     tracing::warn!(?scroll, ?reader, "OpenScroll missing properties");
-                    self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+                    self.element_terminated(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(sequence_id, element_index),
+                    );
                 }
             }
             other => {

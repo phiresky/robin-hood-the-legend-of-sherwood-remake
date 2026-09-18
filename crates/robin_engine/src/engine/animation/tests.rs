@@ -4,6 +4,7 @@ use crate::element::{
 };
 use crate::engine::EngineInner;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn failed_movement_translation_clears_the_previous_installed_idle_order() {
@@ -25,7 +26,11 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
     let wait_id = engine.orders.sequence_manager.insert_element(wait);
     engine.orders.sequence_manager.start_sequence_level(wait_id);
     engine.select_sequence_element(owner, Some((wait_id, 0)));
-    engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), wait_id, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(wait_id, 0),
+    );
     engine.publish_selected_order_as_installed(owner);
     let installed_wait = engine
         .get_entity(owner)
@@ -42,8 +47,7 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
     engine.element_interrupted(
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
-        wait_id,
-        0,
+        SequenceElementRef::new(wait_id, 0),
         crate::sequence::CascadeFlags::NEXT_LEVEL,
     );
     // Queue membership ends first; the installed object remains readable through
@@ -71,7 +75,11 @@ fn failed_movement_translation_clears_the_previous_installed_idle_order() {
         Some(OrderType::WaitingCapeAnonymousArcher)
     );
 
-    engine.element_impossible(TickCtx::new(&sim, &assets), &mut Vec::new(), movement, 0);
+    engine.element_impossible(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(movement, 0),
+    );
 
     assert_eq!(
         engine.live_actor_animation(owner),
@@ -532,8 +540,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
     engine.element_in_progress(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let result = engine.tick_actor_animation_for(
@@ -784,7 +791,11 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), sequence, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(sequence, 0),
+    );
 
     let start = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), actor);
     assert_eq!(start.expect("weak-sword START"), MotionState::Start);
@@ -1625,8 +1636,7 @@ fn striking_down_execute_fixture() -> (
     engine.element_in_progress(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
     let order_id = engine
         .orders

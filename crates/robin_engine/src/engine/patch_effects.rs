@@ -4,6 +4,7 @@ use super::movement::MovePathOutcome;
 use super::*;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 
 fn initialize_patch_animation(
     sprite: &mut crate::sprite::Sprite,
@@ -424,9 +425,19 @@ impl EngineInner {
                 // differs observably: the actor is not moved, the corrected
                 // source is different, and first-point selection becomes enabled.
                 if !self.extract_move_instruction_owner(id) {
-                    self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        &mut Vec::new(),
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    );
                 } else {
-                    match self.try_dispatch_move_path(tcx, id, seq_id, elem_idx, dest, action) {
+                    match self.try_dispatch_move_path(
+                        tcx,
+                        id,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                        dest,
+                        action,
+                    ) {
                         MovePathOutcome::Success | MovePathOutcome::Pending => {
                             // Retranslation replaces order storage. Install the
                             // new current order only if this element still owns
@@ -450,7 +461,11 @@ impl EngineInner {
                             self.install_actor_order(id, installed_order);
                         }
                         MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
+                            self.element_impossible(
+                                tcx,
+                                &mut Vec::new(),
+                                SequenceElementRef::new(seq_id, elem_idx),
+                            );
                         }
                         MovePathOutcome::Failed => {
                             // Source extraction failure already performed the

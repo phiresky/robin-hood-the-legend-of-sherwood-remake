@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedOwnerInstruction {
@@ -17,13 +18,21 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> Result<PreparedOwnerInstruction, bool> {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         if let Some(actor) = self.get_entity_mut(owner).and_then(Entity::actor_data_mut) {
             actor.execution_frozen = false;
         }
-        if self.pc_instruct_early_completion(tcx, active_scripts, owner, seq_id, elem_idx) {
+        if self.pc_instruct_early_completion(
+            tcx,
+            active_scripts,
+            owner,
+            SequenceElementRef::new(seq_id, elem_idx),
+        ) {
             return Err(true);
         }
         self.debug_patrol_turn_instruct(owner, seq_id, elem_idx);
@@ -56,7 +65,11 @@ impl EngineInner {
             {
                 actor.execution_frozen = false;
             }
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(false);
         }
         if command.is_some_and(|command| self.pc_should_hold_shoot_bow(owner, command)) {
@@ -78,7 +91,11 @@ impl EngineInner {
                 .and_then(crate::element::Entity::actor_data_mut)
                 .expect("NULL actor instruction requires its actor owner")
                 .execution_frozen = false;
-            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(true);
         }
 
@@ -109,7 +126,7 @@ impl EngineInner {
                                 == crate::element::Posture::Undefined)
                 });
         if needs_transition {
-            self.stamp_element_transition_state(owner, seq_id, elem_idx);
+            self.stamp_element_transition_state(owner, SequenceElementRef::new(seq_id, elem_idx));
         }
         // Original-game actor instruction handles a selected
         // NON_INTERRUPTABLE element before transition generation.
@@ -128,9 +145,18 @@ impl EngineInner {
         // incoming element's transition orders before normal
         // priority comparison with the selected element.
         if needs_transition
-            && !self.generate_transition(tcx, active_scripts, owner, seq_id, elem_idx)
+            && !self.generate_transition(
+                tcx,
+                active_scripts,
+                owner,
+                SequenceElementRef::new(seq_id, elem_idx),
+            )
         {
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
 
             return Err(false);
         }
@@ -216,7 +242,11 @@ impl EngineInner {
                         })
             });
             if helper_is_entering {
-                self.postpone_element(tcx, active_scripts, seq_id, elem_idx);
+                self.postpone_element(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return Err(false);
             }
             if let Some(helper_id) = helper
@@ -242,7 +272,11 @@ impl EngineInner {
                             Some(helper_id),
                         ),
                     );
-                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        active_scripts,
+                        SequenceElementRef::new(seq_id, elem_idx),
+                    );
                     return Err(false);
                 }
             }
@@ -330,7 +364,11 @@ impl EngineInner {
         // than RECEIVE_PURSE / BEGGAR_SHOW_FACE / WAIT on
         // beggar civilians.
         if self.beggar_rejects_command(owner, cmd) {
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return Err(false);
         }
         // Posture transitions (leave-disguise, stand-up, …)

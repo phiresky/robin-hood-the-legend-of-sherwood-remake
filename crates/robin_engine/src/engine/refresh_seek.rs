@@ -35,6 +35,7 @@ use crate::element::{ActionState, Entity, EntityId};
 use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
 };
@@ -773,7 +774,11 @@ impl crate::engine::EngineInner {
         let Some(resolved) = self.resolve_entity_seek(tcx, owner, target, flags, seek_distance)
         else {
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return;
         };
         // Seek refresh's transient selected seek is replaced by the concrete
@@ -798,7 +803,13 @@ impl crate::engine::EngineInner {
             *destination = resolved.destination;
         }
 
-        self.relaunch_seek_replacement(tcx, active_scripts, owner, seq_id, elem_idx, new_elem);
+        self.relaunch_seek_replacement(
+            tcx,
+            active_scripts,
+            owner,
+            SequenceElementRef::new(seq_id, elem_idx),
+            new_elem,
+        );
     }
 
     /// Original-game seek refresh waits instead of rebuilding
@@ -897,7 +908,11 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return true;
             }
         };
@@ -911,7 +926,11 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
                 return true;
             }
         };
@@ -929,7 +948,11 @@ impl crate::engine::EngineInner {
             // The unable-to-do bark belongs to movement-sequence construction's
             // gate-path failure below.
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
 
@@ -980,7 +1003,11 @@ impl crate::engine::EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
 
@@ -988,8 +1015,7 @@ impl crate::engine::EngineInner {
         self.element_interrupted(
             tcx,
             active_scripts,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             CascadeFlags::NEXT_LEVEL,
         );
 
@@ -1154,7 +1180,11 @@ impl crate::engine::EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_selected_seek_for_refresh(owner);
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
             return true;
         };
         if gate_path.is_empty() {
@@ -1165,8 +1195,7 @@ impl crate::engine::EngineInner {
         self.element_interrupted(
             tcx,
             active_scripts,
-            seq_id,
-            elem_idx,
+            SequenceElementRef::new(seq_id, elem_idx),
             CascadeFlags::NEXT_LEVEL,
         );
 
@@ -1198,18 +1227,11 @@ impl crate::engine::EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         new_elem: SequenceElement,
     ) {
         self.stop_selected_seek_for_refresh(owner);
-        self.element_interrupted(
-            tcx,
-            active_scripts,
-            seq_id,
-            elem_idx,
-            CascadeFlags::NEXT_LEVEL,
-        );
+        self.element_interrupted(tcx, active_scripts, elem_ref, CascadeFlags::NEXT_LEVEL);
 
         let mut seq = Sequence::new();
         seq.append_element(new_elem);

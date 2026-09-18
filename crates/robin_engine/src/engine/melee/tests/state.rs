@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn accepted_empty_damage_clears_installed_order_without_clearing_movement_goal() {
@@ -756,7 +757,12 @@ fn reactive_zero_distance_step_back_completes_before_returning() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(
+            SequenceElementRef::new(old_sequence, 0),
+            OrderType::WalkingWithSword,
+            90.0,
+            100.0,
+        );
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.t_element_in_progress(&assets, old_sequence, 0);
         {
@@ -2494,8 +2500,7 @@ fn thrust_a_promotes_clicked_secondary_opponent() {
         pc,
         clicked,
         SwordStrike::A,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     assert_eq!(
         engine.action_state_of(pc),
@@ -2952,8 +2957,7 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
     engine.element_impossible(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence_id,
-        element_index,
+        SequenceElementRef::new(sequence_id, element_index),
     );
     assert!(
         !engine.human(owner).last_motion_was_step_back_in_combat,

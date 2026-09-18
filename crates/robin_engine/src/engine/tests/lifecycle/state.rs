@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn scrolling_table_generation() {
@@ -892,8 +893,7 @@ fn translate_pay_without_facing_or_speech(
             &mut engine.orders.sequence_manager,
             pc,
             beggar,
-            seq,
-            0,
+            SequenceElementRef::new(seq, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
@@ -1689,7 +1689,7 @@ fn released_leave_listen_is_consumed_once(
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(leave_seq, 0)
+            .is_registered_to_go(SequenceElementRef::new(leave_seq, 0))
             || leave_state == SequenceState::Impossible,
         "released LeaveListen must be re-dispatched through the production queue \
          (state: {leave_state:?})"
@@ -1717,7 +1717,7 @@ fn released_leave_listen_is_consumed_once(
         !engine
             .orders
             .sequence_manager
-            .is_registered_to_go(leave_seq, 0),
+            .is_registered_to_go(SequenceElementRef::new(leave_seq, 0)),
         "released LeaveListen action must be consumed exactly once"
     );
     assert!(leave.orders.is_empty());

@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
@@ -1038,8 +1039,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
             &mut engine.orders.sequence_manager,
             owner,
             target,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
             &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started

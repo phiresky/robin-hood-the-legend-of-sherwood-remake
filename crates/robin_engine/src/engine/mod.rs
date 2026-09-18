@@ -11,6 +11,7 @@
 mod ability_execution;
 mod accessors_short;
 mod ai;
+use crate::sequence::SequenceElementRef;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod achievements;
 pub use achievements::PcExperienceSnapshot;
@@ -895,7 +896,11 @@ impl EngineInner {
     /// transitioned to `Terminated` and the slot nulled.
     pub(super) fn terminate_prev_camera_sequence_element(&mut self, tcx: TickCtx<'_>) {
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.element_terminated(tcx, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(r.sequence_id, r.element_index),
+            );
         }
     }
 
@@ -1961,12 +1966,7 @@ impl EngineInner {
     /// un-stamped element (leaving the field at `Posture::Undefined`)
     /// would cause the alerted transition animation to silently not
     /// fire.
-    fn stamp_element_transition_state(
-        &mut self,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    fn stamp_element_transition_state(&mut self, owner: EntityId, elem_ref: SequenceElementRef) {
         let (actor_posture, actor_action_state) = self
             .get_entity(owner)
             .map(|e| {
@@ -1975,11 +1975,7 @@ impl EngineInner {
                 (posture, action_state)
             })
             .unwrap_or_default();
-        if let Some(elem) = self
-            .orders
-            .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
-        {
+        if let Some(elem) = self.orders.sequence_manager.get_element_at_mut(elem_ref) {
             elem.posture_after_transition = actor_posture;
             elem.action_state_after_transition = actor_action_state;
         }
@@ -2093,7 +2089,11 @@ impl EngineInner {
             // The move will be invalid after this newly-instructed door
             // pass executes. Once Execute has run, the lifecycle flag is
             // cleared and later moves are postponed normally.
-            self.element_impossible(tcx, active_scripts, new_seq, new_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(new_seq, new_idx),
+            );
         } else {
             // `new.Postpone(current)` — current is the blocker, new is
             // the waiter.
@@ -2147,8 +2147,7 @@ impl EngineInner {
             self.element_interrupted(
                 tcx,
                 &mut Vec::new(),
-                cur_seq,
-                cur_idx,
+                SequenceElementRef::new(cur_seq, cur_idx),
                 CascadeFlags::NEXT_LEVEL,
             );
         }
@@ -2166,8 +2165,7 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> bool {
         if !self.get_entity(owner).is_some_and(Entity::is_pc) {
             return false;
@@ -2175,7 +2173,7 @@ impl EngineInner {
         let command = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .map(|element| element.command);
         if matches!(
             command,
@@ -2186,7 +2184,7 @@ impl EngineInner {
                 .and_then(Entity::human_data)
                 .is_some_and(|human| !human.opponents.is_empty())
             {
-                self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, elem_ref);
                 return true;
             }
             // Posture commands stop nonmovement work before transition
@@ -2217,7 +2215,7 @@ impl EngineInner {
             }
             _ => return false,
         };
-        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
         self.hero_speaking(tcx.assets, owner, expression);
         true
     }
@@ -2374,7 +2372,11 @@ impl EngineInner {
             );
         }
         if let Some((seq_id, elem_idx)) = seek_element {
-            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+            self.element_terminated(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(seq_id, elem_idx),
+            );
         }
 
         // Termination callbacks can register the parent's next command level.

@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn pc_and_civilian_provoke_translate_without_soldier_speech() {
@@ -124,7 +125,12 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
-        engine.push_new_order(old_sequence, 0, OrderType::WalkingWithSword, 90.0, 100.0);
+        engine.push_new_order(
+            SequenceElementRef::new(old_sequence, 0),
+            OrderType::WalkingWithSword,
+            90.0,
+            100.0,
+        );
         engine.select_sequence_element(victim, Some((old_sequence, 0)));
         engine.t_element_in_progress(&assets, old_sequence, 0);
         {
@@ -151,8 +157,7 @@ fn reactive_strike_recognition_uses_command_not_replacement_animation() {
             id
         };
         engine.push_new_order(
-            strike_sequence,
-            0,
+            SequenceElementRef::new(strike_sequence, 0),
             OrderType::StrikingRoundLeftSword,
             100.0,
             100.0,

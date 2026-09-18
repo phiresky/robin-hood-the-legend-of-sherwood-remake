@@ -15,6 +15,7 @@ use crate::element::{Command, Entity, EntityId};
 use crate::engine::LevelAssets;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{
     CondolationCard, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
 };
@@ -129,13 +130,17 @@ fn observe_condolation_stimulus(owner: EntityId, stimulus: StimulusType) {
 pub(super) fn install_condolation_nested_termination(
     owner: EntityId,
     stimulus: StimulusType,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
 ) {
     CONDOLATION_NESTED_TERMINATION.with(|hook| {
         assert!(
             hook.borrow_mut()
-                .replace((owner, stimulus, seq_id, elem_idx))
+                .replace((
+                    owner,
+                    stimulus,
+                    elem_ref.sequence_id,
+                    elem_ref.element_index
+                ))
                 .is_none(),
             "nested-condolation test hook must not already be installed"
         );
@@ -316,15 +321,14 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(tcx, &mut Vec::new(), elem_ref);
             return;
         };
         if !entity.is_soldier() {
-            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(tcx, &mut Vec::new(), elem_ref);
             return;
         }
 
@@ -372,7 +376,11 @@ impl EngineInner {
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
         if on_ladder {
-            self.translate_ladder_wall_fall(tcx, owner, (seq_id, elem_idx));
+            self.translate_ladder_wall_fall(
+                tcx,
+                owner,
+                (elem_ref.sequence_id, elem_ref.element_index),
+            );
         }
 
         // Book the first struggle animation onto the wasp-sting
@@ -400,11 +408,9 @@ impl EngineInner {
         .with_completion(crate::order::OrderCompletion::WaspStruggleCycle {
             cycles_remaining: bee_time,
         });
-        self.orders
-            .sequence_manager
-            .push_order_on(seq_id, elem_idx, order);
+        self.orders.sequence_manager.push_order_at(elem_ref, order);
 
-        self.element_in_progress(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.element_in_progress(tcx, &mut Vec::new(), elem_ref);
     }
 
     /// Dispatch a single removal notification to the owner entity.
@@ -655,7 +661,7 @@ impl EngineInner {
             || !self
                 .orders
                 .sequence_manager
-                .is_last_real_action(seq_id, elem_idx as usize)
+                .is_last_real_action(SequenceElementRef::new(seq_id, elem_idx as usize))
         {
             return;
         }
@@ -780,7 +786,11 @@ impl EngineInner {
         if let Some(st) = stimulus {
             observe_condolation_stimulus(owner, st);
             if let Some((seq_id, elem_idx)) = take_condolation_nested_termination(owner, st) {
-                self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(
+                    tcx,
+                    &mut Vec::new(),
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
             }
         }
 

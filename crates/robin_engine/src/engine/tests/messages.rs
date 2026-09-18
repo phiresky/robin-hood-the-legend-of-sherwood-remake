@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
     use crate::ai::{AiState, Substate};
@@ -621,15 +622,13 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        movement,
-        0
+        SequenceElementRef::new(movement, 0)
     ));
     assert!(engine.instruct_owner(
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        movement,
-        1
+        SequenceElementRef::new(movement, 1)
     ));
 
     let sequence = engine

@@ -3,6 +3,7 @@ use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
+use crate::sequence::SequenceElementRef;
 
 /// Ground-level (`z == 0`) test position.
 fn wp(x: f32, y: f32) -> WorldPoint3D {
@@ -105,8 +106,7 @@ fn give_flight(
         .sequence_manager
         .start_sequence_level(sequence);
     engine.push_new_order(
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
         crate::order::OrderType::FallingHitUpright,
         0.0,
         0.0,
@@ -532,8 +532,7 @@ fn dispatch_crowded_cross_sector_swordfight(
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     (engine, owner, opponent, seq_id)
 }

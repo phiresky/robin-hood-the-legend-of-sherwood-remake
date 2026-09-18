@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     pub(super) fn execute_teleport(
@@ -7,8 +8,7 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         // Read destination + layer + sector off the
         // movement element, snap the actor there, and spawn
@@ -21,7 +21,7 @@ impl EngineInner {
         // new-side star burst when the validation step
         // gives up.
         let (dest, dest_layer) = {
-            let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
+            let elem = self.orders.sequence_manager.get_element_at(elem_ref);
             match elem.map(|e| &e.data) {
                 Some(crate::sequence::SequenceElementData::Movement {
                     destination, layer, ..
@@ -50,7 +50,7 @@ impl EngineInner {
                 let entity = match self.get_entity(owner) {
                     Some(e) => e,
                     None => {
-                        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+                        self.element_terminated(tcx, active_scripts, elem_ref);
                         return;
                     }
                 };
@@ -322,7 +322,7 @@ impl EngineInner {
                 }
             }
         }
-        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, elem_ref);
         // `actor_wait` parks the actor in a low-priority
         // idle element after the teleport so the AI
         // re-enters its default loop instead of resuming

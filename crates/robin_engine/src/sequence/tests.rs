@@ -1,6 +1,7 @@
 use super::*;
 use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
+use crate::sequence::SequenceElementRef;
 use crate::sim_rng::test_context;
 
 fn live_sequence_fixture() -> (EngineInner, LevelAssets, EntityId) {
@@ -120,9 +121,14 @@ fn termination_starts_postponed_link_selected_by_owner_callback() {
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(replacement, 0)
+            .is_registered_to_go(SequenceElementRef::new(replacement, 0))
     );
-    assert!(!engine.orders.sequence_manager.is_registered_to_go(old, 0));
+    assert!(
+        !engine
+            .orders
+            .sequence_manager
+            .is_registered_to_go(SequenceElementRef::new(old, 0))
+    );
     assert_eq!(
         engine
             .orders
@@ -557,7 +563,7 @@ fn lazy_stop_priority_is_used_by_live_stop() {
             engine
                 .orders
                 .sequence_manager
-                .resolve_element_stop_priority(root, 0, &|_| resolved),
+                .resolve_element_stop_priority(SequenceElementRef::new(root, 0), &|_| resolved),
             expected
         );
         engine.stop_owner_current_from_root(
@@ -595,9 +601,10 @@ fn lazy_stop_priority_preserves_already_resolved_none_and_other_priorities() {
         element.priority = priority;
         let sequence = manager.insert_element(element);
         assert_eq!(
-            manager.resolve_element_stop_priority(sequence, 0, &|_| panic!(
-                "resolved priorities must not call the resolver"
-            )),
+            manager
+                .resolve_element_stop_priority(SequenceElementRef::new(sequence, 0), &|_| panic!(
+                    "resolved priorities must not call the resolver"
+                )),
             priority
         );
     }
@@ -834,7 +841,7 @@ fn state_change_interrupted_does_not_resume_postponed_elements() {
         !engine
             .orders
             .sequence_manager
-            .is_registered_to_go(postponed, 0)
+            .is_registered_to_go(SequenceElementRef::new(postponed, 0))
     );
 }
 
@@ -892,8 +899,7 @@ fn impossible_starts_postponed_before_clearing_orders_and_reading_owner() {
             engine.element_impossible(
                 TickCtx::new(&test_context(), &assets),
                 &mut Vec::new(),
-                root,
-                0,
+                SequenceElementRef::new(root, 0),
             )
         },
     );
@@ -951,7 +957,12 @@ fn nested_peer_completion_advances_level_once_before_postponed_startup() {
                 let sequence = engine.orders.sequence_manager.get_sequence(root).unwrap();
                 assert_eq!(sequence.current_command_level, 2);
                 assert_eq!(sequence.running_elements, 1);
-                assert!(engine.orders.sequence_manager.is_registered_to_go(root, 2));
+                assert!(
+                    engine
+                        .orders
+                        .sequence_manager
+                        .is_registered_to_go(SequenceElementRef::new(root, 2))
+                );
             }
         },
         || engine.t_element_terminated(&assets, root, 0),
@@ -3051,7 +3062,10 @@ fn set_action_recursive_walks_sequence() {
     ));
     let seq_id = mgr.insert_sequence(seq);
 
-    mgr.set_action_recursive(seq_id, 0, OrderType::WalkingCrouched);
+    mgr.set_action_recursive(
+        SequenceElementRef::new(seq_id, 0),
+        OrderType::WalkingCrouched,
+    );
 
     let s = mgr.get_sequence(seq_id).unwrap();
     for element in s.elements.iter().take(2) {
@@ -3077,7 +3091,10 @@ fn set_action_recursive_honors_loaded_null_and_nonadjacent_next() {
     null_sequence.append_element(movement_elem(owner, OrderType::RunningUpright));
     let null_id = null_mgr.insert_sequence(null_sequence);
     null_mgr.get_element_mut(null_id, 0).unwrap().next = None;
-    null_mgr.set_action_recursive(null_id, 0, OrderType::WalkingCrouched);
+    null_mgr.set_action_recursive(
+        SequenceElementRef::new(null_id, 0),
+        OrderType::WalkingCrouched,
+    );
     assert_eq!(
         movement_action(null_mgr.get_element(null_id, 0).unwrap()),
         OrderType::WalkingCrouched
@@ -3095,7 +3112,10 @@ fn set_action_recursive_honors_loaded_null_and_nonadjacent_next() {
     let linked_id = linked_mgr.insert_sequence(linked_sequence);
     linked_mgr.get_element_mut(linked_id, 0).unwrap().next =
         Some(SequenceElementRef::new(linked_id, 2));
-    linked_mgr.set_action_recursive(linked_id, 0, OrderType::WalkingCrouched);
+    linked_mgr.set_action_recursive(
+        SequenceElementRef::new(linked_id, 0),
+        OrderType::WalkingCrouched,
+    );
     assert_eq!(
         movement_action(linked_mgr.get_element(linked_id, 0).unwrap()),
         OrderType::WalkingCrouched
@@ -3118,7 +3138,7 @@ fn set_action_recursive_follows_cross_postponed_link() {
     let postponed = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
     mgr.get_element_mut(root, 0).unwrap().postponed = Some(SequenceElementRef::new(postponed, 0));
 
-    mgr.set_action_recursive(root, 0, OrderType::WalkingCrouched);
+    mgr.set_action_recursive(SequenceElementRef::new(root, 0), OrderType::WalkingCrouched);
 
     assert_eq!(
         movement_action(mgr.get_element(postponed, 0).unwrap()),
@@ -3342,7 +3362,10 @@ fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
 
     engine.orders.pending_path_requests =
         crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
-            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+            crate::engine::PendingPathRequest::test_request(
+                fixture_owner_0,
+                SequenceElementRef::new(seq_id, 0),
+            ),
         ]);
     let changed = engine.stop_movement_for_owner(
         TickCtx::new(&sim, &assets),
@@ -3415,7 +3438,10 @@ fn stop_movement_rewrite_does_not_cancel_path_for_move_waiting() {
 
     engine.orders.pending_path_requests =
         crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
-            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+            crate::engine::PendingPathRequest::test_request(
+                fixture_owner_0,
+                SequenceElementRef::new(seq_id, 0),
+            ),
         ]);
     engine.stop_movement_for_owner(
         TickCtx::new(&sim, &assets),
@@ -3454,7 +3480,10 @@ fn stop_movement_cancels_path_on_interrupt() {
 
     engine.orders.pending_path_requests =
         crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
-            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+            crate::engine::PendingPathRequest::test_request(
+                fixture_owner_0,
+                SequenceElementRef::new(seq_id, 0),
+            ),
         ]);
     engine.stop_movement_for_owner(
         TickCtx::new(&sim, &assets),
@@ -3491,7 +3520,10 @@ fn stop_movement_interrupts_element_with_unknown_action() {
 
     engine.orders.pending_path_requests =
         crate::engine::PendingPathRequestQueue::restore_v48_waiting(vec![
-            crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
+            crate::engine::PendingPathRequest::test_request(
+                fixture_owner_0,
+                SequenceElementRef::new(seq_id, 0),
+            ),
         ]);
     engine.stop_movement_for_owner(
         TickCtx::new(&sim, &assets),
@@ -3709,10 +3741,10 @@ fn is_next_movement_detects_same_owner_chain() {
     ));
     let seq_id = mgr.insert_sequence(seq);
 
-    assert!(mgr.is_next_movement(seq_id, 0));
-    assert!(!mgr.is_next_movement(seq_id, 1)); // next is Jump (Simple) — not movement
-    assert!(mgr.is_next_movement_or_jump(seq_id, 1));
-    assert!(!mgr.is_next_movement(seq_id, 2)); // last element — nothing next
+    assert!(mgr.is_next_movement(SequenceElementRef::new(seq_id, 0)));
+    assert!(!mgr.is_next_movement(SequenceElementRef::new(seq_id, 1))); // next is Jump (Simple) — not movement
+    assert!(mgr.is_next_movement_or_jump(SequenceElementRef::new(seq_id, 1)));
+    assert!(!mgr.is_next_movement(SequenceElementRef::new(seq_id, 2))); // last element — nothing next
 }
 
 #[test]
@@ -3724,18 +3756,24 @@ fn following_queries_preserve_cross_sequence_and_owner_policies() {
     let next = mgr.insert_element(movement_elem(owner, OrderType::RunningUpright));
     mgr.get_element_mut(root, 0).unwrap().next = Some(SequenceElementRef::new(next, 0));
 
-    assert_eq!(mgr.next_element_in_chain(root, 0), Some((next, 0)));
-    assert!(!mgr.is_last_real_action(root, 0));
-    mgr.set_action_recursive(root, 0, OrderType::WalkingCrouched);
+    assert_eq!(
+        mgr.next_element_in_chain(SequenceElementRef::new(root, 0)),
+        Some((next, 0))
+    );
+    assert!(!mgr.is_last_real_action(SequenceElementRef::new(root, 0)));
+    mgr.set_action_recursive(SequenceElementRef::new(root, 0), OrderType::WalkingCrouched);
     assert_eq!(
         movement_action(mgr.get_element(next, 0).unwrap()),
         OrderType::WalkingCrouched
     );
 
     mgr.get_element_mut(next, 0).unwrap().owner = Some(other);
-    assert_eq!(mgr.next_element_in_chain(root, 0), None);
-    assert!(!mgr.is_last_real_action(root, 0));
-    mgr.set_action_recursive(root, 0, OrderType::RunningUpright);
+    assert_eq!(
+        mgr.next_element_in_chain(SequenceElementRef::new(root, 0)),
+        None
+    );
+    assert!(!mgr.is_last_real_action(SequenceElementRef::new(root, 0)));
+    mgr.set_action_recursive(SequenceElementRef::new(root, 0), OrderType::RunningUpright);
     assert_eq!(
         movement_action(mgr.get_element(next, 0).unwrap()),
         OrderType::WalkingCrouched
@@ -3753,10 +3791,13 @@ fn severed_following_edge_stops_recursive_action_rewrite() {
     mgr.get_element_mut(id, 0).unwrap().next = None;
 
     assert_eq!(mgr.unsevered_following_ref(id, 0), None);
-    assert_eq!(mgr.next_element_in_chain(id, 0), None);
-    assert!(mgr.is_last_real_action(id, 0));
+    assert_eq!(
+        mgr.next_element_in_chain(SequenceElementRef::new(id, 0)),
+        None
+    );
+    assert!(mgr.is_last_real_action(SequenceElementRef::new(id, 0)));
     assert_eq!(mgr.rewrite_following_ref(id, 0), None);
-    mgr.set_action_recursive(id, 0, OrderType::WalkingCrouched);
+    mgr.set_action_recursive(SequenceElementRef::new(id, 0), OrderType::WalkingCrouched);
     assert_eq!(
         movement_action(mgr.get_element(id, 1).unwrap()),
         OrderType::RunningUpright
@@ -3775,8 +3816,8 @@ fn loaded_v48_null_next_overrides_physical_adjacency() {
         .expect("loaded first element exists")
         .next = None;
 
-    assert!(!mgr.is_next_movement(sequence_id, 0));
-    assert!(mgr.is_last_real_action(sequence_id, 0));
+    assert!(!mgr.is_next_movement(SequenceElementRef::new(sequence_id, 0)));
+    assert!(mgr.is_last_real_action(SequenceElementRef::new(sequence_id, 0)));
 }
 
 #[test]
@@ -3797,8 +3838,8 @@ fn loaded_v48_nonadjacent_next_is_authoritative() {
         .expect("loaded first element exists")
         .next = Some(SequenceElementRef::new(sequence_id, 2));
 
-    assert!(mgr.is_next_movement(sequence_id, 0));
-    assert!(!mgr.is_last_real_action(sequence_id, 0));
+    assert!(mgr.is_next_movement(SequenceElementRef::new(sequence_id, 0)));
+    assert!(!mgr.is_last_real_action(SequenceElementRef::new(sequence_id, 0)));
 }
 
 #[test]
@@ -3818,7 +3859,7 @@ fn last_real_action_checks_postponed_on_each_skipped_follower() {
             .postponed = Some(SequenceElementRef::new(postponed_id, 0));
 
         assert!(
-            !mgr.is_last_real_action(primary_id, 0),
+            !mgr.is_last_real_action(SequenceElementRef::new(primary_id, 0)),
             "{skipped_command:?} follower's postponed action must count as real"
         );
     }
@@ -3834,7 +3875,7 @@ fn last_real_action_counts_following_manager_owned_element() {
     let sequence_id = mgr.insert_sequence(sequence);
 
     assert!(
-        !mgr.is_last_real_action(sequence_id, 0),
+        !mgr.is_last_real_action(SequenceElementRef::new(sequence_id, 0)),
         "the original game follows the next-element link without an owner-identity gate"
     );
 }
@@ -3854,14 +3895,14 @@ fn last_real_action_stops_at_halt_severed_following_edge() {
     let sequence_id = mgr.insert_sequence(sequence);
 
     assert!(
-        !mgr.is_last_real_action(sequence_id, 0),
+        !mgr.is_last_real_action(SequenceElementRef::new(sequence_id, 0)),
         "an intact skipped AssertPosition edge must still expose the following Move"
     );
     mgr.get_element_mut(sequence_id, 0)
         .expect("PassDoor exists")
         .next = None;
     assert!(
-        mgr.is_last_real_action(sequence_id, 0),
+        mgr.is_last_real_action(SequenceElementRef::new(sequence_id, 0)),
         "Halt's nulled following pointer must hide physically adjacent dead elements"
     );
 }
@@ -3876,7 +3917,11 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
     let mut todo = SequenceElement::new(1, Command::LeaveListen, Some(owner));
     todo.priority = SequencePriority::NonInterruptable;
     let todo_seq = engine.t_launch_element(&assets, todo);
-    engine.element_impossible(TickCtx::new(&sim, &assets), &mut Vec::new(), todo_seq, 0);
+    engine.element_impossible(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(todo_seq, 0),
+    );
     assert_eq!(
         engine
             .orders
@@ -3892,7 +3937,11 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
     active.priority = SequencePriority::NonInterruptable;
     let active_seq = engine.t_launch_element(&assets, active);
     engine.t_element_in_progress(&assets, active_seq, 0);
-    engine.element_impossible(TickCtx::new(&sim, &assets), &mut Vec::new(), active_seq, 0);
+    engine.element_impossible(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(active_seq, 0),
+    );
     assert_eq!(
         engine
             .orders
@@ -3907,8 +3956,7 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
     engine.element_impossible_from_execute(
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
-        active_seq,
-        0,
+        SequenceElementRef::new(active_seq, 0),
     );
     assert_eq!(
         engine

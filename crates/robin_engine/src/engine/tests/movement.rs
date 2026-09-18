@@ -2,6 +2,7 @@ use super::scenarios::bind_walking_sprite;
 use super::*;
 use crate::engine::TickCtx;
 use crate::engine::test_support::actors::for_both_creation_orders;
+use crate::sequence::SequenceElementRef;
 
 use crate::element_kinds::Command;
 
@@ -804,8 +805,7 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     engine.element_impossible(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
-        sequence_id,
-        0,
+        SequenceElementRef::new(sequence_id, 0),
     );
     assert!(
         !engine.human(mover_id).last_motion_was_step_back_in_combat,
@@ -1352,9 +1352,9 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     dead.state = SequenceState::Interrupted;
 
     engine.orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
-        PendingPathRequest::test_request(first_owner, first_sequence, 0),
-        PendingPathRequest::test_request(dead_owner, dead_sequence, 0),
-        PendingPathRequest::test_request(last_owner, last_sequence, 0),
+        PendingPathRequest::test_request(first_owner, SequenceElementRef::new(first_sequence, 0)),
+        PendingPathRequest::test_request(dead_owner, SequenceElementRef::new(dead_sequence, 0)),
+        PendingPathRequest::test_request(last_owner, SequenceElementRef::new(last_sequence, 0)),
     ]);
 
     // First barrier: the WAITING arm computes and delivers the head, then
@@ -1464,11 +1464,17 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     let nonexpired_sequence = launch_failed_move(&mut engine, nonexpired_owner);
     engine.orders.failed_path_requests.extend([
         FailedPathRequest::from_pending(
-            PendingPathRequest::test_request(expired_owner, expired_sequence, 0),
+            PendingPathRequest::test_request(
+                expired_owner,
+                SequenceElementRef::new(expired_sequence, 0),
+            ),
             0,
         ),
         FailedPathRequest::from_pending(
-            PendingPathRequest::test_request(nonexpired_owner, nonexpired_sequence, 0),
+            PendingPathRequest::test_request(
+                nonexpired_owner,
+                SequenceElementRef::new(nonexpired_sequence, 0),
+            ),
             1,
         ),
     ]);
@@ -1591,8 +1597,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     engine.orders.pending_path_requests =
         PendingPathRequestQueue::restore_v48_waiting(vec![PendingPathRequest::test_request(
             owner,
-            unrelated_id,
-            0,
+            SequenceElementRef::new(unrelated_id, 0),
         )]);
 
     engine.actor_make_fast(&crate::sim_rng::test_context(), owner);
@@ -2286,7 +2291,11 @@ fn production_owner_final_arrival_delivers_reachpoint_callback_exactly_once() {
         sequence_id
     };
     engine.t_element_in_progress(&assets, nested_seq, 0);
-    install_condolation_nested_termination(mover_id, StimulusType::EventReachPoint, nested_seq, 0);
+    install_condolation_nested_termination(
+        mover_id,
+        StimulusType::EventReachPoint,
+        SequenceElementRef::new(nested_seq, 0),
+    );
     let sim = crate::sim_rng::test_context();
 
     let (_, trace) = capture_condolation_stimuli(|| {

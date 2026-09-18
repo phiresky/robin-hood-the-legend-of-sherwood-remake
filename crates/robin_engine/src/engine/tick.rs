@@ -20,6 +20,7 @@ use crate::engine::TickCtx;
 use crate::game_operation::GameCode;
 use crate::messenger::{MessageType, SimpleMessage};
 use crate::profiles::MissionType;
+use crate::sequence::SequenceElementRef;
 
 /// Strict opt-in gate for the Drop Execute-boundary diagnostic.
 fn drop_owner_boundary_matches(frame: u32, owner: EntityId) -> bool {
@@ -1547,7 +1548,11 @@ impl EngineInner {
                     {
                         element.command = crate::element::Command::MoveOk;
                     }
-                    self.element_impossible(tcx, &mut Vec::new(), request.seq_id, request.elem_idx);
+                    self.element_impossible(
+                        tcx,
+                        &mut Vec::new(),
+                        SequenceElementRef::new(request.seq_id, request.elem_idx),
+                    );
                     if let Some(destination) = fallback {
                         tracing::info!(
                             actor = ?request.owner,
@@ -2214,7 +2219,7 @@ impl EngineInner {
             }
         } else if command == Some(Command::WaitFreeLift) {
             let (seq, elem) = selected.expect("lift wait lost its selected element");
-            if self.authorize_and_reserve_lift_wait(owner, seq, elem) {
+            if self.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq, elem)) {
                 *motion = crate::sprite::MotionState::Terminated;
             }
         }

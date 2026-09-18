@@ -1,6 +1,7 @@
 use super::scenarios::assets_with_test_pc_profile;
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
@@ -583,8 +584,7 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
-        incoming,
-        0
+        SequenceElementRef::new(incoming, 0)
     ));
 
     assert_eq!(
@@ -1560,7 +1560,10 @@ fn postponing_pathfinding_movement_restores_move_and_cancels_failure() {
     engine.t_element_in_progress(&assets, movement_sequence, 0);
     engine.orders.failed_path_requests.push(
         crate::engine::movement::FailedPathRequest::from_pending(
-            crate::engine::movement::PendingPathRequest::test_request(owner, movement_sequence, 0),
+            crate::engine::movement::PendingPathRequest::test_request(
+                owner,
+                SequenceElementRef::new(movement_sequence, 0),
+            ),
             0,
         ),
     );
@@ -2976,8 +2979,7 @@ fn parry_sword_terminates_when_either_parry_is_already_active() {
             &mut Vec::new(),
             soldier,
             low,
-            seq_id,
-            0,
+            SequenceElementRef::new(seq_id, 0),
         );
 
         let elem = engine
@@ -3075,14 +3077,13 @@ fn posture_transition_orders_preserve_live_pose_until_execution() {
             SequenceElement::new_generic(1, command, Some(owner))
         };
         let sequence = engine.orders.sequence_manager.insert_element(element);
-        engine.stamp_element_transition_state(owner, sequence, 0);
+        engine.stamp_element_transition_state(owner, SequenceElementRef::new(sequence, 0));
         assert!(
             engine.generate_transition(
                 TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 &mut Vec::new(),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
             ),
             "{posture:?} {command:?}"
         );

@@ -5,6 +5,7 @@ use crate::element::{
 };
 use crate::engine::TickCtx;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElement, SequenceId, SequenceState};
 
 fn make_aiming_pc(action_state: ActionState) -> Entity {
@@ -682,8 +683,7 @@ fn wait_context_rejects_stale_owner_contextually() {
         &mut Vec::new(),
         owner,
         Command::Wait,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 }
 
@@ -922,7 +922,8 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
 
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    let authorized = engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    let authorized =
+        engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 
     assert!(!authorized);
     assert_eq!(
@@ -979,7 +980,7 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
     let seq_id = engine.t_launch_element(&assets, wait);
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 }
 
 #[test]
@@ -1013,13 +1014,13 @@ fn lift_wait_context_reserves_direction_before_terminating() {
 
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    let authorized = engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
+    let authorized =
+        engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0));
 
     assert!(authorized);
     engine.do_next_order(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     assert_eq!(
         engine
@@ -1091,7 +1092,7 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
     let seq_id = engine.t_launch_element(&assets, wait);
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
-    assert!(engine.authorize_and_reserve_lift_wait(owner, seq_id, 0));
+    assert!(engine.authorize_and_reserve_lift_wait(owner, SequenceElementRef::new(seq_id, 0)));
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
 
     engine.execute_pass_door(

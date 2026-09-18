@@ -5,6 +5,7 @@
 use super::state::OrderRuntime;
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     /// Apply the human actor's specialized admission guard. It runs before
@@ -134,12 +135,20 @@ impl EngineInner {
         // Civilian instruction handling refuses everything except RECEIVE_PURSE /
         // BEGGAR_SHOW_FACE / WAIT when the civilian is a beggar.
         if self.beggar_rejects_command(owner, new_command) {
-            self.element_impossible(tcx, active_scripts, new_seq, new_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(new_seq, new_idx),
+            );
             return false;
         }
 
         if self.human_instruct_rejects_command(owner, new_command) {
-            self.element_impossible(tcx, active_scripts, new_seq, new_idx);
+            self.element_impossible(
+                tcx,
+                active_scripts,
+                SequenceElementRef::new(new_seq, new_idx),
+            );
             return false;
         }
 
@@ -187,7 +196,11 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .take_over_postponed(cur_seq, cur_idx, new_seq, new_idx);
-                self.element_impossible(tcx, active_scripts, new_seq, new_idx);
+                self.element_impossible(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(new_seq, new_idx),
+                );
                 false
             }
             PriorityDecision::Postpone => {
@@ -200,7 +213,7 @@ impl EngineInner {
                 assert!(
                     self.orders
                         .sequence_manager
-                        .can_interrupt_now(cur_seq, cur_idx),
+                        .can_interrupt_now(SequenceElementRef::new(cur_seq, cur_idx)),
                     "interruption eligibility is unconditional"
                 );
                 // `current.Postpone(new)` — postpone current behind new.
@@ -251,7 +264,7 @@ impl EngineInner {
                 assert!(
                     self.orders
                         .sequence_manager
-                        .can_interrupt_now(cur_seq, cur_idx),
+                        .can_interrupt_now(SequenceElementRef::new(cur_seq, cur_idx)),
                     "interruption eligibility is unconditional"
                 );
                 // New takes over current's postponed chain, current
@@ -266,8 +279,7 @@ impl EngineInner {
                 self.element_interrupted(
                     tcx,
                     active_scripts,
-                    cur_seq,
-                    cur_idx,
+                    SequenceElementRef::new(cur_seq, cur_idx),
                     crate::sequence::CascadeFlags::NEXT_LEVEL,
                 );
                 self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx))
@@ -463,7 +475,11 @@ impl EngineInner {
                             waiter_seq,
                             waiter_idx,
                         );
-                        self.element_impossible(tcx, active_scripts, waiter_seq, waiter_idx);
+                        self.element_impossible(
+                            tcx,
+                            active_scripts,
+                            SequenceElementRef::new(waiter_seq, waiter_idx),
+                        );
                         return;
                     }
                     PriorityDecision::Postpone => {
@@ -518,8 +534,7 @@ impl EngineInner {
                         self.element_interrupted(
                             tcx,
                             active_scripts,
-                            existing_seq,
-                            existing_idx,
+                            SequenceElementRef::new(existing_seq, existing_idx),
                             crate::sequence::CascadeFlags::NEXT_LEVEL,
                         );
                         self.orders.sequence_manager.set_cross_postponed_link(
@@ -567,7 +582,11 @@ impl EngineInner {
                 {
                     e.orders.clear();
                 }
-                self.element_terminated(tcx, active_scripts, waiter_seq, waiter_idx);
+                self.element_terminated(
+                    tcx,
+                    active_scripts,
+                    SequenceElementRef::new(waiter_seq, waiter_idx),
+                );
                 return;
             }
 
@@ -664,7 +683,11 @@ impl EngineInner {
         {
             w.orders.clear();
         }
-        self.postpone_element(tcx, active_scripts, waiter_seq, waiter_idx);
+        self.postpone_element(
+            tcx,
+            active_scripts,
+            SequenceElementRef::new(waiter_seq, waiter_idx),
+        );
     }
 }
 /// Cancel pending and failed path requests before interrupting or postponing

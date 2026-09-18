@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     #[inline(never)]
@@ -610,7 +611,11 @@ impl EngineInner {
                 victim.camp(),
                 victim.is_pc(),
             ) {
-                self.element_terminated(tcx, &mut Vec::new(), damage_element.0, damage_element.1);
+                self.element_terminated(
+                    tcx,
+                    &mut Vec::new(),
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
+                );
                 return None;
             }
         }
@@ -1163,7 +1168,7 @@ impl EngineInner {
                 .publish_order_posture(Posture::Dead);
             }
             let (dseq, didx) = damage_element;
-            self.element_terminated(tcx, &mut Vec::new(), dseq, didx);
+            self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
             // The original game's transition to terminated sends the selected actor's
             // condolence card synchronously from inside
             // sword-damage translation. Besides notifying an NPC AI, that
@@ -1812,7 +1817,7 @@ impl EngineInner {
             );
             if !is_rider && !still_alive {
                 let (dseq, didx) = damage_element;
-                self.element_terminated(tcx, &mut Vec::new(), dseq, didx);
+                self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
                 return;
             }
         }
@@ -2120,7 +2125,7 @@ impl EngineInner {
             }
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
-                self.element_terminated(tcx, &mut Vec::new(), dseq, didx);
+                self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
                 return;
             }
             // TODO: match the Original sleeping-rider special case,
@@ -2256,7 +2261,11 @@ impl EngineInner {
                     victim.is_pc(),
                 )
             {
-                self.element_terminated(tcx, &mut Vec::new(), damage_element.0, damage_element.1);
+                self.element_terminated(
+                    tcx,
+                    &mut Vec::new(),
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
+                );
                 return;
             }
         }
@@ -2357,7 +2366,11 @@ impl EngineInner {
         // same frame that the first hit's flight lands: EVENT_GOTHIT must
         // still restore EYES_DIE_OR_GET_UNCONSCIOUS before the element ends.
         if victim_posture == Posture::Lying {
-            self.element_terminated(tcx, &mut Vec::new(), damage_element.0, damage_element.1);
+            self.element_terminated(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(damage_element.0, damage_element.1),
+            );
             return;
         }
 
@@ -2468,7 +2481,11 @@ impl EngineInner {
                 // before command translation; leaving the element live would
                 // mistake one of those stale orders for a hit reaction and
                 // run actor instruction handling's IN_PROGRESS epilogue.
-                self.element_terminated(tcx, &mut Vec::new(), damage_element.0, damage_element.1);
+                self.element_terminated(
+                    tcx,
+                    &mut Vec::new(),
+                    SequenceElementRef::new(damage_element.0, damage_element.1),
+                );
                 return;
             }
         };
@@ -2883,7 +2900,12 @@ impl EngineInner {
         );
         let seq_id = self.launch_element(tcx, elem);
         let elem_idx = 0;
-        self.instruct_owner(tcx, &mut Vec::new(), victim_id, seq_id, elem_idx);
+        self.instruct_owner(
+            tcx,
+            &mut Vec::new(),
+            victim_id,
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     /// Register a projectile damage sequence for the sequence-manager phase.

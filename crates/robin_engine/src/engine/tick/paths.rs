@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     /// Advance queued pathfinding and failed-path deadlines before any entity
@@ -49,7 +50,11 @@ impl EngineInner {
             {
                 element.command = crate::element::Command::MoveOk;
             }
-            self.element_impossible(tcx, &mut Vec::new(), request.seq_id, request.elem_idx);
+            self.element_impossible(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(request.seq_id, request.elem_idx),
+            );
             tracing::debug!(
                 actor = ?request.owner,
                 seq_id = ?request.seq_id,

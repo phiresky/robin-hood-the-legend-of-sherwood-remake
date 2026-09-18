@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     /// Consume the host sound-manager update that completed after the
@@ -376,7 +377,11 @@ impl EngineInner {
             }
         });
         for r in expired {
-            self.element_terminated(tcx, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(r.sequence_id, r.element_index),
+            );
         }
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
@@ -50,7 +51,11 @@ fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
     let sim = crate::sim_rng::test_context();
     let assets = engine.test_runtime_assets();
     let sequence = engine.launch_element(TickCtx::new(&sim, &assets), movement);
-    engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), sequence, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(sequence, 0),
+    );
     engine.select_sequence_element(owner, Some((sequence, 0)));
 
     engine.tick_entity_movement_owner(

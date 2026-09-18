@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn this_guy_forbid_preserves_original_uword_narrowing_and_ulong_comparison() {
@@ -183,7 +184,11 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
     let shot_seq = engine.launch_element(TickCtx::new(sim, &assets), shot);
-    engine.postpone_element(TickCtx::new(sim, &assets), &mut Vec::new(), shot_seq, 0);
+    engine.postpone_element(
+        TickCtx::new(sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(shot_seq, 0),
+    );
 
     let (_, stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
         engine.enter_swordfight(TickCtx::new(sim, &assets), initiator, opponent, false)

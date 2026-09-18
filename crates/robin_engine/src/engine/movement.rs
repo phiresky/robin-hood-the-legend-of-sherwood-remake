@@ -7,6 +7,7 @@ use crate::element::EntityId;
 use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
+use crate::sequence::SequenceElementRef;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
 mod combat_motion;
@@ -1121,16 +1122,12 @@ impl PendingPathRequest {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_request(
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) -> Self {
+    pub(crate) fn test_request(owner: EntityId, elem_ref: SequenceElementRef) -> Self {
         Self {
             restored_from_v48: false,
             owner,
-            seq_id,
-            elem_idx,
+            seq_id: elem_ref.sequence_id,
+            elem_idx: elem_ref.element_index,
             source: MapPoint::new(10.0, 10.0),
             dest: MapPoint::new(20.0, 20.0),
             layer: 0,
@@ -2537,7 +2534,10 @@ impl EngineInner {
                             element
                                 .postponed
                                 .map(|reference| (reference.sequence_id, reference.element_index)),
-                            manager.is_registered_to_go(sequence.id, element_index),
+                            manager.is_registered_to_go(SequenceElementRef::new(
+                                sequence.id,
+                                element_index,
+                            )),
                             element.current_order().map(|order| {
                                 (
                                     order.order_type,
@@ -3334,8 +3334,7 @@ impl EngineInner {
         let selected_priority = {
             let resolver = Self::priority_resolver(&self.world.entities);
             self.orders.sequence_manager.resolve_element_stop_priority(
-                selected.seq_id,
-                selected.elem_idx,
+                SequenceElementRef::new(selected.seq_id, selected.elem_idx),
                 &resolver,
             )
         };
@@ -4012,13 +4011,12 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let Some((flags, target, action)) = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Movement {
                     flags,
@@ -4051,8 +4049,8 @@ impl EngineInner {
             &mut Vec::new(),
             crate::engine::refresh_seek::EntitySeekRequest {
                 owner,
-                sequence_id: seq_id,
-                element_index: elem_idx,
+                sequence_id: elem_ref.sequence_id,
+                element_index: elem_ref.element_index,
                 target,
                 action,
                 flags,
@@ -4365,7 +4363,11 @@ impl EngineInner {
                 &tcx.assets.profile_manager,
                 order_action,
             );
-            self.refresh_movement_transition_seek(tcx, eid, move_seq_id, move_elem_idx);
+            self.refresh_movement_transition_seek(
+                tcx,
+                eid,
+                SequenceElementRef::new(move_seq_id, move_elem_idx),
+            );
             return MotionState::InProgress;
         }
 
@@ -4422,7 +4424,11 @@ impl EngineInner {
                     &tcx.assets.profile_manager,
                     order_action,
                 );
-                self.refresh_movement_transition_seek(tcx, eid, move_seq_id, move_elem_idx);
+                self.refresh_movement_transition_seek(
+                    tcx,
+                    eid,
+                    SequenceElementRef::new(move_seq_id, move_elem_idx),
+                );
                 return MotionState::InProgress;
             }
         }
@@ -4670,11 +4676,14 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         dest: MapPoint,
         mut move_action: OrderType,
     ) -> MovePathOutcome {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Swap walking/running into the sword variant when the actor
         // is already in a sword action state — but only under two
         // gates:
@@ -5310,8 +5319,9 @@ impl EngineInner {
         //   obstacle clip on that first leg.)
 
         {
-            if let Some((elem, next_order_id)) =
-                self.orders.element_with_order_ids_mut(seq_id, elem_idx)
+            if let Some((elem, next_order_id)) = self
+                .orders
+                .element_with_order_ids_mut(SequenceElementRef::new(seq_id, elem_idx))
             {
                 // Fresh Rust movement elements retain their generated
                 // transition prefix through `num_transition_orders`. A
@@ -5340,7 +5350,7 @@ impl EngineInner {
 
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
-        self.post_process_path(seq_id, elem_idx);
+        self.post_process_path(SequenceElementRef::new(seq_id, elem_idx));
 
         if is_movement_anim && !is_pass_door {
             let (blood_alcohol, half_diagonal, move_box) = self
@@ -5362,8 +5372,9 @@ impl EngineInner {
                 .unwrap_or_default();
             if blood_alcohol > 0 {
                 let grid = &self.world.fast_grid;
-                if let Some((element, next_order_id)) =
-                    self.orders.element_with_order_ids_mut(seq_id, elem_idx)
+                if let Some((element, next_order_id)) = self
+                    .orders
+                    .element_with_order_ids_mut(SequenceElementRef::new(seq_id, elem_idx))
                 {
                     crate::engine::tick::apply_drunken_order_deviation(
                         sim,

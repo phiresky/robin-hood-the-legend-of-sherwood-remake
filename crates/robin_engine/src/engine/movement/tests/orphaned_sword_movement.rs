@@ -225,8 +225,7 @@ mod suite {
             engine.try_dispatch_move_path(
                 TickCtx::new(&sim, &LevelAssets::new()),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
                 destination,
                 authored_action,
             ),
@@ -1003,8 +1002,7 @@ mod suite {
         engine.postpone_element(
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
-            turn_sequence,
-            0,
+            SequenceElementRef::new(turn_sequence, 0),
         );
         engine
             .orders
@@ -1066,7 +1064,7 @@ mod suite {
             engine
                 .orders
                 .sequence_manager
-                .is_registered_to_go(unrelated_sequence, 0),
+                .is_registered_to_go(SequenceElementRef::new(unrelated_sequence, 0)),
             "the exact-root stop must preserve unrelated pending owner work"
         );
         let quit = engine
@@ -1373,8 +1371,7 @@ mod suite {
             engine.try_dispatch_move_path(
                 TickCtx::new(&sim, &LevelAssets::new()),
                 owner,
-                sequence,
-                0,
+                SequenceElementRef::new(sequence, 0),
                 destination,
                 OrderType::WalkingWithSword,
             ),

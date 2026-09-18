@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn lying_arrow_victim_speaks_before_posture_termination() {
@@ -46,8 +47,7 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             victim,
-            sequence,
-            0,
+            SequenceElementRef::new(sequence, 0),
         );
     }
 

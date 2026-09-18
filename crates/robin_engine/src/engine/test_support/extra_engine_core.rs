@@ -4,6 +4,7 @@
 
 use crate::engine::TickCtx;
 use crate::engine::{EngineInner, HostDisplayState};
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{Sequence, SequenceElement, SequenceId};
 
 impl EngineInner {
@@ -25,7 +26,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.element_in_progress(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.element_in_progress(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_element_terminated_with(
@@ -34,7 +39,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_postpone_element_with(
@@ -43,7 +52,11 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        self.postpone_element(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.postpone_element(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     pub(crate) fn t_tick_actor_owner_envelopes_with(&mut self, tcx: TickCtx<'_>) {

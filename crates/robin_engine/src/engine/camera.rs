@@ -4,6 +4,7 @@ use super::*;
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint, ScreenSize};
 use crate::element_kinds::Command;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::SequenceState;
 
 impl EngineInner {
@@ -122,8 +123,7 @@ impl EngineInner {
         self.element_terminated(
             TickCtx::new(&sim, assets),
             &mut Vec::new(),
-            sequence_ref.sequence_id,
-            sequence_ref.element_index,
+            SequenceElementRef::new(sequence_ref.sequence_id, sequence_ref.element_index),
         );
 
         // The original game's transition to terminated synchronously executes
@@ -137,7 +137,11 @@ impl EngineInner {
             return;
         }
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.element_terminated(tcx, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(
+                tcx,
+                &mut Vec::new(),
+                SequenceElementRef::new(r.sequence_id, r.element_index),
+            );
         }
     }
 

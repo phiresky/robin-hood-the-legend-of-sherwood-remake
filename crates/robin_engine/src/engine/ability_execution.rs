@@ -9,6 +9,7 @@ use crate::element::{ActionState, Entity, EntityId, Posture};
 use crate::engine::TickCtx;
 use crate::movement::AbilityKind;
 use crate::order::OrderType;
+use crate::sequence::SequenceElementRef;
 use crate::sprite::MotionState as SpriteMotionState;
 
 impl EngineInner {
@@ -463,9 +464,12 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         healer_id: EntityId,
         target_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> SpriteMotionState {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Player-character execution checks Heal validity again in
         // the completed-motion arm, immediately before healing (or
         // FX activation) and consuming a plant. The target may
@@ -475,7 +479,7 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!("Heal DONE owner {healer_id:?} lost element {seq_id:?}/{elem_idx}")
                 });
@@ -795,9 +799,12 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         pc_id: EntityId,
         beggar_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> SpriteMotionState {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Paying validates again after action processing reports completion.
         // Ransom or distance may have changed while the PC was
         // turning/animating; invalid payment aborts before launching the
@@ -806,7 +813,7 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!("completed Pay owner {pc_id:?} lost element {seq_id:?}/{elem_idx}")
                 });
@@ -914,9 +921,12 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         actor_id: EntityId,
         target_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         // Human hitting execution rechecks the live
         // interaction when motion completes, before applying damage.
         // Losing validity here merely makes the swing miss: the
@@ -926,7 +936,7 @@ impl EngineInner {
             let element = self
                 .orders
                 .sequence_manager
-                .get_element(seq_id, elem_idx)
+                .get_element_at(elem_ref)
                 .unwrap_or_else(|| {
                     panic!(
                         "completed Hit owner {actor_id:?} lost element \
@@ -2038,7 +2048,12 @@ impl EngineInner {
             AbilityKind::Tie => self.apply_ability_tie_done(tcx, entity_id, target()),
             AbilityKind::Untie => self.apply_ability_untie_done(tcx, entity_id, target()),
             AbilityKind::Heal => {
-                return self.apply_ability_heal_done(tcx, entity_id, target(), seq_id, elem_idx);
+                return self.apply_ability_heal_done(
+                    tcx,
+                    entity_id,
+                    target(),
+                    SequenceElementRef::new(seq_id, elem_idx),
+                );
             }
             AbilityKind::Whistle => self.apply_ability_whistle_done(tcx, entity_id, actor_pos),
             AbilityKind::Pay => {
@@ -2048,8 +2063,7 @@ impl EngineInner {
                     ability
                         .target
                         .expect("AbilityKind::Pay must carry a beggar target (set in begin_pay)"),
-                    seq_id,
-                    elem_idx,
+                    SequenceElementRef::new(seq_id, elem_idx),
                 );
             }
             AbilityKind::Listen | AbilityKind::ReceivePurse => unreachable!(
@@ -2148,8 +2162,7 @@ impl EngineInner {
                 ability
                     .target
                     .expect("AbilityKind::Hit must carry a target (set in begin_hit)"),
-                seq_id,
-                elem_idx,
+                SequenceElementRef::new(seq_id, elem_idx),
             ),
             AbilityKind::Strangle => {
                 return self.apply_ability_strangle_setup_done(

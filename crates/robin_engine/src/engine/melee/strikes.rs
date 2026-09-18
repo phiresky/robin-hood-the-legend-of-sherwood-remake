@@ -2857,7 +2857,12 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
+        engine.push_new_order(
+            SequenceElementRef::new(sequence, 0),
+            OrderType::FallingPushedUpright,
+            0.0,
+            0.0,
+        );
         engine.select_sequence_element(victim, Some((sequence, 0)));
         engine.t_element_in_progress(&assets, sequence, 0);
         engine.publish_selected_order_as_installed(victim);
@@ -3019,7 +3024,12 @@ mod tests {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        engine.push_new_order(sequence, 0, OrderType::FallingLadderWall, 0.0, 0.0);
+        engine.push_new_order(
+            SequenceElementRef::new(sequence, 0),
+            OrderType::FallingLadderWall,
+            0.0,
+            0.0,
+        );
         engine
             .orders
             .sequence_manager

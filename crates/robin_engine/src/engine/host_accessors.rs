@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 impl EngineInner {
     // ─── Read-only accessors for host renderer / input ───────────
@@ -157,8 +158,7 @@ impl EngineInner {
             tcx,
             &mut Vec::new(),
             owner,
-            element_ref.sequence_id,
-            element_ref.element_index,
+            SequenceElementRef::new(element_ref.sequence_id, element_ref.element_index),
         );
         if accepted {
             let human = self
@@ -411,18 +411,15 @@ impl EngineInner {
     /// pushing it onto the given element.
     pub(crate) fn push_new_order(
         &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         order_type: crate::order::OrderType,
         x: f32,
         y: f32,
     ) -> std::num::NonZeroU32 {
         let id = self.orders.allocate_order_id();
-        self.orders.sequence_manager.push_order_on(
-            seq_id,
-            elem_idx,
-            crate::order::Order::new(order_type, x, y, id),
-        );
+        self.orders
+            .sequence_manager
+            .push_order_at(elem_ref, crate::order::Order::new(order_type, x, y, id));
         id
     }
 
@@ -442,12 +439,11 @@ impl EngineInner {
     /// — its Execute arm consumes the event in
     /// `dispatch_arm_completion` (`engine/animation.rs`) and mutates
     /// the front order in place without popping.
-    pub(crate) fn do_next_order(
-        &mut self,
-        tcx: TickCtx<'_>,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-    ) {
+    pub(crate) fn do_next_order(&mut self, tcx: TickCtx<'_>, elem_ref: SequenceElementRef) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         if tracing::enabled!(target: "parity_owner_handoff", tracing::Level::TRACE) {
             let element_state = self
                 .orders
@@ -586,7 +582,11 @@ impl EngineInner {
         // Removal-notification callback can synchronously instruct a real
         // successor. The actor's next update entry supplies Wait only if
         // that stack unwinds without one.
-        self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
+        self.element_terminated(
+            tcx,
+            &mut Vec::new(),
+            SequenceElementRef::new(seq_id, elem_idx),
+        );
     }
 
     /// Guarantee that `entity_id` has a live `Command::Wait` sequence

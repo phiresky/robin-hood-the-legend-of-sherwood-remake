@@ -7,6 +7,7 @@ use crate::combat::{self};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::engine::TickCtx;
 use crate::profiles::WeaponThrustKind;
+use crate::sequence::SequenceElementRef;
 use crate::weapons::SwordStrike;
 
 /// A lift sector's low entry point resolved to 3D: the lowest door's
@@ -361,8 +362,7 @@ impl EngineInner {
             self.element_interrupted(
                 tcx,
                 &mut Vec::new(),
-                postponed.sequence_id,
-                postponed.element_index,
+                SequenceElementRef::new(postponed.sequence_id, postponed.element_index),
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         }
@@ -483,8 +483,7 @@ impl EngineInner {
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
         let posture = self
             .expect_entity(owner, "dispatch_fall owner")
@@ -560,8 +559,7 @@ impl EngineInner {
             // wobble runs at normal priority.
             if matches!(posture, Posture::OnShoulders) {
                 self.orders.sequence_manager.set_element_priority(
-                    seq_id,
-                    elem_idx,
+                    elem_ref,
                     crate::sequence::SequencePriority::NonInterruptable,
                 );
             }
@@ -569,9 +567,9 @@ impl EngineInner {
             // shoulder-damage translation. Original-game player translation authors both
             // FallingShoulders and FallingBackUpright with
             // direction computation disabled.
-            self.push_translated_damage_order((seq_id, elem_idx), anim);
+            self.push_translated_damage_order((elem_ref.sequence_id, elem_ref.element_index), anim);
         } else {
-            self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
+            self.element_terminated(tcx, &mut Vec::new(), elem_ref);
         }
     }
 
@@ -715,7 +713,7 @@ impl EngineInner {
                 let (dseq, didx) = damage_element;
                 self.orders
                     .sequence_manager
-                    .set_element_priority(dseq, didx, priority);
+                    .set_element_priority(SequenceElementRef::new(dseq, didx), priority);
             }
             self.queue_damage_anim(victim_id, damage_element, fall_anim);
         }

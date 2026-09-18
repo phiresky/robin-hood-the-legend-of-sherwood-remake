@@ -3227,8 +3227,7 @@ mod shoulder_idle_initialization_tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
-            helper_wait,
-            0,
+            SequenceElementRef::new(helper_wait, 0),
         );
 
         engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), helper_id);
@@ -3335,8 +3334,7 @@ mod shoulder_idle_initialization_tests {
         engine.element_in_progress(
             TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
-            wait_id,
-            0,
+            SequenceElementRef::new(wait_id, 0),
         );
 
         engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), climber_id);

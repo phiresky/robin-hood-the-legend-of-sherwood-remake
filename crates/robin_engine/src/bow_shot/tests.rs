@@ -5,6 +5,8 @@ use crate::coordinates::{MapVec, SpriteFrameOffset, SpriteLocalPoint};
 use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
+use crate::sequence::SequenceElementRef;
+use crate::sequence::SequenceId;
 use crate::sprite_script::SpriteScript;
 
 fn begin_test_bow_shot(
@@ -31,8 +33,7 @@ fn begin_test_bow_shot(
         sequences,
         owner,
         target,
-        sequence,
-        element,
+        SequenceElementRef::new(sequence, element),
         once,
         ammo,
         mode,
@@ -223,11 +224,10 @@ fn launch_test_shoot_element(
 
 fn set_test_action_state_after_transition(
     sm: &mut SequenceManager,
-    seq_id: SequenceId,
-    elem_idx: usize,
+    elem_ref: SequenceElementRef,
     action_state: ActionState,
 ) {
-    sm.get_element_mut(seq_id, elem_idx)
+    sm.get_element_at_mut(elem_ref)
         .unwrap()
         .action_state_after_transition = action_state;
 }
@@ -983,7 +983,11 @@ fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
         .action_state = ActionState::AimingWithBow;
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    set_test_action_state_after_transition(&mut sm, seq_id, elem_idx, ActionState::AimingWithBow);
+    set_test_action_state_after_transition(
+        &mut sm,
+        SequenceElementRef::new(seq_id, elem_idx),
+        ActionState::AimingWithBow,
+    );
 
     let result = begin_test_bow_shot(
         &mut entities,
@@ -1030,7 +1034,11 @@ fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
         launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
-    set_test_action_state_after_transition(&mut sm, seq_id, elem_idx, ActionState::AimingWithBow);
+    set_test_action_state_after_transition(
+        &mut sm,
+        SequenceElementRef::new(seq_id, elem_idx),
+        ActionState::AimingWithBow,
+    );
 
     let result = begin_test_bow_shot(
         &mut entities,

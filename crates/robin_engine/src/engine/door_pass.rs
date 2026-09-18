@@ -10,6 +10,7 @@ use crate::engine::TickCtx;
 use crate::gate::DoorType;
 use crate::order::OrderType;
 use crate::sector::LiftType;
+use crate::sequence::SequenceElementRef;
 
 mod steps;
 mod transitions;
@@ -458,13 +459,16 @@ impl EngineInner {
         tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity_id: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         let movement = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .and_then(|element| match &element.data {
                 crate::sequence::SequenceElementData::Movement {
                     gate_id,
@@ -554,7 +558,7 @@ impl EngineInner {
                 ?direct,
                 "PassDoor: actor not authorized"
             );
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         }
         let lift_type = match door.door_type {
@@ -570,7 +574,7 @@ impl EngineInner {
                 ?direct,
                 "PassDoor: actor not authorized for lift type"
             );
-            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, elem_ref);
             return;
         }
 
@@ -580,8 +584,7 @@ impl EngineInner {
             .position_iface_mut()
             .set_door(door_index, direct);
         let built = self.build_door_pass(
-            seq_id,
-            elem_idx,
+            elem_ref,
             entity_id,
             door_index,
             direct,
@@ -616,17 +619,14 @@ impl EngineInner {
             _ => true,
         };
         if rewrite_element_action
-            && let Some(elem) = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
+            && let Some(elem) = self.orders.sequence_manager.get_element_at_mut(elem_ref)
         {
             elem.set_action(built.root_action);
         }
         if let Some(override_action) = built.post_chain_action_recursive {
             self.orders
                 .sequence_manager
-                .set_action_recursive(seq_id, elem_idx, override_action);
+                .set_action_recursive(elem_ref, override_action);
         }
         let actor = self
             .world
@@ -666,8 +666,7 @@ impl EngineInner {
     /// and lift type.
     fn build_door_pass(
         &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
         direct: bool,
@@ -891,7 +890,7 @@ impl EngineInner {
         let element = self
             .orders
             .sequence_manager
-            .get_element_mut(seq_id, elem_idx)
+            .get_element_at_mut(elem_ref)
             .expect("door translation element disappeared");
         let mut orders = DoorOrders {
             element,

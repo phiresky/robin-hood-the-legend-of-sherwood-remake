@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn sword_strike_range_rejects_nan_like_original_positive_comparisons() {
@@ -648,8 +649,7 @@ fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         victim,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 
     let victim_entity = engine.ent(victim);
@@ -1651,8 +1651,7 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         victim,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let victim_entity = engine.ent(victim);
@@ -1777,8 +1776,7 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         victim,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let victim_entity = engine.ent(victim);
@@ -1866,8 +1864,7 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
         TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         victim,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let victim_entity = engine.ent(victim);
@@ -3030,7 +3027,7 @@ fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(sequence_id, 1),
+            .is_registered_to_go(SequenceElementRef::new(sequence_id, 1)),
         "sword-damage translation's termination must synchronously ready the successor into the manager FIFO"
     );
 }
@@ -3172,8 +3169,7 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
         TickCtx::new(sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 
     let owner_entity = engine.ent(owner);
@@ -3259,8 +3255,7 @@ fn failed_enter_swordfight_retires_matching_postponed_thrust_a() {
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        admission,
-        0,
+        SequenceElementRef::new(admission, 0),
     );
 
     assert_eq!(
@@ -3334,8 +3329,7 @@ fn failed_enter_swordfight_leaves_mismatched_postponed_work_untouched() {
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        admission,
-        0,
+        SequenceElementRef::new(admission, 0),
     );
 
     assert_eq!(
@@ -3404,8 +3398,7 @@ fn successful_enter_swordfight_retains_postponed_thrust_a() {
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        admission,
-        0,
+        SequenceElementRef::new(admission, 0),
     );
 
     assert!(
@@ -3509,8 +3502,7 @@ fn enter_swordfight_instruct_preserves_live_sprite_destination() {
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 
     assert_eq!(
@@ -3555,8 +3547,7 @@ fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
         TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 
     assert!(handled);
@@ -4006,7 +3997,11 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
     };
 
     engine.select_sequence_element(opponent, Some((selected_id, 0)));
-    engine.element_in_progress(TickCtx::new(sim, &assets), &mut Vec::new(), selected_id, 0);
+    engine.element_in_progress(
+        TickCtx::new(sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(selected_id, 0),
+    );
     assert!(engine.enter_swordfight(TickCtx::new(sim, &assets), initiator, opponent, false));
 
     assert!(

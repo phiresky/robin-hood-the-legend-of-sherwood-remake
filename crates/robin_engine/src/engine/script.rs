@@ -6,6 +6,7 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::engine::TickCtx;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
+use crate::sequence::SequenceElementRef;
 
 fn think_stimulus_debug_filter() -> Option<super::diagnostics::ExactOwnerFrame> {
     super::diagnostics::config().think_stimulus
@@ -3033,14 +3034,17 @@ impl EngineInner {
     /// Returns `(message, argument, extended_argument)`.
     pub(super) fn extract_message_properties(
         &self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
+        elem_ref: SequenceElementRef,
     ) -> (i32, i32, i32) {
+        let SequenceElementRef {
+            sequence_id: seq_id,
+            element_index: elem_idx,
+        } = elem_ref;
         use crate::sequence::{Field, FieldValue};
         let elem = self
             .orders
             .sequence_manager
-            .get_element(seq_id, elem_idx)
+            .get_element_at(elem_ref)
             .unwrap_or_else(|| panic!("missing SendMessage element {seq_id:?}/{elem_idx}"));
         let msg = match elem.get_property(Field::Message) {
             Some(FieldValue::Integer(v)) => *v as i32,

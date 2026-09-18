@@ -5,6 +5,7 @@ use crate::element::{
 };
 use crate::engine::TickCtx;
 use crate::position_interface::SectorHandle;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{SequenceElementData, SequenceState};
 
 #[test]
@@ -1312,7 +1313,11 @@ fn running_stairs_refreshes_a_moved_target_before_its_second_motion() {
         *tolerance = 10.0;
     }
     let sequence = engine.launch_element(TickCtx::new(&sim, &assets), seek);
-    engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), sequence, 0);
+    engine.element_in_progress(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        SequenceElementRef::new(sequence, 0),
+    );
     engine.select_sequence_element(owner, Some((sequence, 0)));
     let actor = engine
         .get_entity_mut(owner)
@@ -1861,8 +1866,7 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         owner,
-        seek_seq,
-        0,
+        SequenceElementRef::new(seek_seq, 0),
         replacement,
     );
 
@@ -1897,6 +1901,6 @@ fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacemen
         engine
             .orders
             .sequence_manager
-            .is_registered_to_go(replacement_seq, 0)
+            .is_registered_to_go(SequenceElementRef::new(replacement_seq, 0))
     );
 }

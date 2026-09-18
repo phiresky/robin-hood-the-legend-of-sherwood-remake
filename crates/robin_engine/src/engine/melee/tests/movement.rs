@@ -1,5 +1,6 @@
 use super::*;
 use crate::engine::TickCtx;
+use crate::sequence::SequenceElementRef;
 
 #[test]
 fn sector_to_angle_keeps_original_double_intermediate_rounding() {
@@ -171,8 +172,7 @@ fn thrust_a_translates_for_an_existing_opponent_during_ordinary_door_transit() {
         attacker,
         target,
         SwordStrike::A,
-        sequence,
-        0,
+        SequenceElementRef::new(sequence, 0),
     );
 
     let element = engine

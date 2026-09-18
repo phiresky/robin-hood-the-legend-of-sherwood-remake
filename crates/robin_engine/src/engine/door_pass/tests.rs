@@ -1,6 +1,7 @@
 use super::*;
 use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
+use crate::sequence::SequenceElementRef;
 use crate::sequence::{
     LegacyV48OrderState, LegacyV48SequenceElementState, SequenceElement, SequenceElementData,
     SequenceState,
@@ -125,8 +126,7 @@ fn dispatch_pass_with_element_mutation(
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     (accepted, seq_id)
 }
@@ -848,8 +848,7 @@ fn wall_transition_and_passing_door_use_separate_owner_slots() {
 
     engine.do_next_order(
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
     let transition_order = {
         let element = engine
@@ -1998,8 +1997,7 @@ fn non_movement_pass_door_is_an_invariant_failure() {
         TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         owner,
-        seq_id,
-        0,
+        SequenceElementRef::new(seq_id, 0),
     );
 }
 
