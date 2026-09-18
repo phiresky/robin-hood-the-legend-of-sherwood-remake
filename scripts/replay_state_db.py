@@ -1600,6 +1600,8 @@ def discover_external_activity(corpora: list[dict[str, object]]) -> dict[str, ob
                     "unknown",
                 )
                 conversions.setdefault((corpus_path, audit_path), []).append(int(process.name))
+        # TODO: the schema16 orchestrator script was removed; drop orchestrator
+        # discovery and its downstream recommendations/report lines together.
         if shell_process and "run_schema16_existing_corpora_orchestrator.sh" in joined:
             audit_path = next(
                 (arg for arg in reversed(arguments)

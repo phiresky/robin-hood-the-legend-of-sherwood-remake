@@ -1,5 +1,10 @@
 # Compression investigation — sprites and maps
 
+> Tooling note: the research examples `sprite_size_bench` and
+> `sprite_compression_probe` (and `scripts/sprite_compress_{atlas,streams}.sh`)
+> were removed once these experiments closed. Commands below that invoke them
+> are a historical record; recover the tools from Git history to rerun them.
+
 Summary of a benchmark sweep looking at whether we can shrink the shipping datadir. Tools: `crates/robin_rs/examples/sprite_size_bench.rs` (codec sweep), `crates/robin_rs/examples/datadir_breakdown.rs` (where-does-the-shipping-blob-budget-actually-go), `cargo run --bin convert_datadir -- --map-format jxl-{lossless,q90}` (the actual production conversion). Data: `datadirs/fullgame_gog` and `datadirs/demo_leicester_ecoste`.
 
 ## Latest recorded outcome

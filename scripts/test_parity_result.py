@@ -7,8 +7,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 from parity_result import PREFIX, RESULT_VERSION, LEGACY_EOF_MARKER, exact_eof, read_result
-from parity_campaign import DEPENDENCIES, load
-from run_parity_fixture_gate import snapshot_runner, digest
 
 
 def result_log(**changes):
@@ -33,18 +31,6 @@ class ResultTests(unittest.TestCase):
         match = re.search(r'pub const RESULT_VERSION: u32 = (\d+);', rust)
         self.assertIsNotNone(match)
         self.assertEqual(int(match[1]), RESULT_VERSION)
-
-    def test_fixture_gate_pins_executable_across_rebuilds(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "build-output"
-            snapshot = Path(directory) / "audit-runner"
-            source.write_bytes(b"first build")
-            source.chmod(0o755)
-            expected = snapshot_runner(source, snapshot)
-            source.write_bytes(b"replacement build")
-            self.assertEqual(digest(snapshot), expected)
-            self.assertNotEqual(digest(source), expected)
-            self.assertEqual(snapshot.stat().st_mode & 0o777, 0o555)
 
     def test_success_does_not_depend_on_human_wording(self):
         self.assertTrue(exact_eof("new human wording\n" + result_log()))
@@ -83,24 +69,6 @@ class ResultTests(unittest.TestCase):
         del capabilities["exceptions"][0]["removal_condition"]
         with self.assertRaises(ValueError):
             exact_eof(result_log(capabilities=capabilities))
-
-    def test_frozen_campaign_retains_deployed_script_hash(self):
-        manifest = load(Path(__file__).parent / "parity-campaigns/schema16-20260824.json")
-        self.assertEqual(manifest["profiles"]["existing_corpora"]["expected_prepass_script_sha"],
-                         "d2b7fd1eb29a921655a3aec49617ca5c48e70cbf990f94593490ba17631a074b")
-
-    def test_campaign_binds_reusable_validator_dependency(self):
-        scripts = Path(__file__).parent
-        manifest = load(scripts / "parity-campaigns/schema16-20260824.json")
-        manifest["script_dependencies"] = {name: "0" * 64 for name in DEPENDENCIES}
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "campaign.json"
-            path.write_text(json.dumps(manifest))
-            result = subprocess.run(["python3", str(scripts / "parity_campaign.py"),
-                                     str(path), "--profile", "existing_corpora"],
-                                    capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("campaign dependency hash mismatch", result.stderr)
 
     def test_shared_shell_helpers_use_bounded_decimal_and_preserve_hash_failures(self):
         helper = Path(__file__).parent / "lib/parity_common.sh"

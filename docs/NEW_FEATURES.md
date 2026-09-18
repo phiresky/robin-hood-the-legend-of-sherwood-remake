@@ -1153,8 +1153,8 @@ is recoverable from Git history.
 - **Sprite compression research probes** (commit b112f8141). The
   `sprite_probe_experiments`, `sprite_probe_rdo` and `sprite_probe_rle_dict`
   examples were retired after their experiments closed; `docs/COMPRESSION.md`
-  records the findings. `sprite_size_bench` and `sprite_compression_probe`
-  remain.
+  records the findings. `sprite_size_bench`, `sprite_compression_probe` and
+  the `scripts/sprite_compress_*.sh` helpers were later removed the same way.
 
 ## Not-Todos
 

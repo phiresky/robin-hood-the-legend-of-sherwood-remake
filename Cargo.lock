@@ -1159,16 +1159,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpu-time"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e393a7668fe1fad3075085b86c781883000b4ede868f43627b34a87c8b7ded"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5560,15 +5550,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
-name = "qoi"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f6d64c71eb498fe9eae14ce4ec935c555749aef511cca85b5568910d6e48001"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5988,7 +5969,6 @@ version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
  "bitflags 2.13.2",
- "cpu-time",
  "enum-map",
  "fastrand",
  "geo",
@@ -6198,14 +6178,12 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_replay_format",
- "robin_run_types",
  "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.20",
  "tracing",
- "zstd",
 ]
 
 [[package]]
@@ -6307,7 +6285,6 @@ dependencies = [
  "percent-encoding",
  "png",
  "pollster 1.0.1",
- "qoi",
  "rand",
  "rayon",
  "reqwest",
