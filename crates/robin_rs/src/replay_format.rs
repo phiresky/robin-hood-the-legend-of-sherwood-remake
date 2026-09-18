@@ -4,13 +4,14 @@
 //! [`robin_replay_format`]. This module adds two application-only concerns:
 //!
 //! - local developer JSONL/path loading, visibly separate from production;
-//! - isolated public compact validation before the game process/wasm instance
-//!   decodes the exact bytes a second time.
+//! - user-supplied compact playback: native decodes in-process under the
+//!   bounded decoder (the only entry points are the player's own `--replay`
+//!   path and the loopback-only RPC route, so a hostile file can at worst
+//!   spend the player's own bounded memory); browser builds load other
+//!   players' replays and require the shell's memory-capped Web Worker to
+//!   validate the exact bytes first.
 
 pub use robin_replay_format::*;
-
-#[cfg(not(target_arch = "wasm32"))]
-mod native;
 
 /// Exact source commit used by multiplayer artifact selection.
 pub const ENGINE_SOURCE_COMMIT: &str = env!("ROBIN_GIT_COMMIT");
@@ -74,7 +75,7 @@ pub fn decode_compact_for_admission(
     Ok(decoded)
 }
 
-/// Decode the bounded local-custom lane after/inside isolated containment.
+/// Decode the bounded local-custom lane.
 pub fn decode_compact_for_local_playback(
     bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), robin_replay_format::FormatError> {
@@ -95,18 +96,6 @@ pub enum ReplayLoadError {
     #[cfg(not(target_arch = "wasm32"))]
     #[error("local JSONL replay decode failed: {0}")]
     LocalJsonl(String),
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("isolated replay admission rejected the artifact: {0}")]
-    AdmissionRejected(String),
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("replay admission exhausted its {stage} resource limit: {detail}")]
-    ResourceLimit { stage: &'static str, detail: String },
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("this platform cannot securely contain replay admission: {0}")]
-    ContainmentUnavailable(String),
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("isolated replay admission protocol failed: {0}")]
-    WorkerProtocol(String),
     #[cfg(target_arch = "wasm32")]
     #[error("browser compact replay was not validated by the isolated Web Worker")]
     BrowserWorkerValidationRequired,
@@ -115,38 +104,18 @@ pub enum ReplayLoadError {
     BrowserCompactOnly,
 }
 
-/// Load user-supplied compact bytes only after an isolated validator has
-/// accepted the exact digest. Native uses a short-lived child process with
-/// OS memory/CPU limits. Browser builds require the shell's dedicated Worker
-/// to install a one-shot digest proof before this call.
+/// Load user-supplied compact bytes. Native decodes in-process under the
+/// bounded local-custom limits. Browser builds additionally require the
+/// shell's dedicated Worker to have installed a one-shot digest proof for
+/// these exact bytes; the repeated typed decode is then safe because
+/// collection/string sizes and total work were already proven under the
+/// Worker's memory cap.
 pub fn decode_compact_for_public_playback(
     bytes: &[u8],
 ) -> Result<(String, robin_engine::replay::ReplayData), ReplayLoadError> {
-    AdmittedReplay::admit(bytes)?.decode()
-}
-
-/// Process-local capability for these exact immutable bytes. Deliberately
-/// neither serializable nor publicly constructible: a deserialized digest is
-/// not evidence that the isolated worker ran.
-struct AdmittedReplay<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> AdmittedReplay<'a> {
-    fn admit(bytes: &'a [u8]) -> Result<Self, ReplayLoadError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        native::validate_in_native_child(bytes)?;
-        #[cfg(target_arch = "wasm32")]
-        consume_browser_worker_proof(bytes)?;
-        Ok(Self { bytes })
-    }
-
-    // The isolated worker validated and canonically re-encoded these exact
-    // immutable bytes. Repeating typed decode here is safe: collection/string
-    // sizes and total work were already proven under external containment.
-    fn decode(self) -> Result<(String, robin_engine::replay::ReplayData), ReplayLoadError> {
-        decode_compact_for_local_playback(self.bytes).map_err(Into::into)
-    }
+    #[cfg(target_arch = "wasm32")]
+    consume_browser_worker_proof(bytes)?;
+    decode_compact_for_local_playback(bytes).map_err(Into::into)
 }
 
 /// Explicitly local CLI/developer loader. Production network/server code must

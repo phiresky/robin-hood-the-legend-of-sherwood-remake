@@ -3,10 +3,7 @@
 // Shaders are now consumed directly as WGSL by wgpu at runtime — no
 // offline compilation step needed.
 
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-
-use sha2::{Digest as _, Sha256};
 
 pub fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -14,7 +11,6 @@ pub fn main() {
     println!("cargo:rerun-if-env-changed=ROBIN_PACKAGE_VERSION");
     println!("cargo:rerun-if-env-changed=ROBIN_REQUIRE_BUILD_IDENTITY");
     emit_git_hash();
-    emit_cargo_lock_hash();
     emit_build_identity();
 }
 
@@ -139,28 +135,6 @@ fn emit_git_hash() {
     let short_hash = full_hash.get(..12).unwrap_or(&full_hash);
     println!("cargo:rustc-env=ROBIN_GIT_HASH={short_hash}");
     println!("cargo:rustc-env=ROBIN_GIT_COMMIT={full_hash}");
-}
-
-fn emit_cargo_lock_hash() {
-    let manifest_dir = PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR")
-            .expect("Cargo must provide CARGO_MANIFEST_DIR to build scripts"),
-    );
-    let lock_path = manifest_dir.join("../../Cargo.lock");
-    println!("cargo:rerun-if-changed={}", lock_path.display());
-    let hash = std::fs::read(&lock_path)
-        .map(|bytes| {
-            Sha256::digest(bytes)
-                .iter()
-                .fold(String::with_capacity(64), |mut output, byte| {
-                    write!(output, "{byte:02x}").expect("writing to a String cannot fail");
-                    output
-                })
-        })
-        .unwrap_or_else(|error| {
-            missing_identity(&format!("cannot read {}: {error}", lock_path.display()))
-        });
-    println!("cargo:rustc-env=ROBIN_CARGO_LOCK_SHA256={hash}");
 }
 
 fn emit_build_identity() {

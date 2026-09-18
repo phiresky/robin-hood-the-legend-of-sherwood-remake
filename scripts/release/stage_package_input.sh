@@ -15,7 +15,6 @@ mkdir -p target/package-input/docs
 cp docs/MODDING_TOOLS.md docs/JSON_PATCH_MODS.md target/package-input/docs/
 suffix=""
 if [[ "${runtime}" == win-x64 ]]; then suffix=".exe"; fi
-cp "target/${target}/release/robin-replay-admission${suffix}" target/package-input/
 for tool in cpf_to_json encode_mod_sprites disasm_scb dump_res; do
   cp "target/${target}/release/${tool}${suffix}" target/package-input/
 done

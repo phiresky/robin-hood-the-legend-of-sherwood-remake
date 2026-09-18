@@ -93,19 +93,17 @@ failure, never a skipped input check. Build the game separately:
 ```sh
 CARGO_BUILD_JOBS=1 bash scripts/build-native.sh --no-default-features --features robin_rs/release
 git rev-parse HEAD
-sha256sum target/debug/robin target/debug/robin-replay-admission
+sha256sum target/debug/robin
 ```
 
-This builds both the game and its required adjacent native replay-admission
-helper. Record that exact source and both binary digests. Do not replace either
-executable before admission. Supply both digests below; the suite pins one pair
-before its first scenario, so subsequent build-output replacement does not
-change the executables being validated:
+Record that exact source and the binary digest. Do not replace the executable
+before admission. Supply the digest below; the suite pins the executable before
+its first scenario, so subsequent build-output replacement does not change the
+executable being validated:
 
 ```sh
 ROBIN_LIFECYCLE_BINARY=/absolute/path/to/checkout/target/debug/robin \
 ROBIN_LIFECYCLE_BINARY_SHA256=RECORDED_SHA256 \
-ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256=RECORDED_HELPER_SHA256 \
 ROBIN_LIFECYCLE_SNAPSHOT=RECORDED_SOURCE_COMMIT \
 ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo \
 bash scripts/check-quality.sh native-lifecycle
@@ -115,17 +113,17 @@ The supplied binary source is a caller's build-provenance assertion, not
 inferred from the current checkout. The summary distinguishes it from the
 harness checkout commit. Preserve the adjacent built-in `mods` installation if
 copying a binary out of target. Preserve the exact tested binary separately if
-the checkout will later be deleted. The lifecycle suite requires and pins both
-executables in its evidence `bin/` directory, checks their supplied hashes,
-passes only that frozen pair to all four drivers, and verifies retained hashes
+the checkout will later be deleted. The lifecycle suite pins the game
+executable in its evidence `bin/` directory, checks its supplied hash, passes
+only that frozen copy to all four drivers, and verifies the retained hash
 before/after each scenario. Each driver retains its own copy; its reported game
-and helper hashes must both match the suite's admitted pair. Direct standalone
-drivers retain their existing per-run snapshots.
+hash must match the suite's admitted executable. Direct standalone drivers
+retain their existing per-run snapshots.
 
-The summary records initial and final observations of both original build-tree
-paths, including replacement or deletion. Such later changes are diagnostic,
-not a failure of an unchanged retained pair. Admission mismatch, missing helper,
-retained-copy mutation, or a mismatched scenario hash is still a hard failure.
+The summary records initial and final observations of the original build-tree
+path, including replacement or deletion. Such later changes are diagnostic,
+not a failure of an unchanged retained copy. Admission mismatch, retained-copy
+mutation, or a mismatched scenario hash is still a hard failure.
 The independent clean/frozen harness-source identity guard remains unchanged.
 
 Each of four runs receives a fresh loopback-only network namespace and isolated

@@ -29,8 +29,7 @@ def main():
         ("robin_script_types", {"robin_engine", "robin_spellforge"}, []),
         ("robin_spellforge", {"robin_engine"}, []),
         ("robin_modding_tools", {"robin_rs"}, []),
-        ("robin_replay_format", {"robin_rs", "robin_assets", "wgpu", "winit", "kira", "cpal", "ffmpeg-next"},
-         ["--features", "native-admission"]),
+        ("robin_replay_format", {"robin_rs", "robin_assets", "wgpu", "winit", "kira", "cpal", "ffmpeg-next"}, []),
     ):
         command = ["cargo", "tree", "--locked", "-p", package,
                    "--no-default-features", "--edges", "normal,build",

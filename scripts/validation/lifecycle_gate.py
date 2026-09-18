@@ -14,7 +14,7 @@ import sys
 import tempfile
 import tomllib
 
-from runtime_evidence import client_helper_path, observe_client_sources, snapshot_client, stop_process_group, verify_client
+from runtime_evidence import observe_client_source, snapshot_client, stop_process_group, verify_client
 
 ROOT = Path(__file__).resolve().parents[2]
 REPLAY_CHECKS = {"native_playback_finished", "post_bootstrap_hash_verified"}
@@ -212,33 +212,23 @@ def native(evidence, summary):
     expected = os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"]
     if digest(binary) != expected:
         raise RuntimeError("prebuilt binary does not match supplied SHA256")
-    helper = client_helper_path(binary)
-    if not helper.is_file():
-        raise RuntimeError(f"required adjacent replay admission helper is missing: {helper}")
-    helper_expected = os.environ.get("ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256")
-    if not helper_expected:
-        raise RuntimeError("set ROBIN_LIFECYCLE_ADMISSION_HELPER_SHA256 to the recorded helper digest")
-    if digest(helper) != helper_expected:
-        raise RuntimeError("prebuilt replay admission helper does not match supplied SHA256")
     snapshot = os.environ["ROBIN_LIFECYCLE_SNAPSHOT"]
     source_binary = binary
     summary.update(binary_source_snapshot=snapshot, data=str(data), checks={},
-                   source_pair_initial=observe_client_sources(source_binary))
+                   source_initial=observe_client_source(source_binary))
     try:
-        # The suite, not each scenario, admits one immutable executable pair.
+        # The suite, not each scenario, admits one immutable executable.
         binary = snapshot_client(source_binary, evidence, summary)
-        if (summary["binary_sha256"] != expected
-                or summary.get("admission_helper_sha256") != helper_expected):
-            raise RuntimeError("game/helper pair changed while admitting supplied SHA256 identities")
+        if summary["binary_sha256"] != expected:
+            raise RuntimeError("game executable changed while admitting supplied SHA256 identity")
         _native_scenarios(binary, data, snapshot, evidence, summary)
     finally:
-        summary["source_pair_final"] = observe_client_sources(source_binary)
-        summary["source_pair_changed"] = summary["source_pair_initial"] != summary["source_pair_final"]
+        summary["source_final"] = observe_client_source(source_binary)
+        summary["source_changed"] = summary["source_initial"] != summary["source_final"]
 
 
 def _native_scenarios(binary, data, snapshot, evidence, summary):
     expected = summary["binary_sha256"]
-    helper_expected = summary["admission_helper_sha256"]
     driver = ROOT / "scripts/validation/frame_steps_live.py"
     for name, extra in (("ordinary", []), ("save-load", ["--save-load"])):
         live = evidence / name
@@ -256,7 +246,6 @@ def _native_scenarios(binary, data, snapshot, evidence, summary):
             if name == "save-load" and suffix == "headless":
                 required |= SAVE_CHECKS
             if (result.get("completed") is not True or result.get("binary_sha256") != expected
-                    or result.get("admission_helper_sha256") != helper_expected
                     or result.get("snapshot") != snapshot
                     or any(result.get("checks", {}).get(key) is not True for key in required)):
                 raise RuntimeError(f"invalid acceptance summary: {destination}")

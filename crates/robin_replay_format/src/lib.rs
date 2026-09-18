@@ -21,11 +21,16 @@
 //! built replay-admission wasm inside a Dedicated Worker; that artifact owns a
 //! non-shared linear memory with a CI-inspected 384 MiB maximum. A normal game
 //! wasm instance is not an allocation boundary.
+//!
+//! Native client playback decodes in-process with [`decode_compact_bounded`]
+//! under [`LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS`]. Its only entry points are
+//! the player's own `--replay` path and the loopback-only RPC route, so the
+//! input is the player's own file and the worst case is that player's own
+//! bounded memory; input size, decompressed size, zstd window and
+//! collection/string limits still apply.
 
 pub mod seek;
 
-#[cfg(all(feature = "native-admission", not(target_arch = "wasm32")))]
-pub mod native_admission;
 use robin_engine::campaign::Campaign;
 use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile, ReplayFrame};
 use serde::Serialize;

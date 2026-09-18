@@ -76,19 +76,16 @@ class RuntimeEvidenceTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 namespace_x11._namespace_socket(":" + number, None, "", number)
 
-    def test_retained_client_and_helper_do_not_follow_rebuilt_input(self):
+    def test_retained_client_does_not_follow_rebuilt_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "robin"
-            helper = root / "robin-replay-admission"
             source.write_bytes(b"build one")
-            helper.write_bytes(b"decoder one")
             retained = root / "evidence"
             retained.mkdir()
             summary = {}
             binary = evidence.snapshot_client(source, retained, summary)
             source.write_bytes(b"build two")
-            helper.write_bytes(b"decoder two")
             evidence.verify_client(binary, summary)
             self.assertEqual(binary.read_bytes(), b"build one")
             binary.chmod(0o755)
