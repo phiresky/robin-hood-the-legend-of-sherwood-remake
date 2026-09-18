@@ -1702,7 +1702,10 @@ impl robin_engine_types::PixelOpacityLookup for PublishedFrameHolder {
             .current
             .read()
             .expect("published frame-holder read lock poisoned");
-        robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(&**current, sorted_bank_ids)
+        robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(
+            &**current,
+            sorted_bank_ids,
+        )
     }
 }
 
@@ -2545,7 +2548,8 @@ mod tests {
         });
 
         let ids = [0, 1];
-        let optimized = robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
+        let optimized =
+            robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
         let reference = robin_engine_types::PixelOpacityLookup::simulation_opacity_sha256(
             &DefaultOpacity(&holder),
             &ids,

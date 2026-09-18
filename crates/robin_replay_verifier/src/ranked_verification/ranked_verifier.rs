@@ -108,8 +108,11 @@ pub fn confined_official_files(
 pub fn load_official_profiles(
     files: &SbFileSystem,
 ) -> Result<ProfileManager, RankedVerifierLoadError> {
-    crate::ranked_verification::profile_loading::load_profiles(&robin_engine::engine::GlobalOptions::default(), files)
-        .map_err(RankedVerifierLoadError::Profiles)
+    crate::ranked_verification::profile_loading::load_profiles(
+        &robin_engine::engine::GlobalOptions::default(),
+        files,
+    )
+    .map_err(RankedVerifierLoadError::Profiles)
 }
 
 /// Load and construct the exact engine which may execute a ranked replay.

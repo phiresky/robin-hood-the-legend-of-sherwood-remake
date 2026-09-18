@@ -342,7 +342,7 @@ fn populate_ranked_sound_duration_tables(
     // derive local voice lengths, or add an ambient filesystem search root.
     // A missing core file is a build error here and a startup error in the game.
     robin_engine::audio_durations::AudioDurations::from_json(include_bytes!(
-        "../../../assets/core-datadir/Data/AudioDurations.json"
+        "../../../../assets/core-datadir/Data/AudioDurations.json"
     ))?
     .populate(&mut assets.audio, profiles)
 }
@@ -419,8 +419,8 @@ mod resource_tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("robin_engine"),
         ];
         let expected = [
-            include_bytes!("lib.rs").as_slice(),
-            include_bytes!("../../robin_engine/src/lib.rs").as_slice(),
+            include_bytes!("../lib.rs").as_slice(),
+            include_bytes!("../../../robin_engine/src/lib.rs").as_slice(),
         ];
         std::thread::scope(|scope| {
             for (root, expected) in roots.iter().zip(expected) {
@@ -458,7 +458,7 @@ mod resource_tests {
         .unwrap();
         assert_eq!(
             resources.read_required_asset("Cargo.toml").unwrap(),
-            include_bytes!("../Cargo.toml").as_slice(),
+            include_bytes!("../../Cargo.toml").as_slice(),
         );
         assert!(
             resources
