@@ -6,7 +6,6 @@ use crate::element::{
 };
 use crate::element_kinds::ObjectType;
 use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
-use crate::order::OrderType;
 
 fn add_ale(engine: &mut EngineInner, owner: EntityId, x: f32, y: f32) -> EntityId {
     let mut element = ElementData::default();
@@ -132,8 +131,8 @@ fn enemy_below_reads_ground_position_at_the_call_boundary() {
             false,
         ),
     ] {
-        place(&mut engine, owner, me);
-        place(&mut engine, target, other);
+        engine.place(owner, me);
+        engine.place(target, other);
         assert_eq!(engine.observation_enemy_below(owner, target), below);
     }
 }
@@ -250,54 +249,6 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
     .into_tuple()
 }
 
-fn place(engine: &mut EngineInner, id: EntityId, point: WorldPoint3D) {
-    engine.place(id, point);
-}
-
-fn door_position(engine: &mut EngineInner, actor: EntityId, point: MapPoint) {
-    let sector = engine
-        .expect_entity(actor, "test door actor")
-        .element_data()
-        .sector()
-        .unwrap();
-    let door = crate::gate::DoorIndex::new(engine.script_domains.interactables.doors.len() as u32)
-        .unwrap();
-    engine
-        .script_domains
-        .interactables
-        .doors
-        .push(crate::gate::Door {
-            point_in: point,
-            point_out: point,
-            sector_in: crate::sector::SectorNumber::new(1),
-            sector_out: crate::sector::SectorNumber::new(1),
-            sector_in_index: sector.arena_index(),
-            sector_out_index: sector.arena_index(),
-            ..Default::default()
-        });
-    let mut element = crate::sequence::SequenceElement::new_movement(
-        1,
-        crate::element::Command::PassDoor,
-        Some(actor),
-        OrderType::WalkingUpright,
-    );
-    let crate::sequence::SequenceElementData::Movement {
-        gate_id, direction, ..
-    } = &mut element.data
-    else {
-        unreachable!()
-    };
-    *gate_id = Some(door);
-    *direction = 1;
-    let sequence = engine.orders.sequence_manager.insert_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .start_sequence_level(sequence);
-    engine.select_sequence_element(actor, Some((sequence, 0)));
-    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
-}
-
 #[test]
 fn enemy_sighting_uses_live_geometry_without_detection_capture() {
     let (mut engine, assets, owner, target) = fixture();
@@ -340,10 +291,14 @@ fn moving_sighting_approach_radius_uses_raw_stretched_world_distance() {
         ),
     ] {
         let (mut engine, assets, owner, target) = fixture();
-        place(&mut engine, owner, owner_point);
-        place(&mut engine, target, target_point);
+        engine.place(owner, owner_point);
+        engine.place(target, target_point);
         if let Some(point) = door {
-            door_position(&mut engine, owner, point);
+            crate::engine::test_support::extra_engine_combat::enter_test_door(
+                &mut engine,
+                owner,
+                point,
+            );
         }
         engine.set_action_state_of(owner, ActionState::MovingFast);
         engine.execute_ai_seen_enemy(
@@ -368,16 +323,8 @@ fn moving_sighting_approach_radius_uses_raw_stretched_world_distance() {
 #[test]
 fn near_sighting_gate_uses_world_y_and_elevation() {
     let (mut engine, assets, owner, target) = fixture();
-    place(
-        &mut engine,
-        owner,
-        WorldPoint3D::new(575.6, 2465.001, 105.001),
-    );
-    place(
-        &mut engine,
-        target,
-        WorldPoint3D::new(609.0, 2449.001, 150.001),
-    );
+    engine.place(owner, WorldPoint3D::new(575.6, 2465.001, 105.001));
+    engine.place(target, WorldPoint3D::new(609.0, 2449.001, 150.001));
     engine
         .world
         .entities
@@ -403,17 +350,16 @@ fn near_sighting_gate_uses_world_y_and_elevation() {
 #[test]
 fn near_sighting_gate_reads_raw_target_during_door_pass() {
     let (mut engine, assets, owner, target) = fixture();
-    place(
-        &mut engine,
+    engine.place(
         owner,
         WorldPoint3D::new(654.72314, 1403.2888 + 143.06665, 143.06665),
     );
-    place(
+    engine.place(target, WorldPoint3D::new(560.9536, 1552.7451, 130.001));
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
         &mut engine,
         target,
-        WorldPoint3D::new(560.9536, 1552.7451, 130.001),
+        MapPoint::new(663.75, 1421.5),
     );
-    door_position(&mut engine, target, MapPoint::new(663.75, 1421.5));
     engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
@@ -503,9 +449,7 @@ fn runtime_objects_trigger_reactions_but_bonus_variants_are_ignored() {
 #[test]
 fn moving_sighting_rereads_target_after_state_callback() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, owner, target) = fixture();
     engine.set_action_state_of(owner, ActionState::MovingFast);
     engine.actor_mut(owner).script_class = "MoveObserved".into();
@@ -517,45 +461,28 @@ fn moving_sighting_rereads_target_after_state_callback() {
     assets.scripts.location_sector_handles =
         std::sync::Arc::new(vec![engine.live_ai_position(target).sector]);
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                empty_startup_class("sighting.scs".into()),
-                ClassEntry {
-                    source_file: "sighting.scs".into(),
-                    class_name: "MoveObserved".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff1_get_param(0xC000, 4),
-                        q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
-                        q_ieq(0xC000, 0xC000, 0xC004),
-                        q_if_not_zero_goto(0xC000, 7),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_aff0_iconstant(0xC000, ScriptHandleCodec::actor_handle(target)),
-                        q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::SetActorLocation as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "sighting.scs",
+            "MoveObserved",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff1_get_param(0xC000, 4),
+                q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
+                q_ieq(0xC000, 0xC000, 0xC004),
+                q_if_not_zero_goto(0xC000, 7),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_aff0_iconstant(0xC000, ScriptHandleCodec::actor_handle(target)),
+                q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::SetActorLocation as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .unwrap(),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine

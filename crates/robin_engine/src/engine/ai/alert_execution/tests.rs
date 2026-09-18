@@ -212,9 +212,7 @@ fn officer_group_path_advances_waypoint_on_refusal() {
 #[test]
 fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, [owner, refused, second, third]) = group_fixture();
     let sector = engine.live_ai_position(owner).sector.unwrap();
     assets.navigation.hiking_paths = std::sync::Arc::new(
@@ -257,46 +255,22 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
         .unwrap()
         .script_class = "ChangePath".into();
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                ClassEntry {
-                    source_file: "path.scs".into(),
-                    class_name: "StartUp".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![],
-                    quads: vec![],
-                },
-                ClassEntry {
-                    source_file: "path.scs".into(),
-                    class_name: "ChangePath".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff0_iconstant(0xC000, handle),
-                        q_aff0_iconstant(0xC004, 1),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::AssignPath as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "path.scs",
+            "ChangePath",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff0_iconstant(0xC000, handle),
+                q_aff0_iconstant(0xC004, 1),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::AssignPath as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .expect("path reassignment script compiles"),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine

@@ -1222,28 +1222,14 @@ mod tests {
             q_return_val(0xc00c),
             q_end_function(),
         ];
-        let class = crate::scb::ClassEntry {
-            source_file: "approach_stop.scs".into(),
-            class_name: "StopOnState".into(),
-            size_of_member_variables: 0,
-            member_variables: vec![],
-            functions: vec![crate::scb::Function {
-                name: "FilterAIEvent".into(),
-                address: 0,
-                num_parameters: 3,
-                size_of_return_value: 4,
-                size_of_parameters: 12,
-                size_of_volatile: 0,
-                size_of_temporary: 16,
-            }],
-            quads,
-        };
+
         engine.scripts.mission = Some(
-            crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-                version: crate::scb::SCB_VERSION,
-                classes: vec![empty_startup_class("approach_stop.scs".into()), class],
-            })
-            .unwrap(),
+            crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+                "approach_stop.scs",
+                "StopOnState",
+                16,
+                quads,
+            ),
         );
         engine.scripts.mission.as_mut().unwrap().bind_actor(
             crate::natives::ScriptHandleCodec::actor_handle(owner),

@@ -984,41 +984,6 @@ mod exact_ai_goto_source_tests {
     use crate::position_interface::{DoorHandle, SectorHandle};
     use crate::sector::SectorNumber;
 
-    fn minimal_mission() -> crate::engine::MissionScript {
-        use crate::scb::{ClassEntry, Function};
-        use crate::vm::{Opcode, Quad};
-
-        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![ClassEntry {
-                source_file: "queued_goto_door_test.scs".into(),
-                class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: vec![Function {
-                    name: "Initialize".into(),
-                    address: 0,
-                    num_parameters: 0,
-                    size_of_return_value: 0,
-                    size_of_parameters: 0,
-                    size_of_volatile: 0,
-                    size_of_temporary: 0,
-                }],
-                quads: vec![
-                    Quad {
-                        operation: Opcode::BeginFunction as u8,
-                        operands: [0; 8],
-                    },
-                    Quad {
-                        operation: Opcode::Return as u8,
-                        operands: [0; 8],
-                    },
-                ],
-            }],
-        })
-        .expect("minimal mission")
-    }
-
     #[test]
     fn live_move_preserves_reverse_and_strafe_action_flags() {
         use crate::ai::GotoFlags;
@@ -1081,7 +1046,9 @@ mod exact_ai_goto_source_tests {
     #[test]
     fn door_transit_construction_keeps_raw_branch_and_adapted_route_identities_distinct() {
         let mut engine = EngineInner::new();
-        engine.scripts.mission = Some(minimal_mission());
+        engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+            "queued_goto_door_test.scs",
+        ));
 
         engine.world.fast_grid_mut().size_map(16, 16);
         engine.world.fast_grid_mut().allocate_layers(3);
