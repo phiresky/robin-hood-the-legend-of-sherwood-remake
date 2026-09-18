@@ -2,7 +2,6 @@ cargo-features = ["codegen-backend"]
 
 [workspace]
 resolver = "2"
-exclude = ["vendor/bitcode"]
 members = [
     "crates/robin_content",
     "crates/robin_identity_signer",
@@ -138,8 +137,9 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.14"
 
 [patch.crates-io]
-# Vulkan presentation hooks; provenance: vendor/wgpu-hal/ROBIN_PATCHES.md.
-wgpu-hal = { path = "vendor/wgpu-hal" }
+# crates.io wgpu-hal 30.0.1 plus Vulkan presentation hooks; provenance:
+# ROBIN_PATCHES.md in the fork. Drop once upstream ships equivalent hooks.
+wgpu-hal = { git = "https://github.com/phiresky/wgpu-hal.git", rev = "1418048934ce0cfc00ce45c92de8a685d098cae7" }
 # Deterministic VM patch provenance and upgrade procedure: vendor/rilua/ROBIN_PATCHES.md.
 rilua = { path = "vendor/rilua" }
 # winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the
@@ -378,4 +378,5 @@ panic = "abort"
 
 # Keep the pinned bitcode wire format while bounding untrusted sprite decode.
 [patch."https://github.com/SoftbearStudios/bitcode.git"]
-bitcode = { path = "vendor/bitcode" }
+# Fork adds `decode_with_limit`; see LOCAL_CHANGES.md on branch robin-decode-limit.
+bitcode = { git = "https://github.com/phiresky/bitcode.git", rev = "59051e886ff8cd24bfc63ef0cef6321372829604" }

@@ -28,7 +28,8 @@ A list of which additional features we have added, which ones we might still wan
   Unknown timestamps are not classified as discarded frames; VRR/unknown
   refresh timing does not produce missed-refresh counts. Resize resets tracking.
   Unsupported devices retain CPU presentation diagnostics, which are estimates.
-  Local wgpu-hal hook provenance is in `vendor/wgpu-hal/ROBIN_PATCHES.md`.
+  Local wgpu-hal hook provenance is in `ROBIN_PATCHES.md` of the
+  `phiresky/wgpu-hal` fork pinned in the root `Cargo.toml`.
 
 - **In-game leaderboard registration.** Every submission checks the uploader's
   server profile first: Previous Plays, mission-end buttons, retries, and
