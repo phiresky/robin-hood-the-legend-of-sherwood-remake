@@ -199,17 +199,9 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         executed_transition,
         "a transition selected as GenericAnimation must not be suppressed merely because its element carries Movement data"
     );
+    assert_eq!(engine.ent(owner).sprite().last_action, transition);
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().last_action,
-        transition
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(owner),
         ActionState::Waiting,
         "bored-exit completion inside MoveOk must apply the base-Actor state transition"
     );
@@ -245,11 +237,7 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         live_goal,
         "deferred Turn instruction must not replace a goal advanced by the outgoing actor slot"
     );
@@ -316,13 +304,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        u8::from(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        u8::from(engine.ent(owner).position_iface().get_direction_goal()),
         expected_direction as u8
     );
     assert_eq!(
@@ -395,11 +377,7 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     engine.orders.sequence_manager.set_halt_pending(false);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         old_goal,
         "replacement selection must happen before the old movement's condolence can clear its cached transition goal"
     );

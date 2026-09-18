@@ -89,15 +89,7 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         "the >UBER old principal must make a pre-removal snapshot false"
     );
     engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![promoted]
-    );
+    assert_eq!(engine.human(owner).opponents, vec![promoted]);
     assert!(
         engine.sword_movement_termination_warrants_provoke(&assets, owner),
         "the promoted reciprocal opponent is inside the Provoke band"
@@ -181,12 +173,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
     assert!(promoted_human.smalltalk_initiative);
     assert!(promoted_human.received_smalltalk_initiative);
     assert!(
-        !engine
-            .get_entity(old_principal)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative,
+        !engine.human(old_principal).smalltalk_initiative,
         "the pruned old principal must not receive the START handoff"
     );
 }
@@ -262,24 +249,8 @@ fn soldier_death_detaches_guard_and_archery_before_forcing_quiet_music() {
     engine.ai.global.overall_alert_status = AlertLevel::Red;
 
     engine.set_live_guarded_pc(victim_id, Some(current_guarded_pc_typed));
-    assert_eq!(
-        engine
-            .get_entity(old_guarded_pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .guard,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(current_guarded_pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .guard,
-        Some(victim_id)
-    );
+    assert_eq!(engine.pc(old_guarded_pc).guard, None);
+    assert_eq!(engine.pc(current_guarded_pc).guard, Some(victim_id));
 
     let assets = engine.test_runtime_assets();
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim_id);

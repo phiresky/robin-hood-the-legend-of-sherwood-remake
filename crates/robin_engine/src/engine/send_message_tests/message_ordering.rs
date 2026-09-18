@@ -243,13 +243,7 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
         Some(&0),
         "ProcessMessage must observe state before the later Unblip sibling"
     );
-    assert!(
-        !engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .element_data()
-            .blipped
-    );
+    assert!(!engine.elem(receiver).blipped);
     assert_eq!(ScriptHandleCodec::actor_handle(receiver), handle);
 }
 
@@ -374,7 +368,7 @@ fn ownerless_message_runs_wait_successor_before_next_launch() {
         SequenceState::InProgress,
         "WAIT successor completes inside the first launch",
     );
-    assert!(engine.get_entity(receiver).unwrap().element_data().blipped);
+    assert!(engine.elem(receiver).blipped);
 
     let mut older_sibling = Sequence::new();
     older_sibling.append_element(SequenceElement::new_generic(
@@ -395,11 +389,7 @@ fn ownerless_message_runs_wait_successor_before_next_launch() {
         "Ready must run the WAIT successor before returning"
     );
     assert!(
-        !engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .element_data()
-            .blipped,
+        !engine.elem(receiver).blipped,
         "the next immediate launch runs after the WAIT successor"
     );
 }
@@ -485,11 +475,7 @@ fn missing_send_message_receiver_reports_failure_after_successor_cleanup() {
         "the reported failure cascades through the already completed successor"
     );
     assert!(
-        !engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .element_data()
-            .blipped,
+        !engine.elem(receiver).blipped,
         "the successor must still execute after the required receiver VM is absent; state={successor_state:?}"
     );
 }

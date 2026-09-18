@@ -1920,13 +1920,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
         "the sweep must use the call-boundary antagonist after the owner's live field is cleared"
     );
     assert_eq!(
-        u8::from(
-            engine
-                .get_entity(first_arm)
-                .expect("deferred-face candidate exists")
-                .position_iface()
-                .get_direction()
-        ),
+        u8::from(engine.ent(first_arm).position_iface().get_direction()),
         Direction::EAST.as_u8(),
         "the synchronous callback must register Face without instructing Turn in the actor slot"
     );

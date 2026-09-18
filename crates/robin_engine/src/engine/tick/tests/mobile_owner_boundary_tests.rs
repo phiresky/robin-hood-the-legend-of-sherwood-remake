@@ -132,24 +132,8 @@ fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
 
     engine.tick_actor_owner_envelopes(&sim_context, &assets);
     assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
-    assert_eq!(
-        engine
-            .get_entity(first)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        12.0
-    );
-    assert_eq!(
-        engine
-            .get_entity(second)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        22.0
-    );
+    assert_eq!(engine.map_pos_of(first).x, 12.0);
+    assert_eq!(engine.map_pos_of(second).x, 22.0);
 
     assert_eq!(
         engine.world.mobile_elements[0].position.x, 2.0,
@@ -424,15 +408,7 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
     let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
         engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
     });
-    assert_eq!(
-        engine
-            .get_entity(child)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        10.0
-    );
+    assert_eq!(engine.map_pos_of(child).x, 10.0);
     assert_eq!(increments, []);
 
     engine.world.mobile_elements[0].stopped = false;
@@ -441,15 +417,7 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
     let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
         engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
     });
-    assert_eq!(
-        engine
-            .get_entity(child)
-            .unwrap()
-            .element_data()
-            .position_map()
-            .x,
-        10.0
-    );
+    assert_eq!(engine.map_pos_of(child).x, 10.0);
     assert_eq!(increments, []);
 }
 

@@ -69,10 +69,7 @@ fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
     assert_ne!(selected, (sequence, 0));
     assert_eq!(
         engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
+            .actor(owner)
             .installed_order
             .unwrap()
             .resolve(&engine.orders.sequence_manager)
@@ -264,15 +261,7 @@ fn retained_shot_refreshes_transition_state_when_aiming_resumes() {
         ActionState::AimingWithBow
     );
     assert_eq!(shot.state, SequenceState::Impossible);
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty()
-    );
+    assert!(engine.human(owner).pending_shoots.is_empty());
 }
 
 #[test]
@@ -399,13 +388,7 @@ fn completion_during_translation_does_not_latch_instruction_motion() {
         );
         assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .continuation
-                .motion_state,
+            engine.motion_state_of(owner),
             MotionState::Terminated,
             "a translation that clears selection must skip the ordinary instruction epilogue"
         );

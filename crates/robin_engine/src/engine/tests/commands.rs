@@ -640,24 +640,14 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
             .state,
         SequenceState::Terminated,
     );
-    assert!(
-        !engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .execution_frozen
-    );
+    assert!(!engine.actor(owner).execution_frozen);
     assert_eq!(
         engine.orders.timer_elements.len(),
         1,
         "termination must release the timer in the same manager drain"
     );
     assert_eq!(engine.orders.timer_elements[0].remaining, 5);
-    assert_eq!(
-        engine.get_entity(owner).unwrap().element_data().posture(),
-        Posture::Upright
-    );
+    assert_eq!(engine.posture_of(owner), Posture::Upright);
 }
 
 #[test]
@@ -867,24 +857,8 @@ fn swordfight_los_ignores_crossing_motion_line() {
 
     engine.tick_waiting_sword_execute_for(sim, &assets, left_id);
 
-    assert_eq!(
-        engine
-            .get_entity(left_id)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![right_id]
-    );
-    assert_eq!(
-        engine
-            .get_entity(right_id)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents,
-        vec![left_id]
-    );
+    assert_eq!(engine.human(left_id).opponents, vec![right_id]);
+    assert_eq!(engine.human(right_id).opponents, vec![left_id]);
 }
 
 #[test]

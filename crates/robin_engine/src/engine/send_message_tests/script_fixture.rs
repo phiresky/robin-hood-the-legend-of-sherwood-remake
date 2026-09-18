@@ -14,12 +14,10 @@ fn freeze_toggling_scroll_class(class_name: &str, frozen: bool) -> ClassEntry {
         class_name: class_name.into(),
         functions: vec![Function {
             name: "Hourglass".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -387,12 +385,10 @@ fn target_ordering_class() -> ClassEntry {
         class_name: "TargetOrdering".into(),
         functions: vec![Function {
             name: "ActivatedByArrow".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -412,12 +408,10 @@ fn move_ordering_class() -> ClassEntry {
         class_name: "MoveOrdering".into(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 12,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(3),
@@ -443,12 +437,10 @@ fn scroll_observer_class() -> ClassEntry {
         class_name: "ScrollObserver".into(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(2),
@@ -471,12 +463,10 @@ fn self_deactivating_scroll_class() -> ClassEntry {
         class_name: "SelfDeactivatingScroll".into(),
         functions: vec![Function {
             name: "Hourglass".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -498,21 +488,16 @@ fn scroll_relay_class() -> ClassEntry {
         functions: vec![
             Function {
                 name: "TriggerScroll".into(),
-                address: 0,
                 num_parameters: 1,
-                size_of_return_value: 0,
                 size_of_parameters: 4,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
             Function {
                 name: "TriggerOwnerless".into(),
                 address: 14,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
         ],
         quads: vec![
@@ -601,12 +586,10 @@ fn recursive_class() -> ClassEntry {
         class_name: "RecursiveReceiver".into(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(2),
@@ -733,21 +716,18 @@ fn failure_receiver_class() -> ClassEntry {
         functions: vec![
             Function {
                 name: "ProcessMessage".into(),
-                address: 0,
                 num_parameters: 3,
-                size_of_return_value: 0,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 8,
+                ..Default::default()
             },
             Function {
                 name: "TriggerFailure".into(),
                 address: 8,
                 num_parameters: 1,
-                size_of_return_value: 0,
                 size_of_parameters: 4,
-                size_of_volatile: 0,
                 size_of_temporary: 16,
+                ..Default::default()
             },
         ],
         quads: vec![
@@ -791,12 +771,11 @@ fn open_scroll_failure_class() -> ClassEntry {
         class_name: "OpenScrollFailure".into(),
         functions: vec![Function {
             name: "IsTaken".into(),
-            address: 0,
             num_parameters: 1,
             size_of_return_value: 4,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             // The ScrollReader parameter is a valid actor with no bound VM.
@@ -821,12 +800,10 @@ fn open_scroll_local_failure_class() -> ClassEntry {
         class_name: "OpenScrollLocalFailure".into(),
         functions: vec![Function {
             name: "IsTaken".into(),
-            address: 0,
             num_parameters: 1,
             size_of_return_value: 4,
             size_of_parameters: 4,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         }],
         // The declared function has no instruction at address zero, making
         // this a direct local RanOff failure rather than a descendant action.
@@ -851,10 +828,9 @@ fn yielding_flavor_class() -> ClassEntry {
             name: name.into(),
             address: if name == "EmitEffect" { 8 } else { 0 },
             num_parameters,
-            size_of_return_value: 0,
             size_of_parameters: num_parameters * 4,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         })
         .collect(),
         quads: vec![

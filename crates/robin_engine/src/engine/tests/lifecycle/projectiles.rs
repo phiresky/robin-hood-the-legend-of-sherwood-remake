@@ -294,7 +294,7 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
     assert!(engine.get_entity(flying_net).is_some());
     for id in [apple, stone, flying_purse] {
         assert!(
-            !engine.get_entity(id).unwrap().is_active(),
+            !engine.ent(id).is_active(),
             "{id:?} must remain as an inactive tombstone"
         );
     }
@@ -540,12 +540,7 @@ fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
 
     engine.apply_pending_presentation_refresh(&sim);
     assert_eq!(
-        engine
-            .get_entity(fx_id)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_sound_id,
+        engine.elem(fx_id).sprite.last_sound_id,
         0,
         "a restored frame has no pending Refresh before its first parity snapshot"
     );
@@ -553,15 +548,7 @@ fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
 
     engine.control.arrow_refresh_pending = true;
     engine.apply_pending_presentation_refresh(&sim);
-    assert_eq!(
-        engine
-            .get_entity(fx_id)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_sound_id,
-        49
-    );
+    assert_eq!(engine.elem(fx_id).sprite.last_sound_id, 49);
     assert!(matches!(
         engine.feedback.pending_side_effects.sounds.as_slice(),
         [super::super::super::SoundCommand::Fx { fx_id: 49, .. }]
@@ -672,20 +659,7 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
             ..Default::default()
         },
     }));
-    assert!(
-        engine
-            .get_entity(shallower)
-            .unwrap()
-            .element_data()
-            .position()
-            .y
-            < engine
-                .get_entity(deeper)
-                .unwrap()
-                .element_data()
-                .position()
-                .y
-    );
+    assert!(engine.pos_of(shallower).y < engine.pos_of(deeper).y);
     let draw_order = engine.compute_display_order();
     let relevant: Vec<_> = draw_order
         .ids
@@ -937,7 +911,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
     engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().last_action,
+        engine.ent(owner).sprite().last_action,
         OrderType::TransitionEquipBow
     );
 }
@@ -1008,11 +982,7 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         order_id
     );
     assert_eq!(
-        engine
-            .get_entity(shooter)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(shooter).sprite().last_processed_order_id,
         u32::MAX
     );
 }
@@ -1113,12 +1083,7 @@ fn selected_listen_done_does_not_clear_newer_bow_action() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(owner).current_action,
         crate::profiles::Action::Bow,
         "a stale Listen completion must be filtered by the messenger-global action"
     );

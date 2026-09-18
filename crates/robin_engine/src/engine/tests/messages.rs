@@ -447,11 +447,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
     engine.t_element_terminated(&assets, sequence, 0);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO,
         "a selected AssertPosition card clears the old movement goal before its successor executes"
     );
@@ -483,11 +479,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     // Interruption closes the selected movement before its caller selects Wait.
     engine.t_element_interrupted(&assets, movement_sequence, 0, CascadeFlags::NEXT_LEVEL);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO
     );
     let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
@@ -495,11 +487,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     let wait_sequence = engine.t_launch_in_progress(&assets, wait);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO,
         "selecting Wait must preserve the completed movement cleanup"
     );
@@ -568,11 +556,7 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
     assert_eq!(movement.command, Command::Move);
     assert!(movement.orders.is_empty());
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         goal,
         "POSTPONE_CURRENT has no selected-element condolence and retains the movement goal"
     );
@@ -606,11 +590,7 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
     engine.t_element_terminated(&assets, sibling_sequence, 0);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         goal,
         "a finished immediate sibling must not clear the movement that is selected again when its callback returns"
     );
@@ -859,12 +839,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
             SequenceState::Interrupted
         );
         assert!(
-            !engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .wasp_victim,
+            !engine.npc(owner).wasp_victim,
             "cross-owner notification {idx} must run inside the originating state-change cascade"
         );
     }

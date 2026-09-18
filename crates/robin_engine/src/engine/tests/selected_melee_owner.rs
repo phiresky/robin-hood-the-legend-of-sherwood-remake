@@ -150,12 +150,7 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
     engine.t_element_in_progress(&assets, interrupt, 0);
     run_owner_walk(&mut engine, &LevelAssets::new());
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(attacker).sprite.last_processed_order_id,
         order_id.get(),
         "latent melee must not suppress the actual selected generic Execute arm"
     );
@@ -786,15 +781,7 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
     engine.t_element_in_progress(&assets, replacement, 0);
     engine.tick_selected_melee_owner(&crate::sim_rng::test_context(), &assets, owner, selected);
 
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        0
-    );
+    assert_eq!(engine.elem(attacker).sprite.current_frame, 0);
 }
 
 /// Build a Lacklandist enemy soldier for the learning-by-looking tests.

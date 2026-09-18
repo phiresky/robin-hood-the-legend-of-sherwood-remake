@@ -15,12 +15,7 @@ fn minimal_movement_test_mission() -> crate::engine::MissionScript {
             class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             functions: vec![Function {
                 name: "Initialize".into(),
-                address: 0,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
-                size_of_temporary: 0,
+                ..Default::default()
             }],
             quads: vec![
                 Quad {
@@ -716,21 +711,12 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
     }
 
     assert_eq!(
-        engine
-            .get_entity(mover_id)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(mover_id),
         destination,
         "the step-back fixture must reach its terminal movement goal"
     );
     assert!(
-        engine
-            .get_entity(mover_id)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .last_motion_was_step_back_in_combat,
+        engine.human(mover_id).last_motion_was_step_back_in_combat,
         "a genuinely terminated step-back must publish completed-step history"
     );
 }
@@ -823,11 +809,7 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     }
 
     assert_eq!(
-        engine
-            .get_entity(mover_id)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(mover_id),
         MapPoint::new(107.2, 100.0),
         "the final-waypoint transition must terminate before reaching the movement goal"
     );
@@ -839,12 +821,7 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
         0,
     );
     assert!(
-        !engine
-            .get_entity(mover_id)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .last_motion_was_step_back_in_combat,
+        !engine.human(mover_id).last_motion_was_step_back_in_combat,
         "a final-waypoint transition that is aborted before movement termination must not publish completed-step history"
     );
 }
@@ -1045,12 +1022,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             functions: vec![Function {
                 name: "Initialize".into(),
-                address: 0,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
-                size_of_temporary: 0,
+                ..Default::default()
             }],
             quads: vec![
                 Quad {
@@ -1837,7 +1809,7 @@ fn frozen_all_repeats_running_rider_galopp_callback_on_the_frozen_frame() {
         })
         .collect();
     assert_eq!(owners, vec![rider; 3]);
-    assert_eq!(engine.get_entity(rider).unwrap().sprite().current_frame, 0);
+    assert_eq!(engine.ent(rider).sprite().current_frame, 0);
 }
 
 #[test]
@@ -2444,16 +2416,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
     let replacement = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
 
     engine.t_tick_actor_owner_envelopes(&assets);
-    assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
-        vec![stale]
-    );
+    assert_eq!(engine.human(rider).sword_sweep.victims, vec![stale]);
 
     engine.place_map(stale, MapPoint::new(900.0, 900.0));
     engine.place_map(replacement, rider_charge_point(origin, 0, 100.0, 30.0));
@@ -2472,13 +2435,7 @@ fn rider_charge_fresh_id_same_action_replacement_reinitializes_candidates_immedi
     engine.t_tick_actor_owner_envelopes(&assets);
 
     assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
+        engine.human(rider).sword_sweep.victims,
         vec![replacement],
         "fresh same-action identity clears and rebuilds candidates before motion"
     );
@@ -2541,16 +2498,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
     let victim_id = engine.add_test_entity(victim);
 
     engine.t_tick_actor_owner_envelopes(&assets);
-    assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
-        vec![victim_id]
-    );
+    assert_eq!(engine.human(rider).sword_sweep.victims, vec![victim_id]);
 
     // Move both participants after initialization. The second polygon must
     // use the rider's new sample, while eligibility must not be rerun.
@@ -2558,13 +2506,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
     engine.elem_mut(victim_id).set_layer(1);
     engine.t_tick_actor_owner_envelopes(&assets);
     assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
+        engine.human(rider).sword_sweep.victims,
         vec![victim_id],
         "a candidate on another live layer stays pending"
     );
@@ -2702,32 +2644,11 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
 
     engine.t_tick_actor_owner_envelopes(&assets);
     assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .last_executed_rider_charge_order_id,
+        engine.actor(rider).last_executed_rider_charge_order_id,
         Some(old_order_id)
     );
-    assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
-        u32::MAX
-    );
-    assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims,
-        vec![stale]
-    );
+    assert_eq!(engine.ent(rider).sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(engine.human(rider).sword_sweep.victims, vec![stale]);
 
     engine.place_map(stale, MapPoint::new(900.0, 900.0));
     engine.place_map(replacement, rider_charge_point(origin, 0, 100.0, 30.0));
@@ -2869,16 +2790,7 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
         hit.victim_direction_after, 0,
         "hit-damage translation only authors the fall order; takeoff preparation is deferred to execution"
     );
-    assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims
-            .is_empty()
-    );
+    assert!(engine.human(rider).sword_sweep.victims.is_empty());
 
     // The first frame's manager drain only translates ReceiveSwordDamage and
     // installs hit-induced falling. Takeoff preparation belongs to that order's next
@@ -2887,11 +2799,7 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
         tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets)
     });
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(victim),
         expected_facing,
         "the fall order's first Execute faces the victim opposite live rider direction 0"
     );
@@ -3024,11 +2932,7 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
         );
     }
     assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(rider),
         MapPoint::new(102.0, 100.0),
         "motion processing snaps an undeviated zero-tolerance arrival to its goal"
     );
@@ -3150,14 +3054,7 @@ fn arrival_crossing_script_replacement_keeps_its_live_in_progress_motion() {
         1,
         "the terminal movement crosses the active script boundary"
     );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map(),
-        MapPoint::new(102.0, 100.0)
-    );
+    assert_eq!(engine.map_pos_of(owner), MapPoint::new(102.0, 100.0));
     let (replacement, _, order) = engine
         .orders
         .sequence_manager
@@ -3170,13 +3067,7 @@ fn arrival_crossing_script_replacement_keeps_its_live_in_progress_motion() {
         "the terminating movement must not advance the callback's new order"
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
+        engine.motion_state_of(owner),
         crate::sprite::MotionState::InProgress
     );
 }
@@ -3220,11 +3111,7 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
     assert_eq!(element.state, crate::sequence::SequenceState::Terminated);
     assert!(element.orders.is_empty());
     assert_eq!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(rider).position_iface().map_goal(),
         MapPoint::ZERO,
         "completion notification clears the completed selected movement goal"
     );
@@ -3328,14 +3215,7 @@ fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
     assert_ne!(order.order_id, old_id);
     assert!(engine.live_actor_animation(rider) != Some(crate::order::OrderType::RiderCharging));
     assert!(
-        engine
-            .get_entity(rider)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .sword_sweep
-            .victims
-            .is_empty(),
+        engine.human(rider).sword_sweep.victims.is_empty(),
         "a landed charge victim is removed from the shared human sword list"
     );
 }
@@ -3472,20 +3352,12 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
         vec![earlier, later]
     );
     assert_eq!(
-        engine
-            .get_entity(earlier)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(earlier),
         earlier_start,
         "the rider interrupts the earlier victim on its no-distance wait frame"
     );
     assert_eq!(
-        engine
-            .get_entity(later)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(later),
         hit_point,
         "later victim is damaged/interrupted before its movement slot"
     );
@@ -3588,15 +3460,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
         Some((sequence_id, 0)),
     );
 
-    assert_eq!(
-        engine
-            .get_entity(mover_id)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
-        ActionState::Waiting
-    );
+    assert_eq!(engine.action_state_of(mover_id), ActionState::Waiting);
     engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
     let entity = engine.ent(mover_id);
@@ -4497,14 +4361,7 @@ fn concussion_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
         engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
         ConcussionOutcome::WokeUp
     );
-    assert!(
-        !engine
-            .get_entity(waker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .unconscious
-    );
+    assert!(!engine.human(waker).unconscious);
 
     assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
     assert_eq!(
@@ -4540,14 +4397,7 @@ fn concussion_wakeup_blinks_hostile_observers_before_returning() {
         engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
         ConcussionOutcome::WokeUp
     );
-    assert!(
-        !engine
-            .get_entity(waker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .unconscious
-    );
+    assert!(!engine.human(waker).unconscious);
 
     assert_eq!(enemy_blink_state(&engine, same_camp_npc), (true, true));
     assert_eq!(
@@ -4576,14 +4426,7 @@ fn concussion_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
         engine.apply_scripted_concussion(sim, &assets, waker, 0, true),
         ConcussionOutcome::WokeUp
     );
-    assert!(
-        !engine
-            .get_entity(waker)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .unconscious
-    );
+    assert!(!engine.human(waker).unconscious);
 
     assert_eq!(enemy_blink_state(&engine, opposite_camp_npc), (true, true));
 }

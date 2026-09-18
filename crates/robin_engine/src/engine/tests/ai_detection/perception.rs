@@ -804,23 +804,12 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
             &crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
         );
         assert_eq!(
-            engine
-                .get_entity(recovering_id)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .eye_status,
+            engine.npc(recovering_id).eye_status,
             EyeStatus::LookForward,
             "FitAgain must finish its eye update before returning"
         );
         assert!(
-            engine
-                .get_entity(observer_id)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[DetectableType::Body as usize]
-                .is_empty(),
+            engine.npc(observer_id).detectable_lists[DetectableType::Body as usize].is_empty(),
             "FitAgain must remove the stale body before the subsequent inform pass"
         );
         engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
@@ -2357,11 +2346,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         );
         crate::sim_rng::with_seed(0xA013_0B20, |sim| engine.tick_enemy_ai(sim, &assets));
         assert!(
-            !engine
-                .get_entity(target_id)
-                .expect("Royalist target remains present")
-                .element_data()
-                .blipped,
+            !engine.elem(target_id).blipped,
             "Royalist detection must reveal its blipped NPC target at the detecting slot"
         );
 
@@ -2514,24 +2499,11 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         "detection must settle every Royalist enemy latch before AI processing"
     );
     assert!(
-        !engine
-            .get_entity(first_visible_id)
-            .expect("first visible Royalist target remains present")
-            .element_data()
-            .blipped
-            && !engine
-                .get_entity(last_visible_id)
-                .expect("last visible Royalist target remains present")
-                .element_data()
-                .blipped,
+        !engine.elem(first_visible_id).blipped && !engine.elem(last_visible_id).blipped,
         "every rising Royalist Enemy edge must reveal its target before Think"
     );
     assert!(
-        engine
-            .get_entity(lost_id)
-            .expect("lost Royalist target remains present")
-            .element_data()
-            .blipped,
+        engine.elem(lost_id).blipped,
         "a falling Royalist Enemy edge must not reveal its target"
     );
     let ai = engine

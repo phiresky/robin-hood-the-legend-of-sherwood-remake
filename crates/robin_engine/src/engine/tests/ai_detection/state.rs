@@ -183,10 +183,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 
     assert_eq!(
         engine
-            .get_entity(chief)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
+            .ai_ctrl(chief)
             .patrol_path
             .as_ref()
             .unwrap()
@@ -667,12 +664,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     assert!(!npc.human_data().unwrap().unconscious);
     npc.ai_controller().unwrap();
     assert!(
-        engine
-            .get_entity(observer_id)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .detectable_lists[crate::element::DetectableType::Body as usize]
+        engine.npc(observer_id).detectable_lists[crate::element::DetectableType::Body as usize]
             .is_empty(),
         "FIT_AGAIN's resurrection fan-out is inline even while FrozenAll skips the NPC tail"
     );
@@ -880,23 +872,11 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     // is open for the common modulo-16 blip cadence.
     engine.control.frame_counter = 2;
     engine.tick_enemy_ai(sim, &assets);
-    assert!(
-        engine
-            .get_entity(observer_id)
-            .expect("Royalist blip observer survives closed cadence")
-            .element_data()
-            .blipped
-    );
+    assert!(engine.elem(observer_id).blipped);
 
     engine.control.frame_counter = 1;
     engine.tick_enemy_ai(sim, &assets);
-    assert!(
-        !engine
-            .get_entity(observer_id)
-            .expect("Royalist blip observer survives open cadence")
-            .element_data()
-            .blipped
-    );
+    assert!(!engine.elem(observer_id).blipped);
 }
 
 #[test]
@@ -1087,23 +1067,11 @@ fn bonus_refresh_discovered_is_live_bonus_owned_freeze_safe_and_rng_free() {
         trace.is_empty(),
         "bonus discovery must not consume simulation RNG"
     );
-    assert!(
-        !engine
-            .get_entity(bonus_before)
-            .unwrap()
-            .element_data()
-            .blipped
-    );
-    assert!(
-        !engine
-            .get_entity(bonus_after)
-            .unwrap()
-            .element_data()
-            .blipped
-    );
+    assert!(!engine.elem(bonus_before).blipped);
+    assert!(!engine.elem(bonus_after).blipped);
     for id in [scroll, projectile, net] {
         assert!(
-            engine.get_entity(id).unwrap().element_data().blipped,
+            engine.elem(id).blipped,
             "only Entity::Bonus owns discovery refresh; {id:?} was revealed"
         );
     }

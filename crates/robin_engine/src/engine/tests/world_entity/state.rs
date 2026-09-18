@@ -158,13 +158,7 @@ fn add_entity_assigns_original_script_element_index() {
 
     for id in [first, second] {
         assert_eq!(
-            u32::from(
-                engine
-                    .get_entity(id)
-                    .expect("inserted entity exists")
-                    .element_data()
-                    .index_in_elements_list
-            ),
+            u32::from(engine.elem(id).index_in_elements_list),
             id.index()
         );
     }
@@ -800,12 +794,7 @@ fn repeated_checkpoint_charly_replaces_the_live_target() {
         let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(first.index())));
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .ai_actor_data()
-                .unwrap()
-                .detectable_lists[MissedFriend as usize][0]
+            engine.ent(owner).ai_actor_data().unwrap().detectable_lists[MissedFriend as usize][0]
                 .element,
             Some(first)
         );
@@ -865,7 +854,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
             panic!("fighter changed kind")
         };
         assert!(!soldier.is_able_to_fight());
-        assert!(!engine.get_entity(id).unwrap().is_dead());
+        assert!(!engine.ent(id).is_dead());
         assert!(!soldier.human.unconscious);
     }
 }

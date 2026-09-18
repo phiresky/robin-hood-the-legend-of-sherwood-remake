@@ -376,51 +376,14 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let ale_entity = engine.ent(ale);
     assert!(!ale_entity.element_data().active);
     assert_eq!(ale_entity.element_data().sprite.current_frame, 0);
+    assert_eq!(engine.elem(cape).sprite.current_frame, 1);
+    assert_eq!(engine.elem(bonus).sprite.current_frame, 1);
+    assert_eq!(engine.elem(target).sprite.current_frame, 1);
     assert_eq!(
-        engine
-            .get_entity(cape)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(bonus)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(target)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(projectile)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
+        engine.elem(projectile).sprite.current_frame,
         projectile_frame
     );
-    assert_eq!(
-        engine
-            .get_entity(net)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        net_frame
-    );
+    assert_eq!(engine.elem(net).sprite.current_frame, net_frame);
 
     let mobile_child = engine.add_test_entity(Entity::Fx(crate::element::ElementFx {
         element: {
@@ -437,22 +400,9 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     }));
     engine.tick_static_entity_hourglass_for(&sim, &assets, mobile_child);
     engine.tick_static_entity_hourglass_for(&sim, &assets, projectile);
+    assert_eq!(engine.elem(mobile_child).sprite.current_frame, 0);
     assert_eq!(
-        engine
-            .get_entity(mobile_child)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        0
-    );
-    assert_eq!(
-        engine
-            .get_entity(projectile)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
+        engine.elem(projectile).sprite.current_frame,
         projectile_frame
     );
 }

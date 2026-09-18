@@ -178,12 +178,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             OrderType::Listening
         );
         assert_eq!(
-            owner_driven
-                .get_entity(listener)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            owner_driven.elem(listener).sprite.last_action,
             OrderType::Listening,
             "countdown must keep driving the visual action while ignoring its completion"
         );
@@ -210,23 +205,13 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         let mut dev = DevState::default();
         gated.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
         assert_eq!(
-            gated
-                .get_entity(listener)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time,
+            gated.actor(listener).wait_time,
             expected,
             "{case} owner gate"
         );
         if frozen_all {
             assert_eq!(
-                gated
-                    .get_entity(listener)
-                    .unwrap()
-                    .element_data()
-                    .sprite
-                    .frame_count,
+                gated.elem(listener).sprite.frame_count,
                 7,
                 "FrozenAll must preserve the Listening sprite phase"
             );
@@ -241,16 +226,8 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
         restored.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
         Some(crate::sprite::MotionState::InProgress)
     );
-    assert_eq!(
-        restored
-            .get_entity(listener)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .wait_time,
-        0
-    );
-    assert!(restored.get_entity(near).unwrap().element_data().blipped);
+    assert_eq!(restored.actor(listener).wait_time, 0);
+    assert!(restored.elem(near).blipped);
 
     for invocation in 1..25 {
         engine.actor_mut(listener).execute_order_initialising = invocation == 1;
@@ -258,27 +235,19 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
             engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
             Some(crate::sprite::MotionState::InProgress)
         );
-        assert_eq!(
-            engine
-                .get_entity(listener)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .wait_time,
-            25 - invocation
-        );
-        assert!(engine.get_entity(near).unwrap().element_data().blipped);
+        assert_eq!(engine.actor(listener).wait_time, 25 - invocation);
+        assert!(engine.elem(near).blipped);
     }
     assert_eq!(
         engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
         Some(crate::sprite::MotionState::Terminated)
     );
     assert!(
-        !engine.get_entity(near).unwrap().element_data().blipped,
+        !engine.elem(near).blipped,
         "450-100 strictly-near 3D cross-layer target reveals"
     );
     assert!(
-        engine.get_entity(exact).unwrap().element_data().blipped,
+        engine.elem(exact).blipped,
         "450-600-750 exact 3D boundary remains out"
     );
     let Entity::Target(target_entity) = engine.ent(target) else {
@@ -344,7 +313,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
         }
     });
 
-    assert!(!engine.get_entity(reveal).unwrap().element_data().blipped);
+    assert!(!engine.elem(reveal).blipped);
     let [heard] = heard.as_slice() else {
         panic!("expected exactly one Heard callback, got {heard:?}");
     };
@@ -800,11 +769,7 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     );
     assert!(queries[0].result);
     assert!(
-        !engine
-            .get_entity(observer_id)
-            .expect("blipped observer survives tick")
-            .element_data()
-            .blipped,
+        !engine.elem(observer_id).blipped,
         "the playable rescue PC must reveal the nearby blip"
     );
 }

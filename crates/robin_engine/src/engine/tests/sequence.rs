@@ -36,12 +36,7 @@ fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
         SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), Some(target));
     let incoming = engine.launch_element_for_owner(&sim, &assets, incoming);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots,
+        engine.human(owner).pending_shoots,
         [crate::sequence::SequenceElementRef::new(incoming, 0)]
     );
     // A script can change the requested action state while the sprite still
@@ -52,15 +47,7 @@ fn retained_shot_prelude_captures_replacement_for_aborted_execution() {
 
     engine.t_tick_actor_owner_envelopes(&assets);
 
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty()
-    );
+    assert!(engine.human(owner).pending_shoots.is_empty());
     let recovery = engine
         .orders
         .sequence_manager
@@ -508,14 +495,7 @@ fn manager_instruct_rejects_transition_terminated_element_before_priority_and_ar
     let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
     profiles.soldiers.push(Default::default());
     profiles.hth_weapons.push(Default::default());
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .enemy_ai()
-            .unwrap()
-            .attentive
-    );
+    assert!(engine.enemy(owner).attentive);
     let mut display = HostDisplayState::default();
     engine.hourglass_phase_sequences(&crate::sim_rng::test_context(), &mut display, &assets);
 
@@ -614,21 +594,9 @@ fn redundant_swordfight_entry_releases_selected_wait_before_fresh_idle() {
         SequenceState::Terminated
     );
     assert_eq!(engine.current_sequence_element_for_actor(owner), None);
+    assert_eq!(engine.actor(owner).installed_order, None);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(owner).sprite().last_processed_order_id,
         old_order_id.get()
     );
 
@@ -960,11 +928,7 @@ fn synchronous_accepted_zero_order_damage_stamps_in_progress_motion() {
         "accepted empty translation must retain the actor instruction's motion edge"
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(victim).position_iface().map_goal(),
         retained_goal,
         "an accepted empty damage card must not clear the resuming movement goal"
     );
@@ -2137,11 +2101,7 @@ fn post_seek_handoff_clears_selected_movement_goal() {
         Some((seek_sequence, 0)),
     ));
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         crate::coordinates::MapPoint::ZERO,
         "completion notification clears the selected seek goal before post-seek launch"
     );
@@ -2276,11 +2236,7 @@ fn initial_seek_dispatch_clears_outgoing_movement_goal_until_first_execute() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO,
         "Original interrupts its selected transient Seek before launching the concrete movement"
     );
@@ -2632,11 +2588,7 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
         Some(OrderType::RefreshingSeek)
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(owner),
         start,
         "final Move|SEEK must not take the ordinary building teleport branch"
     );
@@ -2645,11 +2597,7 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
 
     engine.t_tick_actor_owner_envelopes(&LevelAssets::default());
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        engine.map_pos_of(owner),
         target_position,
         "the explicit RefreshingSeek order refreshes on the following owner slot"
     );
@@ -2670,12 +2618,7 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
         "RefreshingSeek returns InProgress independently of the stale sprite edge"
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_motion_state,
+        engine.elem(owner).sprite.last_motion_state,
         Some(stale_sprite_motion),
         "the non-animation RefreshingSeek arm must not fabricate a sprite motion"
     );
@@ -3172,10 +3115,7 @@ fn posture_transition_orders_preserve_live_pose_until_execution() {
             .get_element(sequence, 0)
             .unwrap();
         assert_eq!(element.posture_after_transition, predicted, "{command:?}");
-        assert_eq!(
-            engine.get_entity(owner).unwrap().element_data().posture(),
-            posture
-        );
+        assert_eq!(engine.posture_of(owner), posture);
         let posture_orders: Vec<_> = element
             .orders
             .iter()
@@ -3231,14 +3171,7 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
         .current_order_for_actor(&engine.world.entities, owner)
         .map(|(_, _, order)| order.order_type);
     assert_eq!(order, Some(OrderType::Sitting));
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .expect("soldier present")
-            .element_data()
-            .posture(),
-        Posture::Sitting
-    );
+    assert_eq!(engine.posture_of(owner), Posture::Sitting);
 }
 
 #[test]
@@ -4103,12 +4036,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
         None
     );
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots,
+        engine.human(pc).pending_shoots,
         [crate::sequence::SequenceElementRef::new(incoming_seq, 0)]
     );
 
@@ -4120,16 +4048,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     engine.process_shoot_list_for(&sim, &assets, pc);
     engine.elem_mut(pc).sprite.last_action = OrderType::WaitingUpright;
     engine.process_shoot_list_for(&sim, &assets, pc);
-    assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .len(),
-        1
-    );
+    assert_eq!(engine.human(pc).pending_shoots.len(), 1);
     assert_eq!(
         engine
             .orders
@@ -4145,15 +4064,7 @@ fn pc_shoot_bow_waits_through_load_and_wait_then_retries_only_while_aiming() {
     // target makes this particular element Impossible).
     engine.elem_mut(pc).sprite.last_action = OrderType::AimingWithBow;
     engine.process_shoot_list_for(&sim, &assets, pc);
-    assert!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty()
-    );
+    assert!(engine.human(pc).pending_shoots.is_empty());
     assert_eq!(
         engine
             .orders
@@ -4195,12 +4106,7 @@ fn postponed_held_pc_shot_leaves_human_fifo_owned_by_sequence_manager() {
     let held = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), None);
     let held_seq = engine.launch_element_for_owner(&sim, &assets, held);
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots,
+        engine.human(pc).pending_shoots,
         [crate::sequence::SequenceElementRef::new(held_seq, 0)]
     );
 
@@ -4208,13 +4114,7 @@ fn postponed_held_pc_shot_leaves_human_fifo_owned_by_sequence_manager() {
     engine.process_shoot_list_for(&sim, &assets, pc);
 
     assert!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty(),
+        engine.human(pc).pending_shoots.is_empty(),
         "actor instruction succeeds after POSTPONE_NEW, so shoot-list processing must pop the entry"
     );
     assert_eq!(
@@ -4291,12 +4191,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     engine.process_shoot_list_for(&sim, &assets, pc);
 
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots,
+        engine.human(pc).pending_shoots,
         [crate::sequence::SequenceElementRef::new(incoming_seq, 0)],
         "the post-transition terminal guard must reject and retain the pointer"
     );
@@ -4334,7 +4229,7 @@ fn pc_shoot_list_readmits_retained_terminated_element() {
     let result = engine.tick_actor_animation_for(&sim, &assets, pc);
     assert_eq!(result.unwrap(), crate::sprite::MotionState::InProgress);
     assert_eq!(
-        engine.get_entity(pc).unwrap().sprite().frame_count,
+        engine.ent(pc).sprite().frame_count,
         0,
         "the second Wait tick must increment the START sentinel instead of restarting it"
     );
@@ -4535,21 +4430,13 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
         functions: vec![
             Function {
                 name: "Initialize".into(),
-                address: 0,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
-                size_of_temporary: 0,
+                ..Default::default()
             },
             Function {
                 name: "ReachPoint".into(),
                 address: 2,
                 num_parameters: 1,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
-                size_of_temporary: 0,
+                ..Default::default()
             },
         ],
         quads: vec![begin, ret, begin, ret],
@@ -5187,22 +5074,12 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
 
     for id in [target, neighbour] {
         assert!(
-            engine
-                .get_entity(id)
-                .expect("human remains present")
-                .human_data()
-                .expect("entity remains human")
-                .small_repulsive_radius,
+            engine.human(id).small_repulsive_radius,
             "waking up's synchronous lying-posture assignment must publish the overlap for {id:?}"
         );
     }
     assert_eq!(
-        engine
-            .get_entity(target)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .last_is_lying_for_corpse_intersection,
+        engine.human(target).last_is_lying_for_corpse_intersection,
         Some(true)
     );
 }
@@ -5550,15 +5427,7 @@ fn redundant_pc_crouch_stops_path_wait_before_transition_rejection() {
         if command == Command::MoveWaiting {
             assert_eq!(movement.state, SequenceState::Interrupted);
             assert_eq!(engine.world.entities.current_element_for_actor(owner), None);
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .actor_data()
-                    .unwrap()
-                    .installed_order,
-                None
-            );
+            assert_eq!(engine.actor(owner).installed_order, None);
         } else {
             assert_eq!(movement.state, SequenceState::InProgress);
             assert_eq!(

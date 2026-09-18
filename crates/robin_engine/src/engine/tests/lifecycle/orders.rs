@@ -146,24 +146,14 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
         .order_id
         .get();
     assert_eq!(
-        engine
-            .get_entity(soldier_id)
-            .expect("soldier present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(soldier_id).sprite.last_processed_order_id,
         u32::MAX,
         "an order dispatched by the sequence manager after the entity loop must not animate in that same frame"
     );
 
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
-        engine
-            .get_entity(soldier_id)
-            .expect("soldier present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(soldier_id).sprite.last_processed_order_id,
         order_id,
         "the dispatched animation must start on the following entity frame"
     );
@@ -394,12 +384,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(body)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .carrier,
+        engine.human(body).carrier,
         None,
         "SelectAction's synchronous stop completion must release the body before the update"
     );
@@ -573,13 +558,13 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     // sprite's 0xFFFF frame-count sentinel wraps to 0 on the first tick and
     // advances to 1 on the second. A frozen hold would leave it untouched.
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().frame_count,
+        engine.ent(owner).sprite().frame_count,
         0,
         "the tied hold must advance by one action step on its first tick"
     );
     engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().frame_count,
+        engine.ent(owner).sprite().frame_count,
         1,
         "the tied hold must retain the original game's per-tick action processing"
     );
@@ -642,11 +627,7 @@ fn face_to_waits_for_manager_after_live_halt() {
         "an ordinary walking actor must not execute or translate an AI-tail Turn in the same owner slot"
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         MapPoint::ZERO,
         "an explicit StopAll before Face must not resurrect the stopped movement goal"
     );
@@ -718,22 +699,12 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
     engine.tick_selected_ability(sim, &assets, first, engine.actors_frozen());
 
     assert_ne!(
-        engine
-            .get_entity(first)
-            .expect("first ability actor present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(first).sprite.last_processed_order_id,
         u32::MAX,
         "the actor at the current creation slot must advance"
     );
     assert_eq!(
-        engine
-            .get_entity(second)
-            .expect("later ability actor present")
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(second).sprite.last_processed_order_id,
         u32::MAX,
         "a later actor's ability cannot advance from an earlier actor's update"
     );
@@ -830,13 +801,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
         SequenceState::Terminated
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
+        engine.motion_state_of(owner),
         crate::sprite::MotionState::Terminated
     );
     let sprite = engine.ent(owner).sprite();
@@ -852,12 +817,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
     );
     assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .life_points,
+        engine.pc(owner).life_points,
         crate::pc_status::LIFEPOINTS_PC,
         "the rejected ability must apply neither ammo nor healing side effects"
     );
@@ -1066,12 +1026,7 @@ fn selected_beggar_exit_preserves_action_that_replaced_beggar() {
 
     assert_eq!(engine.players.seats[0].selected_action, Action::Net);
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(pc).current_action,
         Action::Net,
         "the engine must never see a beggar-action deselection after the messenger rejects its stale action"
     );
@@ -1094,15 +1049,7 @@ fn selected_beggar_exit_clears_action_while_beggar_is_still_selected() {
     engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
-    assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
-        Action::NoAction
-    );
+    assert_eq!(engine.pc(pc).current_action, Action::NoAction);
 }
 
 #[test]
@@ -1189,31 +1136,15 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         }
     }
     assert!(
-        (engine
-            .get_entity(attacker)
-            .unwrap()
-            .sprite()
-            .last_motion_state
-            == Some(crate::sprite::MotionState::Done))
+        (engine.ent(attacker).sprite().last_motion_state == Some(crate::sprite::MotionState::Done))
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_action,
+        engine.elem(victim).sprite.last_action,
         OrderType::BeingStrangled,
         "attacker Done must force the victim animation before its same-invocation increment"
     );
     assert!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame
-            > 0,
+        engine.elem(victim).sprite.current_frame > 0,
         "victim virgin increment must occur during initial attacker Done setup"
     );
     // Once DONE has latched, a fast-turn short-circuit still executes the
@@ -1362,7 +1293,7 @@ fn selected_ability_catalog_order_executes_without_separate_binding() {
     engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().last_action,
+        engine.ent(owner).sprite().last_action,
         OrderType::ThrowingApple
     );
     assert!(
@@ -1520,15 +1451,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
             .order_type,
         OrderType::WaitingUpright
     );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .life_points,
-        60
-    );
+    assert_eq!(engine.pc(owner).life_points, 60);
     assert_eq!(engine.campaign().characters[0].status.num_rations, 1);
 }
 
@@ -1551,12 +1474,7 @@ fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
     );
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(owner).current_action,
         crate::profiles::Action::NoAction
     );
     assert!(
@@ -1804,22 +1722,9 @@ fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
     );
     assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
 
-    assert!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .opponents
-            .is_empty()
-    );
+    assert!(engine.human(owner).opponents.is_empty());
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(owner),
         crate::element::ActionState::WaitingSword,
         "translation must not switch to Waiting before lowering-sword START"
     );

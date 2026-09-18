@@ -56,13 +56,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     engine.remove_entity(removed); // idempotent, including queue ordering
     assert!(engine.get_entity(removed).is_none());
     assert_eq!(
-        u32::from(
-            engine
-                .get_entity(first)
-                .unwrap()
-                .element_data()
-                .index_in_elements_list
-        ),
+        u32::from(engine.elem(first).index_in_elements_list),
         first.index()
     );
     for seat in &engine.players.seats {
@@ -346,14 +340,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     assert_eq!(far_human.opponents, vec![far_partner]);
     assert!(far_human.smalltalk_initiative);
     assert!(far_human.received_smalltalk_initiative);
-    assert!(
-        !engine
-            .get_entity(far_partner)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative
-    );
+    assert!(!engine.human(far_partner).smalltalk_initiative);
 }
 
 #[test]

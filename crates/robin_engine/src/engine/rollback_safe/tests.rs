@@ -940,7 +940,7 @@ fn presentation_queries_preserve_fixed_world_results_and_snapshot_bytes() {
         );
         assert_eq!(
             view.get_entity(pc).unwrap().element_data().position(),
-            engine.get_entity(pc).unwrap().element_data().position()
+            engine.pos_of(pc)
         );
         assert_eq!(
             view.active_entity_positions().collect::<Vec<_>>(),

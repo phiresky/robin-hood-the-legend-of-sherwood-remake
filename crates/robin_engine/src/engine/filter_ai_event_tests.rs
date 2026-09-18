@@ -370,11 +370,7 @@ fn reentrant_return_to_duty_uses_absent_live_order_not_stale_sprite_animation() 
         "ReturnToDuty must advance directly to the initial-view Turn, not launch a zero-distance Move"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .expect("NoOverride soldier")
-            .position_iface()
-            .get_direction_goal(),
+        engine.ent(actor).position_iface().get_direction_goal(),
         crate::position_interface::Direction::from_raw(1)
     );
 }
@@ -567,12 +563,8 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
         class_name: STARTUP_CLASS.into(),
         functions: vec![Function {
             name: "Reassign".into(),
-            address: 0,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             q_begin_function(0, 2),
@@ -1614,12 +1606,10 @@ fn action_change_class(class_name: &str, temporary_count: u16, body: Vec<Quad>) 
         class_name: class_name.into(),
         functions: vec![Function {
             name: "ActionChange".into(),
-            address: 0,
             num_parameters: 2,
-            size_of_return_value: 0,
             size_of_parameters: 8,
-            size_of_volatile: 0,
             size_of_temporary: i32::from(temporary_count) * 4,
+            ..Default::default()
         }],
         quads,
         ..Default::default()
@@ -1884,11 +1874,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             "only a later creation slot may observe the same-frame lockpick action point"
         );
         assert_eq!(
-            engine
-                .get_entity(unlocker)
-                .expect("unlock owner survives action point")
-                .element_data()
-                .direction(),
+            engine.direction_of(unlocker),
             1,
             "UnlockingDoor must execute the original per-tick Turn()"
         );
@@ -3107,17 +3093,11 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
         "the visual sprite's stale Done edge must not complete authoritative Turn motion"
     );
     assert_eq!(
-        u8::from(
-            engine
-                .get_entity(actor)
-                .unwrap()
-                .position_iface()
-                .get_direction()
-        ),
+        u8::from(engine.ent(actor).position_iface().get_direction()),
         15
     );
     assert_eq!(
-        engine.get_entity(actor).unwrap().sprite().last_motion_state,
+        engine.ent(actor).sprite().last_motion_state,
         Some(MotionState::InProgress),
         "Turn()'s authoritative result must replace the visual sprite edge"
     );
@@ -3207,12 +3187,7 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
         "actor updates apply WAIT_TIMER after frozen execution returns InProgress"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .expect("frozen timer owner remains installed")
-            .element_data()
-            .sprite
-            .last_action,
+        engine.elem(actor).sprite.last_action,
         OrderType::NonanimationEnd,
         "original-game actor execution returns before selecting the installed wait animation"
     );
@@ -3510,9 +3485,7 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
     assert_eq!(
         u8::from(
             engine
-                .get_entity(actor)
-                .expect("direction owner remains installed")
-                .element_data()
+                .elem(actor)
                 .sprite
                 .position_iface
                 .get_direction_goal()
@@ -3570,14 +3543,7 @@ fn frozen_all_keeps_waiting_sword_callbacks_live_without_selecting_sprites() {
         "freezing all suppresses action processing, not sword-waiting's synchronous smalltalk/swordfight evaluation tail"
     );
     assert_eq!(
-        [attacker, defender].map(|actor| {
-            engine
-                .get_entity(actor)
-                .expect("fighter remains live")
-                .element_data()
-                .sprite
-                .last_processed_order_id
-        }),
+        [attacker, defender].map(|actor| { engine.elem(actor).sprite.last_processed_order_id }),
         before,
         "FrozenAll must not stamp either selected sprite order identity"
     );
@@ -3621,21 +3587,9 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     engine.set_actors_frozen(true);
 
     engine.t_tick_actor_owner_envelopes(&assets);
-    assert_eq!(
-        engine
-            .get_entity(soldier)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .last_execute_order_id,
-        Some(order_id)
-    );
+    assert_eq!(engine.actor(soldier).last_execute_order_id, Some(order_id));
     assert_ne!(
-        engine
-            .get_entity(soldier)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(soldier).sprite().last_processed_order_id,
         order_id.get()
     );
 
@@ -3676,23 +3630,12 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
 
     engine.t_tick_actor_owner_envelopes(&assets);
 
-    assert!(
-        !engine
-            .get_entity(weak)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative
-    );
+    assert!(!engine.human(weak).smalltalk_initiative);
     let opponent_human = engine.human(opponent);
     assert!(opponent_human.smalltalk_initiative);
     assert!(opponent_human.received_smalltalk_initiative);
     assert_eq!(
-        engine
-            .get_entity(weak)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(weak).sprite().last_processed_order_id,
         u32::MAX,
         "weak/stunned initialization is actor-owned and precedes the frozen sprite boundary"
     );
@@ -3726,12 +3669,7 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
     engine.t_tick_actor_owner_envelopes(&assets);
 
     assert!(
-        engine
-            .get_entity(stunned)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .smalltalk_initiative,
+        engine.human(stunned).smalltalk_initiative,
         "BeingStunnedSword must not perform weakness execution's initiative handoff"
     );
     let opponent_human = engine.human(opponent);
@@ -4593,12 +4531,11 @@ fn retained_human_stimulus_reads_target_position_after_filter() {
         class_name: "MoveStimulusTarget".into(),
         functions: vec![Function {
             name: "FilterAIEvent".into(),
-            address: 0,
             num_parameters: 3,
             size_of_return_value: 4,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             q_begin_function(0, 2),
@@ -4822,12 +4759,11 @@ fn state_change_filter_class(
         class_name: class_name.into(),
         functions: vec![Function {
             name: "FilterAIEvent".into(),
-            address: 0,
             num_parameters: 3,
             size_of_return_value: 4,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 24,
+            ..Default::default()
         }],
         quads,
         ..Default::default()
@@ -4895,21 +4831,17 @@ fn post_filter_panic_class(class_name: &str) -> ClassEntry {
         functions: vec![
             Function {
                 name: "FilterAIEvent".into(),
-                address: 0,
                 num_parameters: 3,
                 size_of_return_value: 4,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 20,
+                ..Default::default()
             },
             Function {
                 name: "Run".into(),
                 address: run_address,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
         ],
         quads,
@@ -5006,21 +4938,17 @@ fn ai_state_native_probe_class(
         functions: vec![
             Function {
                 name: "FilterAIEvent".into(),
-                address: 0,
                 num_parameters: 3,
                 size_of_return_value: 4,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
             Function {
                 name: "Run".into(),
                 address: run_address,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 16,
+                ..Default::default()
             },
         ],
         quads,
@@ -5379,12 +5307,9 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         "a live saved door outside selected PassDoor must use the current-position forecast"
     );
     assert_eq!(
-        super::ai::extract_forecast_input(
-            engine.get_entity(owner).expect("forecast owner exists"),
-            false
-        )
-        .expect("actor has forecast state")
-        .door_pass,
+        super::ai::extract_forecast_input(engine.ent(owner), false)
+            .expect("actor has forecast state")
+            .door_pass,
         None
     );
 
@@ -6944,12 +6869,11 @@ fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
                     class_name: "Arrival".into(),
                     functions: vec![Function {
                         name: "FilterAIEvent".into(),
-                        address: 0,
                         num_parameters: 3,
                         size_of_return_value: 4,
                         size_of_parameters: 12,
-                        size_of_volatile: 0,
                         size_of_temporary: 12,
+                        ..Default::default()
                     }],
                     quads: std::mem::take(&mut quads),
                     ..Default::default()

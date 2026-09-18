@@ -66,11 +66,7 @@ fn launch_interaction_and_tick(
     let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
     assert_eq!(
-        engine
-            .get_entity(actor_id)
-            .expect("interaction actor present")
-            .element_data()
-            .direction(),
+        engine.direction_of(actor_id),
         0,
         "the sequence-manager dispatch follows the entity loop, so its new order cannot turn the actor on the launch frame"
     );
@@ -129,10 +125,7 @@ fn crouched_pc_take_uses_stamped_crouched_animation() {
 
     assert_eq!(
         engine
-            .get_entity(actor_id)
-            .expect("crouched PC remains present")
-            .actor_data()
-            .expect("crouched PC retains actor data")
+            .actor(actor_id)
             .installed_order
             .as_ref()
             .map(|order| order.resolve(&engine.orders.sequence_manager).order_type),

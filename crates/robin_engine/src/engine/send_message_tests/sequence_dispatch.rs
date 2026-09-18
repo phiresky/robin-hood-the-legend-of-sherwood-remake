@@ -94,11 +94,7 @@ fn child_dispatch_failure_leaves_parent_successor_unexecuted() {
     assert!(child_send.is_some(), "only the actual child is Impossible");
     assert!(parent_unblip.is_some(), "parent Unblip remains unexecuted");
     assert!(
-        engine
-            .get_entity(failure_id)
-            .unwrap()
-            .element_data()
-            .blipped,
+        engine.elem(failure_id).blipped,
         "parent successor must not execute after the child error"
     );
 }
@@ -166,11 +162,7 @@ fn open_scroll_terminates_before_nested_child_failure() {
         "only the nested SendMessage child is Impossible"
     );
     assert!(
-        engine
-            .get_entity(reader_id)
-            .expect("reader")
-            .element_data()
-            .blipped,
+        engine.elem(reader_id).blipped,
         "the parent successor was not executed after the error"
     );
 }
@@ -227,11 +219,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
         "sequence failure cancels the unstarted successor without dispatching it"
     );
     assert!(
-        engine
-            .get_entity(reader_id)
-            .expect("reader")
-            .element_data()
-            .blipped,
+        engine.elem(reader_id).blipped,
         "the Unblip successor must not execute after local OpenScroll failure"
     );
 }

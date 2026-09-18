@@ -41,13 +41,7 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
     assert_eq!(visits, vec![earlier, owner, later]);
     assert_eq!(observed, Some((110.0, 70.0)));
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .stare_point
-            .x,
+        engine.npc(owner).stare_point.x,
         70.0,
         "view refresh must retain an earlier callback's mutation of a later actor"
     );

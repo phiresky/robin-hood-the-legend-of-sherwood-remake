@@ -850,11 +850,7 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
         crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
 
         assert_eq!(
-            engine
-                .get_entity(observer_id)
-                .expect("blipped observer survives tick")
-                .element_data()
-                .blipped,
+            engine.elem(observer_id).blipped,
             !observer_inside,
             "inactive building NPCs run blip detection; inactive outdoor NPCs do not"
         );

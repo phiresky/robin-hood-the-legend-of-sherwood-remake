@@ -59,7 +59,7 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     );
 
     assert_eq!(
-        engine.get_entity(victim).unwrap().human_life_points(),
+        engine.ent(victim).human_life_points(),
         0,
         "the arrow is lethal"
     );
@@ -151,7 +151,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         0,
     );
 
-    assert_eq!(engine.get_entity(victim).unwrap().human_life_points(), 80);
+    assert_eq!(engine.ent(victim).human_life_points(), 80);
     assert_eq!(
         engine
             .orders
@@ -175,11 +175,8 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         corpse_exit_initialization_fixture(Command::EnterSwordfight);
     let assets = engine.test_runtime_assets();
 
-    assert_eq!(
-        engine.get_entity(carrier).unwrap().posture(),
-        Posture::CarryingCorpse
-    );
-    assert_eq!(engine.get_entity(body).unwrap().posture(), Posture::Carried);
+    assert_eq!(engine.posture_of(carrier), Posture::CarryingCorpse);
+    assert_eq!(engine.posture_of(body), Posture::Carried);
     assert_eq!(
         engine
             .orders
@@ -325,10 +322,10 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        assert!(engine.get_entity(healer).unwrap().is_pc());
-        assert!(!engine.get_entity(healer).unwrap().is_dead());
+        assert!(engine.ent(healer).is_pc());
+        assert!(!engine.ent(healer).is_dead());
         assert!(
-            engine.get_entity(target).unwrap().kind().is_fx_target()
+            engine.ent(target).kind().is_fx_target()
                 || engine
                     .get_entity(target)
                     .and_then(Entity::pc_data)
@@ -514,42 +511,22 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     );
     assert!(victim_ai.timer_is_running);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(attacker),
         8,
         "translation must not change the attacker direction",
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(victim),
         8,
         "translation must not change the victim direction",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(attacker)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(attacker).position_iface().get_direction_goal()),
         8,
         "translation must not eagerly set the attacker goal",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(victim).position_iface().get_direction_goal()),
         8,
         "translation must not eagerly set the victim goal",
     );
@@ -569,10 +546,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     );
     assert!(
         !invalid
-            .get_entity(victim)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
+            .ai_ctrl(victim)
             .locks_flag_field
             .contains(crate::ai::AiLockFlags::FREEZE)
     );
@@ -596,24 +570,12 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
             .contains(crate::ai::AiLockFlags::FREEZE)
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(attacker)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(attacker).position_iface().get_direction_goal()),
         live_facing,
         "first owner Execute must compute the attacker goal from live positions",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(victim).position_iface().get_direction_goal()),
         live_facing,
         "first owner Execute must compute the victim goal from live positions",
     );
@@ -859,10 +821,7 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
             if card.owner == victim && card.seq_id == old_wait {
                 assert!(
                     engine
-                        .get_entity(victim)
-                        .unwrap()
-                        .ai_controller()
-                        .unwrap()
+                        .ai_ctrl(victim)
                         .locks_flag_field
                         .contains(AiLockFlags::FREEZE),
                     "replacement Wait must execute before the victim's AI unlock"

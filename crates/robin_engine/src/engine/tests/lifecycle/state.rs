@@ -199,7 +199,7 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
             }
             assert_eq!(tick(&mut engine), vec![(projectile_id, object_type)]);
         }
-        assert!(!engine.get_entity(projectile_id).unwrap().is_active());
+        assert!(!engine.ent(projectile_id).is_active());
         assert_eq!(
             tick(&mut engine),
             vec![(projectile_id, object_type)],
@@ -243,7 +243,7 @@ fn interrupt_corpse_exit_initialization_aligns_body_from_selected_order() {
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
     assert_eq!(body_entity.element_data().position_map(), body_position);
     assert_eq!(
-        engine.get_entity(carrier).unwrap().sprite().last_action,
+        engine.ent(carrier).sprite().last_action,
         OrderType::TransitionCarryingCorpseWaitingUpright,
         "the selected corpse-exit order must execute its animation"
     );
@@ -550,14 +550,7 @@ fn explicit_halt_then_goto_keeps_single_stop_transition() {
         OrderType::TransitionWalkingUprightWaitingUpright,
         "the explicit action stop rewrites one stop transition and movement must not halt it again"
     );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
-        old_goal
-    );
+    assert_eq!(engine.ent(owner).position_iface().map_goal(), old_goal);
     assert_eq!(
         engine
             .orders
@@ -608,12 +601,7 @@ fn execution_frozen_wait_retains_selected_identity_without_entering_execute_arm(
         Some(OrderType::WaitingUpright)
     );
     assert_ne!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(owner).sprite.last_processed_order_id,
         order_id.get(),
         "per-actor execution freeze returns before the selected sprite call"
     );
@@ -898,12 +886,7 @@ fn translate_pay_without_facing_or_speech(
     engine.select_sequence_element(pc, Some((seq, 0)));
     engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .position_iface()
-            .get_direction_goal()
-            .as_u8(),
+        engine.ent(pc).position_iface().get_direction_goal().as_u8(),
         1,
         "translation must not expose PAYING's facing"
     );
@@ -933,8 +916,7 @@ fn assert_invalid_first_pay_execute_aborts_before_facing(
     invalid.tick_selected_ability(sim, assets, pc, invalid.actors_frozen());
     assert_eq!(
         invalid
-            .get_entity(pc)
-            .unwrap()
+            .ent(pc)
             .position_iface()
             .get_direction_goal()
             .as_u8(),
@@ -960,12 +942,7 @@ fn first_valid_pay_execute_samples_facing_once(
     engine.actor_mut(pc).execute_order_initialising = true;
     engine.tick_selected_ability(sim, assets, pc, engine.actors_frozen());
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .position_iface()
-            .get_direction_goal()
-            .as_u8(),
+        engine.ent(pc).position_iface().get_direction_goal().as_u8(),
         15
     );
     assert_eq!(
@@ -1031,14 +1008,7 @@ fn fork_pay_completion_branches(
         )
         .is_some_and(|ability| ability.order_done)
     );
-    assert!(
-        !invalid_completion
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .execute_order_initialising
-    );
+    assert!(!invalid_completion.actor(pc).execute_order_initialising);
     assert_eq!(
         invalid_completion
             .mission_domain
@@ -1093,12 +1063,7 @@ fn later_pay_execute_frames_do_not_resample(
     engine.face(beggar, 8);
     engine.tick_selected_ability(sim, assets, pc, engine.actors_frozen());
     assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .position_iface()
-            .get_direction_goal()
-            .as_u8(),
+        engine.ent(pc).position_iface().get_direction_goal().as_u8(),
         15,
         "later Execute frames must not resample the antagonist"
     );
@@ -1252,23 +1217,9 @@ fn assert_valid_pay_completion_launches_response(
             &valid_completion.orders.sequence_manager,
             pc
         ),
-        valid_completion
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .continuation
-            .motion_state,
-        valid_completion
-            .get_entity(pc)
-            .unwrap()
-            .element_data()
-            .position_map(),
-        valid_completion
-            .get_entity(beggar)
-            .unwrap()
-            .element_data()
-            .position_map(),
+        valid_completion.motion_state_of(pc),
+        valid_completion.map_pos_of(pc),
+        valid_completion.map_pos_of(beggar),
     );
     assert!(
         valid_completion
@@ -1373,14 +1324,7 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
         &assets,
         |_, _| {},
     );
-    assert_eq!(
-        engine
-            .get_entity(beggar)
-            .unwrap()
-            .element_data()
-            .direction(),
-        1
-    );
+    assert_eq!(engine.direction_of(beggar), 1);
     let coin = engine
         .world
         .entities
@@ -1396,14 +1340,7 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
         coin.index() > donor.index(),
         "coin must occupy a later live creation slot"
     );
-    assert!(
-        engine
-            .get_entity(donor)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .has_given_money_to_beggar
-    );
+    assert!(engine.npc(donor).has_given_money_to_beggar);
 }
 
 #[test]
@@ -1635,21 +1572,11 @@ fn enter_listen_finishes_through_its_own_exit(fx: &mut LeaveListenFixture) {
         SequenceState::Terminated
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(owner),
         crate::element::ActionState::Waiting
     );
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(owner).current_action,
         crate::profiles::Action::NoAction,
         "selected Listen DONE must synchronously apply MSG_UNSELECT_ACTION"
     );
@@ -2045,12 +1972,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
         class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         functions: vec![Function {
             name: "PostInitialize".into(),
-            address: 0,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         }],
         quads: vec![begin, ret],
         ..Default::default()

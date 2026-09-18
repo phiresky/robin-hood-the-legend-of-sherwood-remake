@@ -3408,12 +3408,7 @@ fn resolved_orientation_restores_the_implicit_messenger_action() {
 
     assert_eq!(engine.get_selected_action(), Action::Net);
     assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(pc_id).current_action,
         previous_pc_action,
         "the orientation attests messenger state, not a player-character action mutation"
     );
@@ -4008,10 +4003,7 @@ fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
             .hth_weapons
             .push(crate::profiles::HtHWeaponProfile::default());
     }
-    assert_eq!(
-        engine.get_entity(pc_id).unwrap().element_data().sector(),
-        None
-    );
+    assert_eq!(engine.sector_of(pc_id), None);
     let target_id = engine.add_test_entity(Entity::Civilian(ActorCivilian {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
@@ -4291,12 +4283,7 @@ fn minimal_script() -> crate::engine::types::MissionScript {
         class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         functions: vec![Function {
             name: "Initialize".into(),
-            address: 0,
-            num_parameters: 0,
-            size_of_return_value: 0,
-            size_of_parameters: 0,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         }],
         quads: vec![
             Quad {
@@ -6713,15 +6700,7 @@ fn retained_quick_action_without_seek_clears_previous_continuation() {
         engine.replay_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
         Some(true)
     );
-    assert!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .post_seek_sequence
-            .is_none()
-    );
+    assert!(engine.actor(pc).post_seek_sequence.is_none());
 }
 
 #[test]

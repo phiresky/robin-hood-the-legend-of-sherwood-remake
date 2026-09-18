@@ -352,15 +352,7 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     let idle_sequence = engine.t_launch_element(&assets, idle);
     engine.select_sequence_element(owner, Some((idle_sequence, 0)));
     engine.t_element_in_progress(&assets, idle_sequence, 0);
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .wait_time,
-        7
-    );
+    assert_eq!(engine.actor(owner).wait_time, 7);
 }
 
 #[test]
