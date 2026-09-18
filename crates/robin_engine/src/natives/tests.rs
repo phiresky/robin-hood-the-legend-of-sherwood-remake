@@ -1120,17 +1120,7 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
             sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
             layer: 0,
             sector_number: SectorNumber::new(0),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         },
         0,
     );
@@ -1965,17 +1955,7 @@ fn geometric_is_inside_host(actor_sector: u16, actor_layer: Option<u16>) -> Nati
             sector_type: crate::sector::SectorType::SCRIPT,
             layer: 0,
             sector_number: crate::sector::SectorNumber::new(-1),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     host.script_domains
         .zones
@@ -4460,17 +4440,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
             sector_type: crate::sector::SectorType::SHADOW,
             layer: 0,
             sector_number: crate::sector::SectorNumber::new(1),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         },
         0,
     );

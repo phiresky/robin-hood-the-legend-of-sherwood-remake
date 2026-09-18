@@ -2606,17 +2606,7 @@ mod tests {
                     sector_type: crate::sector::SectorType::MOTION,
                     layer: 0,
                     sector_number: crate::sector::SectorNumber::new(sector_number),
-                    door_index: None,
-                    lift_type: None,
-                    lift_direction: 0,
-                    force_crouched: false,
-                    building_index: None,
-                    low_exit_point: None,
-                    high_exit_point: None,
-                    lowest_door_index: None,
-                    jump_line_indices: Vec::new(),
-                    gate_indices: Vec::new(),
-                    underlying_sector: None,
+                    ..Default::default()
                 },
                 0,
             );
