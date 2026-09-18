@@ -1,18 +1,14 @@
 use super::*;
-use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+use crate::coordinates::WorldPoint3D;
+use crate::engine::test_support::actors::make_test_ai_soldier;
 
 fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let mut ids = Vec::new();
     for &(x, y) in positions {
         let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);

@@ -825,26 +825,10 @@ mod tests {
         lower_door.sector_out_index = lower_sector.arena_index();
         lower_door.layer_out = 0;
         engine.script_domains.interactables.doors.push(lower_door);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(Some(entry_sector));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_layer(3);
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(Some(entry_sector));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_layer(3);
+        engine.elem_mut(owner).set_sector(Some(entry_sector));
+        engine.elem_mut(owner).set_layer(3);
+        engine.elem_mut(target).set_sector(Some(entry_sector));
+        engine.elem_mut(target).set_layer(3);
         move_actor(engine, owner, 100.0, 100.0);
         move_actor(engine, target, 70.0, 80.0);
         let mut pass = SequenceElement::new_movement(
@@ -864,13 +848,7 @@ mod tests {
         let id = engine.orders.sequence_manager.insert_element(pass);
         engine.orders.sequence_manager.start_sequence_level(id);
         engine.select_sequence_element(target, Some((id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            id,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), id, 0);
         Position {
             x: 410.0,
             y: 120.0,
@@ -883,33 +861,20 @@ mod tests {
     fn reconsider_approach_uses_selected_door_lift_and_live_weapon_range_after_retarget() {
         let (mut engine, assets, owner, _, target) = prepare_approach(65);
         engine.control.frame_counter = 1058;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .current_substate = Substate::AttackingQuittingSwordfight;
+        engine.enemy_mut(owner).base.current_substate = Substate::AttackingQuittingSwordfight;
         let entry = install_lift_target(&mut engine, owner, target);
         assert_eq!(
             engine.live_ai_position(target).map_point(),
             MapPoint::new(500.0, 500.0)
         );
-        assert_eq!(
-            engine
-                .get_entity(target)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(70.0, 80.0)
-        );
+        assert_eq!(engine.map_pos_of(target), MapPoint::new(70.0, 80.0));
         engine.execute_ai_reconsider_enemy_approach(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
             false,
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToLadder);
         assert_eq!(ai.base.last_goto_destination, entry);
         assert_eq!(ai.base.stop_before_end_of_path_distance, 30);
@@ -917,31 +882,18 @@ mod tests {
         assert_eq!(pending_moves(&engine, owner).len(), 1);
 
         let replacement = engine.add_test_entity(make_test_pc(Posture::Upright));
-        engine
-            .get_entity_mut(replacement)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(entry.sector);
-        engine
-            .get_entity_mut(replacement)
-            .unwrap()
-            .element_data_mut()
-            .set_layer(entry.level);
+        engine.elem_mut(replacement).set_sector(entry.sector);
+        engine.elem_mut(replacement).set_layer(entry.level);
         move_actor(&mut engine, replacement, 700.0, 100.0);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .primary_target = Some(AiEntityHandle::new(replacement.index()));
+        engine.enemy_mut(owner).base.primary_target =
+            Some(AiEntityHandle::new(replacement.index()));
         engine.execute_ai_reconsider_enemy_approach(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
             true,
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
         assert_eq!(
             ai.base.last_goto_destination.map_point(),
@@ -997,16 +949,8 @@ mod tests {
         };
         door.lock_npc_villain();
         engine.script_domains.interactables.doors = vec![door];
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(Some(outside));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(Some(inside));
+        engine.elem_mut(owner).set_sector(Some(outside));
+        engine.elem_mut(target).set_sector(Some(inside));
         move_actor(&mut engine, owner, 250.0, if close { 300.0 } else { 100.0 });
         move_actor(&mut engine, target, 264.0, 700.0);
         if waiting {
@@ -1021,13 +965,7 @@ mod tests {
             let id = engine.orders.sequence_manager.insert_element(element);
             engine.orders.sequence_manager.start_sequence_level(id);
             engine.select_sequence_element(owner, Some((id, 0)));
-            engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                &mut Vec::new(),
-                id,
-                0,
-            );
+            engine.t_element_in_progress(&LevelAssets::new(), id, 0);
         }
         (
             engine,
@@ -1063,7 +1001,7 @@ mod tests {
                 owner,
                 true,
             );
-            let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+            let ai = engine.enemy(owner);
             assert_eq!(
                 ai.base.current_substate,
                 Substate::AttackingRunToAvengerOnRoof
@@ -1113,11 +1051,7 @@ mod tests {
         let (mut engine, assets, owner, friend, target) = prepare_approach(62);
         move_actor(&mut engine, owner, 655.007_8, 1744.445);
         move_actor(&mut engine, target, 585.0, 1726.0);
-        engine
-            .get_entity_mut(friend)
-            .unwrap()
-            .element_data_mut()
-            .active = false;
+        engine.set_active(friend, false);
         engine.execute_ai_reconsider_enemy_approach(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1125,13 +1059,7 @@ mod tests {
             false,
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .base
-                .current_substate,
+            engine.enemy(owner).base.current_substate,
             Substate::AttackingSwordfight
         );
         assert!(
@@ -1177,11 +1105,7 @@ mod tests {
     }
 
     fn move_actor(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
-        engine
-            .get_entity_mut(actor)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(x, y, 0.0));
+        engine.place(actor, WorldPoint3D::new(x, y, 0.0));
     }
 
     fn pending_moves(
@@ -1219,12 +1143,7 @@ mod tests {
     ) {
         use crate::engine::test_support::asm::*;
         use crate::natives::NativeFn;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .script_class = "StopOnState".into();
+        engine.actor_mut(owner).script_class = "StopOnState".into();
         let quads = vec![
             q_begin_function(0, 4),
             q_native_call(NativeFn::ThisActor as u32),
@@ -1245,28 +1164,14 @@ mod tests {
             q_return_val(0xc00c),
             q_end_function(),
         ];
-        let class = crate::scb::ClassEntry {
-            source_file: "approach_stop.scs".into(),
-            class_name: "StopOnState".into(),
-            size_of_member_variables: 0,
-            member_variables: vec![],
-            functions: vec![crate::scb::Function {
-                name: "FilterAIEvent".into(),
-                address: 0,
-                num_parameters: 3,
-                size_of_return_value: 4,
-                size_of_parameters: 12,
-                size_of_volatile: 0,
-                size_of_temporary: 16,
-            }],
-            quads,
-        };
+
         engine.scripts.mission = Some(
-            crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
-                version: crate::scb::SCB_VERSION,
-                classes: vec![empty_startup_class("approach_stop.scs".into()), class],
-            })
-            .unwrap(),
+            crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+                "approach_stop.scs",
+                "StopOnState",
+                16,
+                quads,
+            ),
         );
         engine.scripts.mission.as_mut().unwrap().bind_actor(
             crate::natives::ScriptHandleCodec::actor_handle(owner),
@@ -1279,12 +1184,8 @@ mod tests {
     fn reconsider_approach_resolves_position_after_reciprocal_retarget() {
         let (mut engine, assets, owner, friend, target) = prepare_approach(50);
         let replacement = engine.add_test_entity(make_test_pc(Posture::Upright));
-        let sector = engine.get_entity(target).unwrap().element_data().sector();
-        engine
-            .get_entity_mut(replacement)
-            .unwrap()
-            .element_data_mut()
-            .set_sector(sector);
+        let sector = engine.sector_of(target);
+        engine.elem_mut(replacement).set_sector(sector);
         for (id, x) in [
             (owner, 100.0),
             (friend, 1100.0),
@@ -1306,20 +1207,14 @@ mod tests {
             owner,
             false,
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(replacement.index()))
         );
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(
-            engine
-                .get_entity(friend)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .base
-                .primary_target,
+            engine.enemy(friend).base.primary_target,
             Some(AiEntityHandle::new(target.index()))
         );
         let pending = engine.orders.sequence_manager.deferred_elements_to_go();
@@ -1342,11 +1237,7 @@ mod tests {
             let (mut engine, assets, owner, _, target) = prepare_approach(50);
             move_actor(&mut engine, owner, 1773.7925, 2523.631);
             move_actor(&mut engine, target, 1731.4956, 2379.8796);
-            let ai = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .enemy_ai_mut()
-                .unwrap();
+            let ai = engine.enemy_mut(owner);
             ai.base.current_substate = if same_state {
                 Substate::AttackingRunningToEnemy
             } else {
@@ -1359,15 +1250,10 @@ mod tests {
                 owner,
                 true,
             );
-            let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+            let ai = engine.enemy(owner);
             assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
             assert_eq!(ai.base.stop_before_end_of_path_distance, 50);
-            let count = engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .custom_values[0];
+            let count = engine.npc(owner).custom_values[0];
             if same_state {
                 assert_eq!(count, 0, "same substate must not manufacture a callback");
                 assert_eq!(pending_moves(&engine, owner).len(), 1);
@@ -1387,19 +1273,14 @@ mod tests {
         let (mut engine, assets, owner, _, target) = prepare_approach(150);
         move_actor(&mut engine, owner, 100.0, 100.0);
         move_actor(&mut engine, target, 200.0, 100.0);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .sword_is_charge_weapon = true;
+        engine.enemy_mut(owner).sword_is_charge_weapon = true;
         engine.execute_ai_reconsider_enemy_approach(
             &crate::sim_rng::test_context(),
             &assets,
             owner,
             false,
         );
-        let ai = engine.get_entity(owner).unwrap().enemy_ai().unwrap();
+        let ai = engine.enemy(owner);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert!(!ai.base.already_on_point);
         assert!(pending_moves(&engine, owner).is_empty());
@@ -1415,15 +1296,11 @@ mod tests {
 
     fn actors() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(256, 256);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(5000.0, 5000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (256, 256),
+            (5000.0, 5000.0),
         );
-        let sector = crate::position_interface::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let friend = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let target = engine.add_test_entity(make_test_pc(Posture::Upright));
@@ -1432,7 +1309,7 @@ mod tests {
             (friend, 2000.0, 2000.0),
             (target, 500.0, 200.0),
         ] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity.element_data_mut().set_sector(Some(sector));
             entity
                 .element_data_mut()
@@ -1479,22 +1356,14 @@ mod tests {
                 f32::from_bits(0x43b8_eb5e),
             ),
         ] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_position(WorldPoint3D::new(x, y, 0.0));
+            engine.place(id, WorldPoint3D::new(x, y, 0.0));
         }
         assert!(
             engine
                 .live_rider_attack_destination(owner, target, owner_position, 11)
                 .is_none()
         );
-        engine
-            .get_entity_mut(friend)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(3000.0, 3000.0, 0.0));
+        engine.place(friend, WorldPoint3D::new(3000.0, 3000.0, 0.0));
         assert!(
             engine
                 .live_rider_attack_destination(owner, target, owner_position, 11)
@@ -1506,20 +1375,15 @@ mod tests {
     fn rider_charge_finishes_focus_and_retains_live_target_position() {
         for (distance, passing) in [(200.0, false), (50.0, true)] {
             let (mut engine, assets, owner, _, target) = actors();
-            let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+            let Entity::Soldier(soldier) = engine.ent_mut(owner) else {
                 unreachable!()
             };
             soldier.soldier.rider = true;
             engine
-                .get_entity_mut(owner)
-                .unwrap()
+                .ent_mut(owner)
                 .position_iface_mut()
                 .set_direction(crate::position_interface::Direction::from_raw(0));
-            engine
-                .get_entity_mut(target)
-                .unwrap()
-                .element_data_mut()
-                .set_position(WorldPoint3D::new(500.0, 500.0 - distance, 0.0));
+            engine.place(target, WorldPoint3D::new(500.0, 500.0 - distance, 0.0));
             let position = engine.live_ai_position(target);
             assert!(engine.execute_ai_maybe_make_rider_attack(
                 &crate::sim_rng::test_context(),
@@ -1566,12 +1430,8 @@ mod tests {
     #[test]
     fn rider_geometry_uses_raw_position_even_when_ai_position_is_substituted() {
         let (mut engine, _, owner, carrier, target) = actors();
-        engine
-            .get_entity_mut(carrier)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(500.0, 450.0, 0.0));
-        let target_entity = engine.get_entity_mut(target).unwrap();
+        engine.place(carrier, WorldPoint3D::new(500.0, 450.0, 0.0));
+        let target_entity = engine.ent_mut(target);
         target_entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(500.0, 550.0, 0.0));
@@ -1590,24 +1450,19 @@ mod tests {
     #[test]
     fn rider_charge_uses_a_live_persistent_target_without_a_nearby_projection() {
         let (mut engine, assets, owner, target, _) = actors();
-        let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(owner) else {
             unreachable!()
         };
         soldier.soldier.rider = true;
-        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(target) else {
             unreachable!()
         };
         soldier.soldier.cached_camp = Camp::Royalists;
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .position_iface_mut()
             .set_direction(crate::position_interface::Direction::from_raw(0));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(500.0, 450.0, 0.0));
+        engine.place(target, WorldPoint3D::new(500.0, 450.0, 0.0));
         engine
             .world
             .entities
@@ -1631,11 +1486,11 @@ mod tests {
     #[test]
     fn approach_resolves_current_carrier_without_a_target_snapshot() {
         let (mut engine, assets, owner, carrier, target) = actors();
-        let Entity::Soldier(soldier) = engine.get_entity_mut(carrier).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(carrier) else {
             unreachable!()
         };
         soldier.soldier.cached_camp = Camp::Royalists;
-        let entity = engine.get_entity_mut(target).unwrap();
+        let entity = engine.ent_mut(target);
         entity.element_data_mut().set_posture(Posture::OnShoulders);
         entity.human_data_mut().unwrap().carrier = Some(carrier);
         engine.execute_ai_reconsider_enemy_approach(
@@ -1657,13 +1512,7 @@ mod tests {
     #[test]
     fn already_swordfighting_approach_keeps_the_short_timer_without_target_data() {
         let (mut engine, assets, owner, _, target) = actors();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(target);
+        engine.human_mut(owner).opponents.push(target);
         let ai = engine
             .world
             .entities

@@ -63,7 +63,7 @@ fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
         }),
     );
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(entity.element_data().position_map(), position);
     assert_eq!(
         entity.position_iface().get_direction().as_u8(),
@@ -134,11 +134,7 @@ fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
         target.element.set_position_map(MapPoint::new(100.0, 300.0));
         target.element.set_sector(Some(sector));
         let target = engine.add_test_entity(Entity::Pc(target));
-        let actor = engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap();
+        let actor = engine.actor_mut(owner);
         actor.seek_target = Some(target);
         actor.last_seek_target_position = MapPoint::new(100.0, 300.0);
         actor.seek_distance = 5.0;
@@ -175,7 +171,7 @@ fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
 
         for expected in [MotionState::Start, MotionState::Done] {
             engine.tick_actor_owner_envelopes(&sim, &assets);
-            let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+            let actor = engine.actor(owner);
             assert_eq!(actor.continuation.motion_state, expected, "{action:?}");
             assert_eq!(
                 engine.actor_installed_order(owner).unwrap().order_id,
@@ -214,21 +210,13 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
         100.0,
         order_id,
     ));
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        movement,
-    );
+    let seq_id = engine.t_launch_element(&LevelAssets::new(), movement);
     let stale = MovementOwnerSelection {
         seq_id,
         elem_idx: 0,
         order_id: std::num::NonZeroU32::new(order_id.get().checked_add(1).unwrap()).unwrap(),
     };
-    let before = engine
-        .get_entity(owner)
-        .unwrap()
-        .element_data()
-        .position_map();
+    let before = engine.map_pos_of(owner);
     for selected in [None, Some(stale)] {
         let result = engine.tick_entity_movement_owner(
             &crate::sim_rng::test_context(),
@@ -237,14 +225,7 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
             selected,
         );
         assert!(result.is_none());
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            before
-        );
+        assert_eq!(engine.map_pos_of(owner), before);
         assert_eq!(
             engine
                 .orders

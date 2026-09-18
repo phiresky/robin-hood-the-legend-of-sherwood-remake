@@ -232,11 +232,7 @@ impl SwordDamageProbe {
                 .get_entity(victim_id)
                 .and_then(test_human_life_points)
                 .expect("sword damage test victim remains human"),
-            victim_direction_after: engine
-                .get_entity(victim_id)
-                .expect("sword damage test victim remains present")
-                .element_data()
-                .direction(),
+            victim_direction_after: engine.direction_of(victim_id),
         };
         SWORD_DAMAGE_PROBE.with(|probe| probe.record(observation));
     }
@@ -3787,37 +3783,18 @@ mod net_publication_tests {
                 .build(),
         );
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.ai_ctrl_mut(victim).knocked_out_in_money_fight = true;
         engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .knocked_out_in_money_fight = true;
-        engine
-            .get_entity_mut(friend)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
+            .enemy_mut(friend)
             .money_fight_enemies
             .push(victim.index());
 
         engine.apply_net(&sim, &assets, victim);
 
-        assert!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .already_detectable_body
-        );
+        assert!(engine.human(victim).already_detectable_body);
         for owner in [victim, friend] {
-            let list = &engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[crate::element::DetectableType::Body as usize];
+            let list =
+                &engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize];
             assert_eq!(
                 list.iter()
                     .filter(|entry| entry.element == Some(victim))
@@ -3826,23 +3803,14 @@ mod net_publication_tests {
             );
         }
         assert_eq!(
-            engine
-                .get_entity(friend)
-                .unwrap()
-                .enemy_ai()
-                .unwrap()
-                .money_fight_enemies,
+            engine.enemy(friend).money_fight_enemies,
             vec![victim.index()]
         );
         // Once published, another announcement preserves the existing entries.
         engine.add_detectable_for_all_npc(victim, crate::element::DetectableType::Body);
         for owner in [victim, friend] {
-            let list = &engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[crate::element::DetectableType::Body as usize];
+            let list =
+                &engine.npc(owner).detectable_lists[crate::element::DetectableType::Body as usize];
             assert_eq!(
                 list.iter()
                     .filter(|entry| entry.element == Some(victim))

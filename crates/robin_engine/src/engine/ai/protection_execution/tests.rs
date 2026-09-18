@@ -3,9 +3,7 @@ use super::*;
 #[test]
 fn phalanx_arrival_reads_target_position_after_state_callback() {
     use crate::engine::test_support::asm::*;
-    use crate::engine::types::MissionScript;
     use crate::natives::{NativeFn, ScriptHandleCodec};
-    use crate::scb::{ClassEntry, Function, ScbFile};
     let (mut engine, mut assets, ids) = fixture(&[(100.0, 100.0), (120.0, 100.0), (300.0, 300.0)]);
     let (owner, neighbour, target) = (ids[0], ids[1], ids[2]);
     let target_handle = ScriptHandleCodec::actor_handle(target);
@@ -14,9 +12,7 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
     assets.scripts.location_positions = std::sync::Arc::new(vec![(600.0, 700.0)]);
     assets.scripts.location_layers = std::sync::Arc::new(vec![0]);
     assets.scripts.location_sectors = std::sync::Arc::new(vec![1]);
-    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![
-        engine.get_entity(target).unwrap().element_data().sector(),
-    ]);
+    assets.scripts.location_sector_handles = std::sync::Arc::new(vec![engine.sector_of(target)]);
     engine
         .world
         .entities
@@ -25,45 +21,28 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .unwrap()
         .script_class = "MoveShieldTarget".into();
     engine.scripts.mission = Some(
-        MissionScript::from_scb(ScbFile {
-            version: crate::scb::SCB_VERSION,
-            classes: vec![
-                empty_startup_class("shield.scs".into()),
-                ClassEntry {
-                    source_file: "shield.scs".into(),
-                    class_name: "MoveShieldTarget".into(),
-                    size_of_member_variables: 0,
-                    member_variables: vec![],
-                    functions: vec![Function {
-                        name: "FilterAIEvent".into(),
-                        address: 0,
-                        num_parameters: 3,
-                        size_of_return_value: 4,
-                        size_of_parameters: 12,
-                        size_of_volatile: 0,
-                        size_of_temporary: 8,
-                    }],
-                    quads: vec![
-                        q_begin_function(0, 2),
-                        q_aff1_get_param(0xC000, 4),
-                        q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
-                        q_ieq(0xC000, 0xC000, 0xC004),
-                        q_if_not_zero_goto(0xC000, 7),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_aff0_iconstant(0xC000, target_handle),
-                        q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
-                        q_native_param(0xC000),
-                        q_native_param(0xC004),
-                        q_native_call(NativeFn::SetActorLocation as u32),
-                        q_aff0_iconstant(0xC000, 1),
-                        q_return_val(0xC000),
-                        q_end_function(),
-                    ],
-                },
+        crate::engine::test_support::extra_engine_combat::filter_ai_event_mission(
+            "shield.scs",
+            "MoveShieldTarget",
+            8,
+            vec![
+                q_begin_function(0, 2),
+                q_aff1_get_param(0xC000, 4),
+                q_aff0_iconstant(0xC004, AiState::Attacking.state_change_event_code()),
+                q_ieq(0xC000, 0xC000, 0xC004),
+                q_if_not_zero_goto(0xC000, 7),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_aff0_iconstant(0xC000, target_handle),
+                q_aff0_iconstant(0xC004, ScriptHandleCodec::location_handle_from_index(0)),
+                q_native_param(0xC000),
+                q_native_param(0xC004),
+                q_native_call(NativeFn::SetActorLocation as u32),
+                q_aff0_iconstant(0xC000, 1),
+                q_return_val(0xC000),
+                q_end_function(),
             ],
-        })
-        .unwrap(),
+        ),
     );
     engine.attach_script_bindings(&assets);
     engine
@@ -283,15 +262,11 @@ use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
 
 fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let mut ids = Vec::new();
     for &(x, y) in positions {
         let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
@@ -313,7 +288,7 @@ fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     for &id in &ids {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_sector_topology(Some(sector), sector.arena_index());
@@ -588,13 +563,7 @@ fn live_primary_selection_scores_raw_door_position_and_live_multiplicity() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(passing, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
     assert_eq!(engine.live_ai_position(passing).x, 277.0);
     engine
         .world
@@ -912,13 +881,7 @@ fn periodic_phalanx_fixture(
         .sequence_manager
         .start_sequence_level(selected);
     engine.select_sequence_element(owner, Some((selected, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        selected,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), selected, 0);
     engine.install_test_order(owner, crate::order::OrderType::WaitingUpright);
     (engine, assets, owner)
 }

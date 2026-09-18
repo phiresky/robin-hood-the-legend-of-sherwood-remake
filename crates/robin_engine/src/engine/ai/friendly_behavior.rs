@@ -717,15 +717,7 @@ mod tests {
             assert!(ai.base.ai_log.iter().any(|line| line.line_type
                 == crate::ai::LogLineType::EventRefused
                 && line.info == refused));
-            assert_eq!(
-                engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .eye_status,
-                eye
-            );
+            assert_eq!(engine.npc(owner).eye_status, eye);
         }
     }
 
@@ -782,23 +774,10 @@ mod tests {
             AiState::Default,
             Substate::DefaultOnPost,
         );
-        assert!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[Friend as usize]
-                .is_empty()
-        );
+        assert!(engine.npc(owner).detectable_lists[Friend as usize].is_empty());
         engine.execute_ai_append_detectable(owner, target, Friend);
         assert!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .npc_data()
-                .unwrap()
-                .detectable_lists[Friend as usize]
+            engine.npc(owner).detectable_lists[Friend as usize]
                 .iter()
                 .any(|entry| entry.element == Some(target))
         );
@@ -822,7 +801,7 @@ mod tests {
             .set_position(crate::coordinates::WorldPoint3D::new(500.0, 500.0, 0.0));
         civilian
             .element_data_mut()
-            .set_sector(engine.get_entity(soldier).unwrap().element_data().sector());
+            .set_sector(engine.sector_of(soldier));
         civilian.npc_data_mut().unwrap().life_points = 50;
         civilian.npc_data_mut().unwrap().ai_brain =
             crate::element::AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(0)));
@@ -859,11 +838,10 @@ mod tests {
                 sector_in_index: sector.arena_index(),
                 ..Default::default()
             });
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(600.0, 600.0, 0.0));
+        engine.place(
+            target,
+            crate::coordinates::WorldPoint3D::new(600.0, 600.0, 0.0),
+        );
         let mut pass = crate::sequence::SequenceElement::new_movement(
             1,
             crate::element::Command::PassDoor,
@@ -1032,11 +1010,10 @@ mod tests {
     #[test]
     fn live_apple_escape_uses_single_direction_draw_and_authorized_geometry() {
         let (mut engine, _, owner, target) = fixture();
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(600.0, 500.0, 0.0));
+        engine.place(
+            target,
+            crate::coordinates::WorldPoint3D::new(600.0, 500.0, 0.0),
+        );
         engine.reporting_civilian_mut(owner).base.antagonist =
             Some(AiEntityHandle::new(target.index()));
         crate::sim_rng::with_seed(1, |sim| {

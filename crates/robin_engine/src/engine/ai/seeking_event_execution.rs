@@ -368,25 +368,16 @@ impl AiOwnerCtx<'_> {
 pub(super) mod tests {
     use super::*;
     use crate::ai::{AiEntityHandle, AlertLevel, PathId, PatrolPath};
-    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::coordinates::WorldPoint3D;
 
     pub(in crate::engine::ai) fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let mut engine = EngineInner::new();
         engine.control.frame_counter = 100;
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            crate::engine::test_support::square_sector(
-                1,
-                0,
-                MapPoint::new(0.0, 0.0),
-                MapPoint::new(3000.0, 3000.0),
-            ),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (3000.0, 3000.0),
         );
-        let sector = crate::ai::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner =
             engine.add_test_entity(crate::engine::test_support::actors::make_test_ai_soldier(
                 crate::element::Camp::Lacklandists,
@@ -396,7 +387,7 @@ pub(super) mod tests {
                 crate::element::Camp::Lacklandists,
             ));
         for (id, x) in [(owner, 100.0), (target, 200.0)] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity
                 .element_data_mut()
                 .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -499,25 +490,15 @@ pub(super) mod tests {
     #[test]
     fn chief_arrival_faces_the_live_elevation_before_waiting() {
         let (mut engine, assets, owner, chief) = fixture();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(1021.08, 2031.7904 + 27.71125, 27.71125));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_direction_instantly(6);
-        engine
-            .get_entity_mut(chief)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(
-                1033.5859,
-                2036.767 + 25.100779,
-                25.100779,
-            ));
+        engine.place(
+            owner,
+            WorldPoint3D::new(1021.08, 2031.7904 + 27.71125, 27.71125),
+        );
+        engine.face(owner, 6);
+        engine.place(
+            chief,
+            WorldPoint3D::new(1033.5859, 2036.767 + 25.100779, 25.100779),
+        );
         let ai = engine.seek_enemy_mut(owner);
         ai.base.patrol_chief = Some(chief);
         ai.base.current_substate = Substate::DefaultGotoChief;
@@ -554,12 +535,7 @@ pub(super) mod tests {
     #[test]
     fn net_arrival_enters_taking_state_even_when_the_net_object_has_disappeared() {
         let (mut engine, assets, owner, body) = fixture();
-        engine
-            .get_entity_mut(body)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .stuck_under_nets_counter = 1;
+        engine.human_mut(body).stuck_under_nets_counter = 1;
         let ai = engine.seek_enemy_mut(owner);
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingNet;
@@ -601,11 +577,7 @@ pub(super) mod tests {
     #[test]
     fn seekpoint_arrival_filters_rear_directions_and_preserves_remaining_live_directions() {
         let (mut engine, assets, owner, _) = fixture();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .element_data_mut()
-            .set_direction_instantly(0);
+        engine.face(owner, 0);
         let position = engine.live_ai_position(owner);
         engine.ai.global.seek_points.push(SeekPoint {
             position,

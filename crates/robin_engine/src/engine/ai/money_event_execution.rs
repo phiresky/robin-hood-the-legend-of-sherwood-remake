@@ -714,11 +714,7 @@ mod tests {
             let far = object(&mut engine, owner, 400.0, ObjectType::Coin);
             let near = object(&mut engine, owner, 140.0, ObjectType::Coin);
             let inactive = object(&mut engine, owner, 110.0, ObjectType::Coin);
-            engine
-                .get_entity_mut(inactive)
-                .unwrap()
-                .element_data_mut()
-                .active = false;
+            engine.set_active(inactive, false);
             set_state(&mut engine, owner, Substate::WonderingTakingMoney);
             engine.seek_enemy_mut(owner).other_seen_money =
                 vec![far.index(), inactive.index(), near.index()];
@@ -789,11 +785,7 @@ mod tests {
     fn brawl_arrival_uses_live_distance_and_launches_hit_only_in_reach() {
         for x in [110.0, 500.0] {
             let (mut engine, assets, owner, friend) = fixture();
-            engine
-                .get_entity_mut(friend)
-                .unwrap()
-                .element_data_mut()
-                .set_position(WorldPoint3D::new(x, 100.0, 0.0));
+            engine.place(friend, WorldPoint3D::new(x, 100.0, 0.0));
             set_state(&mut engine, owner, Substate::WonderingBrawlApproaching);
             engine.seek_enemy_mut(owner).base.friend_in_trouble =
                 Some(AiEntityHandle::new(friend.index()));
@@ -846,12 +838,7 @@ mod tests {
                 let ai = engine.seek_enemy_mut(friend);
                 ai.base.current_state = AiState::Sleeping;
                 ai.base.current_substate = Substate::SleepingUnconscious;
-                engine
-                    .get_entity_mut(friend)
-                    .unwrap()
-                    .human_data_mut()
-                    .unwrap()
-                    .unconscious = true;
+                engine.human_mut(friend).unconscious = true;
                 engine.seek_enemy_mut(owner).base.friend_in_trouble =
                     Some(AiEntityHandle::new(friend.index()));
                 engine
@@ -877,12 +864,7 @@ mod tests {
     fn looting_reads_owner_money_and_marks_the_next_victim_before_approaching() {
         let (mut engine, assets, owner, body) = fixture();
         set_state(&mut engine, owner, Substate::WonderingLooting);
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .npc_data_mut()
-            .unwrap()
-            .money = 21;
+        engine.npc_mut(owner).money = 21;
         let ai = engine.seek_enemy_mut(owner);
         ai.old_money = 20;
         ai.money_fight_victims.push(body.index());

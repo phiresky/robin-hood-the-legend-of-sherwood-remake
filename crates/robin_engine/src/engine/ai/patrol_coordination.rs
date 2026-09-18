@@ -4,7 +4,7 @@ use super::*;
 mod tests {
     use super::*;
     use crate::ai::{AiState, AlertLevel, Position, StimulusInfo, Substate};
-    use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+    use crate::engine::test_support::actors::make_test_ai_soldier;
 
     fn assembly_fixture(points: &[(f32, f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         let mut engine = EngineInner::new();
@@ -67,11 +67,10 @@ mod tests {
             (102.0, 100.0, 0.0),
             (103.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[3])
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0));
+        engine.place(
+            ids[3],
+            crate::coordinates::WorldPoint3D::new(f32::NAN, 100.0, 0.0),
+        );
         engine.initialize_patrol_for_npc(&assets, ids[0]);
         assert_eq!(
             engine
@@ -136,13 +135,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(ids[2], Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         assert_eq!(
             engine.live_ai_position(ids[2]).map_point(),
             MapPoint::new(100.0, 99.0)
@@ -178,19 +171,9 @@ mod tests {
             (130.0, 100.0, 0.0),
             (140.0, 100.0, 0.0),
         ]);
-        engine
-            .get_entity_mut(ids[1])
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap()
-            .base
-            .current_state = AiState::Attacking;
-        engine
-            .get_entity_mut(ids[2])
-            .unwrap()
-            .element_data_mut()
-            .active = false;
-        let dead = engine.get_entity_mut(ids[4]).unwrap();
+        engine.enemy_mut(ids[1]).base.current_state = AiState::Attacking;
+        engine.set_active(ids[2], false);
+        let dead = engine.ent_mut(ids[4]);
         dead.element_data_mut().active = false;
         dead.npc_data_mut().unwrap().life_points = 0;
         crate::sight_obstacle::begin_parity_visibility_capture();
@@ -242,15 +225,11 @@ mod tests {
             ),
         ] {
             let mut engine = EngineInner::new();
-            engine.world.fast_grid_mut().size_map(128, 128);
-            engine.world.fast_grid_mut().allocate_layers(1);
-            let index = engine.world.fast_grid_mut().add_sector(
-                square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-                0,
+            let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+                &mut engine,
+                (128, 128),
+                (2000.0, 2000.0),
             );
-            let sector = crate::ai::SectorHandle::new(1)
-                .unwrap()
-                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
             let mut ids = Vec::new();
             for x in [100.0, 200.0] {
                 let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);

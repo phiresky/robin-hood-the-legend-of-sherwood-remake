@@ -1702,21 +1702,9 @@ mod tests {
             (OrderType::JumpingDown, 20.0, 5),
         ] {
             let mut actor = TestActor::pc(Posture::Flying)
-                .at(WorldPoint3D {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                })
+                .at(WorldPoint3D::new(0.0, 0.0, 0.0))
                 .build();
-            start_airborne_jump_motion(
-                &mut actor,
-                animation,
-                WorldPoint3D {
-                    x: 120.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
-            );
+            start_airborne_jump_motion(&mut actor, animation, WorldPoint3D::new(120.0, 0.0, 0.0));
             assert_eq!(actor.actor_data().unwrap().wait_time, ticks);
             for tick in 1..=ticks {
                 let motion =
@@ -1760,16 +1748,8 @@ mod tests {
     #[test]
     fn trajectory_ends_at_destination() {
         // Horizontal jump across 300 units with a 50-unit rise.
-        let start = WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        };
-        let dest = WorldPoint3D {
-            x: 300.0,
-            y: 0.0,
-            z: 50.0,
-        };
+        let start = WorldPoint3D::new(0.0, 0.0, 0.0);
+        let dest = WorldPoint3D::new(300.0, 0.0, 50.0);
         let traj = compute_trajectory_jump(start, dest);
         assert!(
             !traj.is_empty(),

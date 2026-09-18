@@ -326,7 +326,7 @@ mod tests {
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         for (id, x) in [(owner, 100.0), (target, 1000.0)] {
-            let entity = engine.get_entity_mut(id).unwrap();
+            let entity = engine.ent_mut(id);
             entity
                 .element_data_mut()
                 .set_position(WorldPoint3D::new(x, 100.0, 0.0));
@@ -404,11 +404,7 @@ mod tests {
                 .my_archery_point_index,
             crate::sector::ArcheryPointIdx(0)
         );
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(2000.0, 100.0, 0.0));
+        engine.place(target, WorldPoint3D::new(2000.0, 100.0, 0.0));
         assert!(!engine.choose_ai_good_shooting_point(&assets, owner));
     }
 }

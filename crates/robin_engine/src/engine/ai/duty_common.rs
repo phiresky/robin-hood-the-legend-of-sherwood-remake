@@ -6,22 +6,15 @@ mod tests {
     use crate::ai::*;
     use crate::ai_enemy::{EnemyAi, task_priority};
     use crate::element::{Camp, DetectableType, Posture};
-    use crate::engine::test_support::{
-        actors::{make_test_ai_soldier, make_test_pc},
-        square_sector,
-    };
+    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
 
     fn fixture(count: usize) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::position_interface::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let ids: Vec<EntityId> = (0..count)
             .map(|i| {
                 let mut entity = make_test_ai_soldier(Camp::Lacklandists);
@@ -137,22 +130,14 @@ mod tests {
         );
 
         assert!(enemy(&engine, owner).base.couldnt_reachpoint);
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .installed_order,
-            Some(installed)
-        );
+        assert_eq!(engine.actor(owner).installed_order, Some(installed));
     }
 
     #[test]
     fn facing_a_fractionally_elevated_target_registers_the_integral_direction() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(
@@ -194,7 +179,7 @@ mod tests {
     fn facing_elevation_sentinel_resolves_target_ground_height() {
         let (mut engine, assets, ids) = fixture(1);
         let owner = ids[0];
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(1000.0, 500.0, 0.0));
@@ -366,13 +351,7 @@ mod tests {
                 .sequence_manager
                 .start_sequence_level(sequence);
             engine.select_sequence_element(chief, Some((sequence, 0)));
-            engine.element_in_progress(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                &mut Vec::new(),
-                sequence,
-                0,
-            );
+            engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
             enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
             engine.execute_common_ai_duty(
                 &crate::sim_rng::test_context(),
@@ -827,8 +806,7 @@ mod tests {
         ai.forced_attentive = true;
         ai.base.current_state = AiState::Sleeping;
         engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .ai_actor_data_mut()
             .unwrap()
             .eye_status = crate::element::EyeStatus::Closed;
@@ -916,7 +894,7 @@ mod tests {
             let (mut engine, mut assets, ids) = fixture(3);
             let (archer, bearer) = (ids[0], ids[1]);
             std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].shield = true;
-            let entity = engine.get_entity_mut(bearer).unwrap();
+            let entity = engine.ent_mut(bearer);
             let mut conversion = (*entity.element_data().sprite.conversion).clone();
             conversion.resize(
                 conversion

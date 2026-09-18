@@ -604,20 +604,11 @@ mod tests {
     fn alert_fixture() -> (EngineInner, LevelAssets, EntityId, [EntityId; 2]) {
         let (mut engine, owner, first) = reporting_pair(Substate::DefaultOnPost);
         let second = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            crate::engine::test_support::square_sector(
-                1,
-                0,
-                MapPoint::new(0.0, 0.0),
-                MapPoint::new(2000.0, 2000.0),
-            ),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::ai::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         for (id, x) in [(owner, 100.0), (first, 250.0), (second, 400.0)] {
             let entity = engine.world.entities.get_mut(id).unwrap();
             entity.element_data_mut().active = true;

@@ -564,11 +564,7 @@ mod tests {
             ),
         ] {
             let (mut engine, mut assets, owner, target) = fixture(false);
-            engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .element_data_mut()
-                .active = active;
+            engine.set_active(owner, active);
             let position = engine.live_ai_position(owner);
             let ai = engine.seek_enemy_mut(owner);
             ai.base.current_state = AiState::Seeking;

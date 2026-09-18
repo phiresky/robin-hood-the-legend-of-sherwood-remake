@@ -28,7 +28,7 @@ mod tests {
                 crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
                 engine.control.frame_counter = 70;
                 engine.enter_ai_think_frame(owner);
-                let entity = engine.get_entity_mut(owner).unwrap();
+                let entity = engine.ent_mut(owner);
                 entity.enemy_ai_mut().unwrap().fleeing_seen_enemy_counter = 20;
                 let ai = entity.ai_controller_mut().unwrap();
                 ai.current_state = AiState::Fleeing;
@@ -54,14 +54,9 @@ mod tests {
                         )
                         .expect("spent panic event must be handled");
                 });
-                let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
+                let ai = engine.ai_ctrl(owner);
                 assert_eq!(
-                    engine
-                        .get_entity(owner)
-                        .unwrap()
-                        .enemy_ai()
-                        .unwrap()
-                        .fleeing_seen_enemy_counter,
+                    engine.enemy(owner).fleeing_seen_enemy_counter,
                     if stimulus == StimulusType::EventReachPoint {
                         0
                     } else {
@@ -84,12 +79,8 @@ mod tests {
                         .iter()
                         .all(|site| *site == crate::sim_rng::RngSite::AiPanic)
                 );
-                let detectable = &engine
-                    .get_entity(owner)
-                    .unwrap()
-                    .npc_data()
-                    .unwrap()
-                    .detectable_lists[crate::element::DetectableType::Enemy as usize][0];
+                let detectable = &engine.npc(owner).detectable_lists
+                    [crate::element::DetectableType::Enemy as usize][0];
                 assert!(!detectable.seen_now && !detectable.seen_last_frame);
             }
         }

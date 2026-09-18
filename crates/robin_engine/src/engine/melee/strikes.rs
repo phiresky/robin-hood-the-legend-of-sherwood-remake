@@ -2770,7 +2770,7 @@ mod tests {
         let motion =
             engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Start);
         assert_eq!(motion, crate::sprite::MotionState::Start);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position_map(),
             MapPoint::new(15.0, 20.0)
@@ -2799,7 +2799,7 @@ mod tests {
             .unwrap()
             .2
             .order_id;
-        let entity = engine.get_entity_mut(victim).unwrap();
+        let entity = engine.ent_mut(victim);
         let actor = entity.actor_data_mut().unwrap();
         actor.last_execute_order_id = Some(order_id);
         actor.execute_order_initialising = false;
@@ -2813,7 +2813,7 @@ mod tests {
         let motion = engine.tick_actor_animation_for(&sim, &assets, victim);
 
         assert_eq!(motion, Some(crate::sprite::MotionState::InProgress));
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position(),
             WorldPoint3D::new(15.0, 20.0, 0.0)
@@ -2896,13 +2896,7 @@ mod tests {
             .start_sequence_level(sequence);
         engine.push_new_order(sequence, 0, OrderType::FallingPushedUpright, 0.0, 0.0);
         engine.select_sequence_element(victim, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.publish_selected_order_as_installed(victim);
     }
 
@@ -2914,11 +2908,7 @@ mod tests {
             let reference = engine.add_test_entity(falling_pushed_soldier(false));
             for display_reference in [None, Some(reference)] {
                 let victim = engine.add_test_entity(falling_pushed_soldier(false));
-                let sprite = &mut engine
-                    .get_entity_mut(victim)
-                    .unwrap()
-                    .element_data_mut()
-                    .sprite;
+                let sprite = &mut engine.elem_mut(victim).sprite;
                 sprite.display_order_ref = display_reference;
                 sprite.behind_display_order_ref = behind;
                 sprite.display_depth = -77.0;
@@ -2928,7 +2918,7 @@ mod tests {
                     MotionState::Terminated,
                 ] {
                     engine.perform_combat_flight_position(victim, motion);
-                    let sprite = engine.get_entity(victim).unwrap().sprite();
+                    let sprite = engine.ent(victim).sprite();
                     assert_eq!(sprite.display_order_ref, display_reference, "{motion:?}");
                     assert_eq!(sprite.behind_display_order_ref, behind, "{motion:?}");
                     assert_eq!(
@@ -2946,7 +2936,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_pushed_soldier(false));
         install_falling_pushed_order(&mut engine, victim);
-        let position = engine.get_entity_mut(victim).unwrap().position_iface_mut();
+        let position = engine.ent_mut(victim).position_iface_mut();
         position.set_flight_goal_and_increment(
             WorldPoint3D::new(4.0, 14.0, 0.0),
             WorldVec3D::new(-2.0, -2.0, 0.0),
@@ -2954,12 +2944,9 @@ mod tests {
             SectorHandle::new(4).and_then(SectorHandle::arena_index),
         );
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().position(),
-            WorldPoint3D::new(8.0, 18.0, 0.0)
-        );
+        assert_eq!(engine.pos_of(victim), WorldPoint3D::new(8.0, 18.0, 0.0));
         engine.perform_combat_flight_position(victim, crate::sprite::MotionState::Terminated);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         assert_eq!(
             entity.element_data().position(),
             WorldPoint3D::new(4.0, 14.0, 0.0)
@@ -3080,13 +3067,7 @@ mod tests {
             .unwrap()
             .destination_3d = [15.0, 20.0, 0.0];
         engine.select_sequence_element(victim, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.publish_selected_order_as_installed(victim);
     }
 
@@ -3107,11 +3088,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_ladder_pc(200));
         {
-            let actor = engine
-                .get_entity_mut(victim)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(victim);
             actor.wait_time = 1;
             actor.seek_target = Some(victim);
             actor.post_seek_sequence = Some(crate::sequence::Sequence::new().into_post_seek());
@@ -3125,7 +3102,7 @@ mod tests {
             crate::sprite::MotionState::InProgress,
         );
 
-        let actor = engine.get_entity(victim).unwrap().actor_data().unwrap();
+        let actor = engine.actor(victim);
         assert_eq!(actor.wait_time, 0);
         assert_eq!(actor.seek_target, Some(victim));
         assert!(actor.post_seek_sequence.is_some());
@@ -3146,8 +3123,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         let state = engine
-            .get_entity(victim_id)
-            .unwrap()
+            .ent(victim_id)
             .position_iface()
             .v48_serialized_state();
         assert_eq!(state.computed_position.bits(), 7);
@@ -3170,8 +3146,7 @@ mod tests {
         let victim_id = engine.add_test_entity(falling_pushed_soldier(true));
         let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
         engine
-            .get_entity_mut(victim_id)
-            .unwrap()
+            .ent_mut(victim_id)
             .position_iface_mut()
             .set_flight_goal_and_increment(
                 WorldPoint3D::new(15.0, 20.0, 0.0),
@@ -3181,7 +3156,7 @@ mod tests {
             );
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
@@ -3198,7 +3173,7 @@ mod tests {
             WorldVec3D::new(5.0, 0.0, 0.0)
         );
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(
             victim.element_data().position_map(),
             MapPoint::new(15.0, 20.0)
@@ -3237,7 +3212,7 @@ mod tests {
         let victim_id = engine.add_test_entity(entity);
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
@@ -3303,7 +3278,7 @@ mod tests {
         install_falling_pushed_order(&mut engine, victim_id);
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
 
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(
             victim.position_iface().get_elevation().to_bits(),
             goal_z.to_bits()
@@ -3343,7 +3318,7 @@ mod tests {
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
             crate::movement_diagnostics::take_parity_movement_capture().expect("capture started");
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().position_map(), exact_goal);
         assert_eq!(victim.position_iface().old_map_position(), near_goal);
         assert!(victim.position_iface().is_moving_map());
@@ -3367,33 +3342,15 @@ mod tests {
         crate::movement_diagnostics::begin_parity_movement_capture();
         engine.perform_combat_flight_position(earlier, crate::sprite::MotionState::InProgress);
 
+        assert_eq!(engine.map_pos_of(earlier), MapPoint::new(15.0, 20.0));
         assert_eq!(
-            engine
-                .get_entity(earlier)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
+            engine.map_pos_of(later),
             MapPoint::new(10.0, 20.0),
             "a later actor must retain its pre-update position"
         );
 
         engine.perform_combat_flight_position(later, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(later)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(later), MapPoint::new(15.0, 20.0));
         let flights =
             crate::movement_diagnostics::take_parity_flight_capture().expect("capture started");
         let _ =
@@ -3441,12 +3398,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(entity);
         install_falling_ladder_order(&mut engine, victim);
-        let installed = engine
-            .get_entity(victim)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order;
+        let installed = engine.actor(victim).installed_order;
         let motion = engine.execute_ladder_fall_position(
             &sim,
             &assets,
@@ -3454,7 +3406,7 @@ mod tests {
             crate::sprite::MotionState::InProgress,
         );
         assert_eq!(motion, crate::sprite::MotionState::Terminated);
-        let entity = engine.get_entity(victim).unwrap();
+        let entity = engine.ent(victim);
         let actor = entity.actor_data().unwrap();
         assert_eq!(
             actor.continuation.motion_state,
@@ -3502,27 +3454,13 @@ mod tests {
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
         let opponent = engine.add_test_entity(opponent_entity);
         {
-            let ai = engine
-                .get_entity_mut(opponent)
-                .unwrap()
-                .ai_controller_mut()
-                .unwrap();
+            let ai = engine.ai_ctrl_mut(opponent);
             ai.set_ai_state(crate::ai::AiState::Attacking);
             ai.current_substate = crate::ai::Substate::AttackingSwordfight;
             ai.primary_target = Some(crate::ai::AiEntityHandle::new(victim.index()));
         }
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![opponent].into();
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![victim].into();
+        engine.human_mut(victim).opponents = vec![opponent].into();
+        engine.human_mut(opponent).opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.execute_ladder_fall_position(
@@ -3534,21 +3472,11 @@ mod tests {
 
         for fighter in [victim, opponent] {
             assert!(
-                engine
-                    .get_entity(fighter)
-                    .unwrap()
-                    .human_data()
-                    .unwrap()
-                    .opponents
-                    .is_empty(),
+                engine.human(fighter).opponents.is_empty(),
                 "knockout must synchronously remove both reciprocal relationships"
             );
         }
-        let opponent_ai = engine
-            .get_entity(opponent)
-            .unwrap()
-            .ai_controller()
-            .unwrap();
+        let opponent_ai = engine.ai_ctrl(opponent);
         assert_eq!(
             opponent_ai.current_substate,
             crate::ai::Substate::AttackingQuittingSwordfight
@@ -3575,18 +3503,8 @@ mod tests {
         let mut engine = EngineInner::new();
         let victim = engine.add_test_entity(falling_ladder_pc(200));
         let opponent = engine.add_test_entity(falling_pushed_soldier(false));
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![opponent].into();
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![victim].into();
+        engine.human_mut(victim).opponents = vec![opponent].into();
+        engine.human_mut(opponent).opponents = vec![victim].into();
         install_falling_ladder_order(&mut engine, victim);
 
         engine.execute_ladder_fall_position(
@@ -3596,32 +3514,9 @@ mod tests {
             crate::sprite::MotionState::InProgress,
         );
 
-        assert!(
-            !engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .unconscious
-        );
-        assert_eq!(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![opponent]
-        );
-        assert_eq!(
-            engine
-                .get_entity(opponent)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .opponents,
-            vec![victim]
-        );
+        assert!(!engine.human(victim).unconscious);
+        assert_eq!(engine.human(victim).opponents, vec![opponent]);
+        assert_eq!(engine.human(opponent).opponents, vec![victim]);
     }
 
     #[test]
@@ -3639,23 +3534,9 @@ mod tests {
         let motion = engine
             .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         assert_eq!(motion, crate::sprite::MotionState::InProgress);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(15.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(15.0, 20.0));
         engine.perform_combat_flight_position(victim_id, crate::sprite::MotionState::Terminated);
-        assert_eq!(
-            engine
-                .get_entity(victim_id)
-                .unwrap()
-                .element_data()
-                .position_map(),
-            MapPoint::new(14.0, 20.0)
-        );
+        assert_eq!(engine.map_pos_of(victim_id), MapPoint::new(14.0, 20.0));
     }
 
     #[test]
@@ -3668,7 +3549,7 @@ mod tests {
         let motion = engine
             .perform_combat_flight_position(victim_id, crate::sprite::MotionState::InProgress);
         assert_eq!(motion, crate::sprite::MotionState::InProgress);
-        let victim = engine.get_entity(victim_id).unwrap();
+        let victim = engine.ent(victim_id);
         assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
@@ -3701,13 +3582,7 @@ mod tests {
         let attacker_id = engine.add_test_entity(attacker);
         let victim_id = engine.add_test_entity(victim);
 
-        engine
-            .get_entity_mut(attacker_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .sword_sweep
-            .victims = vec![victim_id];
+        engine.human_mut(attacker_id).sword_sweep.victims = vec![victim_id];
         engine.complete_melee_strike(
             &crate::sim_rng::test_context(),
             &assets,
@@ -3717,16 +3592,10 @@ mod tests {
         );
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
 
-        if let Entity::Soldier(soldier) = engine.get_entity_mut(victim_id).unwrap() {
+        if let Entity::Soldier(soldier) = engine.ent_mut(victim_id) {
             soldier.soldier.cached_camp = Camp::Royalists;
         }
-        engine
-            .get_entity_mut(attacker_id)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .sword_sweep
-            .victims = vec![victim_id];
+        engine.human_mut(attacker_id).sword_sweep.victims = vec![victim_id];
         engine.complete_melee_strike(
             &crate::sim_rng::test_context(),
             &assets,

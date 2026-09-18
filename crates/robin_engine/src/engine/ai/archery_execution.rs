@@ -13,20 +13,11 @@ mod tests {
 
     fn beggar_fixture(civilian: bool) -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            crate::engine::test_support::square_sector(
-                1,
-                0,
-                crate::coordinates::MapPoint::new(0.0, 0.0),
-                crate::coordinates::MapPoint::new(2000.0, 2000.0),
-            ),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::ai::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let beggar = engine.add_test_entity(if civilian {
             crate::engine::test_support::actors::make_test_civilian(
@@ -36,16 +27,8 @@ mod tests {
             make_test_pc(crate::element::Posture::SimulatingBeggar)
         });
         for (id, x) in [(owner, 100.0), (beggar, 140.0)] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_sector(Some(sector));
+            engine.place(id, crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
+            engine.elem_mut(id).set_sector(Some(sector));
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
@@ -207,19 +190,14 @@ mod tests {
         let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         let assets = LevelAssets::new();
         for (id, x) in [(owner, 100.0), (target, 1000.0)] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
+            engine.place(id, crate::coordinates::WorldPoint3D::new(x, 100.0, 0.0));
         }
         let position = engine.live_ai_position(owner);
         assert!(!engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0));
+        engine.place(
+            target,
+            crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0),
+        );
         assert!(engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
         engine
             .world

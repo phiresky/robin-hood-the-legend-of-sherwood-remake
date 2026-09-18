@@ -77,10 +77,7 @@ mod tests {
             human: Default::default(),
             pc: Default::default(),
         }));
-        let element = engine
-            .get_entity_mut(target)
-            .expect("test PC exists")
-            .element_data_mut();
+        let element = engine.elem_mut(target);
         element.set_position_map(MapPoint::new(150.0, 150.0));
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));

@@ -96,18 +96,8 @@ mod suite {
             destination.x,
             destination.y,
         ));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -229,11 +219,7 @@ mod suite {
         if fast {
             *flags |= MoveFlags::FAST;
         }
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         let sim = crate::sim_rng::test_context();
         assert!(matches!(
             engine.try_dispatch_move_path(
@@ -332,17 +318,9 @@ mod suite {
             ActionState::Waiting,
         );
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
 
-        assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
-            ActionState::HoldingShield
-        );
+        assert_eq!(engine.action_state_of(owner), ActionState::HoldingShield);
     }
 
     #[test]
@@ -355,16 +333,11 @@ mod suite {
             MapPoint::new(140.0, 100.0),
             ActionState::HoldingShield,
         );
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .shield_face_point = Some(MapPoint::new(100.0, 0.0));
+        engine.actor_mut(owner).shield_face_point = Some(MapPoint::new(100.0, 0.0));
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert!(
             matches!(
                 entity.sprite().last_action,
@@ -405,18 +378,8 @@ mod suite {
         movement
             .orders
             .push_back(Order::test_new(OrderType::WalkingWithShield, 140.0, 100.0));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -429,9 +392,9 @@ mod suite {
         );
         engine.set_actors_frozen(true);
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(
             entity.element_data().position_map(),
             MapPoint::new(100.0, 100.0)
@@ -511,18 +474,8 @@ mod suite {
         movement
             .orders
             .push_back(Order::new(action, destination.x, destination.y, order_id));
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -533,7 +486,7 @@ mod suite {
                 .unwrap(),
             Some((sequence, 0)),
         );
-        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        let owner_entity = engine.ent_mut(owner);
         owner_entity
             .element_data_mut()
             .sprite
@@ -554,12 +507,9 @@ mod suite {
         let (mut engine, owner, sequence) =
             install_blocked_upright_movement(action, initial_action_state);
 
-        engine.tick_actor_owner_envelopes(
-            &crate::sim_rng::test_context(),
-            &assets_with_test_pc_profile(),
-        );
+        engine.t_tick_actor_owner_envelopes(&assets_with_test_pc_profile());
 
-        let entity = engine.get_entity(owner).unwrap();
+        let entity = engine.ent(owner);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             expected_action_state
@@ -713,18 +663,8 @@ mod suite {
         if force {
             *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
         }
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.select_sequence_element(
             engine
                 .orders
@@ -761,12 +701,7 @@ mod suite {
             .get_element_mut(movement_sequence, 0)
             .unwrap();
         movement.command = Command::MoveOk;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .action_state = ActionState::Waiting;
+        engine.set_action_state_of(owner, ActionState::Waiting);
 
         let aborted = engine.abort_orphaned_sword_movement(
             &crate::sim_rng::test_context(),
@@ -804,11 +739,7 @@ mod suite {
         let (mut engine, owner, movement_sequence, order_id, _start) =
             install_sword_movement(false);
         let target = engine.add_test_entity(TestActor::pc(Posture::Upright).build());
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_position_map(MapPoint::new(240.0, 100.0));
+        engine.place_map(target, MapPoint::new(240.0, 100.0));
         {
             let movement = engine
                 .orders
@@ -829,11 +760,7 @@ mod suite {
             *tolerance = 10.0;
         }
         {
-            let actor = engine
-                .get_entity_mut(owner)
-                .unwrap()
-                .actor_data_mut()
-                .unwrap();
+            let actor = engine.actor_mut(owner);
             actor.last_seek_target_position = MapPoint::new(140.0, 100.0);
             actor.seek_target = Some(target);
             actor.wait_time = 0;
@@ -941,15 +868,9 @@ mod suite {
             human: HumanData::default(),
             pc: PcData::default(),
         }));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(opponent);
+        engine.human_mut(owner).opponents.push(opponent);
 
-        let owner_entity = engine.get_entity_mut(owner).unwrap();
+        let owner_entity = engine.ent_mut(owner);
         // The replay's strafe order was already initialized before its
         // blocked counter crossed the threshold. A fresh fixture order calls
         // Sprite::initialize_motion_order and resets that counter, so install
@@ -963,28 +884,15 @@ mod suite {
         position_iface.compute_increment_all(true);
         position_iface.blocked_count = 51;
 
-        engine.tick_actor_owner_envelopes(
-            &crate::sim_rng::test_context(),
-            &assets_with_test_pc_profile(),
-        );
+        engine.t_tick_actor_owner_envelopes(&assets_with_test_pc_profile());
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .action_state,
+            engine.action_state_of(owner),
             ActionState::MovingSword,
             "the Human Execute ABORTED arm does not normalize a live sword-motion state"
         );
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            engine.elem(owner).sprite.last_action,
             OrderType::StrafingLeftSword,
             "the regression drives the same terminal strafe family as Soldier 57"
         );
@@ -1008,7 +916,7 @@ mod suite {
 
         engine.tick_actor_owner_envelopes(&sim, &assets);
 
-        let owner_entity = engine.get_entity(owner).unwrap();
+        let owner_entity = engine.ent(owner);
         assert_eq!(
             owner_entity.element_data().position_map(),
             start,
@@ -1053,24 +961,12 @@ mod suite {
             "the rejected movement is already gone but deferred QuitSwordfight is not selected until manager dispatch"
         );
 
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .actor_data_mut()
-            .unwrap()
-            .continuation
-            .motion_state = crate::sprite::MotionState::Aborted;
+        engine.actor_mut(owner).continuation.motion_state = crate::sprite::MotionState::Aborted;
         let mut display = crate::engine::HostDisplayState::default();
         engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .actor_data()
-                .unwrap()
-                .continuation
-                .motion_state,
+            engine.motion_state_of(owner),
             crate::sprite::MotionState::InProgress,
             "the later accepted actor instruction must overwrite execution's ABORTED result"
         );
@@ -1089,15 +985,9 @@ mod suite {
         // Keep the sequence cleanup under test independent of subsequent
         // duty navigation in this fixture without a navigation map. Both
         // callbacks still enter Think and are logged before script refusal.
+        engine.ai_ctrl_mut(owner).script_locked = true;
         engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .script_locked = true;
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
+            .ent_mut(owner)
             .position_iface_mut()
             .set_direction_instantly(crate::position_interface::Direction::from_raw(10));
 
@@ -1107,8 +997,7 @@ mod suite {
             crate::sequence::Field::Direction,
             crate::sequence::FieldValue::Integer(9),
         );
-        let turn_sequence =
-            engine.launch_element(&crate::sim_rng::test_context(), &LevelAssets::new(), turn);
+        let turn_sequence = engine.t_launch_element(&LevelAssets::new(), turn);
         engine.postpone_element(&sim, &assets, &mut Vec::new(), turn_sequence, 0);
         engine
             .orders
@@ -1117,8 +1006,7 @@ mod suite {
             .unwrap()
             .postponed = Some(crate::sequence::SequenceElementRef::new(turn_sequence, 0));
 
-        let unrelated_sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
+        let unrelated_sequence = engine.t_launch_element(
             &LevelAssets::new(),
             SequenceElement::new(1, Command::LookLeft, Some(owner)),
         );
@@ -1201,10 +1089,7 @@ mod suite {
             "an unexecuted direction-9 Turn must not overwrite the live direction goal"
         );
         let events = engine
-            .get_entity(owner)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
+            .ai_ctrl(owner)
             .ai_log
             .iter()
             .filter(|entry| entry.line_type == crate::ai::LogLineType::Event)
@@ -1228,9 +1113,9 @@ mod suite {
     fn forced_sword_movement_without_opponents_still_performs_motion() {
         let (mut engine, owner, movement_sequence, order_id, start) = install_sword_movement(true);
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+        engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
-        let owner_entity = engine.get_entity(owner).unwrap();
+        let owner_entity = engine.ent(owner);
         assert_ne!(
             owner_entity.element_data().position_map(),
             start,
@@ -1286,7 +1171,7 @@ mod suite {
             .compute_direction = false;
 
         {
-            let owner_element = engine.get_entity_mut(owner).unwrap().element_data_mut();
+            let owner_element = engine.elem_mut(owner);
             owner_element.set_direction_instantly(7);
             owner_element.set_direction_goal(9);
         }
@@ -1297,13 +1182,7 @@ mod suite {
             initial_element.active = true;
             initial_element
         };
-        opponent_element.set_position(
-            engine
-                .get_entity(owner)
-                .expect("test owner exists")
-                .element_data()
-                .position(),
-        );
+        opponent_element.set_position(engine.pos_of(owner));
         let opponent = engine.add_test_entity(Entity::Pc(ActorPc {
             element: opponent_element,
             actor: ActorData::default(),
@@ -1313,30 +1192,16 @@ mod suite {
                 ..PcData::default()
             },
         }));
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(opponent);
+        engine.human_mut(owner).opponents.push(opponent);
 
-        engine.tick_actor_owner_envelopes(
-            &crate::sim_rng::test_context(),
-            &assets_with_test_pc_profile(),
-        );
+        engine.t_tick_actor_owner_envelopes(&assets_with_test_pc_profile());
 
         assert_eq!(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .last_action,
+            engine.elem(owner).sprite.last_action,
             OrderType::WalkingBackwardsSword,
             "opponent-facing uses a co-located opponent's literal zero vector for angle calculation, which resolves to PI"
         );
-        let owner_element = engine.get_entity(owner).unwrap().element_data();
+        let owner_element = engine.elem(owner);
         assert_eq!(
             owner_element
                 .sprite
@@ -1390,7 +1255,7 @@ mod suite {
         }));
 
         {
-            let entity = engine.get_entity_mut(owner).unwrap();
+            let entity = engine.ent_mut(owner);
             entity.human_data_mut().unwrap().opponents.push(opponent);
             let actor = entity.actor_data_mut().unwrap();
             actor.seek_target = Some(opponent);
@@ -1420,7 +1285,7 @@ mod suite {
         let assets = assets_with_test_pc_profile();
         engine.tick_actor_owner_envelopes(&sim, &assets);
 
-        let first = engine.get_entity(owner).unwrap().position_iface();
+        let first = engine.ent(owner).position_iface();
         assert_eq!(first.get_direction().as_u8(), 10);
         assert_eq!(first.v48_serialized_state().direction_count, 2);
 
@@ -1495,11 +1360,7 @@ mod suite {
         };
         *stored_destination = destination;
         *flags |= MoveFlags::FORCE_SWORD_MOVEMENT;
-        let sequence = engine.launch_element(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            movement,
-        );
+        let sequence = engine.t_launch_element(&LevelAssets::new(), movement);
         let sim = crate::sim_rng::test_context();
 
         assert!(matches!(

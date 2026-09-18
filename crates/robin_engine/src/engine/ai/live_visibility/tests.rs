@@ -1,88 +1,25 @@
 use super::*;
 use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::element::{Command, EyeStatus, Posture};
+use crate::element::{EyeStatus, Posture};
 use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
 fn fixture(radius: u16) -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let (mut engine, assets, viewer, target) =
         crate::engine::ai::battle_decision_observation_tests::fixture(false);
     for (id, x) in [(viewer, 0.0), (target, 200.0)] {
-        let entity = engine.get_entity_mut(id).unwrap();
+        let entity = engine.ent_mut(id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 0.0, 0.0));
         entity.element_data_mut().set_direction_instantly(4);
         entity.element_data_mut().active = true;
     }
-    let npc = engine
-        .get_entity_mut(viewer)
-        .unwrap()
-        .ai_actor_data_mut()
-        .unwrap();
+    let npc = engine.ent_mut(viewer).ai_actor_data_mut().unwrap();
     npc.view_radius = radius;
     npc.view_direction = [1.0, 0.0];
     npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     npc.eye_status = EyeStatus::LookForward;
     (engine, assets, viewer, target)
-}
-
-fn place(engine: &mut EngineInner, id: EntityId, point: WorldPoint3D) {
-    engine
-        .get_entity_mut(id)
-        .unwrap()
-        .element_data_mut()
-        .set_position(point);
-}
-
-fn door_position(engine: &mut EngineInner, owner: EntityId, point: MapPoint) {
-    let sector = engine
-        .get_entity(owner)
-        .unwrap()
-        .element_data()
-        .sector()
-        .unwrap();
-    let gate = crate::gate::DoorIndex::new(engine.script_domains.interactables.doors.len() as u32)
-        .unwrap();
-    engine
-        .script_domains
-        .interactables
-        .doors
-        .push(crate::gate::Door {
-            point_in: point,
-            point_out: point,
-            sector_in: crate::sector::SectorNumber::new(1),
-            sector_out: crate::sector::SectorNumber::new(1),
-            sector_in_index: sector.arena_index(),
-            sector_out_index: sector.arena_index(),
-            ..Default::default()
-        });
-    let mut element = crate::sequence::SequenceElement::new_movement(
-        1,
-        Command::PassDoor,
-        Some(owner),
-        crate::order::OrderType::WalkingUpright,
-    );
-    let crate::sequence::SequenceElementData::Movement {
-        gate_id, direction, ..
-    } = &mut element.data
-    else {
-        unreachable!()
-    };
-    *gate_id = Some(gate);
-    *direction = 1;
-    let sequence = engine.orders.sequence_manager.insert_element(element);
-    engine
-        .orders
-        .sequence_manager
-        .start_sequence_level(sequence);
-    engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
 }
 
 fn wall(x0: f32, y0: f32, x1: f32, y1: f32, top: f32) -> SightObstacle {
@@ -110,7 +47,11 @@ fn install_obstacle(engine: &mut EngineInner, assets: &mut LevelAssets, obstacle
 #[test]
 fn detection_180_uses_raw_actor_xy_instead_of_selected_door_position() {
     let (mut engine, mut assets, viewer, target) = fixture(400);
-    door_position(&mut engine, target, MapPoint::new(200.0, 30.0));
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        target,
+        MapPoint::new(200.0, 30.0),
+    );
     install_obstacle(
         &mut engine,
         &mut assets,
@@ -124,8 +65,8 @@ fn detection_180_los_preserves_stored_world_point_bits() {
     let (mut engine, assets, viewer, target) = fixture(400);
     let raw = WorldPoint3D::new(1555.9615, f32::from_bits(1143810793), 46.78665);
     assert_ne!(((raw.y - raw.z) + raw.z).to_bits(), raw.y.to_bits());
-    place(&mut engine, viewer, WorldPoint3D::new(1373.0, 595.0, 0.0));
-    place(&mut engine, target, raw);
+    engine.place(viewer, WorldPoint3D::new(1373.0, 595.0, 0.0));
+    engine.place(target, raw);
     crate::sight_obstacle::begin_parity_visibility_capture();
     assert!(engine.live_ai_detects_180(&assets, viewer, target));
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
@@ -141,14 +82,14 @@ fn detection_180_los_preserves_stored_world_point_bits() {
 #[test]
 fn detection_180_uses_live_radius_without_generic_standard_view_box() {
     let (mut engine, assets, viewer, target) = fixture(600);
-    place(&mut engine, target, WorldPoint3D::new(500.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(500.0, 0.0, 0.0));
     assert!(engine.live_ai_detects_180(&assets, viewer, target));
 }
 
 #[test]
 fn detection_180_close_sideways_shortcut_precedes_opaque_los() {
     let (mut engine, mut assets, viewer, target) = fixture(400);
-    place(&mut engine, target, WorldPoint3D::new(0.0, 20.0, 0.0));
+    engine.place(target, WorldPoint3D::new(0.0, 20.0, 0.0));
     install_obstacle(
         &mut engine,
         &mut assets,
@@ -162,7 +103,7 @@ fn detection_180_close_sideways_shortcut_precedes_opaque_los() {
 #[test]
 fn detection_180_projects_ground_radius_before_los() {
     let (mut engine, assets, viewer, target) = fixture(400);
-    place(&mut engine, target, WorldPoint3D::new(399.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(399.0, 0.0, 0.0));
     crate::sight_obstacle::begin_parity_visibility_capture();
     assert!(!engine.live_ai_detects_180(&assets, viewer, target));
     assert!(crate::sight_obstacle::take_parity_visibility_capture().is_empty());
@@ -171,18 +112,17 @@ fn detection_180_projects_ground_radius_before_los() {
 #[test]
 fn live_visibility_reuses_surface_radius_until_the_next_frame_but_never_caches_zero() {
     let (mut engine, assets, viewer, target) = fixture(100);
-    place(&mut engine, target, WorldPoint3D::new(80.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(80.0, 0.0, 0.0));
     assert!(engine.npc_is_detecting_human(&assets, viewer, target, 100));
 
     // The current radius now admits this actor, but the ground projection
     // calculated earlier in this frame still limits visibility.
     engine
-        .get_entity_mut(viewer)
-        .unwrap()
+        .ent_mut(viewer)
         .ai_actor_data_mut()
         .unwrap()
         .view_radius = 400;
-    place(&mut engine, target, WorldPoint3D::new(200.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(200.0, 0.0, 0.0));
     crate::sight_obstacle::begin_parity_visibility_capture();
     assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
     assert!(crate::sight_obstacle::take_parity_visibility_capture().is_empty());
@@ -197,11 +137,10 @@ fn live_visibility_reuses_surface_radius_until_the_next_frame_but_never_caches_z
     // At an eye height equal to the view radius, the ground sphere projects
     // to zero. A changed radius must therefore be recomputed even this frame.
     let (mut engine, assets, viewer, target) = fixture(45);
-    place(&mut engine, target, WorldPoint3D::new(30.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(30.0, 0.0, 0.0));
     assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
     engine
-        .get_entity_mut(viewer)
-        .unwrap()
+        .ent_mut(viewer)
         .ai_actor_data_mut()
         .unwrap()
         .view_radius = 400;
@@ -211,18 +150,9 @@ fn live_visibility_reuses_surface_radius_until_the_next_frame_but_never_caches_z
 #[test]
 fn detection_180_rereads_active_unconscious_target() {
     let (mut engine, assets, viewer, target) = fixture(400);
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
+    engine.human_mut(target).unconscious = true;
     assert!(engine.live_ai_detects_180(&assets, viewer, target));
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     assert!(!engine.live_ai_detects_180(&assets, viewer, target));
 }
 
@@ -244,11 +174,7 @@ fn building_sector(engine: &mut EngineInner) -> crate::position_interface::Secto
 fn standalone_180_allows_target_inside_building_while_normal_and_360_reject_it() {
     let (mut engine, assets, viewer, target) = fixture(400);
     let building = building_sector(&mut engine);
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_sector(Some(building));
+    engine.elem_mut(target).set_sector(Some(building));
     assert!(engine.live_ai_detects_180(&assets, viewer, target));
     assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
     assert!(!engine.patrol_member_visible(&assets, viewer, target));
@@ -257,53 +183,43 @@ fn standalone_180_allows_target_inside_building_while_normal_and_360_reject_it()
 #[test]
 fn detecting_360_rereads_raw_active_actor_geometry_during_door_transit() {
     let (mut engine, assets, viewer, target) = fixture(400);
-    place(&mut engine, target, WorldPoint3D::new(20.0, 0.0, 0.0));
-    door_position(&mut engine, viewer, MapPoint::new(-900.0, 0.0));
-    door_position(&mut engine, target, MapPoint::new(900.0, 0.0));
+    engine.place(target, WorldPoint3D::new(20.0, 0.0, 0.0));
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        viewer,
+        MapPoint::new(-900.0, 0.0),
+    );
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        target,
+        MapPoint::new(900.0, 0.0),
+    );
     for (posture, unconscious) in [(Posture::Upright, true), (Posture::Tied, false)] {
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .set_posture(posture);
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .unconscious = unconscious;
+        engine.elem_mut(target).set_posture(posture);
+        engine.human_mut(target).unconscious = unconscious;
         assert!(engine.patrol_member_visible(&assets, viewer, target));
     }
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     assert!(!engine.patrol_member_visible(&assets, viewer, target));
 }
 
 #[test]
 fn normal_detection_uses_raw_pass_door_geometry_and_current_active_flag() {
     let (mut engine, assets, viewer, target) = fixture(400);
-    door_position(&mut engine, viewer, MapPoint::new(-900.0, 0.0));
-    door_position(&mut engine, target, MapPoint::new(900.0, 0.0));
-    engine
-        .get_entity_mut(viewer)
-        .unwrap()
-        .element_data_mut()
-        .hidden_in_building = true;
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        viewer,
+        MapPoint::new(-900.0, 0.0),
+    );
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        target,
+        MapPoint::new(900.0, 0.0),
+    );
+    engine.elem_mut(viewer).hidden_in_building = true;
+    engine.human_mut(target).unconscious = true;
     assert!(engine.npc_is_detecting_human(&assets, viewer, target, 100));
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
 }
 
@@ -313,42 +229,23 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
         let (mut engine, assets, viewer, target) = fixture(400);
         let building = building_sector(&mut engine);
         for id in [viewer, target] {
-            engine
-                .get_entity_mut(id)
-                .unwrap()
-                .element_data_mut()
-                .set_sector(Some(building));
+            engine.elem_mut(id).set_sector(Some(building));
         }
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .element_data_mut()
-            .active = false;
+        engine.set_active(target, false);
         match gate {
-            1 => {
-                engine
-                    .get_entity_mut(target)
-                    .unwrap()
-                    .pc_data_mut()
-                    .unwrap()
-                    .life_points = 0
-            }
-            2 => {
-                engine
-                    .get_entity_mut(target)
-                    .unwrap()
-                    .human_data_mut()
-                    .unwrap()
-                    .unconscious = true
-            }
+            1 => engine.pc_mut(target).life_points = 0,
+            2 => engine.human_mut(target).unconscious = true,
             3 => {
-                door_position(&mut engine, target, MapPoint::new(200.0, 0.0));
+                crate::engine::test_support::extra_engine_combat::enter_test_door(
+                    &mut engine,
+                    target,
+                    MapPoint::new(200.0, 0.0),
+                );
             }
             4 => {
                 // Physical choreography alone does not select a PassDoor command.
                 engine
-                    .get_entity_mut(target)
-                    .unwrap()
+                    .ent_mut(target)
                     .position_iface_mut()
                     .set_door(crate::position_interface::DoorHandle::new(0).unwrap(), true);
             }
@@ -365,24 +262,20 @@ fn normal_detection_same_building_uses_current_body_and_door_gates() {
 #[test]
 fn normal_detection_projects_radius_on_current_target_obstacle_top_plane() {
     let (mut engine, mut assets, viewer, target) = fixture(400);
-    place(&mut engine, target, WorldPoint3D::new(380.0, 0.0, 0.0));
+    engine.place(target, WorldPoint3D::new(380.0, 0.0, 0.0));
     assert!(engine.npc_is_detecting_human(&assets, viewer, target, 100));
     let mut platform = wall(350.0, -20.0, 410.0, 20.0, 200.0);
     platform.obstacle_type = crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA;
     install_obstacle(&mut engine, &mut assets, platform);
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_obstacle_index(
-            crate::position_interface::ObstacleHandle::new(0),
-            Some(crate::position_interface::PlaneZCoeffs {
-                az: 0.0,
-                bz: 0.0,
-                dz: 200.0,
-            }),
-        );
-    place(&mut engine, target, WorldPoint3D::new(380.0, 0.0, 200.0));
+    engine.elem_mut(target).set_obstacle_index(
+        crate::position_interface::ObstacleHandle::new(0),
+        Some(crate::position_interface::PlaneZCoeffs {
+            az: 0.0,
+            bz: 0.0,
+            dz: 200.0,
+        }),
+    );
+    engine.place(target, WorldPoint3D::new(380.0, 0.0, 200.0));
     assert!(!engine.npc_is_detecting_human(&assets, viewer, target, 100));
 }
 
@@ -393,25 +286,18 @@ fn look_there_broadcast_uses_raw_owner_range_during_door_transit() {
         Camp::Lacklandists,
     ));
     let sector = engine
-        .get_entity(owner)
-        .unwrap()
-        .element_data()
-        .sector()
+        .sector_of(owner)
         .map(|sector| sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()));
-    engine
-        .get_entity_mut(friend)
-        .unwrap()
-        .element_data_mut()
-        .set_sector(sector);
+    engine.elem_mut(friend).set_sector(sector);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-    place(&mut engine, owner, WorldPoint3D::new(722.0, 1695.0, 160.0));
-    place(&mut engine, friend, WorldPoint3D::new(713.0, 1663.0, 250.0));
-    door_position(&mut engine, owner, MapPoint::new(1709.0, 2228.0));
-    let ai = engine
-        .get_entity_mut(friend)
-        .unwrap()
-        .enemy_ai_mut()
-        .unwrap();
+    engine.place(owner, WorldPoint3D::new(722.0, 1695.0, 160.0));
+    engine.place(friend, WorldPoint3D::new(713.0, 1663.0, 250.0));
+    crate::engine::test_support::extra_engine_combat::enter_test_door(
+        &mut engine,
+        owner,
+        MapPoint::new(1709.0, 2228.0),
+    );
+    let ai = engine.enemy_mut(friend);
     ai.base.current_state = crate::ai::AiState::Default;
     ai.base.current_substate = crate::ai::Substate::DefaultOnPost;
     let hint = crate::ai::Position {
@@ -421,7 +307,7 @@ fn look_there_broadcast_uses_raw_owner_range_during_door_transit() {
         level: 0,
     };
     engine.execute_ai_look_there(&crate::sim_rng::test_context(), &assets, owner, hint, 100);
-    let ai = engine.get_entity(friend).unwrap().enemy_ai().unwrap();
+    let ai = engine.enemy(friend);
     assert_eq!(ai.base.seek_position, hint);
     assert_eq!(
         ai.base.current_substate,

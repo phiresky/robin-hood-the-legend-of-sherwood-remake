@@ -578,21 +578,17 @@ mod movement_tests {
     use super::*;
     use crate::coordinates::{MapPoint, WorldPoint3D};
     use crate::element::{ActionState, Command};
-    use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+    use crate::engine::test_support::actors::make_test_ai_soldier;
     use crate::order::OrderType;
     use crate::sequence::{Field, FieldValue, SequenceElementData};
 
     fn fixture(animation: OrderType) -> (EngineInner, LevelAssets, EntityId) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(256, 256);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (256, 256),
+            (4000.0, 4000.0),
         );
-        let sector = crate::position_interface::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);
         entity.element_data_mut().active = true;
         entity
@@ -615,13 +611,7 @@ mod movement_tests {
     #[test]
     fn boredom_outside_on_post_does_not_read_a_retired_order() {
         let (mut engine, assets, owner) = fixture(OrderType::WaitingUpright);
-        let installed = engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .installed_order
-            .unwrap();
+        let installed = engine.actor(owner).installed_order.unwrap();
         let orders = &mut engine
             .orders
             .sequence_manager
@@ -635,12 +625,7 @@ mod movement_tests {
         // short circuit independently of the normal installed-order lifetime.
         orders.release_slot(installed.slot);
         orders.clear();
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .ai_controller_mut()
-            .unwrap()
-            .current_substate = Substate::DefaultGotoPost;
+        engine.ai_ctrl_mut(owner).current_substate = Substate::DefaultGotoPost;
 
         assert!(!engine.default_bored_live(&crate::sim_rng::test_context(), &assets, owner));
     }
@@ -1017,13 +1002,7 @@ mod movement_tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(owner, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
         assert_eq!(
             engine.live_ai_position(owner).map_point(),
             MapPoint::new(500.0, 500.0)

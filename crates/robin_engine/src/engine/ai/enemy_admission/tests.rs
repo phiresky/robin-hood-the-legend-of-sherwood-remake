@@ -88,12 +88,7 @@ fn global_freeze_discards_timer() {
 #[test]
 fn unconscious_script_driven_actor_refuses_look_there() {
     let (mut engine, assets, owner) = fixture();
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
+    engine.human_mut(owner).unconscious = true;
     engine.observation_ai_mut(owner).base.current_substate = Substate::DefaultScriptDriven;
     assert!(!admit(
         &mut engine,
@@ -138,21 +133,11 @@ fn unconsciousness_executes_state_and_eye_changes_before_return() {
 #[test]
 fn corpse_rejects_unconsciousness_without_replacing_death_state() {
     let (mut engine, assets, owner) = fixture();
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap()
-        .life_points = 0;
+    engine.npc_mut(owner).life_points = 0;
     let ai = engine.observation_ai_mut(owner);
     ai.base.current_state = AiState::Sleeping;
     ai.base.current_substate = Substate::SleepingForever;
-    let eyes = engine
-        .get_entity(owner)
-        .unwrap()
-        .ai_actor_data()
-        .unwrap()
-        .eye_status;
+    let eyes = engine.ent(owner).ai_actor_data().unwrap().eye_status;
     assert!(!admit(
         &mut engine,
         &assets,
@@ -177,7 +162,7 @@ fn corpse_rejects_unconsciousness_without_replacing_death_state() {
 #[test]
 fn carried_unconscious_actor_refuses_recovery() {
     let (mut engine, assets, owner) = fixture();
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity
         .element_data_mut()
         .publish_order_posture(Posture::Carried);
@@ -214,22 +199,8 @@ fn after_script_is_rejected_at_each_admission_gate() {
         match gate {
             0 => engine.ai.global.freeze = true,
             1 => engine.observation_ai_mut(owner).base.locks_flag_field = AiLockFlags::BUSY,
-            2 => {
-                engine
-                    .get_entity_mut(owner)
-                    .unwrap()
-                    .human_data_mut()
-                    .unwrap()
-                    .unconscious = true
-            }
-            _ => {
-                engine
-                    .get_entity_mut(owner)
-                    .unwrap()
-                    .npc_data_mut()
-                    .unwrap()
-                    .life_points = 0
-            }
+            2 => engine.human_mut(owner).unconscious = true,
+            _ => engine.npc_mut(owner).life_points = 0,
         }
         assert!(!admit(
             &mut engine,
