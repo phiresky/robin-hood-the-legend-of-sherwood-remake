@@ -306,7 +306,17 @@ impl SavePickerModalState {
             audio,
             &mut self.noise_tracker,
         );
-        match self.controller.take_action() {
+        let action = self.controller.take_action();
+        if action.is_some() || !widget_events.is_empty() {
+            tracing::trace!(
+                ?action,
+                ?widget_events,
+                buttons = ?self.controller.input.buttons,
+                capture = ?self.controller.input.capture(),
+                "save picker frame"
+            );
+        }
+        match action {
             Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
             Some(PickerAction::Accept(PickerTarget::Existing(name)))
                 if mode == SaveLoadMode::Save =>
