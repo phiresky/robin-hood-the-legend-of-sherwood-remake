@@ -26,11 +26,7 @@ fn straight_warning_assets(min_distance: u16, max_distance: u16) -> LevelAssets 
 }
 
 fn set_map_position(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
-    engine
-        .get_entity_mut(actor)
-        .expect("test actor exists")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(x, y));
+    engine.place_map(actor, MapPoint::new(x, y));
 }
 
 fn bind_animation(engine: &mut EngineInner, actor: EntityId, action: OrderType) {
@@ -55,11 +51,7 @@ fn bind_animations(engine: &mut EngineInner, actor: EntityId, actions: &[OrderTy
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0, 0, 0],
     };
-    engine
-        .get_entity_mut(actor)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(actor).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
@@ -88,14 +80,8 @@ fn install_selected_melee(
         .sequence_manager
         .push_order_on(seq_id, 0, order);
     engine.select_sequence_element(attacker, Some((seq_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq_id,
-        0,
-    );
-    let entity = engine.get_entity_mut(attacker).expect("attacker exists");
+    engine.t_element_in_progress(&assets, seq_id, 0);
+    let entity = engine.ent_mut(attacker);
     entity.element_data_mut().active = true;
     seq_id
 }
@@ -123,23 +109,13 @@ fn install_selected_smalltalk(
         .sequence_manager
         .push_order_on(seq_id, 0, order);
     engine.select_sequence_element(attacker, Some((seq_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq_id,
-        0,
-    );
-    engine
-        .get_entity_mut(attacker)
-        .expect("attacker exists")
-        .element_data_mut()
-        .active = true;
+    engine.t_element_in_progress(&assets, seq_id, 0);
+    engine.set_active(attacker, true);
     seq_id
 }
 
 fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), assets);
+    engine.t_tick_actor_owner_envelopes(assets);
 }
 
 #[test]
@@ -150,10 +126,8 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::WaitingUpright);
     let melee_sequence = install_selected_melee(&mut engine, attacker, victim);
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
+    engine.t_element_interrupted(
         &assets,
-        &mut Vec::new(),
         melee_sequence,
         0,
         crate::sequence::CascadeFlags::empty(),
@@ -173,21 +147,10 @@ fn production_owner_rejects_latent_melee_under_higher_priority_current_arm() {
         Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
     );
     engine.select_sequence_element(attacker, Some((interrupt, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        interrupt,
-        0,
-    );
+    engine.t_element_in_progress(&assets, interrupt, 0);
     run_owner_walk(&mut engine, &LevelAssets::new());
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .last_processed_order_id,
+        engine.elem(attacker).sprite.last_processed_order_id,
         order_id.get(),
         "latent melee must not suppress the actual selected generic Execute arm"
     );
@@ -204,12 +167,7 @@ fn production_owner_obeys_execution_frozen() {
         OrderType::StrikingStraightSword,
     );
     let sequence = install_selected_melee(&mut frozen_actor_engine, attacker, victim);
-    frozen_actor_engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execution_frozen = true;
+    frozen_actor_engine.actor_mut(attacker).execution_frozen = true;
     run_owner_walk(&mut frozen_actor_engine, &LevelAssets::new());
     assert_eq!(
         frozen_actor_engine
@@ -231,23 +189,9 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     set_map_position(&mut engine, victim, 40.0, 0.0);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     let sequence = install_selected_melee(&mut engine, attacker, victim);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(8);
-    let before_action_state = engine
-        .get_entity(attacker)
-        .unwrap()
-        .actor_data()
-        .unwrap()
-        .action_state;
-    let before_sprite = engine
-        .get_entity(attacker)
-        .unwrap()
-        .element_data()
-        .sprite
-        .clone();
+    engine.face(attacker, 8);
+    let before_action_state = engine.action_state_of(attacker);
+    let before_sprite = engine.elem(attacker).sprite.clone();
     let before_element = engine
         .orders
         .sequence_manager
@@ -257,7 +201,7 @@ fn frozen_all_bound_melee_animation_leaves_sprite_strike_and_order_untouched() {
     engine.set_actors_frozen(true);
     let (_, rng_trace) =
         crate::sim_rng::with_draw_trace(|| run_owner_walk(&mut engine, &LevelAssets::new()));
-    let entity = engine.get_entity(attacker).unwrap();
+    let entity = engine.ent(attacker);
     let target_direction = crate::position_interface::vector_to_sector_0_to_15(40.0, 0.0);
     assert_eq!(
         i16::from(entity.position_iface().get_direction_goal()),
@@ -307,7 +251,7 @@ fn selected_melee_start_is_not_double_advanced_by_generic_actor_execute() {
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, victim);
     run_owner_walk(&mut engine, &straight_warning_assets(0, 100));
-    let entity = engine.get_entity(attacker).unwrap();
+    let entity = engine.ent(attacker);
     assert_eq!(entity.element_data().sprite.current_frame, 0);
     assert_eq!(
         entity.actor_data().unwrap().action_state,
@@ -332,13 +276,7 @@ fn straight_start_does_not_warn_or_draw_for_out_of_range_or_nonprincipal_target(
         if nominal_target != principal {
             set_map_position(&mut engine, nominal_target, 20.0, 0.0);
         }
-        engine
-            .get_entity_mut(attacker)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents
-            .push(principal);
+        engine.human_mut(attacker).opponents.push(principal);
         bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
         install_selected_melee(&mut engine, attacker, nominal_target);
         let assets = straight_warning_assets(10, 50);
@@ -357,13 +295,7 @@ fn eligible_principal_is_warned_once_on_start_and_not_again_in_progress() {
     let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents
-        .push(principal);
+    engine.human_mut(attacker).opponents.push(principal);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, principal);
     let assets = straight_warning_assets(10, 50);
@@ -413,24 +345,14 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
     set_map_position(&mut engine, lower_slot_later, 0.0, 0.0);
     set_map_position(&mut engine, higher_slot_earlier, 0.0, 0.0);
     for victim in [lower_slot_later, higher_slot_earlier] {
-        engine
-            .get_entity_mut(victim)
-            .unwrap()
-            .element_data_mut()
-            .active = true;
+        engine.set_active(victim, true);
     }
     engine
-        .get_entity_mut(higher_slot_earlier)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
+        .human_mut(higher_slot_earlier)
         .opponents
         .push(earlier_principal);
     engine
-        .get_entity_mut(lower_slot_later)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
+        .human_mut(lower_slot_later)
         .opponents
         .push(later_principal);
     for principal in [earlier_principal, later_principal] {
@@ -439,11 +361,7 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
         // sprite timing.  These synthetic inactive duel links still need a
         // real row, just like a loaded actor profile does.
         bind_animation(&mut engine, principal, OrderType::WaitingSword);
-        engine
-            .get_entity_mut(principal)
-            .unwrap()
-            .element_data_mut()
-            .active = false;
+        engine.set_active(principal, false);
     }
 
     // Rust allocated lower_slot_later first, but the original game appended
@@ -480,18 +398,8 @@ fn lateral_start_warns_in_original_actor_creation_order_before_rng() {
         .sequence_manager
         .push_order_on(sequence, 0, order);
     engine.select_sequence_element(attacker, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.t_element_in_progress(&assets, sequence, 0);
+    engine.set_active(attacker, true);
 
     let thrust = &mut std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].thrusts
         [SwordStrike::D as usize];
@@ -528,24 +436,14 @@ fn straight_start_warns_principal_without_common_victim_filter() {
     let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents
-        .push(principal);
+    engine.human_mut(attacker).opponents.push(principal);
 
     // Straight sword-strike victim collection is deliberately unlike the
     // other strike collectors: Original considers the principal opponent and
     // distance only. In particular it does not call
     // sword-strike victim eligibility, whose first state guard rejects inactive
     // actors. Strike-warning processing applies its own downstream state rules.
-    engine
-        .get_entity_mut(principal)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(principal, false);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, principal);
 
@@ -562,18 +460,8 @@ fn straight_done_hits_principal_without_common_victim_filter() {
     let principal = engine.add_test_entity(make_test_pc(Posture::Upright));
     set_map_position(&mut engine, attacker, 0.0, 0.0);
     set_map_position(&mut engine, principal, 20.0, 0.0);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents
-        .push(principal);
-    engine
-        .get_entity_mut(principal)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.human_mut(attacker).opponents.push(principal);
+    engine.set_active(principal, false);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     install_selected_melee(&mut engine, attacker, principal);
 
@@ -606,7 +494,7 @@ fn smalltalk_done_uses_isometric_facing_for_back_hit_gate() {
     // is positive.
     set_map_position(&mut engine, victim, 60.0, 100.0);
     {
-        let victim = engine.get_entity_mut(victim).unwrap();
+        let victim = engine.ent_mut(victim);
         victim.element_data_mut().set_direction_instantly(2);
         victim.actor_data_mut().unwrap().action_state = crate::element::ActionState::WaitingSword;
     }
@@ -641,17 +529,9 @@ fn push_start_uses_original_aspect_scaled_rectangle() {
     // regression below: an unscaled unit-circle vector rejects the victim,
     // while the original game's aspect-ratio-scaled direction admits it.
     set_map_position(&mut engine, victim, 37.676_39, -3.109_62);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(victim, true);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(3);
+    engine.face(attacker, 3);
     install_selected_melee(&mut engine, attacker, victim);
 
     let mut assets = straight_warning_assets(0, 45);
@@ -688,17 +568,9 @@ fn push_done_uses_original_aspect_scaled_rectangle() {
     // Facing-vector calculation applies ASPECT_RATIO first, yielding about 5.67 and
     // admitting it inside this profile's 10-unit half-width.
     set_map_position(&mut engine, victim, 37.676_39, -3.109_62);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(victim, true);
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(3);
+    engine.face(attacker, 3);
     install_selected_melee(&mut engine, attacker, victim);
 
     let mut assets = straight_warning_assets(0, 45);
@@ -730,25 +602,15 @@ fn push_done_uses_ground_positions_but_warning_keeps_map_positions() {
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     engine
-        .get_entity_mut(attacker)
-        .unwrap()
+        .ent_mut(attacker)
         .position_iface_mut()
         .set_position(WorldPoint3D::new(0.0, 50.0, 0.0));
     engine
-        .get_entity_mut(victim)
-        .unwrap()
+        .ent_mut(victim)
         .position_iface_mut()
         .set_position(WorldPoint3D::new(0.0, 5.0, 2.0));
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(0);
+    engine.set_active(victim, true);
+    engine.face(attacker, 0);
     install_selected_melee(&mut engine, attacker, victim);
 
     let mut assets = straight_warning_assets(0, 45);
@@ -786,25 +648,15 @@ fn push_done_flat_positions_match_warning_geometry() {
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
     bind_animation(&mut engine, attacker, OrderType::StrikingStraightSword);
     engine
-        .get_entity_mut(attacker)
-        .unwrap()
+        .ent_mut(attacker)
         .position_iface_mut()
         .set_position(WorldPoint3D::new(0.0, 50.0, 0.0));
     engine
-        .get_entity_mut(victim)
-        .unwrap()
+        .ent_mut(victim)
         .position_iface_mut()
         .set_position(WorldPoint3D::new(0.0, 5.0, 0.0));
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(0);
+    engine.set_active(victim, true);
+    engine.face(attacker, 0);
     install_selected_melee(&mut engine, attacker, victim);
 
     let mut assets = straight_warning_assets(0, 45);
@@ -837,25 +689,17 @@ fn smalltalk_done_uses_ground_positions_for_back_hit_gate() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_pc(Posture::Upright));
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position(WorldPoint3D::new(1.0, 0.0, 10.0));
+    engine.place(attacker, WorldPoint3D::new(0.0, 0.0, 0.0));
+    engine.place(victim, WorldPoint3D::new(1.0, 0.0, 10.0));
     {
-        let victim = engine.get_entity_mut(victim).unwrap();
+        let victim = engine.ent_mut(victim);
         victim.element_data_mut().set_direction_instantly(13);
         victim.actor_data_mut().unwrap().action_state = crate::element::ActionState::WaitingSword;
     }
 
     let [dx, dy] = crate::position_interface::sector_to_vector_iso(13);
-    let attacker_entity = engine.get_entity(attacker).unwrap();
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let attacker_entity = engine.ent(attacker);
+    let victim_entity = engine.ent(victim);
     let attacker_map = attacker_entity.element_data().position_map();
     let victim_map = victim_entity.element_data().position_map();
     let attacker_ground = attacker_entity.ground_position();
@@ -913,10 +757,8 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
         elem_idx: 0,
         order_id,
     };
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
+    engine.t_element_interrupted(
         &assets,
-        &mut Vec::new(),
         melee_sequence,
         0,
         crate::sequence::CascadeFlags::empty(),
@@ -936,24 +778,10 @@ fn same_owner_replacement_after_selection_cancels_melee_execute_arm() {
         Order::new(OrderType::WaitingUpright, 0.0, 0.0, order_id),
     );
     engine.select_sequence_element(owner, Some((replacement, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        replacement,
-        0,
-    );
+    engine.t_element_in_progress(&assets, replacement, 0);
     engine.tick_selected_melee_owner(&crate::sim_rng::test_context(), &assets, owner, selected);
 
-    assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        0
-    );
+    assert_eq!(engine.elem(attacker).sprite.current_frame, 0);
 }
 
 /// Build a Lacklandist enemy soldier for the learning-by-looking tests.
@@ -966,7 +794,7 @@ fn learning_test_soldier(engine: &mut EngineInner) -> EntityId {
     s.soldier.cached_camp = crate::element::Camp::Lacklandists;
     s.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
     let id = engine.add_test_entity(soldier);
-    let entity = engine.get_entity_mut(id).expect("test soldier exists");
+    let entity = engine.ent_mut(id);
     let Entity::Soldier(s) = entity else {
         unreachable!()
     };
@@ -1007,12 +835,7 @@ fn learning_by_looking_uses_difficulty_modified_fighting_ability() {
 
     engine.make_bad_sword_strike_experience(&assets, learner, SwordStrike::H, true);
 
-    let friend_known = engine
-        .get_entity(friend)
-        .unwrap()
-        .enemy_ai()
-        .unwrap()
-        .known_enemy_strike_1;
+    let friend_known = engine.enemy(friend).known_enemy_strike_1;
     assert_eq!(
         friend_known,
         Some(SwordStrike::H),
@@ -1035,12 +858,7 @@ fn learning_by_looking_respects_unmodified_ability_on_medium() {
 
     engine.make_bad_sword_strike_experience(&assets, learner, SwordStrike::H, true);
 
-    let friend_known = engine
-        .get_entity(friend)
-        .unwrap()
-        .enemy_ai()
-        .unwrap()
-        .known_enemy_strike_1;
+    let friend_known = engine.enemy(friend).known_enemy_strike_1;
     assert_eq!(
         friend_known, None,
         "a raw fighting ability of 40 stays below the learning-by-looking gate on Medium"

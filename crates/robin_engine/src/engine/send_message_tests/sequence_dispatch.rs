@@ -36,7 +36,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
         Some(&0),
         "nested LockAI sequence completed and resumed before parent Unblip"
     );
-    let actor = engine.get_entity(ordering_id).expect("ordering actor");
+    let actor = engine.ent(ordering_id);
     assert!(!actor.element_data().blipped, "parent tail eventually ran");
     assert!(
         actor
@@ -52,11 +52,7 @@ fn child_dispatch_failure_leaves_parent_successor_unexecuted() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     let failure_id = engine.add_test_entity(scripted_soldier("FailureReceiver"));
-    engine
-        .get_entity_mut(failure_id)
-        .unwrap()
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(failure_id).blipped = true;
     let failure_handle = bind_script_actor(&mut engine, failure_id, "FailureReceiver");
     let missing_id = engine.add_test_entity(scripted_soldier(""));
     let missing_handle = ScriptHandleCodec::actor_handle(missing_id);
@@ -98,11 +94,7 @@ fn child_dispatch_failure_leaves_parent_successor_unexecuted() {
     assert!(child_send.is_some(), "only the actual child is Impossible");
     assert!(parent_unblip.is_some(), "parent Unblip remains unexecuted");
     assert!(
-        engine
-            .get_entity(failure_id)
-            .unwrap()
-            .element_data()
-            .blipped,
+        engine.elem(failure_id).blipped,
         "parent successor must not execute after the child error"
     );
 }
@@ -118,11 +110,7 @@ fn open_scroll_terminates_before_nested_child_failure() {
     let scroll_id = engine.add_test_entity(Entity::Scroll(scroll));
     let scroll_handle = ScriptHandleCodec::actor_handle(scroll_id);
     let reader_id = engine.add_test_entity(scripted_soldier(""));
-    engine
-        .get_entity_mut(reader_id)
-        .expect("reader")
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(reader_id).blipped = true;
 
     engine
         .scripts
@@ -174,11 +162,7 @@ fn open_scroll_terminates_before_nested_child_failure() {
         "only the nested SendMessage child is Impossible"
     );
     assert!(
-        engine
-            .get_entity(reader_id)
-            .expect("reader")
-            .element_data()
-            .blipped,
+        engine.elem(reader_id).blipped,
         "the parent successor was not executed after the error"
     );
 }
@@ -187,11 +171,7 @@ fn open_scroll_terminates_before_nested_child_failure() {
 fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor() {
     let (mut engine, reader_id, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    engine
-        .get_entity_mut(reader_id)
-        .expect("reader")
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(reader_id).blipped = true;
 
     let mut scroll = crate::element::ElementScroll::default();
     scroll.element.kind = ElementKind::ObjectScroll;
@@ -239,11 +219,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
         "sequence failure cancels the unstarted successor without dispatching it"
     );
     assert!(
-        engine
-            .get_entity(reader_id)
-            .expect("reader")
-            .element_data()
-            .blipped,
+        engine.elem(reader_id).blipped,
         "the Unblip successor must not execute after local OpenScroll failure"
     );
 }

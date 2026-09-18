@@ -2797,7 +2797,6 @@ mod sequence_phase_context_tests {
     fn unconscious_human_rejection_precedes_transition_order_allocation() {
         use crate::sequence::{SequenceElement, SequenceState};
 
-        let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut soldier = unconscious_lying_soldier();
         soldier
@@ -2805,17 +2804,12 @@ mod sequence_phase_context_tests {
             .expect("test soldier is an actor")
             .execution_frozen = true;
         let owner = engine.add_test_entity(soldier);
-        let sequence = engine.launch_element(
-            &sim,
+        let sequence = engine.t_launch_element(
             &LevelAssets::default(),
             SequenceElement::new(1, Command::LookRight, Some(owner)),
         );
 
-        engine.hourglass_phase_sequences(
-            &sim,
-            &mut HostDisplayState::default(),
-            &LevelAssets::default(),
-        );
+        engine.t_hourglass_phase_sequences(&LevelAssets::default());
 
         let element = engine
             .orders
@@ -2844,11 +2838,9 @@ mod sequence_phase_context_tests {
     fn postponed_wait_remains_admissible_for_unconscious_human() {
         use crate::sequence::{SequenceElement, SequenceState};
 
-        let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(unconscious_lying_soldier());
-        let sequence = engine.launch_element(
-            &sim,
+        let sequence = engine.t_launch_element(
             &LevelAssets::default(),
             SequenceElement::new(1, Command::Wait, Some(owner)),
         );
@@ -2859,11 +2851,7 @@ mod sequence_phase_context_tests {
             .expect("queued wait")
             .state = SequenceState::Postponed;
 
-        engine.hourglass_phase_sequences(
-            &sim,
-            &mut HostDisplayState::default(),
-            &LevelAssets::default(),
-        );
+        engine.t_hourglass_phase_sequences(&LevelAssets::default());
 
         assert!(
             !engine.human_instruct_rejects_command(owner, Command::Wait),
@@ -2995,11 +2983,7 @@ mod sequence_phase_context_tests {
         // removing the NPC-only synthetic pre-set.
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
-        engine
-            .get_entity_mut(owner)
-            .expect("PC owner exists")
-            .element_data_mut()
-            .set_direction_goal(7);
+        engine.elem_mut(owner).set_direction_goal(7);
         let antagonist =
             engine.add_test_entity(interaction_object(crate::element::ObjectType::Coin));
         let seq_id = engine.orders.sequence_manager.insert_element(
@@ -3185,7 +3169,6 @@ mod sequence_phase_context_tests {
     fn live_hourglass_keeps_later_actor_work_observable() {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(object_interaction_soldier(0));
-        let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let mut damage = crate::sequence::SequenceElement::new_generic(
             1,
@@ -3193,12 +3176,12 @@ mod sequence_phase_context_tests {
             Some(owner),
         );
         damage.priority = crate::sequence::SequencePriority::Injury;
-        let damage_sequence = engine.launch_element(&sim, &assets, damage);
+        let damage_sequence = engine.t_launch_element(&assets, damage);
 
         let mut enter =
             crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        engine.launch_element(&sim, &assets, enter);
+        engine.t_launch_element(&assets, enter);
         assert!(matches!(
             engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
@@ -3221,13 +3204,12 @@ mod sequence_phase_context_tests {
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let sim = crate::sim_rng::test_context();
         let owner = engine.add_test_entity(shield_pc(crate::element::ActionState::Waiting));
         engine.players.seats[0].selection = vec![owner];
         let mut character =
             SequenceElement::new_generic(1, Command::CharacterAvailable, Some(owner));
         character.set_property(Field::CharacterAvailable, FieldValue::Bool(false));
-        engine.launch_element(&sim, &assets, character);
+        engine.t_launch_element(&assets, character);
         assert!(engine.players.seats[0].selection.is_empty());
         let pc = engine.get_entity(owner).and_then(Entity::pc_data).unwrap();
         assert!(!pc.playable);
@@ -3301,14 +3283,7 @@ mod sequence_phase_context_tests {
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         engine.select_sequence_element(owner, None);
-        let handled = engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            seq_id,
-            0,
-        );
+        let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
         assert!(handled);
         let element = engine
@@ -3321,7 +3296,7 @@ mod sequence_phase_context_tests {
             element.orders.front().map(|order| order.order_type),
             Some(OrderType::RaisingShield)
         );
-        let owner_entity = engine.get_entity(owner).expect("shield owner exists");
+        let owner_entity = engine.ent(owner);
         assert_eq!(
             owner_entity.element_data().posture(),
             crate::element::Posture::Upright
@@ -3348,14 +3323,7 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .start_sequence_level(instant_seq);
         engine.select_sequence_element(owner, None);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            instant_seq,
-            0,
-        );
+        engine.t_instruct_owner(&assets, owner, instant_seq, 0);
         let instant = engine
             .orders
             .sequence_manager
@@ -3384,21 +3352,9 @@ mod sequence_phase_context_tests {
             .orders
             .sequence_manager
             .start_sequence_level(lower_seq);
-        engine
-            .get_entity_mut(owner)
-            .expect("shield owner exists")
-            .actor_data_mut()
-            .expect("shield owner has actor data")
-            .action_state = ActionState::HoldingShield;
+        engine.set_action_state_of(owner, ActionState::HoldingShield);
         engine.select_sequence_element(owner, None);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            lower_seq,
-            0,
-        );
+        engine.t_instruct_owner(&assets, owner, lower_seq, 0);
         let lower = engine
             .orders
             .sequence_manager
@@ -3419,14 +3375,7 @@ mod sequence_phase_context_tests {
             .sequence_manager
             .start_sequence_level(parry_seq);
         engine.select_sequence_element(owner, None);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            parry_seq,
-            0,
-        );
+        engine.t_instruct_owner(&assets, owner, parry_seq, 0);
         let parry = engine
             .orders
             .sequence_manager
@@ -3484,14 +3433,7 @@ mod sequence_phase_context_tests {
             .initialize_transition_orders();
 
         engine.select_sequence_element(owner, None);
-        engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            seq_id,
-            0,
-        );
+        engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
         let element = engine
             .orders
@@ -3528,24 +3470,14 @@ mod sequence_phase_context_tests {
         for command in [Command::StandUp, Command::Recover] {
             let mut engine = EngineInner::new();
             let owner = engine.add_test_entity(shield_pc(ActionState::Waiting));
-            engine
-                .get_entity_mut(owner)
-                .expect("recovery owner exists")
-                .set_posture(Posture::Lying);
+            engine.ent_mut(owner).set_posture(Posture::Lying);
             let mut recovery = SequenceElement::new(1, command, Some(owner));
             recovery.priority = crate::sequence::SequencePriority::Normal;
             let seq_id = engine.orders.sequence_manager.insert_element(recovery);
             engine.orders.sequence_manager.start_sequence_level(seq_id);
 
             engine.select_sequence_element(owner, None);
-            engine.instruct_owner(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::default(),
-                &mut Vec::new(),
-                owner,
-                seq_id,
-                0,
-            );
+            engine.t_instruct_owner(&LevelAssets::default(), owner, seq_id, 0);
 
             let element = engine
                 .orders
@@ -3585,14 +3517,7 @@ mod sequence_phase_context_tests {
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         engine.select_sequence_element(owner, None);
-        let handled = engine.instruct_owner(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            owner,
-            seq_id,
-            0,
-        );
+        let handled = engine.t_instruct_owner(&assets, owner, seq_id, 0);
 
         assert!(handled);
         let element = engine
@@ -3631,7 +3556,7 @@ mod sequence_phase_context_tests {
         );
         raise.set_property(Field::ShieldDangerPointLayer, FieldValue::Integer(3));
         raise.set_property(Field::ShieldProtected, FieldValue::Element(protected));
-        let raise_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, raise);
+        let raise_seq = engine.t_launch_element(&assets, raise);
         assert!(matches!(
             engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
@@ -3666,8 +3591,7 @@ mod sequence_phase_context_tests {
             }
             data => panic!("shield follow-up must be movement, got {data:?}"),
         }
-        let follow_up_seq =
-            engine.launch_element(&crate::sim_rng::test_context(), &assets, follow_up);
+        let follow_up_seq = engine.t_launch_element(&assets, follow_up);
 
         // The original game's manager tick is a live while-loop. A normal
         // Move/Seek registered from the current instruction callback therefore
@@ -3688,11 +3612,7 @@ mod sequence_phase_context_tests {
                 .is_none()
         );
 
-        let owner_pc = engine
-            .get_entity(owner)
-            .expect("shield owner exists")
-            .pc_data()
-            .expect("shield owner is a PC");
+        let owner_pc = engine.pc(owner);
         assert_eq!(owner_pc.shield_protected, Some(protected));
         assert_eq!(owner_pc.shield_danger_point_layer, 3);
         assert_eq!(owner_pc.shield_danger_point.z, 7.0);

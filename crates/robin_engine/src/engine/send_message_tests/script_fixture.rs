@@ -12,16 +12,12 @@ fn freeze_toggling_scroll_class(class_name: &str, frozen: bool) -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: class_name.into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "Hourglass".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -31,96 +27,75 @@ fn freeze_toggling_scroll_class(class_name: &str, frozen: bool) -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
 fn receiver_class() -> ClassEntry {
     let process_message = Function {
         name: "ProcessMessage".into(),
-        address: 0,
         num_parameters: 3,
-        size_of_return_value: 0,
         size_of_parameters: 12,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     let trigger_self = Function {
         name: "TriggerSelf".into(),
         address: 8,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 12,
+        ..Default::default()
     };
     let trigger_honolulu = Function {
         name: "TriggerHonolulu".into(),
         address: 27,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     let trigger_life = Function {
         name: "TriggerLife".into(),
         address: 38,
-        num_parameters: 0,
         size_of_return_value: 4,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 12,
+        ..Default::default()
     };
     let trigger_concussion = Function {
         name: "TriggerConcussion".into(),
         address: 53,
-        num_parameters: 0,
         size_of_return_value: 4,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 12,
+        ..Default::default()
     };
     let trigger_relay = Function {
         name: "TriggerRelay".into(),
         address: 68,
         num_parameters: 1,
-        size_of_return_value: 0,
         size_of_parameters: 4,
-        size_of_volatile: 0,
         size_of_temporary: 16,
+        ..Default::default()
     };
     let trigger_posture = Function {
         name: "TriggerPosture".into(),
         address: 91,
-        num_parameters: 0,
         size_of_return_value: 4,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     let trigger_timer = Function {
         name: "TriggerTimer".into(),
         address: 103,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 4,
+        ..Default::default()
     };
     let trigger_action_state = Function {
         name: "TriggerActionState".into(),
         address: 111,
-        num_parameters: 0,
         size_of_return_value: 4,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "MessageReceiver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![
             process_message,
             trigger_self,
@@ -273,24 +248,21 @@ fn receiver_class() -> ClassEntry {
             return_value(TMP1),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
 fn relay_class() -> ClassEntry {
     let relay_process_message = Function {
         name: "ProcessMessage".into(),
-        address: 0,
         num_parameters: 3,
-        size_of_return_value: 0,
         size_of_parameters: 12,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "RelayReceiver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![relay_process_message],
         quads: vec![
             begin_function(2),
@@ -302,42 +274,33 @@ fn relay_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
 fn ordering_class() -> ClassEntry {
     let ordering_process_message = Function {
         name: "ProcessMessage".into(),
-        address: 0,
         num_parameters: 3,
-        size_of_return_value: 0,
         size_of_parameters: 12,
-        size_of_volatile: 0,
         size_of_temporary: 12,
+        ..Default::default()
     };
     let ordering_trigger = Function {
         name: "TriggerParentOrder".into(),
         address: 23,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     let ordering_next_level = Function {
         name: "TriggerNextLevel".into(),
         address: 36,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 12,
+        ..Default::default()
     };
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "OrderingReceiver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![
             ordering_process_message,
             ordering_trigger,
@@ -412,6 +375,7 @@ fn ordering_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -419,16 +383,12 @@ fn target_ordering_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "TargetOrdering".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "ActivatedByArrow".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -438,6 +398,7 @@ fn target_ordering_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -445,16 +406,12 @@ fn move_ordering_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "MoveOrdering".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 12,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(3),
@@ -470,6 +427,7 @@ fn move_ordering_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -477,16 +435,12 @@ fn scroll_observer_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "ScrollObserver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(2),
@@ -499,6 +453,7 @@ fn scroll_observer_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -506,16 +461,12 @@ fn self_deactivating_scroll_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "SelfDeactivatingScroll".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "Hourglass".into(),
-            address: 0,
             num_parameters: 1,
-            size_of_return_value: 0,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 4,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(1),
@@ -526,6 +477,7 @@ fn self_deactivating_scroll_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -533,26 +485,19 @@ fn scroll_relay_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "ScrollRelay".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![
             Function {
                 name: "TriggerScroll".into(),
-                address: 0,
                 num_parameters: 1,
-                size_of_return_value: 0,
                 size_of_parameters: 4,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
             Function {
                 name: "TriggerOwnerless".into(),
                 address: 14,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
         ],
         quads: vec![
@@ -585,33 +530,27 @@ fn scroll_relay_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
 fn startup_class() -> ClassEntry {
     let global_process_message = Function {
         name: "ProcessMessage".into(),
-        address: 0,
         num_parameters: 3,
-        size_of_return_value: 0,
         size_of_parameters: 12,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     let global_hourglass = Function {
         name: "Hourglass".into(),
         address: 14,
-        num_parameters: 0,
-        size_of_return_value: 0,
-        size_of_parameters: 0,
-        size_of_volatile: 0,
         size_of_temporary: 8,
+        ..Default::default()
     };
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![global_process_message, global_hourglass],
         quads: vec![
             begin_function(2),
@@ -637,6 +576,7 @@ fn startup_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -644,16 +584,12 @@ fn recursive_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "RecursiveReceiver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(2),
@@ -666,6 +602,7 @@ fn recursive_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -678,30 +615,23 @@ fn heap_a_class() -> ClassEntry {
         functions: vec![
             Function {
                 name: "ProcessMessage".into(),
-                address: 0,
                 num_parameters: 3,
-                size_of_return_value: 0,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
-                size_of_temporary: 0,
+                ..Default::default()
             },
             Function {
                 name: "TriggerSelf".into(),
                 address: 4,
-                num_parameters: 0,
-                size_of_return_value: 0,
-                size_of_parameters: 0,
-                size_of_volatile: 0,
                 size_of_temporary: 12,
+                ..Default::default()
             },
             Function {
                 name: "TriggerRelay".into(),
                 address: 19,
                 num_parameters: 1,
-                size_of_return_value: 0,
                 size_of_parameters: 4,
-                size_of_volatile: 0,
                 size_of_temporary: 16,
+                ..Default::default()
             },
         ],
         quads: vec![
@@ -759,12 +689,10 @@ fn heap_b_class() -> ClassEntry {
         member_variables: Vec::new(),
         functions: vec![Function {
             name: "ProcessMessage".into(),
-            address: 0,
             num_parameters: 3,
-            size_of_return_value: 0,
             size_of_parameters: 12,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             begin_function(2),
@@ -785,26 +713,21 @@ fn failure_receiver_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "FailureReceiver".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![
             Function {
                 name: "ProcessMessage".into(),
-                address: 0,
                 num_parameters: 3,
-                size_of_return_value: 0,
                 size_of_parameters: 12,
-                size_of_volatile: 0,
                 size_of_temporary: 8,
+                ..Default::default()
             },
             Function {
                 name: "TriggerFailure".into(),
                 address: 8,
                 num_parameters: 1,
-                size_of_return_value: 0,
                 size_of_parameters: 4,
-                size_of_volatile: 0,
                 size_of_temporary: 16,
+                ..Default::default()
             },
         ],
         quads: vec![
@@ -838,6 +761,7 @@ fn failure_receiver_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -845,16 +769,13 @@ fn open_scroll_failure_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "OpenScrollFailure".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "IsTaken".into(),
-            address: 0,
             num_parameters: 1,
             size_of_return_value: 4,
             size_of_parameters: 4,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         }],
         quads: vec![
             // The ScrollReader parameter is a valid actor with no bound VM.
@@ -869,6 +790,7 @@ fn open_scroll_failure_class() -> ClassEntry {
             return_value(TMP0),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 
@@ -876,20 +798,16 @@ fn open_scroll_local_failure_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "OpenScrollLocalFailure".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "IsTaken".into(),
-            address: 0,
             num_parameters: 1,
             size_of_return_value: 4,
             size_of_parameters: 4,
-            size_of_volatile: 0,
-            size_of_temporary: 0,
+            ..Default::default()
         }],
         // The declared function has no instruction at address zero, making
         // this a direct local RanOff failure rather than a descendant action.
-        quads: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -897,8 +815,6 @@ fn yielding_flavor_class() -> ClassEntry {
     ClassEntry {
         source_file: "send_message_test.scs".into(),
         class_name: "YieldingFlavor".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![
             ("Initialize", 0),
             ("EnterZone", 1),
@@ -912,10 +828,9 @@ fn yielding_flavor_class() -> ClassEntry {
             name: name.into(),
             address: if name == "EmitEffect" { 8 } else { 0 },
             num_parameters,
-            size_of_return_value: 0,
             size_of_parameters: num_parameters * 4,
-            size_of_volatile: 0,
             size_of_temporary: 8,
+            ..Default::default()
         })
         .collect(),
         quads: vec![
@@ -934,6 +849,7 @@ fn yielding_flavor_class() -> ClassEntry {
             quad(Opcode::Return),
             quad(Opcode::EndFunction),
         ],
+        ..Default::default()
     }
 }
 

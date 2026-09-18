@@ -7,7 +7,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
 
     let mut engine = EngineInner::new();
     let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
+    let Entity::Pc(pc_entity) = engine.ent_mut(pc) else {
         panic!("noise PC changed kind")
     };
     pc_entity.element.active = true;
@@ -18,11 +18,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
     // An unclassified animation reaches the noise refresh's common tail:
     // volume zero and a +/-100 box around the current position.
     engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::Invalid);
-    let initial_box = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor")
-        .hear_noise_box;
+    let initial_box = engine.actor(pc).hear_noise_box;
     assert_eq!(
         initial_box,
         crate::coordinates::MapBBox::from_coords(0.0, 100.0, 200.0, 300.0)
@@ -31,7 +27,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
     // Original's breath arm updates the noise position and volume, then
     // returns before rebuilding the heard-noise bounds. Preserve both halves of
     // that deliberately inconsistent state after the PC moves.
-    let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
+    let Entity::Pc(pc_entity) = engine.ent_mut(pc) else {
         unreachable!()
     };
     pc_entity
@@ -39,10 +35,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
         .set_position_map(MapPoint::new(210.0, 220.0));
     engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::WaitingUpright);
 
-    let actor = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor");
+    let actor = engine.actor(pc);
     let noise = actor
         .produced_noise
         .expect("quiet refresh still publishes the current noise record");
@@ -65,8 +58,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     let member = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     for id in [chief, member] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("patrol soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("patrol soldier changed kind")
         };
         soldier.element.active = true;
@@ -84,7 +76,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
         y: 0.0,
         ..Position::default()
     };
-    let Entity::Soldier(chief_entity) = engine.get_entity_mut(chief).unwrap() else {
+    let Entity::Soldier(chief_entity) = engine.ent_mut(chief) else {
         unreachable!()
     };
     chief_entity
@@ -119,7 +111,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
             },
         ],
     });
-    let Entity::Soldier(member_entity) = engine.get_entity_mut(member).unwrap() else {
+    let Entity::Soldier(member_entity) = engine.ent_mut(member) else {
         unreachable!()
     };
     member_entity
@@ -136,7 +128,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
         engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
     });
 
-    let member_entity = engine.get_entity(member).unwrap();
+    let member_entity = engine.ent(member);
     let member_ai = member_entity.ai_controller().unwrap();
     assert_ne!(
         member_ai.current_substate,
@@ -160,7 +152,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
     let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let member = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
-    let Entity::Soldier(chief_entity) = engine.get_entity_mut(chief).unwrap() else {
+    let Entity::Soldier(chief_entity) = engine.ent_mut(chief) else {
         unreachable!()
     };
     chief_entity.element.active = false;
@@ -184,10 +176,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
 
     assert_eq!(
         engine
-            .get_entity(chief)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
+            .ai_ctrl(chief)
             .patrol_path
             .as_ref()
             .unwrap()
@@ -230,7 +219,7 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
             layer_in: 3,
             ..Door::default()
         }];
-        let owner = engine.get_entity_mut(npc_id).unwrap();
+        let owner = engine.ent_mut(npc_id);
         owner
             .element_data_mut()
             .set_position_map(MapPoint::new(21.0, 31.0));
@@ -260,13 +249,7 @@ fn ambush_owner_inputs_preserve_committed_door_side() {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(npc_id, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
 
         let position = engine.live_ai_position(npc_id);
         assert_eq!(
@@ -295,11 +278,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
         id: 0,
     }];
     for iq in [30, 100] {
-        let enemy = engine
-            .get_entity_mut(npc_id)
-            .unwrap()
-            .enemy_ai_mut()
-            .unwrap();
+        let enemy = engine.enemy_mut(npc_id);
         crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
             profile.intelligence = iq
         });
@@ -307,7 +286,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
         enemy.ambush_point_array_reset = false;
         enemy.ambush_point_status = vec![AmbushPointStatus::Near];
         engine.tick_refresh_ambush_points_for_npc(&sim, npc_id, &assets);
-        let enemy = engine.get_entity(npc_id).unwrap().enemy_ai().unwrap();
+        let enemy = engine.enemy(npc_id);
         assert_eq!(enemy.ambush_point_array_reset, iq > 30);
         assert_eq!(
             enemy.ambush_point_status,
@@ -330,8 +309,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = engine.test_runtime_assets();
-    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ambush owner exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(npc_id) else {
         panic!("ambush owner changed kind")
     };
     soldier.element.active = true;
@@ -361,10 +339,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
 
     engine.tick_refresh_ambush_points_for_npc(sim, npc_id, &assets);
 
-    let enemy = engine
-        .get_entity(npc_id)
-        .and_then(Entity::enemy_ai)
-        .expect("ambush owner retains enemy AI");
+    let enemy = engine.enemy(npc_id);
     assert_eq!(
         enemy.base.current_substate,
         Substate::SeekingSeekpointCheckingAmbushPoint
@@ -388,19 +363,13 @@ fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     engine.control.frame_counter = u32::MAX - 10;
-    let ai = engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("overflow-timer owner has AI");
+    let ai = engine.ai_ctrl_mut(npc_id);
     ai.timer_is_running = true;
     ai.when_does_timer_ring = u32::MAX - 5;
     ai.substate_at_last_timer_launch = ai.current_substate;
 
     engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("overflow-timer owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(
         !ai.timer_is_running || ai.when_does_timer_ring != u32::MAX - 5,
         "the wrapped million-frame guard must consume the apparently-future timer"
@@ -416,7 +385,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
-    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("FIFO owner exists") else {
+    let Entity::Soldier(soldier) = engine.ent_mut(npc_id) else {
         panic!("FIFO owner changed kind")
     };
     soldier.element.publish_order_posture(Posture::OnLadder);
@@ -430,10 +399,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     ];
 
     engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("FIFO owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(ai.locks_flag_field.contains(AiLockFlags::BUSY));
     assert_eq!(
         ai.stimulus_queue
@@ -468,7 +434,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
     engine.world.fast_grid_mut().size_map(64, 64);
     engine.world.fast_grid_mut().allocate_layers(1);
     let sector = crate::position_interface::SectorHandle::new(1).unwrap();
-    let Entity::Civilian(civilian) = engine.get_entity_mut(npc_id).unwrap() else {
+    let Entity::Civilian(civilian) = engine.ent_mut(npc_id) else {
         panic!("retained panic owner changed kind")
     };
     civilian.element.active = true;
@@ -517,10 +483,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
         with_draw_trace(|| engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets));
 
     assert_eq!(draws, vec![RngSite::AiPanic, RngSite::AiPanic]);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("retained panic owner keeps AI");
+    let ai = engine.ai_ctrl(npc_id);
     let events = ai
         .ai_log
         .iter()
@@ -558,7 +521,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             (source_id, receiver_id)
         };
         for id in [source_id, receiver_id] {
-            let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("LOOKTHERE test NPC changed kind")
             };
             soldier.element.active = true;
@@ -567,10 +530,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             soldier.npc.direction_old = 4;
         }
         {
-            let receiver = engine
-                .get_entity_mut(receiver_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap();
+            let receiver = engine.ai_ctrl_mut(receiver_id);
             // Recipient selection happened while this soldier was eligible,
             // but an earlier synchronous callback then changed its state.
             // CALL_LOOKTHERE itself is unconditional in the Original.
@@ -602,10 +562,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             }
         });
 
-        let receiver = engine
-            .get_entity(receiver_id)
-            .and_then(Entity::npc_data)
-            .unwrap();
+        let receiver = engine.npc(receiver_id);
         let receiver_ai = receiver.ai_brain.base().unwrap();
         assert_eq!(receiver_ai.current_state, AiState::Wondering);
         assert_eq!(receiver_ai.current_substate, Substate::WonderingWatching);
@@ -637,15 +594,11 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     let mut engine = EngineInner::new();
     let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    engine
-        .get_entity_mut(npc_id)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(npc_id, true);
     let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
 
-    let Entity::Soldier(npc) = engine.get_entity_mut(npc_id).unwrap() else {
+    let Entity::Soldier(npc) = engine.ent_mut(npc_id) else {
         unreachable!()
     };
     npc.element.publish_order_posture(Posture::Lying);
@@ -663,11 +616,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     ai.current_state = AiState::Sleeping;
     ai.current_substate = Substate::SleepingUnconscious;
 
-    let observer = engine
-        .get_entity_mut(observer_id)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap();
+    let observer = engine.npc_mut(observer_id);
     observer.detectable_lists[crate::element::DetectableType::Body as usize].push(
         crate::element::Detectable {
             element: Some(npc_id),
@@ -682,17 +631,12 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
         engine.tick_actor_owner_envelopes(sim, &assets)
     });
 
-    let npc = engine.get_entity(npc_id).unwrap();
+    let npc = engine.ent(npc_id);
     assert_eq!(npc.npc_data().unwrap().eye_status, EyeStatus::LookForward);
     assert!(!npc.human_data().unwrap().unconscious);
     npc.ai_controller().unwrap();
     assert!(
-        engine
-            .get_entity(observer_id)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .detectable_lists[crate::element::DetectableType::Body as usize]
+        engine.npc(observer_id).detectable_lists[crate::element::DetectableType::Body as usize]
             .is_empty(),
         "FIT_AGAIN's resurrection fan-out is inline even while FrozenAll skips the NPC tail"
     );
@@ -718,7 +662,7 @@ fn consecutive_combat_callbacks_commit_unconscious_eyes_inline() {
         }
     });
 
-    let entity = engine.get_entity(npc_id).unwrap();
+    let entity = engine.ent(npc_id);
     assert_eq!(
         entity.npc_data().unwrap().eye_status,
         EyeStatus::DieOrGetUnconscious,
@@ -757,7 +701,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             .resize_with(1, crate::profiles::SoldierProfile::default);
         profiles.soldiers[0].wake_up = 1;
 
-        let Entity::Soldier(waker) = engine.get_entity_mut(waker_id).unwrap() else {
+        let Entity::Soldier(waker) = engine.ent_mut(waker_id) else {
             unreachable!()
         };
         waker.element.active = true;
@@ -771,7 +715,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         waker.human.unconscious = true;
         waker.human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
         waker.human.concussion_healing_timeout = 0;
-        let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             unreachable!()
         };
         observer.element.active = false;
@@ -797,18 +741,10 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             });
         }
         assert_ne!(
-            engine
-                .get_entity(waker_id)
-                .and_then(Entity::ai_controller)
-                .unwrap()
-                .current_substate,
+            engine.ai_ctrl(waker_id).current_substate,
             Substate::SleepingUnconscious,
             "producer natural={natural}, waker_before_observer={waker_before_observer}, unconscious={}",
-            engine
-                .get_entity(waker_id)
-                .and_then(Entity::human_data)
-                .unwrap()
-                .unconscious
+            engine.human(waker_id).unconscious
         );
 
         crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
@@ -816,7 +752,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         });
 
         let snapshot = |engine: &EngineInner| {
-            let observer = engine.get_entity(observer_id).unwrap();
+            let observer = engine.ent(observer_id);
             let detectable =
                 &observer.npc_data().unwrap().detectable_lists[DetectableType::Enemy as usize][0];
             (detectable.seen_now, detectable.seen_last_frame)
@@ -852,10 +788,7 @@ fn nonserialized_primary_target_multiplicity_starts_empty_after_restore() {
     let mut engine = EngineInner::new();
     let attacker_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let Entity::Soldier(attacker) = engine
-        .get_entity_mut(attacker_id)
-        .expect("restored attacker exists")
-    else {
+    let Entity::Soldier(attacker) = engine.ent_mut(attacker_id) else {
         panic!("restored attacker changed kind")
     };
     let ai = attacker
@@ -890,10 +823,7 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
 
     let mut engine = EngineInner::new();
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("Royalist blip observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("Royalist blip observer changed kind")
     };
     observer.element.active = true;
@@ -906,23 +836,11 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     // is open for the common modulo-16 blip cadence.
     engine.control.frame_counter = 2;
     engine.tick_enemy_ai(sim, &assets);
-    assert!(
-        engine
-            .get_entity(observer_id)
-            .expect("Royalist blip observer survives closed cadence")
-            .element_data()
-            .blipped
-    );
+    assert!(engine.elem(observer_id).blipped);
 
     engine.control.frame_counter = 1;
     engine.tick_enemy_ai(sim, &assets);
-    assert!(
-        !engine
-            .get_entity(observer_id)
-            .expect("Royalist blip observer survives open cadence")
-            .element_data()
-            .blipped
-    );
+    assert!(!engine.elem(observer_id).blipped);
 }
 
 #[test]
@@ -947,10 +865,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         // cadence closed.
         engine.control.frame_counter = 2;
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("closed-cadence observer exists")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("closed-cadence observer changed kind")
         };
         observer.npc.eye_status = if matches!(blocker, Blocker::BlindEyes) {
@@ -974,10 +889,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
         detectable.seen_last_frame = !matches!(blocker, Blocker::GuardedPc);
 
         if matches!(blocker, Blocker::GuardedPc) {
-            let Entity::Pc(pc) = engine
-                .get_entity_mut(pc_id)
-                .expect("closed-cadence guarded PC exists")
-            else {
+            let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
                 panic!("closed-cadence guarded target changed kind")
             };
             pc.pc.guard = Some(observer_id);
@@ -991,10 +903,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
             engine.tick_enemy_ai(sim, &assets)
         });
 
-        let observer = engine
-            .get_entity(observer_id)
-            .and_then(Entity::npc_data)
-            .expect("closed-cadence observer retains NPC state");
+        let observer = engine.npc(observer_id);
         let detectable = observer.detectable_lists[DetectableType::Enemy as usize]
             .iter()
             .find(|detectable| detectable.element == Some(pc_id))
@@ -1045,10 +954,7 @@ fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
     // closes the modulo-2 PC cadence.
     engine.control.frame_counter = 2;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("closed-cadence observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("closed-cadence observer changed kind")
     };
     observer
@@ -1074,10 +980,7 @@ fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
 
     crate::sim_rng::with_seed(0xA013_1A10, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let ai = engine
-        .get_entity(observer_id)
-        .and_then(Entity::ai_controller)
-        .expect("closed-cadence observer retains AI state");
+    let ai = engine.ai_ctrl(observer_id);
     assert_eq!(
         ai.max_visibility,
         u32::from(crate::ai_vision::BASE_VIEW_SPEED),
@@ -1105,7 +1008,7 @@ fn bonus_refresh_discovered_is_live_bonus_owned_freeze_safe_and_rng_free() {
         crate::element::ElementKind::ObjectNet,
     ));
     engine.remove_entity(hole);
-    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("discovery PC exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("discovery PC changed kind")
     };
     pc.element.active = true;
@@ -1122,23 +1025,11 @@ fn bonus_refresh_discovered_is_live_bonus_owned_freeze_safe_and_rng_free() {
         trace.is_empty(),
         "bonus discovery must not consume simulation RNG"
     );
-    assert!(
-        !engine
-            .get_entity(bonus_before)
-            .unwrap()
-            .element_data()
-            .blipped
-    );
-    assert!(
-        !engine
-            .get_entity(bonus_after)
-            .unwrap()
-            .element_data()
-            .blipped
-    );
+    assert!(!engine.elem(bonus_before).blipped);
+    assert!(!engine.elem(bonus_after).blipped);
     for id in [scroll, projectile, net] {
         assert!(
-            engine.get_entity(id).unwrap().element_data().blipped,
+            engine.elem(id).blipped,
             "only Entity::Bonus owns discovery refresh; {id:?} was revealed"
         );
     }
@@ -1157,7 +1048,7 @@ fn bonus_refresh_discovered_uses_live_pc_eligibility_and_original_shoulders_fact
         engine.ai.standard_view_polygon_radius = 100;
         let pc_id = engine.add_test_entity(make_test_pc(posture));
         let bonus_id = engine.add_test_entity(make_discovery_bonus(x));
-        let Entity::Pc(pc) = engine.get_entity_mut(pc_id).unwrap() else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             unreachable!()
         };
         pc.element.active = active;
@@ -1167,19 +1058,13 @@ fn bonus_refresh_discovered_uses_live_pc_eligibility_and_original_shoulders_fact
             .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
         pc.element.set_position_map(MapPoint::new(0.0, 0.0));
         let assets = engine.test_runtime_assets();
-        let eye_z = engine
-            .get_entity(pc_id)
-            .unwrap()
-            .compute_eyes_point(None)
-            .unwrap()
-            .z;
-        engine
-            .get_entity_mut(bonus_id)
-            .unwrap()
-            .element_data_mut()
-            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, eye_z));
+        let eye_z = engine.ent(pc_id).compute_eyes_point(None).unwrap().z;
+        engine.place(
+            bonus_id,
+            crate::coordinates::WorldPoint3D::new(x, 0.0, eye_z),
+        );
         engine.refresh_bonus_discovered_for(&assets, bonus_id);
-        !engine.get_entity(bonus_id).unwrap().element_data().blipped
+        !engine.elem(bonus_id).blipped
     }
 
     assert!(!discovered(
@@ -1240,10 +1125,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
         (not_seeking, 100, Substate::DefaultOnPost),
         (wrong_camp, 100, Substate::SeekingSeekpoint),
     ] {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(id)
-            .expect("test observer must remain present")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test observer must remain a soldier");
         };
         let ai = soldier
@@ -1282,11 +1164,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
         (not_seeking, 0),
         (wrong_camp, 0),
     ] {
-        let list = &engine
-            .get_entity(id)
-            .and_then(Entity::npc_data)
-            .expect("test observer must retain NPC data")
-            .detectable_lists[beggar_idx];
+        let list = &engine.npc(id).detectable_lists[beggar_idx];
         assert_eq!(list.len(), expected_count);
         assert!(
             list.iter()

@@ -44,10 +44,7 @@ pub(super) fn bind_walking_sprite(
         std::sync::Arc::new(conversion),
     );
 
-    let element = engine
-        .get_entity_mut(entity_id)
-        .expect("movement fixture actor exists")
-        .element_data_mut();
+    let element = engine.elem_mut(entity_id);
     let position = element.position_map();
     let sector = element.sector();
     sprite.position_iface.set_sector(sector);

@@ -66,11 +66,7 @@ fn speech_state_roundtrip_and_hash_cover_live_identity_and_global_state() {
         702,
     );
     let first_creation_order = engine.world.original_creation_order(first);
-    let ai = engine
-        .get_entity_mut(first)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(first);
     ai.current_remark = Remark::Arrow;
     ai.current_remark_flags = SpeechFlags::MYTALK_2.bits();
     engine
@@ -147,16 +143,7 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     shot.priority = crate::sequence::SequencePriority::Preference;
     let shot_seq = engine.launch_element(sim, &assets, shot);
     engine.queue_pc_shoot_bow(pc, crate::sequence::SequenceElementRef::new(shot_seq, 0));
-    assert_eq!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .len(),
-        1
-    );
+    assert_eq!(engine.human(pc).pending_shoots.len(), 1);
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
     let _ = engine.enter_swordfight(sim, &assets, pc, opponent, false);
@@ -172,13 +159,7 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
         "clearing the shoot FIFO leaves the registered sequence unchanged"
     );
     assert!(
-        engine
-            .get_entity(pc)
-            .unwrap()
-            .human_data()
-            .unwrap()
-            .pending_shoots
-            .is_empty(),
+        engine.human(pc).pending_shoots.is_empty(),
         "swordfight entry clears the retained human shoot FIFO before validity checks"
     );
     assert!(engine.pc_has_pending_shoot_bow(pc));
@@ -249,12 +230,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
     soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
     let listener_id = engine.add_test_entity(listener);
-    engine
-        .get_entity_mut(listener_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test listener has enemy AI")
-        .base
-        .me = listener_id.index();
+    engine.enemy_mut(listener_id).base.me = listener_id.index();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.broadcast_noise_synchronously(
@@ -268,10 +244,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         None,
     );
 
-    let listener = engine
-        .get_entity(listener_id)
-        .and_then(Entity::enemy_ai)
-        .expect("test listener survives synchronous noise");
+    let listener = engine.enemy(listener_id);
     assert_eq!(listener.base.current_state, AiState::Wondering);
     assert_eq!(listener.base.current_substate, Substate::WonderingWatching);
 }
@@ -329,9 +302,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     );
     assert_eq!(
         engine
-            .get_entity(listener_id)
-            .and_then(Entity::npc_data)
-            .expect("listener keeps NPC state")
+            .npc(listener_id)
             .old_cover_noise_deafness_frame_counter,
         5,
         "heard-volume calculation must refresh deafness before decision-tick admission refuses the event"
@@ -369,9 +340,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     );
     assert_eq!(
         engine
-            .get_entity(listener_id)
-            .and_then(Entity::npc_data)
-            .expect("listener keeps NPC state")
+            .npc(listener_id)
             .old_cover_noise_deafness_frame_counter,
         5,
         "heard-volume calculation must not refresh deafness until subjective volume is positive"
@@ -454,22 +423,12 @@ fn live_combat_position_recovers_exact_duplicate_pc_sector() {
         sector_number: SectorNumber::new(88),
         layer: 2,
         sector_type: SectorType::MOTION,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
     engine.world.fast_grid_mut().level_mut().sectors =
         vec![square(0.0, 100.0), square(600.0, 800.0)];
 
-    let Entity::Soldier(owner_entity) = engine.get_entity_mut(owner).unwrap() else {
+    let Entity::Soldier(owner_entity) = engine.ent_mut(owner) else {
         panic!("fighter owner changed kind")
     };
     owner_entity.element.active = true;
@@ -482,7 +441,7 @@ fn live_combat_position_recovers_exact_duplicate_pc_sector() {
         .base
         .me = owner.index();
 
-    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    let target_element = engine.elem_mut(target);
     target_element.active = true;
     target_element.set_position_map(MapPoint::new(684.0, 745.0));
     target_element.set_layer(2);
@@ -504,7 +463,7 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     let mut engine = EngineInner::new();
     let shooter = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
-    let Entity::Pc(dead_target) = engine.get_entity_mut(target).expect("dead target exists") else {
+    let Entity::Pc(dead_target) = engine.ent_mut(target) else {
         panic!("dead target changed kind")
     };
     dead_target.element.active = true;
@@ -554,8 +513,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     let target_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
 
     for (id, x) in [(self_id, 0.0), (target_id, 20.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -571,10 +529,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
         soldier.element.set_position_map(MapPoint::new(x, 0.0));
     }
 
-    let Entity::Soldier(target) = engine
-        .get_entity_mut(target_id)
-        .expect("door-passing target exists")
-    else {
+    let Entity::Soldier(target) = engine.ent_mut(target_id) else {
         panic!("door-passing target changed kind")
     };
     let exact_target_world = WorldPoint3D::new(20.123_457, 9.876_543, 7.654_321);
@@ -623,13 +578,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
         .sequence_manager
         .start_sequence_level(sequence_id);
     engine.select_sequence_element(target_id, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let assets = engine.test_runtime_assets();
 
@@ -690,8 +639,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for (id, x) in [(owner_id, 0.0), (raw_near_id, 20.0), (raw_far_id, 600.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -710,10 +658,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
             .set_position_map(MapPoint::from_world_xyz(world.x, world.y, world.z));
     }
     let frame = engine.control.frame_counter;
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("observation owner has enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.current_state = AiState::Attacking;
     owner.base.current_substate = Substate::AttackingObserve;
     owner.base.launch_timer(0, frame);
@@ -773,13 +718,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
             .sequence_manager
             .start_sequence_level(sequence_id);
         engine.select_sequence_element(id, Some((sequence_id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence_id, 0);
     }
 
     let assets = engine.test_runtime_assets();
@@ -793,10 +732,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         &assets,
     );
 
-    let owner = engine
-        .get_entity(owner_id)
-        .and_then(Entity::enemy_ai)
-        .expect("observation owner retains enemy AI");
+    let owner = engine.enemy(owner_id);
     assert_eq!(
         owner.base.list_us,
         vec![owner_id.index(), raw_near_id.index()]
@@ -809,10 +745,7 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("inactive help recipient exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("inactive help recipient changed kind")
     };
     soldier.element.active = false;

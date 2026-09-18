@@ -30,11 +30,7 @@ fn accessory_sprite_keeps_fresh_instance_order_sentinel() {
     engine.attach_accessory_sprite(&assets, arrow_id);
 
     assert_eq!(
-        engine
-            .get_entity(arrow_id)
-            .unwrap()
-            .sprite()
-            .last_processed_order_id,
+        engine.ent(arrow_id).sprite().last_processed_order_id,
         u32::from(u16::MAX) + 1
     );
 }

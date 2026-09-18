@@ -16,9 +16,7 @@ fn set_actor_location_honolulu_finishes_before_same_callback_unlock() {
         )
         .expect("Honolulu action and continuation should finish synchronously");
 
-    let entity = engine
-        .get_entity(receiver)
-        .expect("scripted receiver remains present");
+    let entity = engine.ent(receiver);
     assert!(!entity.element_data().active);
     assert!(entity.element_data().in_honolulu);
     assert!(
@@ -42,10 +40,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
     engine.attach_script_bindings(&assets);
 
     {
-        let element = engine
-            .get_entity_mut(receiver)
-            .expect("receiver")
-            .element_data_mut();
+        let element = engine.elem_mut(receiver);
         element.active = false;
         element.in_honolulu = true;
     }
@@ -61,7 +56,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
             .expect("wrong location type is a false result, not a driver error"),
         0
     );
-    let element = engine.get_entity(receiver).unwrap().element_data();
+    let element = engine.elem(receiver);
     assert!(element.active && !element.in_honolulu);
     assert_eq!(
         element.position_map(),
@@ -80,7 +75,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
             .expect("non-motion sector is a false result"),
         0
     );
-    let element = engine.get_entity(receiver).unwrap().element_data();
+    let element = engine.elem(receiver);
     assert_eq!(
         element.position_map(),
         crate::coordinates::MapPoint::new(12.0, 34.0)
@@ -90,22 +85,11 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
 
     let mut level = crate::fast_find_grid::LevelGrid::default();
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer: 1,
         sector_number: crate::sector::SectorNumber::new(7),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
     assert_eq!(
@@ -138,22 +122,11 @@ fn set_actor_location_preserves_authored_sparse_sector_identity() {
     engine.attach_script_bindings(&assets);
 
     let sector = crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer: 1,
         sector_number: crate::sector::SectorNumber::new(7),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
     let mut level = crate::fast_find_grid::LevelGrid::default();
     level.sectors.push(sector.clone());
@@ -173,7 +146,7 @@ fn set_actor_location_preserves_authored_sparse_sector_identity() {
         1
     );
     assert_eq!(
-        engine.get_entity(receiver).unwrap().element_data().sector(),
+        engine.sector_of(receiver),
         Some(exact_sector),
         "the following recorded movement must see the same sector identity as its authored goal"
     );
@@ -195,15 +168,7 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
         )
         .expect("life setter resumes");
     assert_eq!(life, 37);
-    assert_eq!(
-        engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .npc_data()
-            .expect("NPC")
-            .life_points,
-        37
-    );
+    assert_eq!(engine.npc(receiver).life_points, 37);
 
     let concussion = engine
         .call_script_vm(
@@ -216,15 +181,7 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
         )
         .expect("concussion setter resumes");
     assert_eq!(concussion, 123);
-    assert_eq!(
-        engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .human_data()
-            .expect("human")
-            .concussion_of_the_brain,
-        123
-    );
+    assert_eq!(engine.human(receiver).concussion_of_the_brain, 123);
 }
 
 #[test]
@@ -249,11 +206,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
                 .expect("concussion setter"),
             1
         );
-        let human = engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .human_data()
-            .expect("human");
+        let human = engine.human(receiver);
         assert_eq!(
             human.concussion_of_the_brain, 0,
             "byte-narrowed amount {amount:#x} is negative when re-read as SWORD"
@@ -262,7 +215,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
     }
 
     {
-        let entity = engine.get_entity_mut(receiver).unwrap();
+        let entity = engine.ent_mut(receiver);
         entity.npc_data_mut().unwrap().alerted = true;
         entity.enemy_ai_mut().unwrap().forced_attentive = true;
     }
@@ -279,7 +232,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
             .expect("life setter"),
         1
     );
-    let entity = engine.get_entity(receiver).expect("receiver");
+    let entity = engine.ent(receiver);
     assert_eq!(entity.npc_data().expect("NPC").life_points, 0);
     assert_eq!(
         entity.ai_controller().expect("NPC AI").current_substate,
@@ -308,7 +261,7 @@ fn scripted_invulnerable_life_setter_forces_literal_one_hundred() {
     let (mut engine, receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     {
-        let entity = engine.get_entity_mut(receiver).expect("receiver");
+        let entity = engine.ent_mut(receiver);
         entity.human_data_mut().unwrap().invulnerable = true;
         entity.npc_data_mut().unwrap().life_points = 80;
     }
@@ -325,12 +278,7 @@ fn scripted_invulnerable_life_setter_forces_literal_one_hundred() {
         1
     );
     assert_eq!(
-        engine
-            .get_entity(receiver)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .life_points,
+        engine.npc(receiver).life_points,
         100,
         "original-game life updates store literal 100 for invulnerable humans"
     );
@@ -449,7 +397,7 @@ fn anonymous_archer_accepts_a_non_pc_human_and_adds_hidden_titbit_inline() {
             .expect("AnonymousArcher should accept a human soldier"),
         0
     );
-    let entity = engine.get_entity(receiver).expect("receiver");
+    let entity = engine.ent(receiver);
     assert_eq!(entity.element_data().posture(), Posture::AnonymousArcher);
     assert_eq!(
         entity.actor_data().expect("actor").action_state,
@@ -466,8 +414,7 @@ fn anonymous_archer_accepts_a_non_pc_human_and_adds_hidden_titbit_inline() {
 fn upright_from_carrying_corpse_rejects_a_non_pc_human() {
     let (mut engine, receiver, handle) = engine_with_receiver();
     engine
-        .get_entity_mut(receiver)
-        .expect("receiver")
+        .ent_mut(receiver)
         .set_posture(Posture::CarryingCorpse);
 
     let _ = engine.call_external_native(
@@ -495,12 +442,7 @@ fn action_state_set_get_resumes_after_real_wait_instruction() {
         .expect("action-state setter should dispatch WAIT and resume");
     assert_eq!(state, crate::element::ActionState::Bored as i32);
     assert_eq!(
-        engine
-            .get_entity(receiver)
-            .expect("receiver")
-            .actor_data()
-            .expect("actor")
-            .action_state,
+        engine.action_state_of(receiver),
         crate::element::ActionState::Bored
     );
     let current = engine
@@ -607,12 +549,7 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     assert!(engine.players.user_locked);
     assert!(engine.players.seats[0].selection.is_empty());
     assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .current_action,
+        engine.pc(pc_id).current_action,
         crate::profiles::Action::NoAction
     );
 

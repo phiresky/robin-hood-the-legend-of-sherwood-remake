@@ -19,21 +19,13 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
         crate::element::Camp::Lacklandists,
     ));
     attach_test_campaign_identities(&mut engine);
-    engine
-        .get_entity_mut(opponent)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has EnemyAi")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(opponent).hth_weapon_id = 1;
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         *victim_entity.human_and_life_points_mut().unwrap().1 = 20;
         victim_entity.human_data_mut().unwrap().opponents = vec![opponent].into();
     }
-    engine
-        .get_entity_mut(opponent)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .opponents = vec![victim].into();
+    engine.human_mut(opponent).opponents = vec![victim].into();
 
     let damage = SequenceElement::new_damage(
         1,
@@ -59,7 +51,7 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     );
 
     assert_eq!(
-        engine.get_entity(victim).unwrap().human_life_points(),
+        engine.ent(victim).human_life_points(),
         0,
         "the arrow is lethal"
     );
@@ -67,21 +59,11 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     // Arrow-damage translation's flying arm terminates its element on a corpse
     // that already left every opponent list.
     assert!(
-        engine
-            .get_entity(victim)
-            .and_then(Entity::human_data)
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(victim).opponents.is_empty(),
         "the killed victim leaves its own opponent list"
     );
     assert!(
-        engine
-            .get_entity(opponent)
-            .and_then(Entity::human_data)
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(opponent).opponents.is_empty(),
         "the killed victim is removed from its opponent's list"
     );
 }
@@ -130,8 +112,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
             ..Default::default()
         });
     engine
-        .get_entity_mut(victim)
-        .unwrap()
+        .ent_mut(victim)
         .position_iface_mut()
         .set_sector(crate::position_interface::SectorHandle::new(1));
 
@@ -152,7 +133,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         0,
     );
 
-    assert_eq!(engine.get_entity(victim).unwrap().human_life_points(), 80);
+    assert_eq!(engine.ent(victim).human_life_points(), 80);
     assert_eq!(
         engine
             .orders
@@ -174,14 +155,10 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
 
     let (mut engine, carrier, body, _) =
         corpse_exit_initialization_fixture(Command::EnterSwordfight);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
-    assert_eq!(
-        engine.get_entity(carrier).unwrap().posture(),
-        Posture::CarryingCorpse
-    );
-    assert_eq!(engine.get_entity(body).unwrap().posture(), Posture::Carried);
+    assert_eq!(engine.posture_of(carrier), Posture::CarryingCorpse);
+    assert_eq!(engine.posture_of(body), Posture::Carried);
     assert_eq!(
         engine
             .orders
@@ -192,12 +169,12 @@ fn enter_swordfight_corpse_exit_registers_then_drops_on_first_execute() {
         "translation frame must retain the registered corpse-exit owner"
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
-    let carrier_entity = engine.get_entity(carrier).unwrap();
+    let carrier_entity = engine.ent(carrier);
     assert_eq!(carrier_entity.posture(), Posture::Upright);
     assert_eq!(carrier_entity.pc_data().unwrap().carried, None);
-    let body_entity = engine.get_entity(body).unwrap();
+    let body_entity = engine.ent(body);
     assert_eq!(body_entity.posture(), Posture::Lying);
     assert_eq!(body_entity.human_data().unwrap().carrier, None);
     assert!(!body_entity.actor_data().unwrap().execution_frozen);
@@ -242,7 +219,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
     ] {
         let mut engine = EngineInner::new();
         let healer = engine.add_test_entity(make_test_pc(Posture::Upright));
-        let healer_entity = engine.get_entity_mut(healer).unwrap();
+        let healer_entity = engine.ent_mut(healer);
         healer_entity.pc_data_mut().unwrap().life_points = 100;
         healer_entity
             .element_data_mut()
@@ -251,7 +228,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         let target = match target_kind {
             TargetKind::Human(distance) => {
                 let target = engine.add_test_entity(make_test_pc(Posture::Upright));
-                let entity = engine.get_entity_mut(target).unwrap();
+                let entity = engine.ent_mut(target);
                 entity.pc_data_mut().unwrap().life_points = 50;
                 entity
                     .element_data_mut()
@@ -273,12 +250,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 }))
             }
             TargetKind::SelfHeal => {
-                engine
-                    .get_entity_mut(healer)
-                    .unwrap()
-                    .pc_data_mut()
-                    .unwrap()
-                    .life_points = 50;
+                engine.pc_mut(healer).life_points = 50;
                 healer
             }
         };
@@ -315,7 +287,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[sprite_action as usize] = 0;
-        let element = engine.get_entity_mut(healer).unwrap().element_data_mut();
+        let element = engine.elem_mut(healer);
         let position = element.position_map();
         let direction = element.direction();
         element.sprite = crate::sprite::Sprite::new(
@@ -332,10 +304,10 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .orders
             .sequence_manager
             .start_sequence_level(sequence);
-        assert!(engine.get_entity(healer).unwrap().is_pc());
-        assert!(!engine.get_entity(healer).unwrap().is_dead());
+        assert!(engine.ent(healer).is_pc());
+        assert!(!engine.ent(healer).is_dead());
         assert!(
-            engine.get_entity(target).unwrap().kind().is_fx_target()
+            engine.ent(target).kind().is_fx_target()
                 || engine
                     .get_entity(target)
                     .and_then(Entity::pc_data)
@@ -354,13 +326,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             crate::abilities::BeginResult::Started
         );
         engine.select_sequence_element(healer, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
         let target_life_before = engine
             .get_entity(target)
@@ -368,9 +334,8 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
             .map(|pc| pc.life_points);
         let mut assets = assets_with_test_pc_profile();
         complete_test_runtime_fixture(&mut engine, &mut assets);
-        let sim = crate::sim_rng::test_context();
         for _ in 0..4 {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.t_tick_actor_owner_envelopes(&assets);
             let ammo = engine.mission_domain.campaign.characters[healer_description]
                 .status
                 .get_ammo(crate::profiles::Action::Heal);
@@ -391,14 +356,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         if expect_effect {
             assert_eq!(ammo, 1);
             if let Some(life_before) = target_life_before {
-                assert!(
-                    engine
-                        .get_entity(target)
-                        .and_then(Entity::pc_data)
-                        .unwrap()
-                        .life_points
-                        > life_before
-                );
+                assert!(engine.pc(target).life_points > life_before);
             }
         } else {
             assert_eq!(ammo, 2, "invalid Heal DONE must not consume a plant");
@@ -420,12 +378,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 SequenceState::Terminated
             );
             assert_eq!(
-                engine
-                    .get_entity(healer)
-                    .and_then(Entity::actor_data)
-                    .unwrap()
-                    .continuation
-                    .motion_state,
+                engine.actor(healer).continuation.motion_state,
                 crate::sprite::MotionState::Terminated
             );
             assert!(
@@ -464,41 +417,18 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     let _null_handle_slot = engine.add_test_entity(make_test_pc(Posture::Upright));
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
-    else {
+    let crate::element::Entity::Soldier(victim_soldier) = engine.ent_mut(victim) else {
         unreachable!()
     };
     victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let assets = engine.test_runtime_assets();
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(20.0, 0.0));
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(8);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(8);
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::Moving;
+    engine.place_map(attacker, crate::coordinates::MapPoint::new(0.0, 0.0));
+    engine.place_map(victim, crate::coordinates::MapPoint::new(20.0, 0.0));
+    engine.face(attacker, 8);
+    engine.face(victim, 8);
+    engine.set_action_state_of(victim, ActionState::Moving);
 
-    let seq = engine.launch_element(
-        &sim,
+    let seq = engine.t_launch_element(
         &assets,
         SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
     );
@@ -525,7 +455,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     assert_eq!(active.target, Some(victim));
     assert_eq!(active.order_id, order.order_id);
 
-    let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
+    let victim_ai = engine.ai_ctrl(victim);
     assert!(
         !victim_ai
             .locks_flag_field
@@ -551,53 +481,29 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     );
     assert!(victim_ai.timer_is_running);
     assert_eq!(
-        engine
-            .get_entity(attacker)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(attacker),
         8,
         "translation must not change the attacker direction",
     );
     assert_eq!(
-        engine
-            .get_entity(victim)
-            .unwrap()
-            .element_data()
-            .direction(),
+        engine.direction_of(victim),
         8,
         "translation must not change the victim direction",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(attacker)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(attacker).position_iface().get_direction_goal()),
         8,
         "translation must not eagerly set the attacker goal",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(victim).position_iface().get_direction_goal()),
         8,
         "translation must not eagerly set the victim goal",
     );
 
     let mut invalid = engine.clone();
-    invalid
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.tick_actor_owner_envelopes(&sim, &assets);
+    invalid.place_map(victim, crate::coordinates::MapPoint::new(100.0, 100.0));
+    invalid.t_tick_actor_owner_envelopes(&assets);
     assert_eq!(
         invalid
             .orders
@@ -610,10 +516,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     );
     assert!(
         !invalid
-            .get_entity(victim)
-            .unwrap()
-            .ai_controller()
-            .unwrap()
+            .ai_ctrl(victim)
             .locks_flag_field
             .contains(crate::ai::AiLockFlags::FREEZE)
     );
@@ -626,39 +529,23 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
         .is_some()
     );
 
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
+    engine.place_map(victim, crate::coordinates::MapPoint::new(0.0, 20.0));
     let live_facing = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 20.0);
     engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
 
-    let victim_ai = engine.get_entity(victim).unwrap().ai_controller().unwrap();
+    let victim_ai = engine.ai_ctrl(victim);
     assert!(
         victim_ai
             .locks_flag_field
             .contains(crate::ai::AiLockFlags::FREEZE)
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(attacker)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(attacker).position_iface().get_direction_goal()),
         live_facing,
         "first owner Execute must compute the attacker goal from live positions",
     );
     assert_eq!(
-        i16::from(
-            engine
-                .get_entity(victim)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        i16::from(engine.ent(victim).position_iface().get_direction_goal()),
         live_facing,
         "first owner Execute must compute the victim goal from live positions",
     );
@@ -669,12 +556,10 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
     use crate::element::{ActionState, Command, Detectable, DetectableType, Posture};
     use crate::sequence::{SequenceElement, SequenceState};
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    let crate::element::Entity::Soldier(victim_soldier) = engine.get_entity_mut(victim).unwrap()
-    else {
+    let crate::element::Entity::Soldier(victim_soldier) = engine.ent_mut(victim) else {
         unreachable!()
     };
     victim_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
@@ -688,12 +573,11 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
     });
 
     let assets = engine.test_runtime_assets();
-    let seq = engine.launch_element(
-        &sim,
+    let seq = engine.t_launch_element(
         &assets,
         SequenceElement::new_interaction(1, Command::HitCmd, Some(attacker), Some(victim)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+    engine.t_hourglass_phase_sequences(&assets);
 
     let hit = engine
         .orders
@@ -705,7 +589,7 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
         hit.current_order().unwrap().order_type,
         crate::order::OrderType::Hitting
     );
-    let victim = engine.get_entity(victim).unwrap();
+    let victim = engine.ent(victim);
     let ai = victim.ai_controller().unwrap();
     assert_eq!(ai.current_state, crate::ai::AiState::Seeking);
     assert_eq!(
@@ -751,11 +635,7 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::Hitting as usize] = 0;
-        engine
-            .get_entity_mut(attacker)
-            .unwrap()
-            .element_data_mut()
-            .sprite = crate::sprite::Sprite::new(
+        engine.elem_mut(attacker).sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
             std::sync::Arc::new(conversion),
         );
@@ -777,13 +657,9 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     let mut engine = EngineInner::new();
     let attacker = engine.add_test_entity(make_test_pc(Posture::Upright));
     let victim = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(attacker, true);
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         victim_entity.element_data_mut().active = true;
         victim_entity
             .element_data_mut()
@@ -819,44 +695,20 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         crate::abilities::BeginResult::Started
     );
     engine.select_sequence_element(attacker, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execute_order_initialising = true;
+    engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
+    engine.actor_mut(attacker).execute_order_initialising = true;
 
     assert_ne!(
         engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen()),
         Some(crate::sprite::MotionState::Done),
         "the first valid Execute must leave a later terminal boundary to recheck"
     );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execute_order_initialising = false;
+    engine.actor_mut(attacker).execute_order_initialising = false;
 
     let mut in_range = engine.clone();
     let mut out_of_range = engine;
-    in_range
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(39.0, 0.0));
-    out_of_range
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(41.0, 0.0));
+    in_range.place_map(victim, crate::coordinates::MapPoint::new(39.0, 0.0));
+    out_of_range.place_map(victim, crate::coordinates::MapPoint::new(41.0, 0.0));
 
     let mut completion_results = Vec::new();
     for branch in [&mut in_range, &mut out_of_range] {
@@ -875,12 +727,8 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
         completion_results.push(result);
     }
 
-    let in_range_sprite = &in_range.get_entity(attacker).unwrap().element_data().sprite;
-    let out_of_range_sprite = &out_of_range
-        .get_entity(attacker)
-        .unwrap()
-        .element_data()
-        .sprite;
+    let in_range_sprite = &in_range.elem(attacker).sprite;
+    let out_of_range_sprite = &out_of_range.elem(attacker).sprite;
     assert_eq!(
         out_of_range_sprite.current_frame,
         in_range_sprite.current_frame + 1,
@@ -920,7 +768,7 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
     // This interruption occurs after the victim has reached the attacker.
     // Both actors must therefore use the fixture's canonical combat sector.
     {
-        let victim = engine.get_entity_mut(victim).unwrap().element_data_mut();
+        let victim = engine.elem_mut(victim);
         victim.set_position_map(crate::coordinates::MapPoint::new(106.0, 127.0));
         victim.set_layer(3);
         victim.set_sector(crate::position_interface::SectorHandle::new(2));
@@ -928,14 +776,10 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
     let old_wait = engine.actor_wait(&sim, &assets, victim);
     let strangle = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
     engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
+        .ai_ctrl_mut(victim)
         .non_script_lock(AiLockFlags::FREEZE);
     let unrelated = engine.entity_id_for_index(0).unwrap();
-    let outer_wait = engine.launch_element(
-        &sim,
+    let outer_wait = engine.t_launch_element(
         &assets,
         crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(unrelated)),
     );
@@ -947,10 +791,7 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
             if card.owner == victim && card.seq_id == old_wait {
                 assert!(
                     engine
-                        .get_entity(victim)
-                        .unwrap()
-                        .ai_controller()
-                        .unwrap()
+                        .ai_ctrl(victim)
                         .locks_flag_field
                         .contains(AiLockFlags::FREEZE),
                     "replacement Wait must execute before the victim's AI unlock"
@@ -1045,16 +886,8 @@ fn add_strangle_placement_failure_scene(
         0,
         "the attacker must have a non-null legacy AI handle so EventGotHit observation is meaningful"
     );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
-    engine
-        .get_entity_mut(victim)
-        .unwrap()
-        .element_data_mut()
-        .active = true;
+    engine.set_active(attacker, true);
+    engine.set_active(victim, true);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(engine, &mut assets);
     // Keep the synthetic strangle hotspot within the victim's effective
@@ -1081,20 +914,16 @@ fn add_strangle_placement_failure_scene(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .element_data_mut()
-        .sprite = attacker_sprite;
+    engine.elem_mut(attacker).sprite = attacker_sprite;
     {
-        let element = engine.get_entity_mut(attacker).unwrap().element_data_mut();
+        let element = engine.elem_mut(attacker);
         element.sprite.current_row = 0;
         element.set_position_map(crate::coordinates::MapPoint::new(100.0, 120.0));
         element.set_layer(3);
         element.set_sector(crate::position_interface::SectorHandle::new(2));
     }
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         let element = victim_entity.element_data_mut();
         element.set_layer(8);
         element.set_sector(crate::position_interface::SectorHandle::new(5));
@@ -1113,22 +942,11 @@ fn add_strangle_placement_failure_scene(
             .sector_number_map
             .insert(sector_number, level.sectors.len());
         level.sectors.push(crate::fast_find_grid::GridSector {
-            points: Vec::new(),
             bounding_box: crate::coordinates::MapBBox::new(),
             sector_type: crate::sector::SectorType::empty(),
             layer: 3,
             sector_number,
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         });
     }
     crate::engine::test_support::ensure_ordinary_sector(engine, 5, 8);
@@ -1160,16 +978,11 @@ fn launch_initialized_strangle(
     use crate::sequence::SequenceElement;
 
     let expected_action_point = {
-        let attacker = engine.get_entity(attacker).unwrap();
+        let attacker = engine.ent(attacker);
         let sprite_pos = attacker.gameplay_sprite_position();
         crate::coordinates::MapPoint::new(sprite_pos.x + hotspot.x, sprite_pos.y + hotspot.y)
     };
-    let victim_frame_before = engine
-        .get_entity(victim)
-        .unwrap()
-        .element_data()
-        .sprite
-        .current_frame;
+    let victim_frame_before = engine.elem(victim).sprite.current_frame;
     let sequence_count_before = engine.orders.sequence_manager.sequences_iter().count();
     let seq = engine
         .orders
@@ -1193,14 +1006,9 @@ fn launch_initialized_strangle(
         ),
         crate::abilities::BeginResult::Started
     );
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execute_order_initialising = false;
+    engine.actor_mut(attacker).execute_order_initialising = false;
     let attacker_topology = {
-        let element = engine.get_entity(attacker).unwrap().element_data();
+        let element = engine.elem(attacker);
         (
             element.layer(),
             element.sector(),
@@ -1209,13 +1017,7 @@ fn launch_initialized_strangle(
         )
     };
     engine.select_sequence_element(attacker, Some((seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        seq,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
     let order_id = engine
         .orders
         .sequence_manager
@@ -1224,12 +1026,7 @@ fn launch_initialized_strangle(
         .current_order()
         .unwrap()
         .order_id;
-    engine
-        .get_entity_mut(attacker)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .last_execute_order_id = Some(order_id);
+    engine.actor_mut(attacker).last_execute_order_id = Some(order_id);
     engine.publish_selected_order_as_installed(attacker);
     StrangleLaunch {
         seq,
@@ -1275,7 +1072,7 @@ fn assert_failed_strangle_cleanup(
             .state,
         SequenceState::Impossible
     );
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let victim_entity = engine.ent(victim);
     assert_eq!(
         victim_entity.element_data().position_map(),
         expected_action_point
@@ -1363,14 +1160,14 @@ fn assert_failed_strangle_setup_is_not_repeated(
     attacker: EntityId,
     victim: EntityId,
 ) {
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let victim_entity = engine.ent(victim);
     let snapshot = (
         victim_entity.element_data().position_map(),
         victim_entity.element_data().sprite.current_frame,
         engine.orders.sequence_manager.sequences_iter().count(),
     );
     engine.tick_selected_ability(sim, assets, attacker, engine.actors_frozen());
-    let victim_entity = engine.get_entity(victim).unwrap();
+    let victim_entity = engine.ent(victim);
     assert_eq!(
         (
             victim_entity.element_data().position_map(),
@@ -1459,14 +1256,14 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
     let victim = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     {
-        let survivor_entity = engine.get_entity_mut(survivor).unwrap();
+        let survivor_entity = engine.ent_mut(survivor);
         survivor_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
         survivor_entity.human_data_mut().unwrap().opponents = vec![victim].into();
         survivor_entity.pc_data_mut().unwrap().melee_target = Some(victim);
     }
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         victim_entity.actor_data_mut().unwrap().action_state =
             crate::element::ActionState::WaitingSword;
         victim_entity.human_data_mut().unwrap().opponents = vec![survivor].into();
@@ -1475,7 +1272,7 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
 
     engine.quit_swordfight(&sim, &assets, victim);
 
-    let survivor_entity = engine.get_entity(survivor).unwrap();
+    let survivor_entity = engine.ent(survivor);
     assert!(survivor_entity.human_data().unwrap().opponents.is_empty());
     assert_eq!(
         survivor_entity.actor_data().unwrap().action_state,
@@ -1500,12 +1297,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
     let assets = assets_with_test_pc_profile();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::WaitingSword;
+    engine.set_action_state_of(owner, ActionState::WaitingSword);
 
     let movement = engine
         .orders
@@ -1574,7 +1366,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         crate::element::Camp::Lacklandists,
     ));
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
         let enemy = victim_entity
@@ -1595,20 +1387,11 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         .sequence_manager
         .start_sequence_level(damage_sequence);
     engine.select_sequence_element(victim, Some((damage_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        damage_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), damage_sequence, 0);
 
     engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
 
-    let enemy = engine
-        .get_entity(victim)
-        .and_then(crate::element::Entity::enemy_ai)
-        .expect("dead soldier retains EnemyAi");
+    let enemy = engine.enemy(victim);
     assert_eq!(
         enemy.base.current_music_alert_status,
         crate::ai::AlertLevel::Green,
@@ -1638,7 +1421,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     // Model DYING_SWORD's START side effect before its eventual
     // TERMINATED result advances the damage element.
     {
-        let victim_entity = engine.get_entity_mut(victim).unwrap();
+        let victim_entity = engine.ent_mut(victim);
         victim_entity.set_posture(Posture::Dead);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
     }

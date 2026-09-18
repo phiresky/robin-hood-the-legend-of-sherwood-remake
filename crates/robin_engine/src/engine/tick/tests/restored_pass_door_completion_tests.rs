@@ -31,7 +31,7 @@ fn crenel_exit_completes_without_live_door() {
         OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
     );
 
-    let pc = engine.get_entity(owner).unwrap();
+    let pc = engine.ent(owner);
     assert_eq!(pc.element_data().posture(), Posture::Crouched);
     assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
     assert!(pc.position_iface().get_door().is_none());
@@ -45,10 +45,7 @@ fn ladder_down_exits_complete_without_live_door() {
     ] {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(airborne_pc());
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .set_posture(Posture::OnLadder);
+        engine.ent_mut(owner).set_posture(Posture::OnLadder);
 
         engine.apply_door_pass_transition_completion_side_effects(
             &LevelAssets::new(),
@@ -56,7 +53,7 @@ fn ladder_down_exits_complete_without_live_door() {
             action,
         );
 
-        let actor = engine.get_entity(owner).unwrap();
+        let actor = engine.ent(owner);
         assert_eq!(
             actor.element_data().posture(),
             Posture::Upright,
@@ -75,17 +72,14 @@ fn ladder_down_exits_complete_without_live_door() {
 fn wall_down_exit_completes_without_live_door() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(airborne_pc());
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .set_posture(Posture::OnWall);
+    engine.ent_mut(owner).set_posture(Posture::OnWall);
     engine.apply_door_pass_transition_completion_side_effects(
         &LevelAssets::new(),
         owner,
         OrderType::TransitionClimbingWallDownWaitingUpright,
     );
 
-    let pc = engine.get_entity(owner).unwrap();
+    let pc = engine.ent(owner);
     assert_eq!(pc.element_data().posture(), Posture::Upright);
     assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
     assert!(pc.position_iface().get_door().is_none());

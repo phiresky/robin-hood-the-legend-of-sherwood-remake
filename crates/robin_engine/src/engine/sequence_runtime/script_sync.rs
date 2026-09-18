@@ -32,7 +32,7 @@ mod resumed_instruction_tests {
         let owner = engine.add_test_entity(crate::engine::test_support::actors::make_test_pc(
             Posture::Upright,
         ));
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(100.0, 100.0, 0.0));
@@ -59,8 +59,8 @@ mod resumed_instruction_tests {
         *destination = MapPoint::new(120.0, 100.0);
         flags.insert(MoveFlags::NO_TRANSITIONS);
         let sim = crate::sim_rng::test_context();
-        let sequence = engine.launch_element(&sim, &assets, movement);
-        engine.postpone_element(&sim, &assets, &mut Vec::new(), sequence, 0);
+        let sequence = engine.t_launch_element(&assets, movement);
+        engine.t_postpone_element(&assets, sequence, 0);
 
         engine
             .dispatch_script_synchronous_action(
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(engine.players.selection_before_user_lock, [owner]);
         assert!(engine.players.seats[0].selection.is_empty());
         assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
-        let pc = engine.get_entity(owner).unwrap();
+        let pc = engine.ent(owner);
         assert_eq!(pc.pc_data().unwrap().current_action, Action::NoAction);
         assert_eq!(
             pc.actor_data().unwrap().action_state,

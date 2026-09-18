@@ -98,17 +98,13 @@ fn reversible_patch_target_keeps_clickable_visual_through_queued_spent_animation
             let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
             timer.set_property(Field::Timer, FieldValue::Integer(100));
             sequence.append_element(timer);
-            engine.launch_sequence(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::new(),
-                sequence,
-            );
+            engine.t_launch_sequence(&LevelAssets::new(), sequence);
             engine.hourglass_phase_sequences(
                 &crate::sim_rng::test_context(),
                 &mut crate::engine::HostDisplayState::default(),
                 &LevelAssets::new(),
             );
-            let Entity::Target(target) = engine.get_entity(owner).unwrap() else {
+            let Entity::Target(target) = engine.ent(owner) else {
                 unreachable!()
             };
             assert_eq!(
@@ -173,12 +169,9 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
     let assets = engine.test_runtime_assets();
     engine.attach_script_bindings(&assets);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
-    let Entity::Scroll(scroll) = engine
-        .get_entity(scroll_id)
-        .expect("scroll survives callback")
-    else {
+    let Entity::Scroll(scroll) = engine.ent(scroll_id) else {
         unreachable!()
     };
     assert!(!scroll.element.active, "due callback ran before animation");
@@ -210,8 +203,8 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
         .insert(frozen_handle, frozen_instance);
     engine.set_actors_frozen(true);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
-    let Entity::Scroll(frozen_scroll) = engine.get_entity(frozen_id).unwrap() else {
+    engine.t_tick_actor_owner_envelopes(&assets);
+    let Entity::Scroll(frozen_scroll) = engine.ent(frozen_id) else {
         unreachable!()
     };
     assert!(
@@ -252,16 +245,11 @@ fn due_scroll_callback_changes_same_slot_freeze_gate_live() {
         let assets = LevelAssets::new();
         engine.attach_script_bindings(&assets);
 
-        engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
 
         (
             engine.actors_frozen(),
-            engine
-                .get_entity(scroll_id)
-                .unwrap()
-                .element_data()
-                .sprite
-                .current_frame,
+            engine.elem(scroll_id).sprite.current_frame,
         )
     }
 
@@ -313,18 +301,8 @@ fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
             engine.tick_actor_owner_envelopes(sim, &assets);
         });
         (
-            engine
-                .get_entity(a)
-                .unwrap()
-                .element_data()
-                .sprite
-                .current_frame,
-            engine
-                .get_entity(b)
-                .unwrap()
-                .element_data()
-                .sprite
-                .current_frame,
+            engine.elem(a).sprite.current_frame,
+            engine.elem(b).sprite.current_frame,
         )
     }
 
@@ -387,74 +365,25 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let assets = LevelAssets::new();
     let sim = crate::sim_rng::test_context();
 
-    let projectile_frame = engine
-        .get_entity(projectile)
-        .unwrap()
-        .element_data()
-        .sprite
-        .current_frame;
-    let net_frame = engine
-        .get_entity(net)
-        .unwrap()
-        .element_data()
-        .sprite
-        .current_frame;
+    let projectile_frame = engine.elem(projectile).sprite.current_frame;
+    let net_frame = engine.elem(net).sprite.current_frame;
 
-    engine.tick_actor_owner_envelopes(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes(&assets);
 
     // An inactive ale reports false from its update, but the engine's
     // default removal only deactivates: the slot stays occupied because
     // other elements may still reference it, and its sprite never advances.
-    let ale_entity = engine
-        .get_entity(ale)
-        .expect("inactive ale element stays in the element table (deactivate-only removal)");
+    let ale_entity = engine.ent(ale);
     assert!(!ale_entity.element_data().active);
     assert_eq!(ale_entity.element_data().sprite.current_frame, 0);
+    assert_eq!(engine.elem(cape).sprite.current_frame, 1);
+    assert_eq!(engine.elem(bonus).sprite.current_frame, 1);
+    assert_eq!(engine.elem(target).sprite.current_frame, 1);
     assert_eq!(
-        engine
-            .get_entity(cape)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(bonus)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(target)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        1
-    );
-    assert_eq!(
-        engine
-            .get_entity(projectile)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
+        engine.elem(projectile).sprite.current_frame,
         projectile_frame
     );
-    assert_eq!(
-        engine
-            .get_entity(net)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        net_frame
-    );
+    assert_eq!(engine.elem(net).sprite.current_frame, net_frame);
 
     let mobile_child = engine.add_test_entity(Entity::Fx(crate::element::ElementFx {
         element: {
@@ -471,22 +400,9 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     }));
     engine.tick_static_entity_hourglass_for(&sim, &assets, mobile_child);
     engine.tick_static_entity_hourglass_for(&sim, &assets, projectile);
+    assert_eq!(engine.elem(mobile_child).sprite.current_frame, 0);
     assert_eq!(
-        engine
-            .get_entity(mobile_child)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
-        0
-    );
-    assert_eq!(
-        engine
-            .get_entity(projectile)
-            .unwrap()
-            .element_data()
-            .sprite
-            .current_frame,
+        engine.elem(projectile).sprite.current_frame,
         projectile_frame
     );
 }
@@ -520,7 +436,7 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
             applied: false,
             ..Default::default()
         });
-    let Entity::Fx(fx) = engine.get_entity_mut(fx_id).unwrap() else {
+    let Entity::Fx(fx) = engine.ent_mut(fx_id) else {
         unreachable!()
     };
     fx.element.sprite.current_frame = 1;

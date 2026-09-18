@@ -42,10 +42,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
             ..SoldierData::default()
         },
     }));
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test owner has Enemy AI");
+    let ai = engine.enemy_mut(owner);
     ai.base.locks_flag_field = AiLockFlags::FREEZE;
     ai.hth_weapon_id = 1;
 
@@ -54,22 +51,8 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
     strike
         .orders
         .push_back(Order::test_new(OrderType::StrikingRightSmalltalk, 0.0, 0.0));
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, strike);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    let sequence = engine.t_launch_in_progress(&assets, strike);
+    engine.t_element_interrupted(&assets, sequence, 0, CascadeFlags::NEXT_LEVEL);
 
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
@@ -77,9 +60,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
         |engine, actor| {
             if actor == owner {
                 engine
-                    .get_entity_mut(owner)
-                    .and_then(Entity::enemy_ai_mut)
-                    .expect("test owner retains Enemy AI")
+                    .enemy_mut(owner)
                     .base
                     .stimulus_queue
                     .push(Stimulus::with_human(StimulusType::EventOutOfView, 7));
@@ -87,12 +68,7 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
         },
     );
 
-    let queue = &engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("test owner retains Enemy AI")
-        .base
-        .stimulus_queue;
+    let queue = &engine.enemy(owner).base.stimulus_queue;
     assert_eq!(queue.len(), 2);
     assert_eq!(queue[0].stimulus_type, StimulusType::EventDone);
     assert_eq!(queue[1].stimulus_type, StimulusType::EventOutOfView);

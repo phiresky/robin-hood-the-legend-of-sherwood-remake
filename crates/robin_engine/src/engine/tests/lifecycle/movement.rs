@@ -17,7 +17,7 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
     };
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity.position_iface_mut().set_sector_topology(
             SectorHandle::new(42),
             crate::fast_find_grid::SectorIndex::new(0),
@@ -34,17 +34,9 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
         unreachable!("new_movement must produce movement data")
     };
     *destination = crate::coordinates::MapPoint::new(100.0, 200.0);
-    let movement_sequence = engine.launch_element(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
-        movement,
-    );
+    let movement_sequence = engine.t_launch_element(&LevelAssets::default(), movement);
 
-    engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
-        &mut HostDisplayState::default(),
-        &LevelAssets::default(),
-    );
+    engine.t_hourglass_phase_sequences(&LevelAssets::default());
 
     assert_eq!(
         engine
@@ -55,14 +47,14 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
             .state,
         SequenceState::Terminated
     );
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(entity.position_iface().get_plane(), Some(&interior_plane));
     assert_eq!(entity.element_data().position().z, 75.0);
     assert_eq!(
         entity.element_data().position_map(),
         crate::coordinates::MapPoint::new(100.0, 200.0)
     );
-    let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
+    let actor = engine.actor(owner);
     assert_eq!(actor.installed_order, None);
     assert_eq!(
         actor.continuation.motion_state,
@@ -109,8 +101,7 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let assets = engine.test_runtime_assets();
     engine.set_engine_locked(true);
     let pending_owner = EntityId::Pc(crate::entity_id::PcId(319));
-    let pending_sequence = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let pending_sequence = engine.t_launch_element(
         &assets,
         crate::sequence::SequenceElement::new_movement(
             1,
@@ -161,12 +152,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::Bored;
+    engine.set_action_state_of(owner, ActionState::Bored);
 
     let transition = OrderType::TransitionWaitingUprightBoredWaitingUpright;
     let script = SpriteScript {
@@ -183,11 +169,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),
         std::sync::Arc::new(conversion),
     );
@@ -203,26 +185,13 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
     let mut executed_transition = false;
     for _ in 0..16 {
         let executed = engine.tick_actor_animation_for(&sim, &assets, owner);
         executed_transition |= executed.is_some();
-        if engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state
-            == ActionState::Waiting
-        {
+        if engine.action_state_of(owner) == ActionState::Waiting {
             break;
         }
     }
@@ -230,17 +199,9 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         executed_transition,
         "a transition selected as GenericAnimation must not be suppressed merely because its element carries Movement data"
     );
+    assert_eq!(engine.ent(owner).sprite().last_action, transition);
     assert_eq!(
-        engine.get_entity(owner).unwrap().sprite().last_action,
-        transition
-    );
-    assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .actor_data()
-            .unwrap()
-            .action_state,
+        engine.action_state_of(owner),
         ActionState::Waiting,
         "bored-exit completion inside MoveOk must apply the base-Actor state transition"
     );
@@ -256,12 +217,7 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .action_state = ActionState::Moving;
+    engine.set_action_state_of(owner, ActionState::Moving);
 
     let live_goal = MapPoint::new(90.0, 100.0);
     engine.launch_turn_sequence_deferred_no_transitions(
@@ -275,18 +231,13 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
     // The outgoing actor slot may run after facing registers its deferred
     // Turn and advance the movement goal before SequenceManager instructs it.
     engine
-        .get_entity_mut(owner)
-        .unwrap()
+        .ent_mut(owner)
         .position_iface_mut()
         .set_map_goal(live_goal);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         live_goal,
         "deferred Turn instruction must not replace a goal advanced by the outgoing actor slot"
     );
@@ -349,21 +300,11 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
 
     // If manager-time instruction incorrectly re-resolves the point, this
     // position would reverse the requested direction.
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(MapPoint::new(300.0, 100.0));
+    engine.place_map(owner, MapPoint::new(300.0, 100.0));
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
-        u8::from(
-            engine
-                .get_entity(owner)
-                .unwrap()
-                .position_iface()
-                .get_direction_goal()
-        ),
+        u8::from(engine.ent(owner).position_iface().get_direction_goal()),
         expected_direction as u8
     );
     assert_eq!(
@@ -385,7 +326,6 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
     use crate::sequence::{CascadeFlags, SequenceElement, SequencePriority};
     use std::num::NonZeroU32;
 
-    let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier = make_test_soldier(Posture::Upright);
@@ -411,15 +351,9 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         .sequence_manager
         .start_sequence_level(old_sequence);
     engine.select_sequence_element(owner, Some((old_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        old_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), old_sequence, 0);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
         entity.actor_data_mut().unwrap().action_state = ActionState::MovingFast;
         entity.position_iface_mut().set_map_goal(old_goal);
     }
@@ -436,31 +370,14 @@ fn goto_replacement_retains_selected_movement_goal_while_path_is_pending() {
         .orders
         .sequence_manager
         .start_sequence_level(replacement_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        replacement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), replacement_sequence, 0);
     engine.select_sequence_element(owner, Some((replacement_sequence, 0)));
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine.element_interrupted(
-        &sim,
-        &assets,
-        &mut Vec::new(),
-        old_sequence,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, old_sequence, 0, CascadeFlags::NEXT_LEVEL);
     engine.orders.sequence_manager.set_halt_pending(false);
 
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .position_iface()
-            .map_goal(),
+        engine.ent(owner).position_iface().map_goal(),
         old_goal,
         "replacement selection must happen before the old movement's condolence can clear its cached transition goal"
     );
@@ -482,11 +399,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
     };
     soldier_data.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     let owner = engine.add_test_entity(soldier);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .set_sector(SectorHandle::new(1));
+    engine.elem_mut(owner).set_sector(SectorHandle::new(1));
 
     let mut waiting = SequenceElement::new_movement(
         1,
@@ -501,13 +414,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         .sequence_manager
         .start_sequence_level(waiting_sequence);
     engine.select_sequence_element(owner, Some((waiting_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        waiting_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), waiting_sequence, 0);
 
     engine.duty_go_to(
         &sim,
@@ -522,7 +429,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
         crate::ai::GotoFlags::RUN,
     );
 
-    let ai = engine.get_entity(owner).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(owner);
     assert!(
         ai.couldnt_reachpoint,
         "movement construction's synchronous gate failure must reach decision completion"
@@ -561,13 +468,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
         .sequence_manager
         .start_sequence_level(waiting_sequence);
     engine.select_sequence_element(owner, Some((waiting_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        waiting_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), waiting_sequence, 0);
 
     let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
     engine.duty_go_to(
@@ -758,7 +659,7 @@ fn ration_set_path_updates_eat_or_guzzle_slot_without_out_of_ammo_speech() {
                 .get_ammo(action),
             starting_ammo - 1
         );
-        let pc = engine.get_entity(pc_id).unwrap().pc_data().unwrap();
+        let pc = engine.pc(pc_id);
         if starting_ammo == 1 {
             assert_eq!(pc.current_action, Action::NoAction);
             assert_eq!(pc.saved_action, Action::NoAction);
