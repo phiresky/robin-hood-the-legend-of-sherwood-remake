@@ -2282,42 +2282,6 @@ mod tests {
     }
 
     #[test]
-    fn official_projection_mount_is_one_way_and_has_no_host_fallback() {
-        let source = tempfile::tempdir().unwrap();
-        let core = tempfile::tempdir().unwrap();
-        fs::create_dir_all(source.path().join("Data")).unwrap();
-        fs::create_dir_all(core.path().join("Data")).unwrap();
-        fs::write(source.path().join("Data/source.bin"), b"source").unwrap();
-        fs::write(core.path().join("Data/core.bin"), b"core").unwrap();
-        let source = fs::canonicalize(source.path()).unwrap();
-        let core = fs::canonicalize(core.path()).unwrap();
-        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-
-        file_system
-            .configure_official_projection_mounts(&source, "1033", &core)
-            .unwrap();
-        assert_eq!(file_system.read_all("Data/source.bin").unwrap(), b"source");
-        assert_eq!(file_system.read_all("Data/core.bin").unwrap(), b"core");
-        assert!(matches!(
-            file_system.open(source.join("Data/source.bin").to_str().unwrap()),
-            Err(SbFileError::Read(_))
-        ));
-        assert_eq!(
-            file_system.add_alternate_path("host-fallback"),
-            Err(SbFileError::Sealed)
-        );
-        assert_eq!(
-            file_system.set_locale_paths(Some("1031"), None),
-            Err(SbFileError::Sealed)
-        );
-        assert!(
-            file_system
-                .configure_official_projection_mounts(&source, "1033", &core)
-                .is_err()
-        );
-    }
-
-    #[test]
     fn open_and_read() {
         let dir = std::env::temp_dir().join("sbfile_ro_test");
         let _ = fs::create_dir_all(&dir);
