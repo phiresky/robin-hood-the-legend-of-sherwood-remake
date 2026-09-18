@@ -184,6 +184,16 @@ codegen-backend = "cranelift"
 [profile.dev.package."*"]
 opt-level = 3
 
+# Sprite entropy decoding processes millions of tiles during mod preload.
+# Keep this small codec crate optimized while game/asset orchestration stays
+# debuggable. Cranelift does not provide LLVM's loop optimizations here.
+[profile.dev.package.robin_asset_codecs]
+opt-level = 1
+codegen-backend = "llvm"
+[profile.test.package.robin_asset_codecs]
+opt-level = 1
+codegen-backend = "llvm"
+
 # Proc macros execute again on incremental rebuilds. Optimize their host code
 # and parsing dependencies with LLVM while keeping game code on Cranelift.
 # This also covers build scripts and is inherited by the test/dev-opt1 profiles.

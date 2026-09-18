@@ -64,26 +64,29 @@ fn runtime_sprite(
         dictionary.num_entries().into(),
     )?;
     ensure!(
-        width <= sprite.width && sprite.width - width < 4,
+        width > 0 && width <= sprite.width && sprite.width - width < 4,
         "invalid authored frame width"
     );
     let cols = usize::from(sprite.width / 4);
+    // Reuse row storage and expand four pixels per dictionary lookup. Avoid
+    // allocating a row and stepping a nested iterator for every decoded pixel.
+    let mut row = Vec::with_capacity(usize::from(sprite.width));
     let mut packed_data = Vec::new();
-    for y in 0..usize::from(sprite.height) {
-        let row: Vec<u16> = sprite.packed_data[y * cols..(y + 1) * cols]
-            .iter()
-            .flat_map(|&index| dictionary.lookup_pixels(index).iter().copied())
-            .take(width.into())
-            .collect();
+    for indices in sprite.packed_data[..cols * usize::from(sprite.height)].chunks_exact(cols) {
+        row.clear();
+        for &index in indices {
+            row.extend_from_slice(dictionary.lookup_pixels(index));
+        }
+        let row = &row[..usize::from(width)];
         if let Some(first) = row.iter().position(|&pixel| pixel != TRANSPARENT_COLOR_16) {
             let last = row
                 .iter()
                 .rposition(|&pixel| pixel != TRANSPARENT_COLOR_16)
                 .expect("nonempty row");
-            packed_data.extend([first as u16, last as u16]);
+            packed_data.extend_from_slice(&[first as u16, last as u16]);
             packed_data.extend_from_slice(&row[first..=last]);
         } else {
-            packed_data.extend([u16::MAX, u16::MAX]);
+            packed_data.extend_from_slice(&[u16::MAX, u16::MAX]);
         }
     }
     Ok(RuntimeSprite {
@@ -102,9 +105,13 @@ pub fn read_selected_bytes(
     compressed: &[u8],
     selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<(String, HackableRhsCache)>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let started = std::time::Instant::now();
     let bytes = admission::decompress(compressed)?;
     let mut family: Family = admission::decode_document(&bytes, MAGIC)?;
     drop(bytes);
+    #[cfg(not(target_arch = "wasm32"))]
+    let document_ms = started.elapsed().as_millis();
     admission::validate_frames(
         family
             .bank
@@ -148,7 +155,11 @@ pub fn read_selected_bytes(
     if let Some(selected) = selected {
         retain_selected_chunks(&mut family, selected)?;
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let admitted_ms = started.elapsed().as_millis();
     family.bank.materialize_vq_chunks(&rhs_files)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let materialized_ms = started.elapsed().as_millis();
     let mut result = Vec::new();
     for mut character in family.characters {
         character.metadata.version = HACKABLE_RHS_CACHE_VERSION;
@@ -177,6 +188,14 @@ pub fn read_selected_bytes(
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         result.push((character.name, character.metadata));
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    tracing::debug!(
+        document_ms,
+        admission_ms = admitted_ms - document_ms,
+        materialize_ms = materialized_ms - admitted_ms,
+        runtime_ms = started.elapsed().as_millis() - materialized_ms,
+        "custom sprite family decoded"
+    );
     Ok(result)
 }
 
@@ -774,6 +793,70 @@ mod tests {
             proxy(&[vec![0, u16::MAX]], Some(&[vec![0, u16::MAX]]), &[4]),
             0.0
         );
+    }
+
+    #[test]
+    fn runtime_rows_preserve_clipping_transparency_and_shadow_pixels() {
+        // Every transparency pattern within a four-pixel dictionary entry,
+        // including opaque black and the shadow key as ordinary literals.
+        let values: Vec<u16> = (0..16)
+            .flat_map(|mask| {
+                (0..4).map(move |pixel| {
+                    if mask & (1 << pixel) == 0 {
+                        TRANSPARENT_COLOR_16
+                    } else {
+                        [0, assets_frame_holder::SHADOW_KEY, 0x1234, 0xffff][pixel]
+                    }
+                })
+            })
+            .collect();
+        let dictionary = FrameDictionary::from_raw(16, values);
+        for width in 1u16..=12 {
+            let padded = width.next_multiple_of(4);
+            for pattern in 0..16u16 {
+                let grid: Vec<_> = (0..padded / 4 * 3)
+                    .map(|index| (pattern + index) % 16)
+                    .collect();
+                let sprite = ShippingSprite {
+                    width: padded,
+                    height: 3,
+                    dictionary_index: 0,
+                    packed_data: Arc::new(grid.clone()),
+                    raster: None,
+                };
+                let mut expected = Vec::new();
+                for indices in grid.chunks_exact(usize::from(padded / 4)) {
+                    let pixels: Vec<_> = indices
+                        .iter()
+                        .flat_map(|&index| dictionary.lookup_pixels(index).iter().copied())
+                        .take(usize::from(width))
+                        .collect();
+                    match (
+                        pixels.iter().position(|&p| p != TRANSPARENT_COLOR_16),
+                        pixels.iter().rposition(|&p| p != TRANSPARENT_COLOR_16),
+                    ) {
+                        (Some(first), Some(last)) => {
+                            expected.extend([first as u16, last as u16]);
+                            expected.extend_from_slice(&pixels[first..=last]);
+                        }
+                        _ => expected.extend([u16::MAX, u16::MAX]),
+                    }
+                }
+                let decoded = runtime_sprite(width, &sprite, &dictionary).unwrap();
+                decoded.validate().unwrap();
+                assert_eq!(decoded.packed_data, expected);
+            }
+        }
+        let mut invalid = family(HACKABLE_RHS_CACHE_VERSION, 0)
+            .bank
+            .sprites
+            .remove(0)
+            .1;
+        assert!(runtime_sprite(0, &invalid, &dictionary).is_err());
+        invalid.packed_data = Arc::new(vec![16]);
+        assert!(runtime_sprite(1, &invalid, &dictionary).is_err());
+        invalid.packed_data = Arc::new(vec![]);
+        assert!(runtime_sprite(1, &invalid, &dictionary).is_err());
     }
 
     #[test]
