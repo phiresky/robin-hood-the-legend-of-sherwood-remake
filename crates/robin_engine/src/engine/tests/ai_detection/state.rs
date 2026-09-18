@@ -18,11 +18,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
     // An unclassified animation reaches the noise refresh's common tail:
     // volume zero and a +/-100 box around the current position.
     engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::Invalid);
-    let initial_box = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor")
-        .hear_noise_box;
+    let initial_box = engine.actor(pc).hear_noise_box;
     assert_eq!(
         initial_box,
         crate::coordinates::MapBBox::from_coords(0.0, 100.0, 200.0, 300.0)
@@ -39,10 +35,7 @@ fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
         .set_position_map(MapPoint::new(210.0, 220.0));
     engine.refresh_pc_produced_noise_for_with_order(pc, OrderType::WaitingUpright);
 
-    let actor = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor");
+    let actor = engine.actor(pc);
     let noise = actor
         .produced_noise
         .expect("quiet refresh still publishes the current noise record");
@@ -346,10 +339,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
 
     engine.tick_refresh_ambush_points_for_npc(sim, npc_id, &assets);
 
-    let enemy = engine
-        .get_entity(npc_id)
-        .and_then(Entity::enemy_ai)
-        .expect("ambush owner retains enemy AI");
+    let enemy = engine.enemy(npc_id);
     assert_eq!(
         enemy.base.current_substate,
         Substate::SeekingSeekpointCheckingAmbushPoint
@@ -373,19 +363,13 @@ fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
     let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     engine.control.frame_counter = u32::MAX - 10;
-    let ai = engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("overflow-timer owner has AI");
+    let ai = engine.ai_ctrl_mut(npc_id);
     ai.timer_is_running = true;
     ai.when_does_timer_ring = u32::MAX - 5;
     ai.substate_at_last_timer_launch = ai.current_substate;
 
     engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("overflow-timer owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(
         !ai.timer_is_running || ai.when_does_timer_ring != u32::MAX - 5,
         "the wrapped million-frame guard must consume the apparently-future timer"
@@ -415,10 +399,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     ];
 
     engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("FIFO owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(ai.locks_flag_field.contains(AiLockFlags::BUSY));
     assert_eq!(
         ai.stimulus_queue
@@ -502,10 +483,7 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
         with_draw_trace(|| engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets));
 
     assert_eq!(draws, vec![RngSite::AiPanic, RngSite::AiPanic]);
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("retained panic owner keeps AI");
+    let ai = engine.ai_ctrl(npc_id);
     let events = ai
         .ai_log
         .iter()
@@ -552,10 +530,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             soldier.npc.direction_old = 4;
         }
         {
-            let receiver = engine
-                .get_entity_mut(receiver_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap();
+            let receiver = engine.ai_ctrl_mut(receiver_id);
             // Recipient selection happened while this soldier was eligible,
             // but an earlier synchronous callback then changed its state.
             // CALL_LOOKTHERE itself is unconditional in the Original.
@@ -587,10 +562,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             }
         });
 
-        let receiver = engine
-            .get_entity(receiver_id)
-            .and_then(Entity::npc_data)
-            .unwrap();
+        let receiver = engine.npc(receiver_id);
         let receiver_ai = receiver.ai_brain.base().unwrap();
         assert_eq!(receiver_ai.current_state, AiState::Wondering);
         assert_eq!(receiver_ai.current_substate, Substate::WonderingWatching);
@@ -769,18 +741,10 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             });
         }
         assert_ne!(
-            engine
-                .get_entity(waker_id)
-                .and_then(Entity::ai_controller)
-                .unwrap()
-                .current_substate,
+            engine.ai_ctrl(waker_id).current_substate,
             Substate::SleepingUnconscious,
             "producer natural={natural}, waker_before_observer={waker_before_observer}, unconscious={}",
-            engine
-                .get_entity(waker_id)
-                .and_then(Entity::human_data)
-                .unwrap()
-                .unconscious
+            engine.human(waker_id).unconscious
         );
 
         crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
@@ -939,10 +903,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
             engine.tick_enemy_ai(sim, &assets)
         });
 
-        let observer = engine
-            .get_entity(observer_id)
-            .and_then(Entity::npc_data)
-            .expect("closed-cadence observer retains NPC state");
+        let observer = engine.npc(observer_id);
         let detectable = observer.detectable_lists[DetectableType::Enemy as usize]
             .iter()
             .find(|detectable| detectable.element == Some(pc_id))
@@ -1019,10 +980,7 @@ fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
 
     crate::sim_rng::with_seed(0xA013_1A10, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let ai = engine
-        .get_entity(observer_id)
-        .and_then(Entity::ai_controller)
-        .expect("closed-cadence observer retains AI state");
+    let ai = engine.ai_ctrl(observer_id);
     assert_eq!(
         ai.max_visibility,
         u32::from(crate::ai_vision::BASE_VIEW_SPEED),
@@ -1206,11 +1164,7 @@ fn entering_beggar_registers_every_transition_for_intelligent_lacklandist_seeker
         (not_seeking, 0),
         (wrong_camp, 0),
     ] {
-        let list = &engine
-            .get_entity(id)
-            .and_then(Entity::npc_data)
-            .expect("test observer must retain NPC data")
-            .detectable_lists[beggar_idx];
+        let list = &engine.npc(id).detectable_lists[beggar_idx];
         assert_eq!(list.len(), expected_count);
         assert!(
             list.iter()

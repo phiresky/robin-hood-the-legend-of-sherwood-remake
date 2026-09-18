@@ -353,11 +353,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
         .endurance = 90;
 
     for owner in [restored, aligned] {
-        engine
-            .get_entity_mut(owner)
-            .and_then(Entity::human_data_mut)
-            .expect("tiredness fixture remains human")
-            .tiredness = 100;
+        engine.human_mut(owner).tiredness = 100;
     }
 
     let restored_order = (restored.index() + 17) & 31;
@@ -373,11 +369,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = restored.index() & 31;
     engine.tick_tiredness_for(restored, &assets);
     assert_eq!(
-        engine
-            .get_entity(restored)
-            .and_then(Entity::human_data)
-            .expect("restored fixture remains human")
-            .tiredness,
+        engine.human(restored).tiredness,
         100,
         "the kind-local entity slot must not open the recovered cadence"
     );
@@ -385,11 +377,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = restored_order;
     engine.tick_tiredness_for(restored, &assets);
     assert_eq!(
-        engine
-            .get_entity(restored)
-            .and_then(Entity::human_data)
-            .expect("restored fixture remains human")
-            .tiredness,
+        engine.human(restored).tiredness,
         91,
         "the restored Original creation-order slot subtracts endurance / 10"
     );
@@ -397,11 +385,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     engine.control.frame_counter = aligned.index() & 31;
     engine.tick_tiredness_for(aligned, &assets);
     assert_eq!(
-        engine
-            .get_entity(aligned)
-            .and_then(Entity::human_data)
-            .expect("aligned fixture remains human")
-            .tiredness,
+        engine.human(aligned).tiredness,
         91,
         "aligned entity and creation-order slots retain the existing behavior"
     );
@@ -502,10 +486,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     pc.pc.life_points = 100;
     let assets = engine.test_runtime_assets();
 
-    let timer_ai = engine
-        .get_entity_mut(timer_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("timer civilian has AI");
+    let timer_ai = engine.ai_ctrl_mut(timer_owner);
     timer_ai.current_state = AiState::Wondering;
     timer_ai.current_substate = Substate::WonderingCivilianAdmiringHero;
     timer_ai.initial_position = Position {
@@ -518,11 +499,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     timer_ai.substate_at_last_timer_launch = timer_ai.current_substate;
     engine.tick_ai_normal_timer_for_npc(sim, timer_owner, &assets);
     assert_eq!(
-        engine
-            .get_entity(timer_owner)
-            .and_then(Entity::ai_controller)
-            .expect("timer civilian retains AI")
-            .current_substate,
+        engine.ai_ctrl(timer_owner).current_substate,
         Substate::DefaultGotoPost,
         "normal timer Think must complete before the next owner"
     );
@@ -531,10 +508,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
         (retained_owner, Some(Stimulus::new(StimulusType::EventDone))),
         (self_owner, None),
     ] {
-        let ai = engine
-            .get_entity_mut(id)
-            .and_then(Entity::ai_controller_mut)
-            .expect("face civilian has AI");
+        let ai = engine.ai_ctrl_mut(id);
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingCivilianGiveAlertingReportToSoldierPoint;
         ai.antagonist = Some(crate::ai::AiEntityHandle::new(target.index()));
@@ -553,10 +527,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
 
     assert_launched(&engine, self_owner, Command::Turn, "recursive self-Think");
 
-    let periodic_ai = engine
-        .get_entity_mut(periodic_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("The16thFrame civilian has AI");
+    let periodic_ai = engine.ai_ctrl_mut(periodic_owner);
     periodic_ai.current_state = AiState::Default;
     periodic_ai.current_substate = Substate::DefaultGotoPost;
     periodic_ai.stuck_counter = 3;
@@ -571,19 +542,12 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     engine.control.frame_counter = 100;
     engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
     assert_eq!(
-        engine
-            .get_entity(periodic_owner)
-            .and_then(Entity::ai_controller)
-            .expect("The16thFrame civilian retains AI")
-            .stuck_counter,
+        engine.ai_ctrl(periodic_owner).stuck_counter,
         0,
         "the periodic update must run and hand its movement retry to the engine boundary"
     );
 
-    let macro_ai = engine
-        .get_entity_mut(macro_owner)
-        .and_then(Entity::ai_controller_mut)
-        .expect("macro civilian has AI");
+    let macro_ai = engine.ai_ctrl_mut(macro_owner);
     macro_ai.current_state = AiState::Default;
     macro_ai.current_substate = Substate::DefaultInMacro;
     macro_ai.macro_command = vec![3, 8, 0]; // CMD_FACE_TO(8)
@@ -614,10 +578,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
         soldier.npc.ai_brain.base_mut().unwrap().me = id.index();
     }
     {
-        let chief = engine
-            .get_entity_mut(chief_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap();
+        let chief = engine.ai_ctrl_mut(chief_id);
         chief.current_state = AiState::Default;
         chief.current_substate = Substate::DefaultOnPost;
         chief.patrol = vec![subordinate_id];
@@ -636,10 +597,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
         engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus);
     });
 
-    let chief = engine
-        .get_entity(chief_id)
-        .and_then(Entity::ai_controller)
-        .unwrap();
+    let chief = engine.ai_ctrl(chief_id);
     assert_eq!(chief.current_state, AiState::Default);
     assert_eq!(chief.current_substate, Substate::DefaultLookingShadow);
     assert!(

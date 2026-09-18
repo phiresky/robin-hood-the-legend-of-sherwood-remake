@@ -18,18 +18,11 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
         soldier.npc.view_radius = 400;
     }
     {
-        let chief = engine
-            .get_entity_mut(chief_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap();
+        let chief = engine.ai_ctrl_mut(chief_id);
         chief.current_state = AiState::Attacking;
         chief.current_substate = Substate::AttackingReactiontime;
     }
-    engine
-        .get_entity_mut(member_id)
-        .and_then(Entity::ai_controller_mut)
-        .unwrap()
-        .patrol_chief = Some(chief_id);
+    engine.ai_ctrl_mut(member_id).patrol_chief = Some(chief_id);
 
     let assets = engine.test_runtime_assets();
     crate::sim_rng::with_seed(0xA013_1090, |sim| {
@@ -129,10 +122,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
 
     crate::sim_rng::with_seed(0xA013_0B1F, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let ai = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("target-rebind soldier retains enemy AI");
+    let ai = engine.enemy(soldier_id);
     // Original-game battle decisions do not clear the forced
     // decision after using it. The serialized reset flag is never consulted.
     assert_eq!(

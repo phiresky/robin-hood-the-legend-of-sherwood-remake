@@ -540,16 +540,9 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
     let old_member = engine.add_test_entity(make_scripted_soldier(""));
     let assets = engine.test_runtime_assets();
 
-    engine
-        .get_entity_mut(old_chief)
-        .and_then(Entity::ai_controller_mut)
-        .expect("old chief has AI")
-        .theoretical_patrol = vec![old_member];
+    engine.ai_ctrl_mut(old_chief).theoretical_patrol = vec![old_member];
     {
-        let member_ai = engine
-            .get_entity_mut(old_member)
-            .and_then(Entity::ai_controller_mut)
-            .expect("old member has AI");
+        let member_ai = engine.ai_ctrl_mut(old_member);
         member_ai.patrol_chief = Some(old_chief);
         // Keep this regression focused on the script VM boundary. The
         // default-member forced-return path has dedicated coverage above.
@@ -602,20 +595,11 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
         .expect("remove-then-add callback completes");
 
     assert!(
-        engine
-            .get_entity(old_chief)
-            .and_then(Entity::ai_controller)
-            .expect("old chief remains an NPC")
-            .theoretical_patrol
-            .is_empty(),
+        engine.ai_ctrl(old_chief).theoretical_patrol.is_empty(),
         "the old patrol is cleared before the VM continues"
     );
     assert_eq!(
-        engine
-            .get_entity(new_chief)
-            .and_then(Entity::ai_controller)
-            .expect("new chief remains an NPC")
-            .theoretical_patrol,
+        engine.ai_ctrl(new_chief).theoretical_patrol,
         vec![old_chief],
         "the following AddAsSubordinate must observe old_chief.HasPatrol() == false"
     );
@@ -727,14 +711,7 @@ fn combat_command_consumes_live_script_filter_refusal() {
 
     // Combat alerts carry a position, so SourceSensitive receives source zero.
     assert!(engine.execute_ai_command_soldiers_to_attack(&sim, &assets, caller_id, center,));
-    assert_eq!(
-        engine
-            .get_entity(target_id)
-            .and_then(Entity::ai_controller)
-            .expect("target retains AI")
-            .current_state,
-        AiState::Default,
-    );
+    assert_eq!(engine.ai_ctrl(target_id).current_state, AiState::Default,);
 
     // Allowing the filter also lets the accepted recipient execute its handler.
     engine
@@ -823,10 +800,7 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         0
     ));
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("closure-review officer retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     // Acceptances happen in roster order, but each accepted soldier is
     // inserted into the alerted list sorted by decreasing distance from the
     // officer; candidate distance grows with index here, so the list reads
@@ -2888,12 +2862,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("sequence-manager actor is typed")
-        .continuation
-        .motion_state = crate::sprite::MotionState::Terminated;
+    engine.actor_mut(actor).continuation.motion_state = crate::sprite::MotionState::Terminated;
 
     let mut element = SequenceElement::new(1, Command::Generic, Some(actor));
     element.orders.push_back(Order::new(
@@ -2914,12 +2883,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
         Some((successor, 0))
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .and_then(|entity| entity.actor_data())
-            .expect("derived-tail actor remains typed")
-            .continuation
-            .motion_state,
+        engine.actor(actor).continuation.motion_state,
         crate::sprite::MotionState::InProgress,
         "accepted InstructOwner must perform the Original mmotionState rewrite"
     );
@@ -2933,12 +2897,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
     let mut engine = EngineInner::new();
     let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("sequence-manager actor is typed")
-        .continuation
-        .motion_state = crate::sprite::MotionState::Terminated;
+    engine.actor_mut(actor).continuation.motion_state = crate::sprite::MotionState::Terminated;
 
     let sequence = engine.t_launch_element(
         &assets,
@@ -2965,12 +2924,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
         "empty accepted carrier must complete in the same Instruct call"
     );
     assert_eq!(
-        engine
-            .get_entity(actor)
-            .and_then(|entity| entity.actor_data())
-            .expect("sequence-manager actor remains typed")
-            .continuation
-            .motion_state,
+        engine.actor(actor).continuation.motion_state,
         crate::sprite::MotionState::InProgress,
         "Original latches mmotionState before its empty-order termination"
     );
@@ -3168,11 +3122,7 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
-    engine
-        .get_entity_mut(actor)
-        .and_then(|entity| entity.actor_data_mut())
-        .expect("frozen timer owner is an actor")
-        .execution_frozen = true;
+    engine.actor_mut(actor).execution_frozen = true;
 
     engine.t_tick_actor_owner_envelopes(&assets);
 
@@ -3335,11 +3285,7 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
             crate::sequence::SequenceState::InProgress
         );
         assert_eq!(
-            engine
-                .get_entity(target)
-                .and_then(|entity| entity.actor_data())
-                .expect("callback timer target remains an actor")
-                .wait_time,
+            engine.actor(target).wait_time,
             if installer_before_target { 0 } else { 1 },
             "only a target whose live creation slot is still ahead may Execute the callback-installed timer this pass"
         );
@@ -3512,10 +3458,7 @@ fn earlier_smalltalk_hint_is_consumed_by_later_waiting_sword_slot() {
                 Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
             ))
     );
-    let human = engine
-        .get_entity(defender)
-        .and_then(|entity| entity.human_data())
-        .expect("defender remains human");
+    let human = engine.human(defender);
     assert_eq!(human.smalltalk_hint, crate::element::SmalltalkHint::None);
     assert_eq!(human.smalltalk_hint_opponent, None);
 }
@@ -3973,11 +3916,7 @@ fn later_smalltalk_hint_defers_for_already_visited_defender() {
             ))
     );
     assert_ne!(
-        engine
-            .get_entity(defender)
-            .and_then(|entity| entity.human_data())
-            .expect("defender remains human")
-            .smalltalk_hint,
+        engine.human(defender).smalltalk_hint,
         crate::element::SmalltalkHint::None,
         "the later attacker mutates the already-visited defender, but the defender cannot consume the hint until its next slot"
     );
@@ -3989,10 +3928,7 @@ fn earlier_initiative_transfer_drives_later_recipient_slot() {
 
     let (mut engine, assets, attacker, defender) = waiting_sword_pair(true);
     {
-        let human = engine
-            .get_entity_mut(attacker)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("attacker remains human");
+        let human = engine.human_mut(attacker);
         human.received_smalltalk_initiative = false;
         human.relative_fighting_ability = 100;
     }
@@ -4017,10 +3953,7 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
 
     let (mut engine, assets, attacker, defender) = waiting_sword_pair(false);
     {
-        let human = engine
-            .get_entity_mut(attacker)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("attacker remains human");
+        let human = engine.human_mut(attacker);
         human.received_smalltalk_initiative = false;
         human.relative_fighting_ability = 100;
     }
@@ -4037,10 +3970,7 @@ fn later_initiative_transfer_cannot_reenter_visited_recipient_slot() {
                 Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
             ))
     );
-    let human = engine
-        .get_entity(defender)
-        .and_then(|entity| entity.human_data())
-        .expect("defender remains human");
+    let human = engine.human(defender);
     assert!(human.smalltalk_initiative);
     assert!(human.received_smalltalk_initiative);
 }
@@ -4082,32 +4012,17 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
                 OrderType::WaitingSword,
                 OrderType::WaitingSword,
             );
-            engine
-                .get_entity_mut(actor)
-                .and_then(|entity| entity.actor_data_mut())
-                .expect("opponent-prune fighter is typed")
-                .action_state = ActionState::WaitingSword;
-            engine
-                .get_entity_mut(actor)
-                .and_then(Entity::enemy_ai_mut)
-                .expect("opponent-prune fighter has enemy AI")
-                .hth_weapon_id = 1;
+            engine.actor_mut(actor).action_state = ActionState::WaitingSword;
+            engine.enemy_mut(actor).hth_weapon_id = 1;
         }
         for (actor, x, z, sector) in [(pruner, 100.0, 0.0, 1), (mutated, 130.0, 41.0, 2)] {
             let element = engine.elem_mut(actor);
             element.set_position(crate::coordinates::WorldPoint3D { x, y: 100.0, z });
             element.set_sector(crate::position_interface::SectorHandle::new(sector));
         }
-        engine
-            .get_entity_mut(pruner)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("pruner is human")
-            .opponents = vec![mutated].into();
+        engine.human_mut(pruner).opponents = vec![mutated].into();
         {
-            let human = engine
-                .get_entity_mut(mutated)
-                .and_then(|entity| entity.human_data_mut())
-                .expect("mutated fighter is human");
+            let human = engine.human_mut(mutated);
             human.opponents = vec![pruner].into();
             human.smalltalk_initiative = true;
             human.received_smalltalk_initiative = true;
@@ -4149,22 +4064,11 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
                 "both QuitSwordfight launches are instructed by the same frame's manager update"
             );
             assert_eq!(
-                engine
-                    .get_entity(actor)
-                    .and_then(|entity| entity.actor_data())
-                    .expect("pruned fighter remains an actor")
-                    .action_state,
+                engine.actor(actor).action_state,
                 ActionState::WaitingSword,
                 "the sword action state persists until the quit transition finishes"
             );
-            assert!(
-                engine
-                    .get_entity(actor)
-                    .and_then(|entity| entity.human_data())
-                    .expect("pruned fighter remains human")
-                    .opponents
-                    .is_empty()
-            );
+            assert!(engine.human(actor).opponents.is_empty());
         }
     }
 }
@@ -4298,11 +4202,7 @@ fn waking_up_creation_order_engine(
     // The target starts unconscious, so the shared fixture skips its combat
     // attachments — but it wakes up mid-test and then needs a live HtH
     // weapon profile for its fighter snapshot.
-    engine
-        .get_entity_mut(target)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("wake target has enemy AI")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(target).hth_weapon_id = 1;
     (engine, assets, rescuer, target)
 }
 
@@ -4370,11 +4270,7 @@ fn later_waking_up_done_defers_already_visited_actor_recovery_animation() {
 #[test]
 fn waking_up_done_does_not_force_awake_a_script_locked_npc() {
     let (mut engine, assets, _rescuer, target) = waking_up_creation_order_engine(true);
-    engine
-        .get_entity_mut(target)
-        .and_then(Entity::ai_controller_mut)
-        .expect("wake target has AI")
-        .script_locked = true;
+    engine.ai_ctrl_mut(target).script_locked = true;
 
     engine.t_tick_actor_owner_envelopes(&assets);
 
@@ -5812,10 +5708,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     });
     officer_ai.hth_weapon_id = 1;
 
-    let owner_ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("detection RNG owner has Enemy AI");
+    let owner_ai = engine.enemy_mut(owner);
     owner_ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.missed_pc = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;

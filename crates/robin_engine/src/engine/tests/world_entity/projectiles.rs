@@ -230,12 +230,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         .set_position(WorldPoint3D::new(10.0, 10.0, 0.0));
     soldier.element.set_position_map(MapPoint::new(10.0, 10.0));
     let listener_id = engine.add_test_entity(listener);
-    engine
-        .get_entity_mut(listener_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test listener has enemy AI")
-        .base
-        .me = listener_id.index();
+    engine.enemy_mut(listener_id).base.me = listener_id.index();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine.broadcast_noise_synchronously(
@@ -249,10 +244,7 @@ fn synchronous_one_shot_noise_is_handled_before_broadcast_returns() {
         None,
     );
 
-    let listener = engine
-        .get_entity(listener_id)
-        .and_then(Entity::enemy_ai)
-        .expect("test listener survives synchronous noise");
+    let listener = engine.enemy(listener_id);
     assert_eq!(listener.base.current_state, AiState::Wondering);
     assert_eq!(listener.base.current_substate, Substate::WonderingWatching);
 }
@@ -310,9 +302,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     );
     assert_eq!(
         engine
-            .get_entity(listener_id)
-            .and_then(Entity::npc_data)
-            .expect("listener keeps NPC state")
+            .npc(listener_id)
             .old_cover_noise_deafness_frame_counter,
         5,
         "heard-volume calculation must refresh deafness before decision-tick admission refuses the event"
@@ -350,9 +340,7 @@ fn one_shot_hearing_defers_listener_state_filtering_but_rejects_its_source_point
     );
     assert_eq!(
         engine
-            .get_entity(listener_id)
-            .and_then(Entity::npc_data)
-            .expect("listener keeps NPC state")
+            .npc(listener_id)
             .old_cover_noise_deafness_frame_counter,
         5,
         "heard-volume calculation must not refresh deafness until subjective volume is positive"
@@ -670,10 +658,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
             .set_position_map(MapPoint::from_world_xyz(world.x, world.y, world.z));
     }
     let frame = engine.control.frame_counter;
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("observation owner has enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.current_state = AiState::Attacking;
     owner.base.current_substate = Substate::AttackingObserve;
     owner.base.launch_timer(0, frame);
@@ -747,10 +732,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         &assets,
     );
 
-    let owner = engine
-        .get_entity(owner_id)
-        .and_then(Entity::enemy_ai)
-        .expect("observation owner retains enemy AI");
+    let owner = engine.enemy(owner_id);
     assert_eq!(
         owner.base.list_us,
         vec![owner_id.index(), raw_near_id.index()]

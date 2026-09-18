@@ -65,10 +65,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
         engine.tick_actor_owner_envelopes(sim, &assets)
     });
 
-    let actor = engine
-        .get_entity(pc)
-        .and_then(Entity::actor_data)
-        .expect("noise PC remains an actor");
+    let actor = engine.actor(pc);
     assert_eq!(
         actor
             .produced_noise
@@ -76,10 +73,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
             .volume,
         15
     );
-    let later = engine
-        .get_entity(later_npc)
-        .and_then(Entity::npc_data)
-        .expect("later listener remains an NPC");
+    let later = engine.npc(later_npc);
     assert!(
         !later.detectable_lists[DetectableType::Enemy as usize][0].heard_last_frame,
         "later NPC must observe the PC's creation-ordered quiet refresh"
@@ -123,11 +117,7 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
         Substate::SeekingArrowReactiontime
     );
     assert_eq!(
-        engine
-            .get_entity(receiver_id)
-            .and_then(Entity::npc_data)
-            .unwrap()
-            .eye_status,
+        engine.npc(receiver_id).eye_status,
         EyeStatus::LookForward,
         "clearing focus must unfocus the stale look-there point stare"
     );

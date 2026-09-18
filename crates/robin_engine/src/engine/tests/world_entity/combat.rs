@@ -8,33 +8,20 @@ fn reciprocal_swordfight_entry_preserves_existing_opponent_strength() {
     let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let assets = engine.test_runtime_assets();
 
-    engine
-        .get_entity_mut(initiator)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .relative_fighting_ability = 17;
+    engine.human_mut(initiator).relative_fighting_ability = 17;
     {
-        let human = engine
-            .get_entity_mut(opponent)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(opponent);
         human.opponents = vec![initiator].into();
         human.relative_fighting_ability = 42;
     }
 
     assert!(engine.enter_swordfight(&sim, &assets, initiator, opponent, false));
 
-    let initiator_human = engine
-        .get_entity(initiator)
-        .and_then(Entity::human_data)
-        .unwrap();
+    let initiator_human = engine.human(initiator);
     assert_eq!(initiator_human.opponents, vec![opponent]);
     assert_eq!(initiator_human.relative_fighting_ability, 50);
 
-    let opponent_human = engine
-        .get_entity(opponent)
-        .and_then(Entity::human_data)
-        .unwrap();
+    let opponent_human = engine.human(opponent);
     assert_eq!(opponent_human.opponents, vec![initiator]);
     assert_eq!(opponent_human.relative_fighting_ability, 42);
 }
@@ -487,12 +474,7 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
     let owner = engine.add_test_entity(make_enemy_ai_hero());
     let left = engine.add_test_entity(make_enemy_ai_hero());
     for id in [owner, left] {
-        engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("AI-controlled hero has EnemyAi")
-            .base
-            .me = id.index();
+        engine.enemy_mut(id).base.me = id.index();
     }
     engine.test_runtime_assets();
     engine.apply_update_left_combat_neighbour(
@@ -501,18 +483,12 @@ fn enemy_ai_hero_cross_owner_combat_neighbours_preserve_pc_kind() {
         Some(crate::ai::AiEntityHandle::new(left.index())),
     );
 
-    let owner_enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("owner PC retains EnemyAi");
+    let owner_enemy = engine.enemy(owner);
     assert_eq!(
         owner_enemy.left_combat_neighbour,
         Some(crate::ai::AiEntityHandle::new(left.index()))
     );
-    let left_enemy = engine
-        .get_entity(left)
-        .and_then(Entity::enemy_ai)
-        .expect("left PC retains EnemyAi");
+    let left_enemy = engine.enemy(left);
     assert_eq!(
         left_enemy.right_combat_neighbour,
         Some(crate::ai::AiEntityHandle::new(owner.index()))
@@ -546,33 +522,19 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
     let victim = engine.add_test_entity(make_enemy_ai_hero());
     let right = engine.add_test_entity(make_enemy_ai_hero());
     for id in [left, victim, right] {
-        engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("AI-controlled hero has EnemyAi")
-            .base
-            .me = id.index();
+        engine.enemy_mut(id).base.me = id.index();
     }
     {
-        let enemy = engine
-            .get_entity_mut(left)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("left PC has EnemyAi");
+        let enemy = engine.enemy_mut(left);
         enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
     {
-        let enemy = engine
-            .get_entity_mut(victim)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("victim PC has EnemyAi");
+        let enemy = engine.enemy_mut(victim);
         enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(left.index()));
         enemy.right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(right.index()));
     }
     {
-        let enemy = engine
-            .get_entity_mut(right)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("right PC has EnemyAi");
+        let enemy = engine.enemy_mut(right);
         enemy.left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(victim.index()));
     }
 
@@ -583,22 +545,8 @@ fn enemy_ai_hero_death_detaches_pc_combat_neighbours() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.handle_death(&crate::sim_rng::test_context(), &assets, victim);
 
-    assert_eq!(
-        engine
-            .get_entity(left)
-            .and_then(Entity::enemy_ai)
-            .expect("left PC retains EnemyAi")
-            .right_combat_neighbour,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(right)
-            .and_then(Entity::enemy_ai)
-            .expect("right PC retains EnemyAi")
-            .left_combat_neighbour,
-        None
-    );
+    assert_eq!(engine.enemy(left).right_combat_neighbour, None);
+    assert_eq!(engine.enemy(right).left_combat_neighbour, None);
 }
 
 #[test]
@@ -607,11 +555,7 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("review2 combat-alert soldier has AI")
-        .locks_flag_field = AiLockFlags::BUSY;
+    engine.ai_ctrl_mut(soldier_id).locks_flag_field = AiLockFlags::BUSY;
     assert!(engine.execute_ai_command_soldiers_to_attack(
         &sim,
         &assets,
@@ -623,9 +567,7 @@ fn review2_combat_alert_preserves_original_busy_lock_acceptance() {
     ));
     assert_eq!(
         engine
-            .get_entity(soldier_id)
-            .and_then(Entity::ai_controller)
-            .expect("review2 combat-alert soldier retains AI")
+            .ai_ctrl(soldier_id)
             .stimulus_queue
             .last()
             .map(|s| s.stimulus_type),
@@ -640,11 +582,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     {
-        let base = &mut engine
-            .get_entity_mut(soldier_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("combat-alert recipient has EnemyAi")
-            .base;
+        let base = &mut engine.enemy_mut(soldier_id).base;
         base.set_ai_state(AiState::Fleeing);
         base.current_substate = Substate::FleeingRunToDoor;
     };
@@ -656,11 +594,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
         .set_position_map(MapPoint::new(300.0, 0.0));
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .list_them = vec![enemy_id.index()];
+    engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
     engine.execute_live_battle_decision(
         &sim,
         &assets,
@@ -671,10 +605,7 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
         false,
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("combat-alert caller retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
     assert!(officer.alerted_us.is_empty());
     assert_eq!(officer.base.current_state, AiState::Attacking);
@@ -738,11 +669,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         ));
 
     {
-        let base = &mut engine
-            .get_entity_mut(refused_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("partial-refusal rejector has EnemyAi")
-            .base;
+        let base = &mut engine.enemy_mut(refused_id).base;
         base.set_ai_state(AiState::Fleeing);
         base.current_substate = Substate::FleeingRunToDoor;
     };
@@ -754,11 +681,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         .set_position_map(MapPoint::new(300.0, 0.0));
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    engine
-        .get_entity_mut(officer_id)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .list_them = vec![enemy_id.index()];
+    engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
     engine.execute_live_battle_decision(
         &sim,
         &assets,
@@ -769,20 +692,14 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         false,
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal caller retains EnemyAi");
+    let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
     assert_eq!(
         officer.base.current_substate,
         Substate::AttackingOfficerGivingOrders
     );
     assert_eq!(officer.base.current_remark, Remark::OfficerGivesAttackOrder);
-    let accepted = engine
-        .get_entity(accepted_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal acceptor retains EnemyAi");
+    let accepted = engine.enemy(accepted_id);
     assert!(
         !accepted.gather_position_instructed,
         "officer attack commands only use accepted soldiers to orient the officer; they never assign formation slots"
@@ -791,10 +708,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
         accepted.gather_direction, 10,
         "a combat alert must preserve a direction authored by an independent state such as DoorFight"
     );
-    let refused = engine
-        .get_entity(refused_id)
-        .and_then(Entity::enemy_ai)
-        .expect("partial-refusal rejector retains EnemyAi");
+    let refused = engine.enemy(refused_id);
     assert!(!refused.gather_position_instructed);
 }
 
@@ -921,12 +835,7 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
             "case {case:?} must be rejected before retained-lock Think"
         );
         assert!(
-            engine
-                .get_entity(soldier_id)
-                .and_then(Entity::ai_controller)
-                .expect("eligibility caller retains AI")
-                .stimulus_queue
-                .is_empty(),
+            engine.ai_ctrl(soldier_id).stimulus_queue.is_empty(),
             "case {case:?} must not be called"
         );
     }
@@ -959,9 +868,7 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
     ));
     assert_eq!(
         engine
-            .get_entity(soldier_id)
-            .and_then(Entity::ai_controller)
-            .expect("closed-eye recipient retains AI")
+            .ai_ctrl(soldier_id)
             .stimulus_queue
             .last()
             .map(|stimulus| stimulus.stimulus_type),

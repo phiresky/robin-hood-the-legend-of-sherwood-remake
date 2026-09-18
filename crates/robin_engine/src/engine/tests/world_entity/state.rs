@@ -11,25 +11,14 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
     let right = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     {
-        let ai = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap();
+        let ai = engine.enemy_mut(owner);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingOverviewLookLeft;
         ai.left_combat_neighbour = Some(AiEntityHandle::new(left.index()));
         ai.right_combat_neighbour = Some(AiEntityHandle::new(right.index()));
     }
-    engine
-        .get_entity_mut(left)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .right_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
-    engine
-        .get_entity_mut(right)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap()
-        .left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    engine.enemy_mut(left).right_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
+    engine.enemy_mut(right).left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
     let sim = crate::sim_rng::test_context();
     engine.duty_set_state(
         &sim,
@@ -38,7 +27,7 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
         AiState::Attacking,
         Substate::AttackingRunningToPhalanx,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(
         ai.left_combat_neighbour,
         Some(AiEntityHandle::new(left.index()))
@@ -54,25 +43,11 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
         AiState::Attacking,
         Substate::AttackingOverviewLookLeft,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.left_combat_neighbour, None);
     assert_eq!(ai.right_combat_neighbour, None);
-    assert_eq!(
-        engine
-            .get_entity(left)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .right_combat_neighbour,
-        None
-    );
-    assert_eq!(
-        engine
-            .get_entity(right)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .left_combat_neighbour,
-        None
-    );
+    assert_eq!(engine.enemy(left).right_combat_neighbour, None);
+    assert_eq!(engine.enemy(right).left_combat_neighbour, None);
 }
 
 #[test]
@@ -98,10 +73,7 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
         num_shooting_points: 1,
         num_owners: 1,
     });
-    let ai = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .unwrap();
+    let ai = engine.enemy_mut(owner);
     ai.my_shooting_point = Some((0, 0));
     ai.my_archery_sector = Some(0);
     ai.pending_special_strike = true;
@@ -112,7 +84,7 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
         AiState::Default,
         Substate::DefaultOnPost,
     );
-    let ai = engine.get_entity(owner).and_then(Entity::enemy_ai).unwrap();
+    let ai = engine.enemy(owner);
     assert_eq!(ai.my_shooting_point, None);
     assert_eq!(ai.my_archery_sector, None);
     assert!(ai.pending_special_strike);
@@ -175,12 +147,7 @@ fn geometry_only_level_reserves_zero_ai_handle_before_first_actor() {
     let soldier = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Custom(2)));
     assert_eq!(soldier.index(), 1, "the first AI actor must not alias null");
     assert_eq!(
-        engine
-            .get_entity(soldier)
-            .and_then(Entity::enemy_ai)
-            .expect("test soldier has enemy AI")
-            .base
-            .me,
+        engine.enemy(soldier).base.me,
         1,
         "published AI self handle follows the reserved entity slot"
     );
@@ -430,10 +397,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
             .is_none(),
         "registered Face/Leave elements must not become actor-selected during the owner slot"
     );
-    let enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("Enemy test AI remains live");
+    let enemy = engine.enemy(owner);
     assert!(
         !enemy.will_be_attentive,
         "attentive-mode changes update their gate immediately"
@@ -543,10 +507,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         [(Command::LeaveAttentiveMode, SequenceState::Todo)],
         "Reactiontime's attentive=true observes the already-true will-be gate, then the immediately following TooProudApproach attentive=false launches the sole transition"
     );
-    let enemy = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("Enemy test AI remains live");
+    let enemy = engine.enemy(owner);
     assert!(enemy.attentive);
     assert!(!enemy.will_be_attentive);
     assert_eq!(enemy.base.current_state, AiState::Attacking);
@@ -596,11 +557,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
         "both opposite attentive-mode transitions register before the following facing step"
     );
     assert!(
-        !engine
-            .get_entity(owner)
-            .and_then(Entity::enemy_ai)
-            .expect("Enemy test AI remains live")
-            .will_be_attentive,
+        !engine.enemy(owner).will_be_attentive,
         "the final attentive request still owns the projected flag"
     );
 }
@@ -934,10 +891,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         (owner_id, Substate::AttackingReactiontime),
         (friend_id, Substate::AttackingSwordfight),
     ] {
-        let enemy = engine
-            .get_entity_mut(id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test soldier has Enemy AI");
+        let enemy = engine.enemy_mut(id);
         enemy.base.me = id.index();
         {
             let ai = &mut enemy.base;
@@ -946,24 +900,14 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         }
         enemy.base.primary_target = Some(crate::ai::AiEntityHandle::new(old_target_id.index()));
     }
-    engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("owner has Enemy AI")
-        .list_them = vec![old_target_id.index()];
+    engine.enemy_mut(owner_id).list_them = vec![old_target_id.index()];
     let frame = engine.control.frame_counter;
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("owner has Enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.launch_timer(0, frame);
     owner.base.timer_is_running = false;
 
     let assets = engine.test_runtime_assets();
-    let friend = engine
-        .get_entity_mut(friend_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("friend has Enemy AI");
+    let friend = engine.enemy_mut(friend_id);
     friend.base.primary_target = Some(crate::ai::AiEntityHandle::new(new_target_id.index()));
     engine.dispatch_think_with_drain(
         &sim,
@@ -972,10 +916,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &assets,
     );
 
-    let owner = engine
-        .get_entity(owner_id)
-        .and_then(Entity::enemy_ai)
-        .expect("owner retains Enemy AI");
+    let owner = engine.enemy(owner_id);
     assert!(owner.list_them.contains(&new_target_id.index()));
 }
 
@@ -1059,11 +1000,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     officer_ai.base.current_state = AiState::Seeking;
     officer_ai.base.current_substate = Substate::SeekingOfficerCallSoldier;
     {
-        let ai = &mut engine
-            .get_entity_mut(soldier_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("call rejector has EnemyAi")
-            .base;
+        let ai = &mut engine.enemy_mut(soldier_id).base;
         ai.set_ai_state(AiState::Attacking);
         ai.current_substate = Substate::AttackingSwordfight;
     }
@@ -1257,14 +1194,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
         commands.contains(&Command::Move),
         "different exact arenas with the same public number can only publish Move after the gate graph accepts the route"
     );
-    assert!(
-        !engine
-            .get_entity(owner)
-            .and_then(Entity::enemy_ai)
-            .unwrap()
-            .base
-            .couldnt_reachpoint
-    );
+    assert!(!engine.enemy(owner).base.couldnt_reachpoint);
 }
 
 #[test]
@@ -1352,10 +1282,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
             }),
         "accepted CALL_HEY must not publish a return-to-duty transition"
     );
-    let soldier = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("accepted soldier retains EnemyAi");
+    let soldier = engine.enemy(soldier_id);
     assert_eq!(
         soldier.base.current_substate,
         Substate::SeekingSoldierCalledByOfficer
@@ -1412,12 +1339,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
         "nested Turn must remain uninstructed until the manager hourglass"
     );
     assert_eq!(
-        engine
-            .get_entity(target_id)
-            .and_then(Entity::enemy_ai)
-            .expect("nested-turn target retains EnemyAi")
-            .base
-            .current_substate,
+        engine.enemy(target_id).base.current_substate,
         Substate::SeekingOfficerLectureCharly
     );
 }
@@ -1437,10 +1359,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
     // patrol fixture otherwise recurses through unrelated patrol setup.
     source_soldier.soldier.cached_camp = Camp::Royalists;
     {
-        let member = engine
-            .get_entity_mut(member_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("phalanx-break member has EnemyAi");
+        let member = engine.enemy_mut(member_id);
         member.base.current_state = AiState::Attacking;
         member.base.current_substate = Substate::AttackingPhalanx;
         member.list_them = vec![source_id.index()];
@@ -1453,10 +1372,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
 
     engine.execute_ai_break_phalanx(&sim, &assets, member_id, false, false);
 
-    engine
-        .get_entity(member_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx-break member retains EnemyAi");
+    engine.enemy(member_id);
     assert_eq!(
         engine.ai.think_call_stack,
         vec![source_id],
@@ -1470,11 +1386,7 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, _officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let before = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx gather target has EnemyAi")
-        .gather_position;
+    let before = engine.enemy(soldier_id).gather_position;
     engine.instruct_live_phalanx(
         &sim,
         &assets,
@@ -1490,10 +1402,7 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
 
     // The target stands in DefaultOnPost, so the phalanx-correction loop
     // passes over it entirely: neither the slot nor the instruction lands.
-    let soldier = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("phalanx gather target retains EnemyAi");
+    let soldier = engine.enemy(soldier_id);
     assert_eq!(soldier.gather_position, before);
     assert_eq!(soldier.gather_direction, 0);
     assert!(!soldier.gather_position_instructed);

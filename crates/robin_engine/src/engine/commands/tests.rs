@@ -456,11 +456,7 @@ fn mixed_domain_dispatch_preserves_sequence_registration_order() {
 fn self_ability_domain_records_once_before_stopping_without_live_launch() {
     let (mut engine, assets, actor) = setup_pc_engine(&[(Action::Whistle, 0)]);
     engine.players.seats[0].selection.push(actor);
-    engine
-        .get_entity_mut(actor)
-        .and_then(Entity::pc_data_mut)
-        .unwrap()
-        .current_action = Action::Whistle;
+    engine.pc_mut(actor).current_action = Action::Whistle;
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
@@ -504,11 +500,7 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
     let (mut engine, assets, actor) = setup_pc_engine(&[(Action::Shield, 0)]);
     let protected_pc = spawn_pc_at(&mut engine, 80.0, 30.0);
     engine.players.seats[0].selection.push(actor);
-    engine
-        .get_entity_mut(actor)
-        .and_then(Entity::pc_data_mut)
-        .expect("shield actor is a PC")
-        .current_action = Action::Shield;
+    engine.pc_mut(actor).current_action = Action::Shield;
 
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
@@ -670,14 +662,7 @@ fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
     );
 
     assert_eq!(engine.players.seats[0].planned_action, Action::Bow);
-    assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::pc_data)
-            .expect("test PC")
-            .current_action,
-        Action::NoAction
-    );
+    assert_eq!(engine.pc(pc_id).current_action, Action::NoAction);
     assert_eq!(
         engine.orders.sequence_manager.sequence_count(),
         sequence_count
@@ -713,14 +698,7 @@ fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
         &PlayerCommand::CancelPlannedAction,
     );
     assert_eq!(engine.players.seats[0].planned_action, Action::NoAction);
-    assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::pc_data)
-            .expect("test PC")
-            .current_action,
-        Action::NoAction
-    );
+    assert_eq!(engine.pc(pc_id).current_action, Action::NoAction);
 }
 
 #[test]
@@ -810,12 +788,7 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
     let original_titbit = original_state
         .get_slot_titbit(0)
         .expect("captured manual QA titbit");
-    let original_icon = engine
-        .get_entity(pc_id)
-        .and_then(Entity::pc_data)
-        .expect("test PC")
-        .portrait
-        .quick_icons[0];
+    let original_icon = engine.pc(pc_id).portrait.quick_icons[0];
 
     engine.apply_command(
         &sim,
@@ -848,12 +821,7 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
         Some(&original_state),
         "canceling an armed occupied slot must preserve its QA"
     );
-    let canceled_icon = engine
-        .get_entity(pc_id)
-        .and_then(Entity::pc_data)
-        .expect("test PC")
-        .portrait
-        .quick_icons[0];
+    let canceled_icon = engine.pc(pc_id).portrait.quick_icons[0];
     assert_eq!(canceled_icon.titbit_id, original_icon.titbit_id);
     assert_eq!(canceled_icon.running, original_icon.running);
 
@@ -1307,12 +1275,7 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         .get(pc_id)
         .and_then(|state| state.get_slot_titbit(0))
         .expect("occupied manual slot titbit");
-    let manual_icon = engine
-        .get_entity(pc_id)
-        .and_then(Entity::pc_data)
-        .expect("test PC")
-        .portrait
-        .quick_icons[0];
+    let manual_icon = engine.pc(pc_id).portrait.quick_icons[0];
 
     let mut busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
     busy.priority = crate::sequence::SequencePriority::Normal;
@@ -1380,12 +1343,7 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
             .iter()
             .any(|titbit| titbit.id == manual_titbit)
     );
-    let restored_icon = engine
-        .get_entity(pc_id)
-        .and_then(Entity::pc_data)
-        .expect("restored test PC")
-        .portrait
-        .quick_icons[0];
+    let restored_icon = engine.pc(pc_id).portrait.quick_icons[0];
     assert_eq!(restored_icon.titbit_id, manual_icon.titbit_id);
     assert_eq!(restored_icon.running, manual_icon.running);
     assert!(engine.players.auto_queues.is_empty(pc_id));
@@ -1478,11 +1436,7 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
     assert_eq!(queue.len(), 1);
     assert!(queue[0].titbit.is_some());
     assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::pc_data)
-            .expect("test PC")
-            .current_action,
+        engine.pc(pc_id).current_action,
         Action::NoAction,
         "queueing must not arm the live PC action"
     );
@@ -2334,10 +2288,7 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
 
     engine.t_hourglass_phase_sequences(&assets);
 
-    let actor = engine
-        .get_entity(pc_id)
-        .and_then(|entity| entity.actor_data())
-        .expect("DropAle owner remains an actor");
+    let actor = engine.actor(pc_id);
     assert_eq!(
         actor
             .installed_order
@@ -3555,11 +3506,7 @@ fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
 fn recording_ground_target_allocates_one_original_faithful_titbit() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::WaspNest, 1)]);
-    engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::pc_data_mut)
-        .expect("test PC data")
-        .current_action = Action::WaspNest;
+    engine.pc_mut(pc_id).current_action = Action::WaspNest;
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     let target = crate::coordinates::WorldPoint3D::new(25.0, 40.0, 7.0);
@@ -4140,10 +4087,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
     };
     assert_eq!(*element, Some(target_id));
 
-    let actor = engine
-        .get_entity(pc_id)
-        .and_then(|entity| entity.actor_data())
-        .expect("test PC has actor state");
+    let actor = engine.actor(pc_id);
     assert_eq!(actor.wait_time, 25);
     assert_eq!(actor.wait_time, 25);
     assert_eq!(actor.seek_target, Some(target_id));
@@ -4716,11 +4660,7 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
         "a script-authored conscious tied NPC must remain searchable before release"
     );
 
-    engine
-        .get_entity_mut(target_id)
-        .and_then(Entity::npc_data_mut)
-        .expect("test target is an NPC")
-        .money = 0;
+    engine.npc_mut(target_id).money = 0;
     assert_eq!(
         determine_use_command(&engine, &assets, pc_id, target_id),
         Some(Command::Untie)
@@ -5054,11 +4994,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
 
         engine.t_hourglass_phase_sequences(&assets);
         assert_eq!(
-            engine
-                .get_entity(pc_id)
-                .and_then(Entity::actor_data)
-                .expect("test PC retains actor data")
-                .wait_time,
+            engine.actor(pc_id).wait_time,
             0xffff_ff3e,
             "ordinary target movement must not arm seek refresh for {command:?}"
         );
@@ -5276,14 +5212,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     assert!(flags.contains(MoveFlags::SEEK));
 
     engine.t_hourglass_phase_sequences(&assets);
-    assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::actor_data)
-            .expect("test PC retains actor data")
-            .wait_time,
-        25
-    );
+    assert_eq!(engine.actor(pc_id).wait_time, 25);
 }
 
 #[test]
@@ -5570,10 +5499,7 @@ fn pc_action_disable_uses_profile_slot_not_action_enum_value() {
 
     engine.disable_pc_action(&assets, pc_id, Action::Bow);
 
-    let pc = engine
-        .get_entity(pc_id)
-        .and_then(|e| e.pc_data())
-        .expect("test PC exists");
+    let pc = engine.pc(pc_id);
     assert_eq!(pc.disabled_actions, [true, false, false]);
     assert_eq!(pc.current_action, Action::NoAction);
     assert_eq!(pc.saved_action, Action::NoAction);
@@ -5588,10 +5514,7 @@ fn pc_action_enable_uses_profile_slot_not_action_enum_value() {
 
     engine.enable_pc_action(&assets, pc_id, Action::Bow);
 
-    let pc = engine
-        .get_entity(pc_id)
-        .and_then(|e| e.pc_data())
-        .expect("test PC exists");
+    let pc = engine.pc(pc_id);
     assert_eq!(pc.disabled_actions, [false, false, false]);
 }
 
@@ -5964,11 +5887,7 @@ fn recorded_nested_cancel_is_the_only_select_pc_action_fanout() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
     let mut input = InputState::default();
     let mut display = HostDisplayState::default();
-    engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::pc_data_mut)
-        .expect("test PC data")
-        .current_action = Action::Bow;
+    engine.pc_mut(pc_id).current_action = Action::Bow;
 
     engine.apply_commands(
         sim,
@@ -5984,14 +5903,7 @@ fn recorded_nested_cancel_is_the_only_select_pc_action_fanout() {
         ],
     );
 
-    assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::pc_data)
-            .expect("test PC data")
-            .current_action,
-        Action::NoAction
-    );
+    assert_eq!(engine.pc(pc_id).current_action, Action::NoAction);
     assert!(
         !engine
             .orders
@@ -6013,11 +5925,7 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Net, 1)]);
     let mut input = InputState::default();
     let mut display = HostDisplayState::default();
-    engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::pc_data_mut)
-        .expect("test PC data")
-        .current_action = Action::Net;
+    engine.pc_mut(pc_id).current_action = Action::Net;
 
     let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(pc_id));
     wait.priority = crate::sequence::SequencePriority::Wait;
@@ -6055,11 +5963,7 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
         "the SelectPc restitution must run before the independent cancel"
     );
     assert_eq!(
-        engine
-            .get_entity(pc_id)
-            .and_then(Entity::pc_data)
-            .expect("test PC data")
-            .current_action,
+        engine.pc(pc_id).current_action,
         Action::NoAction,
         "the following independent cancel remains authoritative"
     );
@@ -6158,11 +6062,7 @@ fn lone_select_pc_still_restitutes_bow_action() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 10)]);
     let mut input = InputState::default();
     let mut display = HostDisplayState::default();
-    engine
-        .get_entity_mut(pc_id)
-        .and_then(Entity::pc_data_mut)
-        .expect("test PC data")
-        .current_action = Action::Bow;
+    engine.pc_mut(pc_id).current_action = Action::Bow;
 
     engine.apply_commands(
         sim,

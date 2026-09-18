@@ -589,10 +589,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
         entity.element_data_mut().set_sector(me_sector);
         assert_eq!(entity.element_data().sector().unwrap().arena_index(), None);
     }
-    let owner = engine
-        .get_entity_mut(owner_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("roof-wait owner has Enemy AI");
+    let owner = engine.enemy_mut(owner_id);
     owner.base.me = owner_id.index();
     owner.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_id.index()));
 
@@ -736,10 +733,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
             .base
             .me = id.index();
     }
-    let friend = engine
-        .get_entity_mut(friend_id)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("friend has enemy AI");
+    let friend = engine.enemy_mut(friend_id);
     friend.base.view_alert_status = AlertLevel::Yellow;
     friend.base.current_substate = Substate::SeekingSeekpoint;
     friend.seek_flags.insert(SeekFlags::LOOK_FOR_HELP_AFTER);

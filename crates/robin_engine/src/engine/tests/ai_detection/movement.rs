@@ -68,12 +68,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         "inactive/dead humans still recover tiredness on their staggered slot"
     );
     assert!(
-        engine
-            .get_entity(fried)
-            .and_then(Entity::actor_data)
-            .expect("fried PC remains an actor")
-            .produced_noise
-            .is_none(),
+        engine.actor(fried).produced_noise.is_none(),
         "fried return must precede produced-noise refresh"
     );
 }
@@ -165,10 +160,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
             list.clear();
         }
     }
-    let ai = engine
-        .get_entity_mut(locked)
-        .and_then(Entity::ai_controller_mut)
-        .expect("locked owner has AI");
+    let ai = engine.ai_ctrl_mut(locked);
     ai.locks_flag_field = AiLockFlags::FREEZE;
     ai.when_does_timer_ring = u32::MAX;
     ai.when_does_macro_timer_ring = u32::MAX;
@@ -199,10 +191,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
         Some(&(unlocked, Tail::QueuedStimuli)),
         "the later owner must execute its whole unlocked tail"
     );
-    let ai = engine
-        .get_entity(locked)
-        .and_then(Entity::ai_controller)
-        .expect("locked owner retains AI");
+    let ai = engine.ai_ctrl(locked);
     assert_eq!(ai.when_does_timer_ring, 0);
     assert_eq!(ai.when_does_macro_timer_ring, 0);
     assert_eq!(ai.emoticon_expiration_date, 0);
@@ -226,10 +215,7 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     // Model a synchronous periodic-update/EVENT_TIMER consequence that acquires
     // both kinds of outer lock after the branch has already been entered.
     engine.set_actors_frozen(true);
-    let ai = engine
-        .get_entity_mut(npc_id)
-        .and_then(Entity::ai_controller_mut)
-        .expect("post-gate owner has AI");
+    let ai = engine.ai_ctrl_mut(npc_id);
     ai.locks_flag_field = AiLockFlags::FREEZE;
     ai.timer_is_running = true;
     ai.when_does_timer_ring = 100;
@@ -243,10 +229,7 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     engine.tick_npc_emoticon_expiration_for_npc(npc_id);
     engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
 
-    let ai = engine
-        .get_entity(npc_id)
-        .and_then(Entity::ai_controller)
-        .expect("post-gate owner retains AI");
+    let ai = engine.ai_ctrl(npc_id);
     assert!(!ai.timer_is_running, "due normal timer is consumed");
     assert!(!ai.macro_timer_is_running, "due macro timer is consumed");
     assert_eq!(ai.current_emoticon_type, EmoticonType::None);
@@ -739,10 +722,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
 
         crate::sim_rng::with_seed(0xA013_1A51, |sim| engine.tick_enemy_ai(sim, &assets));
 
-        let observer = engine
-            .get_entity(observer_id)
-            .and_then(Entity::npc_data)
-            .expect("inactive-viewer observer remains an NPC");
+        let observer = engine.npc(observer_id);
         let ai = observer
             .ai_brain
             .enemy()
@@ -775,11 +755,7 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
             );
             assert_eq!(observer.maximal_detection_suspect, 0);
             assert_eq!(
-                engine
-                    .get_entity(indoor_target_id)
-                    .and_then(Entity::actor_data)
-                    .expect("inactive indoor target remains an actor")
-                    .last_noise_volume,
+                engine.actor(indoor_target_id).last_noise_volume,
                 0,
                 "retaining an inactive PC for same-building sight must not make it audible"
             );
@@ -989,13 +965,10 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     expected = "Enemy cleanup target for NPC Soldier(SoldierId(0)): entity Soldier(SoldierId(999999)) disappeared"
 )]
 fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
-    use crate::element::{DetectableType, Entity};
+    use crate::element::DetectableType;
 
     let (mut engine, assets, observer_id, _, _) = mixed_enemy_fifo_fixture(true);
-    let observer = engine
-        .get_entity_mut(observer_id)
-        .and_then(Entity::npc_data_mut)
-        .expect("missing-target observer retains NPC state");
+    let observer = engine.npc_mut(observer_id);
     observer.detectable_lists[DetectableType::Enemy as usize][0].element =
         Some(EntityId::Soldier(crate::entity_id::SoldierId(999_999)));
 
@@ -1074,10 +1047,7 @@ fn mixed_enemy_cleanup_removes_negative_life_targets() {
 
     crate::sim_rng::with_seed(0xA013_DEAD, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let observer = engine
-        .get_entity(observer_id)
-        .and_then(Entity::npc_data)
-        .expect("negative-life observer retains NPC state");
+    let observer = engine.npc(observer_id);
     assert!(
         observer.detectable_lists[DetectableType::Enemy as usize].is_empty(),
         "detectable cleanup must use life <= 0 for PCs and soldiers"
@@ -1123,10 +1093,7 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
     );
     crate::sim_rng::with_seed(0xA013_D016, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let observer = engine
-        .get_entity(observer_id)
-        .and_then(Entity::npc_data)
-        .expect("door-transit optical observer retains NPC state");
+    let observer = engine.npc(observer_id);
     let view_targets = observer
         .ai_brain
         .base()
@@ -1210,10 +1177,7 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
 
     crate::sim_rng::with_seed(0xA013_C1A0, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let ai = engine
-        .get_entity(civilian_id)
-        .and_then(Entity::ai_controller)
-        .expect("optical civilian retains FriendlyAi");
+    let ai = engine.ai_ctrl(civilian_id);
     assert_eq!(ai.stimulus_queue.len(), 1);
     assert_eq!(ai.stimulus_queue[0].stimulus_type, StimulusType::EventView);
     assert_eq!(

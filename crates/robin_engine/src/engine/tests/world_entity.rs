@@ -54,10 +54,7 @@ fn build_mytalk_timing_test() -> (EngineInner, EntityId, LevelAssets) {
 }
 
 fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiController {
-    engine
-        .get_entity(soldier_id)
-        .and_then(Entity::ai_controller)
-        .expect("timing-test soldier has an AI controller")
+    engine.ai_ctrl(soldier_id)
 }
 
 #[derive(Clone, Copy)]
@@ -151,9 +148,7 @@ fn queue_and_settle_speech(
 
 fn speech_log(engine: &EngineInner, owner: EntityId) -> Vec<(crate::ai::LogLineType, u16)> {
     engine
-        .get_entity(owner)
-        .and_then(Entity::ai_controller)
-        .expect("speech test owner has AI")
+        .ai_ctrl(owner)
         .ai_log
         .iter()
         .map(|line| (line.line_type, line.info))
@@ -362,10 +357,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     }
 
     {
-        let charly = engine
-            .get_entity_mut(charly_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test Charly has enemy AI");
+        let charly = engine.enemy_mut(charly_id);
         charly.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer_id.index()));
         {
             let base = &mut charly.base;
@@ -376,10 +368,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         charly.base.timer_is_running = false;
     }
     {
-        let officer = engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test officer has enemy AI");
+        let officer = engine.enemy_mut(officer_id);
         let officer_substate = match officer_state {
             AiState::Default => Substate::DefaultOnPost,
             AiState::Attacking => Substate::AttackingSwordfight,

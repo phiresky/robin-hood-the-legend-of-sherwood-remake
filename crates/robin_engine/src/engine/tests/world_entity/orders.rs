@@ -300,32 +300,19 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
     let assets = engine.test_runtime_assets();
 
     {
-        let human = engine
-            .get_entity_mut(owner)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(owner);
         human.opponents = vec![near, far].into();
         human.relative_fighting_ability = 17;
     }
-    engine
-        .get_entity_mut(near)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .opponents = vec![owner].into();
+    engine.human_mut(near).opponents = vec![owner].into();
     {
-        let human = engine
-            .get_entity_mut(far)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(far);
         human.opponents = vec![owner, far_partner].into();
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
     {
-        let human = engine
-            .get_entity_mut(far_partner)
-            .and_then(Entity::human_data_mut)
-            .unwrap();
+        let human = engine.human_mut(far_partner);
         human.opponents = vec![far].into();
         human.smalltalk_initiative = true;
     }
@@ -416,10 +403,7 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
     };
     engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
 
-    let ai = engine
-        .get_entity(owner)
-        .and_then(Entity::enemy_ai)
-        .expect("return-to-duty owner retains Enemy AI");
+    let ai = engine.enemy(owner);
     assert_eq!(ai.base.current_state, AiState::Default);
     assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
     assert!(
@@ -457,10 +441,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     {
-        let officer = engine
-            .get_entity_mut(officer_id)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("report officer has EnemyAi");
+        let officer = engine.enemy_mut(officer_id);
         {
             let base = &mut officer.base;
             base.set_ai_state(AiState::Seeking);
@@ -505,9 +486,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     }
 
     let report_before = engine
-        .get_entity(soldier_id)
-        .and_then(Entity::enemy_ai)
-        .expect("reporting soldier retains EnemyAi")
+        .enemy(soldier_id)
         .base
         .my_reconnaissance_report
         .clone();

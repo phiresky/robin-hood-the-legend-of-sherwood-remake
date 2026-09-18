@@ -217,10 +217,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         },
     }));
     {
-        let npc = engine
-            .get_entity_mut(soldier)
-            .and_then(Entity::npc_data_mut)
-            .expect("test soldier is NPC");
+        let npc = engine.npc_mut(soldier);
         npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(
             soldier.index(),
         )));
@@ -249,10 +246,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         soldier_element.set_sector(crate::ai::SectorHandle::new(1));
     }
     {
-        let enemy = engine
-            .get_entity_mut(soldier)
-            .and_then(Entity::enemy_ai_mut)
-            .expect("test soldier has Enemy AI");
+        let enemy = engine.enemy_mut(soldier);
         enemy.base.current_state = AiState::Default;
         enemy.base.current_substate = Substate::DefaultInMacro;
         enemy.base.macro_in_progress = true;
@@ -266,20 +260,14 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.run_ai_macro(sim, &assets, soldier);
 
-    let ai = engine
-        .get_entity(soldier)
-        .and_then(Entity::ai_controller)
-        .expect("test soldier retains AI");
+    let ai = engine.ai_ctrl(soldier);
     assert_eq!(ai.current_substate, Substate::DefaultGotoRoute);
     assert!(!ai.macro_timer_is_running);
     assert!(
         !ai.timer_is_running,
         "A's ale timer must be cleared when B's enemy state change returns to the patrol route"
     );
-    let enemy = engine
-        .get_entity(soldier)
-        .and_then(Entity::enemy_ai)
-        .expect("test soldier retains Enemy AI");
+    let enemy = engine.enemy(soldier);
     assert!(enemy.other_seen_ale.is_empty());
     assert_eq!(
         enemy.base.last_goto_destination,

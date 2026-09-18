@@ -348,11 +348,7 @@ fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
 }
 
 fn assert_typed_sentinel_snapshot(engine: &Engine, id: EntityId) {
-    let ai = engine
-        .inner
-        .get_entity(id)
-        .and_then(crate::element::Entity::enemy_ai)
-        .expect("typed sentinel fixture retains EnemyAi");
+    let ai = engine.inner.enemy(id);
     assert_eq!(
         ai.base.primary_target,
         Some(crate::ai::AiEntityHandle::new(0))
@@ -618,13 +614,7 @@ fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_i
     assert_typed_sentinel_snapshot(&decoded, id);
     let present_hash = crate::replay::state_hash(&decoded);
     let mut absent = decoded;
-    absent
-        .inner
-        .get_entity_mut(id)
-        .and_then(crate::element::Entity::enemy_ai_mut)
-        .unwrap()
-        .base
-        .primary_target = None;
+    absent.inner.enemy_mut(id).base.primary_target = None;
     assert_ne!(
         present_hash,
         crate::replay::state_hash(&absent),

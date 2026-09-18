@@ -1425,7 +1425,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
 #[test]
 fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     use crate::ai::{LogLineType, StimulusType};
-    use crate::element::{Camp, Entity};
+    use crate::element::Camp;
     use crate::order::{Order, OrderType};
     use crate::sequence::{SequenceElement, SequenceState};
 
@@ -1485,10 +1485,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     engine.control.frame_counter = 101;
     let due_frame = engine.control.frame_counter;
     {
-        let earlier_ai = engine
-            .get_entity_mut(earlier_timer_owner)
-            .and_then(Entity::ai_controller_mut)
-            .expect("earlier timer owner has AI");
+        let earlier_ai = engine.ai_ctrl_mut(earlier_timer_owner);
         earlier_ai.timer_is_running = true;
         earlier_ai.when_does_timer_ring = due_frame;
         earlier_ai.substate_at_last_timer_launch = earlier_ai.current_substate;
@@ -1502,10 +1499,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         .get_element(expired_sequence, 0)
         .expect("expired movement remains registered through its owner card");
     assert_eq!(expired.state, SequenceState::Impossible);
-    let expired_ai = engine
-        .get_entity(expired_owner)
-        .and_then(Entity::ai_controller)
-        .expect("expired path owner retains AI");
+    let expired_ai = engine.ai_ctrl(expired_owner);
     assert!(
         expired_ai.ai_log.iter().any(|line| {
             line.line_type == LogLineType::Event
@@ -1525,10 +1519,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         engine.orders.failed_path_requests[0].owner,
         nonexpired_owner
     );
-    let nonexpired_ai = engine
-        .get_entity(nonexpired_owner)
-        .and_then(Entity::ai_controller)
-        .expect("nonexpired path owner retains AI");
+    let nonexpired_ai = engine.ai_ctrl(nonexpired_owner);
     assert!(
         !nonexpired_ai.ai_log.iter().any(|line| {
             line.line_type == LogLineType::Event
@@ -1537,10 +1528,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
         "a failure at age 100 must not dispatch early"
     );
 
-    let earlier_ai = engine
-        .get_entity(earlier_timer_owner)
-        .and_then(Entity::ai_controller)
-        .expect("earlier actor retains AI");
+    let earlier_ai = engine.ai_ctrl(earlier_timer_owner);
     assert!(
         earlier_ai.timer_is_running,
         "the due timer must remain armed until its owner update slot"
@@ -1553,10 +1541,7 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
     );
 
     engine.tick_ai_normal_timer_for_npc(&sim, earlier_timer_owner, &assets);
-    let earlier_ai = engine
-        .get_entity(earlier_timer_owner)
-        .and_then(Entity::ai_controller)
-        .expect("earlier actor retains AI after its timer slot");
+    let earlier_ai = engine.ai_ctrl(earlier_timer_owner);
     assert!(
         earlier_ai.ai_log.iter().any(|line| {
             line.line_type == LogLineType::Event && line.info == StimulusType::EventTimer as u16
@@ -1760,26 +1745,15 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
         crate::order::OrderType::RiderCharging,
         vec![0, 0],
     );
-    engine
-        .get_entity_mut(rider)
-        .and_then(crate::element::Entity::enemy_ai_mut)
-        .expect("rider has enemy AI")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(rider).hth_weapon_id = 1;
     add_charge_victim(&mut engine, MapPoint::new(100.0, 100.0));
-    engine
-        .get_entity_mut(rider)
-        .and_then(crate::element::Entity::actor_data_mut)
-        .expect("rider remains an actor")
-        .execution_frozen = true;
+    engine.actor_mut(rider).execution_frozen = true;
 
     let ((), observations) = capture_sword_damage_observations(|| {
         tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets)
     });
 
-    let actor = engine
-        .get_entity(rider)
-        .and_then(crate::element::Entity::actor_data)
-        .expect("rider remains an actor");
+    let actor = engine.actor(rider);
     assert!(actor.last_executed_rider_charge_order_id.is_none());
     assert!(observations.is_empty());
 }
@@ -1916,11 +1890,7 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
         OrderType::RiderCharging,
         vec![0, 0],
     );
-    engine
-        .get_entity_mut(rider)
-        .and_then(crate::element::Entity::enemy_ai_mut)
-        .expect("rider has enemy AI")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(rider).hth_weapon_id = 1;
 
     let mut background =
         SequenceElement::new_movement(1, Command::Move, Some(rider), OrderType::RiderCharging);
@@ -1971,10 +1941,7 @@ fn production_owner_uses_exact_selected_element_not_background_movement() {
 
     engine.set_actors_frozen(true);
     tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    let actor = engine
-        .get_entity(rider)
-        .and_then(crate::element::Entity::actor_data)
-        .expect("rider remains an actor");
+    let actor = engine.actor(rider);
     assert!(actor.last_executed_rider_charge_order_id.is_none());
 }
 
@@ -4274,10 +4241,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     let soldier_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     let assets = engine.test_runtime_assets();
 
-    let ai = engine
-        .get_entity_mut(soldier_id)
-        .and_then(|entity| entity.ai_controller_mut())
-        .expect("test soldier has AI");
+    let ai = engine.ai_ctrl_mut(soldier_id);
     ai.locks_flag_field = crate::ai::AiLockFlags::BUSY;
     ai.stimulus_queue.push(crate::ai::Stimulus::new(
         crate::ai::StimulusType::EventAfterCombatInjury,
@@ -4285,29 +4249,15 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
 
     engine.tick_ai_queued_stimuli(sim, &assets);
     assert_eq!(
-        engine
-            .get_entity(soldier_id)
-            .and_then(|entity| entity.ai_controller())
-            .unwrap()
-            .stimulus_queue
-            .len(),
+        engine.ai_ctrl(soldier_id).stimulus_queue.len(),
         1,
         "the update lock check must preserve queued stimuli"
     );
 
-    engine
-        .get_entity_mut(soldier_id)
-        .and_then(|entity| entity.ai_controller_mut())
-        .unwrap()
-        .locks_flag_field = crate::ai::AiLockFlags::empty();
+    engine.ai_ctrl_mut(soldier_id).locks_flag_field = crate::ai::AiLockFlags::empty();
     engine.tick_ai_queued_stimuli(sim, &assets);
     assert!(
-        engine
-            .get_entity(soldier_id)
-            .and_then(|entity| entity.ai_controller())
-            .unwrap()
-            .stimulus_queue
-            .is_empty(),
+        engine.ai_ctrl(soldier_id).stimulus_queue.is_empty(),
         "the final unlocked update phase must replay the old lock queue"
     );
 }
@@ -4315,11 +4265,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
 fn install_seen_enemy(engine: &mut EngineInner, npc_id: EntityId, target: EntityId) {
     use crate::element::{Detectable, DetectableType};
 
-    engine
-        .get_entity_mut(npc_id)
-        .and_then(|entity| entity.npc_data_mut())
-        .expect("NPC has data")
-        .detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
+    engine.npc_mut(npc_id).detectable_lists[DetectableType::Enemy as usize] = vec![Detectable {
         element: Some(target),
         detectable_type: DetectableType::Enemy,
         seen_now: true,
@@ -4331,11 +4277,7 @@ fn install_seen_enemy(engine: &mut EngineInner, npc_id: EntityId, target: Entity
 fn enemy_blink_state(engine: &EngineInner, npc_id: EntityId) -> (bool, bool) {
     use crate::element::DetectableType;
 
-    let detectable = &engine
-        .get_entity(npc_id)
-        .and_then(|entity| entity.npc_data())
-        .expect("NPC has data")
-        .detectable_lists[DetectableType::Enemy as usize][0];
+    let detectable = &engine.npc(npc_id).detectable_lists[DetectableType::Enemy as usize][0];
     (detectable.seen_now, detectable.seen_last_frame)
 }
 

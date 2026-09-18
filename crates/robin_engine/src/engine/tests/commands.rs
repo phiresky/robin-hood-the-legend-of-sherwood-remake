@@ -920,10 +920,7 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
         "elevation rejection must return before the LOS query"
     );
     for fighter in [owner, opponent] {
-        let human = engine
-            .get_entity(fighter)
-            .and_then(Entity::human_data)
-            .expect("fighter remains human");
+        let human = engine.human(fighter);
         assert!(human.opponents.is_empty());
         assert_eq!(human.relative_fighting_ability, 50);
         assert!(
@@ -990,26 +987,17 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
         engine.set_action_state_of(fighter, ActionState::WaitingSword);
     }
     {
-        let human = engine
-            .get_entity_mut(departing)
-            .and_then(Entity::human_data_mut)
-            .expect("departing fighter is human");
+        let human = engine.human_mut(departing);
         human.opponents.push(survivor);
     }
     {
-        let human = engine
-            .get_entity_mut(survivor)
-            .and_then(Entity::human_data_mut)
-            .expect("survivor is human");
+        let human = engine.human_mut(survivor);
         human.opponents.extend([principal, departing]);
         human.smalltalk_initiative = false;
         human.received_smalltalk_initiative = false;
     }
     {
-        let human = engine
-            .get_entity_mut(principal)
-            .and_then(Entity::human_data_mut)
-            .expect("principal is human");
+        let human = engine.human_mut(principal);
         human.opponents.push(survivor);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = false;
@@ -1017,17 +1005,11 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
 
     engine.tick_waiting_sword_execute_for(&crate::sim_rng::test_context(), &assets, departing);
 
-    let survivor_human = engine
-        .get_entity(survivor)
-        .and_then(Entity::human_data)
-        .expect("survivor remains human");
+    let survivor_human = engine.human(survivor);
     assert_eq!(survivor_human.opponents, vec![principal]);
     assert!(survivor_human.smalltalk_initiative);
     assert!(survivor_human.received_smalltalk_initiative);
-    let principal_human = engine
-        .get_entity(principal)
-        .and_then(Entity::human_data)
-        .expect("principal remains human");
+    let principal_human = engine.human(principal);
     assert!(!principal_human.smalltalk_initiative);
 }
 
@@ -1108,14 +1090,8 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         engine.tick_waiting_sword_execute_for(sim, &assets, attacker_id);
     });
 
-    let attacker_human = engine
-        .get_entity(attacker_id)
-        .and_then(|e| e.human_data())
-        .unwrap();
-    let defender_human = engine
-        .get_entity(defender_id)
-        .and_then(|e| e.human_data())
-        .unwrap();
+    let attacker_human = engine.human(attacker_id);
+    let defender_human = engine.human(defender_id);
 
     assert!(attacker_human.smalltalk_initiative);
     assert!(!defender_human.smalltalk_initiative);
@@ -1209,10 +1185,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
                 .push(opponent);
         }
         {
-            let human = engine
-                .get_entity_mut(attacker)
-                .and_then(Entity::human_data_mut)
-                .expect("attacker is human");
+            let human = engine.human_mut(attacker);
             human.smalltalk_initiative = true;
             human.received_smalltalk_initiative = true;
         }
@@ -1387,10 +1360,7 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
             .push(opponent);
     }
     {
-        let human = engine
-            .get_entity_mut(attacker)
-            .and_then(|entity| entity.human_data_mut())
-            .expect("3D attacker is human");
+        let human = engine.human_mut(attacker);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
@@ -1410,11 +1380,7 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
         "60 units horizontally but 72.1 in 3D is outside the 70-unit maximal range"
     );
     assert_eq!(
-        engine
-            .get_entity(defender)
-            .and_then(|entity| entity.human_data())
-            .expect("3D defender remains human")
-            .smalltalk_hint,
+        engine.human(defender).smalltalk_hint,
         crate::element::SmalltalkHint::None
     );
 }
@@ -1530,10 +1496,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
 
     engine.tick_waiting_sword_execute_for(sim, &assets, pc_id);
 
-    let pc_human = engine
-        .get_entity(pc_id)
-        .and_then(|e| e.human_data())
-        .unwrap();
+    let pc_human = engine.human(pc_id);
     assert_eq!(pc_human.smalltalk_hint, SmalltalkHint::None);
     assert_eq!(pc_human.smalltalk_hint_opponent, None);
     assert!(
@@ -1581,10 +1544,7 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
         },
     }));
     engine.remove_entity(stale);
-    let human = engine
-        .get_entity_mut(owner)
-        .and_then(|entity| entity.human_data_mut())
-        .expect("owner is human");
+    let human = engine.human_mut(owner);
     human.smalltalk_hint = SmalltalkHint::Left;
     human.smalltalk_hint_opponent = Some(stale);
 
@@ -1766,11 +1726,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             })
     );
     assert_ne!(
-        engine
-            .get_entity(free_defender_id)
-            .and_then(|e| e.human_data())
-            .unwrap()
-            .smalltalk_hint,
+        engine.human(free_defender_id).smalltalk_hint,
         SmalltalkHint::None
     );
 }
@@ -1824,14 +1780,8 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
 
     engine.apply_sword_movement_start_initiative_transfer(attacker_id);
 
-    let attacker_human = engine
-        .get_entity(attacker_id)
-        .and_then(|e| e.human_data())
-        .unwrap();
-    let defender_human = engine
-        .get_entity(defender_id)
-        .and_then(|e| e.human_data())
-        .unwrap();
+    let attacker_human = engine.human(attacker_id);
+    let defender_human = engine.human(defender_id);
     assert!(!attacker_human.smalltalk_initiative);
     assert!(defender_human.smalltalk_initiative);
     assert!(defender_human.received_smalltalk_initiative);
@@ -2223,13 +2173,6 @@ fn minimap_command_rejects_center_outside_required_level_bounds() {
 }
 
 // ── Scroll hourglass / IsTaken dispatch ──────────────────────
-
-/// The scroll tick counter starts at 0.
-#[test]
-fn scroll_default_hourglass_counter_is_zero() {
-    let s = crate::element::ElementScroll::default();
-    assert_eq!(s.script_hourglass_timeout, 0);
-}
 
 /// Without a mission script, the per-scroll Hourglass dispatcher
 /// is a no-op and doesn't touch scroll state.

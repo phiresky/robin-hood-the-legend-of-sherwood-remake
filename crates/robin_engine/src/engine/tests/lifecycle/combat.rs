@@ -19,21 +19,13 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
         crate::element::Camp::Lacklandists,
     ));
     attach_test_campaign_identities(&mut engine);
-    engine
-        .get_entity_mut(opponent)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has EnemyAi")
-        .hth_weapon_id = 1;
+    engine.enemy_mut(opponent).hth_weapon_id = 1;
     {
         let victim_entity = engine.ent_mut(victim);
         *victim_entity.human_and_life_points_mut().unwrap().1 = 20;
         victim_entity.human_data_mut().unwrap().opponents = vec![opponent].into();
     }
-    engine
-        .get_entity_mut(opponent)
-        .and_then(Entity::human_data_mut)
-        .unwrap()
-        .opponents = vec![victim].into();
+    engine.human_mut(opponent).opponents = vec![victim].into();
 
     let damage = SequenceElement::new_damage(
         1,
@@ -67,21 +59,11 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
     // Arrow-damage translation's flying arm terminates its element on a corpse
     // that already left every opponent list.
     assert!(
-        engine
-            .get_entity(victim)
-            .and_then(Entity::human_data)
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(victim).opponents.is_empty(),
         "the killed victim leaves its own opponent list"
     );
     assert!(
-        engine
-            .get_entity(opponent)
-            .and_then(Entity::human_data)
-            .unwrap()
-            .opponents
-            .is_empty(),
+        engine.human(opponent).opponents.is_empty(),
         "the killed victim is removed from its opponent's list"
     );
 }
@@ -374,14 +356,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
         if expect_effect {
             assert_eq!(ammo, 1);
             if let Some(life_before) = target_life_before {
-                assert!(
-                    engine
-                        .get_entity(target)
-                        .and_then(Entity::pc_data)
-                        .unwrap()
-                        .life_points
-                        > life_before
-                );
+                assert!(engine.pc(target).life_points > life_before);
             }
         } else {
             assert_eq!(ammo, 2, "invalid Heal DONE must not consume a plant");
@@ -403,12 +378,7 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 SequenceState::Terminated
             );
             assert_eq!(
-                engine
-                    .get_entity(healer)
-                    .and_then(Entity::actor_data)
-                    .unwrap()
-                    .continuation
-                    .motion_state,
+                engine.actor(healer).continuation.motion_state,
                 crate::sprite::MotionState::Terminated
             );
             assert!(
@@ -1421,10 +1391,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
 
     engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
 
-    let enemy = engine
-        .get_entity(victim)
-        .and_then(crate::element::Entity::enemy_ai)
-        .expect("dead soldier retains EnemyAi");
+    let enemy = engine.enemy(victim);
     assert_eq!(
         enemy.base.current_music_alert_status,
         crate::ai::AlertLevel::Green,

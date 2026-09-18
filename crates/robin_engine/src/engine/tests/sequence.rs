@@ -122,10 +122,7 @@ fn waiting_alerted_execute_registers_corrective_leave_when_requested_state_is_no
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let enemy = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has enemy AI");
+    let enemy = engine.enemy_mut(owner);
     enemy.attentive = true;
     enemy.will_be_attentive = false;
     engine.set_action_state_of(owner, ActionState::Waiting);
@@ -187,10 +184,7 @@ fn waiting_upright_execute_registers_corrective_enter_when_requested_state_is_at
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let enemy = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has enemy AI");
+    let enemy = engine.enemy_mut(owner);
     enemy.attentive = false;
     enemy.will_be_attentive = true;
     engine.set_action_state_of(owner, ActionState::Waiting);
@@ -298,11 +292,7 @@ fn waiting_alerted_execute_does_not_duplicate_a_leave_already_waiting_to_launch(
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has enemy AI")
-        .will_be_attentive = false;
+    engine.enemy_mut(owner).will_be_attentive = false;
     engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
@@ -328,10 +318,7 @@ fn waiting_alerted_execute_preserves_attentive_requested_state() {
 
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let enemy = engine
-        .get_entity_mut(owner)
-        .and_then(Entity::enemy_ai_mut)
-        .expect("test soldier has enemy AI");
+    let enemy = engine.enemy_mut(owner);
     enemy.attentive = true;
     enemy.will_be_attentive = true;
 
@@ -5084,40 +5071,30 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
     );
 }
 
-/// `Point` → `Pointing` animation.
-#[test]
-fn npc_translate_point_books_pointing_anim() {
-    use crate::element::Command;
-    use crate::order::OrderType;
-    assert_npc_translate_books(Command::Point, OrderType::Pointing);
-}
-
-/// `SitDown` → `TransitionWaitingUprightSitting` animation.
-#[test]
-fn npc_translate_sit_down_books_sit_transition() {
-    use crate::element::Command;
-    use crate::order::OrderType;
-    assert_npc_translate_books(Command::SitDown, OrderType::TransitionWaitingUprightSitting);
-}
-
-/// `BeggarShowFace` → `BeggarShowingFace` animation.  Targets a
-/// civilian, since only civilians can be beggars.
-#[test]
-fn npc_translate_beggar_show_face_books_show_face_anim() {
-    use crate::element::Command;
-    use crate::order::OrderType;
-    assert_npc_translate_books(Command::BeggarShowFace, OrderType::BeggarShowingFace);
-}
-
-/// `EnterLeisure` → `TransitionWaitingUprightSpecial` animation.
-#[test]
-fn npc_translate_enter_leisure_books_special_transition() {
-    use crate::element::Command;
-    use crate::order::OrderType;
-    assert_npc_translate_books(
-        Command::EnterLeisure,
-        OrderType::TransitionWaitingUprightSpecial,
-    );
+/// Each NPC-only command books its matching animation order.
+/// `BeggarShowFace` targets a civilian, since only civilians can be beggars.
+#[rstest::rstest]
+#[case::point_books_pointing_anim(
+    crate::element::Command::Point,
+    crate::order::OrderType::Pointing
+)]
+#[case::sit_down_books_sit_transition(
+    crate::element::Command::SitDown,
+    crate::order::OrderType::TransitionWaitingUprightSitting
+)]
+#[case::beggar_show_face_books_show_face_anim(
+    crate::element::Command::BeggarShowFace,
+    crate::order::OrderType::BeggarShowingFace
+)]
+#[case::enter_leisure_books_special_transition(
+    crate::element::Command::EnterLeisure,
+    crate::order::OrderType::TransitionWaitingUprightSpecial
+)]
+fn npc_translate(
+    #[case] command: crate::element::Command,
+    #[case] expected: crate::order::OrderType,
+) {
+    assert_npc_translate_books(command, expected);
 }
 
 #[test]
