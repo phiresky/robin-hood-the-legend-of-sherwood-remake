@@ -463,8 +463,7 @@ On my machine, several pre-laid-out datadirs live under `datadirs/` for developm
     crates/robin_replay_admission_wasm/ isolated browser replay decoder
     crates/robin_run_types/    plain run-identity types shared by the engine and run protocol
     crates/robin_run_protocol/ signed run, query, content and build contracts
-    crates/robin_ranked_verification/ approved-content and campaign validation
-    crates/robin_replay_verifier/ authenticated replay worker
+    crates/robin_replay_verifier/ authenticated replay worker; approved-content and campaign validation
     crates/robin_highscores/   leaderboard API, worker, storage and administration
     crates/robin_parity/       original-game trace conversion and comparison
     crates/robin_util/         shared helpers

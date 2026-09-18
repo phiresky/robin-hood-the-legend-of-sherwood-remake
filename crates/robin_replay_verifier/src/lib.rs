@@ -5,6 +5,7 @@
 //! compact replay and the read-only raw game content, resimulates the replay
 //! and writes one `VerifierOutputV2`.
 
+pub mod ranked_verification;
 pub mod result_projection;
 pub mod worker;
 pub mod worker_process;

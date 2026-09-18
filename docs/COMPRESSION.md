@@ -2969,7 +2969,7 @@ in `canonical::write_value`, `canonicalize_serde_value` and
 `simulation_opacity_sha256` after the change; all three were prominent before.
 
 Validation: the explicit `robin_engine`, `robin_run_protocol` (102 tests),
-`robin_manifest_tool` (144), `robin_ranked_verification`, `robin_replay_verifier`
+`robin_manifest_tool` (144), `robin_replay_verifier`
 (36) and `robin_rs --features projection-export` (1,510 active) suites pass,
 as do both exporter-example tests and all 83 browser leaderboard/signer tests.
 The original Leicester admission test independently prepares matching seals

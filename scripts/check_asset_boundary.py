@@ -28,7 +28,6 @@ def main():
         ("robin_asset_codecs", {"robin_engine", "robin_assets"}, []),
         ("robin_script_types", {"robin_engine", "robin_spellforge"}, []),
         ("robin_spellforge", {"robin_engine"}, []),
-        ("robin_content", {"robin_engine", "robin_util", "robin_state_hash_derive", "bitcode"}, []),
         ("robin_modding_tools", {"robin_rs"}, []),
         ("robin_replay_format", {"robin_rs", "robin_assets", "wgpu", "winit", "kira", "cpal", "ffmpeg-next"},
          ["--features", "native-admission"]),

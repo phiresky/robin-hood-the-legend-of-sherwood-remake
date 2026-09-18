@@ -2,19 +2,7 @@ use super::*;
 
 // ─── Blazon bar & requirements bar icon strips ────────────────────
 
-/// The blazon set uses three sprites per slot (normal/empty/castle).
-/// Classifying a slot up-front lets the draw and tooltip paths share
-/// layout + semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlazonSlotKind {
-    /// Already-owned blazon.
-    Normal,
-    /// Un-owned slot that will be earned via Sherwood buy/convert.
-    Empty,
-    /// Un-owned slot that must be collected inside the mission itself.
-    /// Flashes to `Normal` while the blink latch is armed.
-    Castle,
-}
+pub use robin_engine::widget_state::blazon_set::BlazonSlotKind;
 
 pub(super) const BLAZON_BAR_TINY_W: u16 = 9;
 pub(super) const BLAZON_BAR_TINY_H: u16 = 14;

@@ -19,7 +19,7 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sbfile::SbFileSystem;
 use robin_engine::sprite_variant::SpriteVariant;
 
-use crate::ranked_verifier::RankedVerifierLoadError;
+use crate::ranked_verification::ranked_verifier::RankedVerifierLoadError;
 
 pub(crate) struct RawMissionInputs {
     pub(crate) assets: LevelAssets,

@@ -6,7 +6,7 @@
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{CompressedEngineSnapshot, RankedSimulationPolicy};
 use robin_engine::player_profile::DifficultyLevel;
-use robin_ranked_verification::ranked_verifier::{
+use robin_replay_verifier::ranked_verification::ranked_verifier::{
     confined_official_files, load_official_profiles, prepare_ranked_replay_mission,
 };
 use std::io::Write;

@@ -4,7 +4,6 @@ cargo-features = ["codegen-backend"]
 resolver = "2"
 exclude = ["vendor/bitcode"]
 members = [
-    "crates/robin_content",
     "crates/robin_identity_signer",
     "crates/robin_data_io",
     "crates/robin_display_text",
@@ -19,7 +18,6 @@ members = [
     "crates/robin_legacy_save",
     "crates/robin_level_data",
     "crates/robin_lua",
-    "crates/robin_ranked_verification",
     "crates/robin_run_protocol",
     "crates/robin_run_types",
     "crates/robin_spellforge",
@@ -62,7 +60,6 @@ result_large_err = "allow"
 
 [workspace.dependencies]
 # Workspace crates
-robin_content = { path = "crates/robin_content" }
 robin_data_io = { path = "crates/robin_data_io" }
 robin_display_text = { path = "crates/robin_display_text" }
 robin_assets = { path = "crates/robin_assets" }
@@ -74,7 +71,6 @@ robin_level_data = { path = "crates/robin_level_data" }
 robin_lua = { path = "crates/robin_lua" }
 robin_modding_tools = { path = "crates/robin_modding_tools", default-features = false }
 robin_replay_format = { path = "crates/robin_replay_format" }
-robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # Simulation consumers need wire types, not Ed25519. Authentication callers
 # opt into the protocol's authentication feature in their member manifest.
 robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }

@@ -1,4 +1,4 @@
-use robin_content::{PixelOpacityLookup, SpriteVariant};
+use robin_engine_types::{PixelOpacityLookup, SpriteVariant};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -57,7 +57,6 @@ fn variant_json_names_and_discriminants_are_unchanged() {
     }
 }
 
-#[cfg(feature = "simulation-codecs")]
 #[test]
 fn simulation_hash_and_snapshot_representation_are_unchanged() {
     use robin_util::state_hash::StateHash;

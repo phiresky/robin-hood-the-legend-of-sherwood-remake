@@ -7,7 +7,7 @@ use robin_engine::engine::{Engine, HostDisplayState};
 use robin_engine::game_operation::GameCode;
 use robin_engine::ranked_resim::RankedExecutionContext;
 use robin_engine::replay::{ReplayData, ReplayFile, state_hash};
-use robin_ranked_verification::ranked_verifier::{
+use robin_replay_verifier::ranked_verification::ranked_verifier::{
     confined_official_files, load_official_profiles, prepare_ranked_replay_mission,
 };
 use serde::{Deserialize, Serialize};
