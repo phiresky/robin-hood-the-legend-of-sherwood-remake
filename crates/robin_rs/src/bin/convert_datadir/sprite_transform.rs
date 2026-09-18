@@ -82,8 +82,8 @@ const RLE_JXL_MAX_ATLAS_PIXELS: usize = 4 << 20;
 /// ships) falls below this keeps its exact RLE words instead — the worst
 /// q70 outliers are tiny dithered pickup/effect sprites that contribute
 /// almost no bytes (docs/COMPRESSION.md). Keeping every sprite at or above
-/// this floor also guarantees the per-chunk aggregate floor that
-/// `sprite_compression_probe --verify-shipping` enforces.
+/// this floor also guarantees the per-chunk aggregate floor recorded in
+/// docs/COMPRESSION.md.
 const RLE_JXL_MIN_SPRITE_PSNR_DB: f64 = 24.0;
 /// Decode-speed encoder settings for RLE sprite JXL: cjxl
 /// `--faster_decoding=2 --epf=0`. Measured on the Demo Dem_Lei_MP atlases

@@ -247,7 +247,6 @@ iroh = { version = "1.1.0", default-features = false, features = ["tls-ring"], o
 [dev-dependencies]
 robin_test_support.workspace = true
 syn = { workspace = true, features = ["full", "visit"] }
-qoi = "0.4"
 naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 robin_engine = { workspace = true, features = ["test-helpers"] }
 
@@ -334,16 +333,6 @@ test = true
 [[example]]
 name = "batch_run"
 test = true
-
-# Operational codec probes are built on demand. Run their tests explicitly
-# with --example rather than adding research code to the default client suite.
-[[example]]
-name = "sprite_size_bench"
-test = false
-
-[[example]]
-name = "sprite_compression_probe"
-test = false
 
 [[example]]
 name = "verify_rollback"

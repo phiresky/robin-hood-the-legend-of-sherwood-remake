@@ -651,7 +651,7 @@ impl ShippingMissionPayload {
 /// chunk from its RHS script metadata. Converter and materialization run
 /// this same rule, so the reference map itself never ships.
 ///
-/// Rule (validated in `sprite_compression_probe --code-aux`): for each
+/// Rule (validated by the codec research recorded in docs/COMPRESSION.md): for each
 /// sprite, the first offset-aligned temporal predecessor in any script row
 /// (`ref < cur` keeps blob order causal; the x offset delta must be a
 /// multiple of the 4-pixel tile width), else the first aligned
