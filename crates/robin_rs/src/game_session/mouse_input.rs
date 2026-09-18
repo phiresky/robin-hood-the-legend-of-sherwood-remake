@@ -1661,8 +1661,7 @@ pub(super) fn handle_pause_menu_events(
                 } else {
                     SaveLoadMode::Save
                 };
-                let resources =
-                    required_menu_resources(menu_resources, "pause-menu save/load picker");
+                required_menu_resources(menu_resources, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
                 let detailed_metadata = host
@@ -1674,7 +1673,6 @@ pub(super) fn handle_pause_menu_events(
                 *active_ui_task = Some(ActiveUiTask::SaveLoad(SaveLoadTaskState::new(
                     event_pump,
                     renderer,
-                    resources,
                     &mut callbacks.save_manager,
                     mission_id,
                     detailed_metadata,

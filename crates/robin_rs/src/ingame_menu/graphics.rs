@@ -14,8 +14,8 @@ use crate::widget::FrameWnd;
 use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
-    MenuTransform, TruncationMarker, draw_fallback_rect, draw_screen_background,
-    render_text_virt_font, truncate_to_pixel_width,
+    MenuTransform, TruncationMarker, draw_fallback_rect, render_text_virt_font,
+    truncate_to_pixel_width,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_ALPHA_VISION_FIELD,
@@ -286,16 +286,7 @@ impl GraphicsScreen {
 
         let renderer = &mut *io.renderer;
         let resources = io.resources;
-        screen.begin_draw(renderer);
-
-        if let Some(bg) = resources.menu_bg[0] {
-            draw_screen_background(renderer, &bg);
-        }
-
-        if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width(&self.title);
-            render_text_virt_font(renderer, font, transform, &self.title, (640 - tw) / 2, 20);
-        }
+        widget_bridge::draw_titled_background(&screen, renderer, resources, 0, &self.title, 640);
         self.draw_page_labels(renderer, resources, transform);
 
         self.draw_page_controls(

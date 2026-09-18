@@ -14,9 +14,7 @@ use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
 use super::ModalScreenOutcome;
-use super::layout::{
-    MenuTransform, TooltipState, align_bottom_right, draw_screen_background, render_text_virt_font,
-};
+use super::layout::{MenuTransform, TooltipState, render_text_virt_font};
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
@@ -186,10 +184,6 @@ fn build_standalone_frame(
 ) -> FrameWnd {
     let localized = LocalizedGameplayText::from_application_context(application_context);
     let (btn_w, btn_h) = resources.button_dimensions();
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
 
     let visible = standalone_visible_option_range(page);
     let visible_count = visible.len();
@@ -249,22 +243,12 @@ fn build_standalone_frame(
         field_w,
         field_h,
     ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
+    widget_bridge::add_bottom_right_pair(
+        &mut frame,
+        resources,
+        (ID_OK, &resources.menu_text.get(MT_BTN_OK)),
+        (ID_CANCEL, &resources.menu_text.get(MT_BTN_CANCEL)),
+    );
     frame
 }
 
@@ -435,16 +419,7 @@ impl GameplayScreenState {
         let transform = screen.transform;
         let renderer = &mut *io.renderer;
         let resources = io.resources;
-        screen.begin_draw(renderer);
-
-        if let Some(bg) = resources.menu_bg[0] {
-            draw_screen_background(renderer, &bg);
-        }
-
-        if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width("Gameplay");
-            render_text_virt_font(renderer, font, transform, "Gameplay", (490 - tw) / 2, 20);
-        }
+        widget_bridge::draw_titled_background(&screen, renderer, resources, 0, "Gameplay", 490);
         if let Some(font) = resources.label_font_any() {
             render_text_virt_font(renderer, font, transform, "Gameplay Tweaks", 30, 80);
         }
@@ -491,12 +466,13 @@ impl GameplayScreenState {
             render_text_virt_font(renderer, font, transform, &page_label, 30, 362);
         }
 
-        if let Some(w) = self.frame.widget(ID_OK) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
-        if let Some(w) = self.frame.widget(ID_CANCEL) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
+        widget_bridge::draw_buttons(
+            renderer,
+            resources,
+            transform,
+            &self.frame,
+            &[ID_OK, ID_CANCEL],
+        );
 
         let mouse_point = robin_engine::coordinates::ScreenPoint::new(
             self.input_state.virt_x,

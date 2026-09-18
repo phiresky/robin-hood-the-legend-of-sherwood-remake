@@ -1,7 +1,7 @@
 //! Load-slot modal and shared save-picker presentation helpers.
 //!
-//! Main-menu and terminal loading drive one LoadPickerModalState. In-mission
-//! saving owns its cooperative UI task and reuses the picker/name-edit helpers.
+//! The main menu, terminal debriefing and the in-mission pause task all drive
+//! one [`SavePickerModalState`]; only frame pacing differs between them.
 
 use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
@@ -12,6 +12,7 @@ use crate::savegame::{SaveGame, SaveGameManager, SlotName};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
+use robin_engine::profiles::ProfileManager;
 use std::borrow::Cow;
 
 use super::layout::{
@@ -19,7 +20,8 @@ use super::layout::{
     render_text_virt_font, truncate_to_pixel_width,
 };
 use super::resources::{
-    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_MSG_REALLY_DELETE_SAVEGAME,
+    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
+    MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
 pub(crate) use super::save_picker::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
@@ -45,52 +47,91 @@ pub enum SaveLoadOutcome {
     Slot(usize),
 }
 
-/// One-frame load-slot picker used by terminal mission debriefing.
+/// What one picker is opened for, fixed for its lifetime.
+#[derive(Debug, Clone, Copy)]
+pub struct SavePickerConfig {
+    pub mode: SaveLoadMode,
+    /// Mission recorded on new drafts and used for default save names;
+    /// required by Save pickers, unused by Load pickers.
+    pub mission_id: Option<u32>,
+    pub detailed_metadata: bool,
+    pub multiplayer_connected: bool,
+    /// Upload and show the selected save's thumbnail. An owner that enables
+    /// this must call [`SavePickerModalState::close`] with the same renderer;
+    /// cooperative tasks that can be cancelled without one leave it off.
+    pub previews: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum SaveConfirmation {
+    Overwrite(SlotName),
+    Delete,
+}
+
+/// One-frame save/load slot picker.
 ///
-/// The main menu drives this state with a small async loop; mission-time loads
-/// tick it cooperatively so networking and automation continue between frames.
-pub struct LoadPickerModalState {
+/// The main menu drives this state with a small async loop; mission-time
+/// pickers tick it cooperatively so networking and automation continue
+/// between frames.
+pub struct SavePickerModalState {
+    config: SavePickerConfig,
     model: PickerModel,
     thumb_widget: WidgetPicture,
     thumb_cache: Option<ThumbnailCache>,
     controller: PickerController,
+    name: WidgetInputField,
     noise_tracker: widget_bridge::NoisyTracker,
-    delete_confirmation: Option<YesNoModalState>,
+    confirmation: Option<(SaveConfirmation, YesNoModalState)>,
     error_notice: Option<crate::save_recovery::ErrorNotice>,
-    detailed_metadata: bool,
+    text_input_active: bool,
     local_time_zone: Option<TimeZone>,
     clock_error_reported: bool,
 }
 
-impl LoadPickerModalState {
+impl SavePickerModalState {
     pub fn new(
         event_pump: &crate::window::GameWindow,
         renderer: &Renderer,
         save_manager: &mut SaveGameManager,
-        detailed_metadata: bool,
-        multiplayer_connected: bool,
+        config: SavePickerConfig,
     ) -> Self {
         save_manager.sort_by_time();
         let input_state = ModalInputState::for_screen(event_pump, renderer);
-        let row_height = if detailed_metadata {
-            DETAILED_ROW_HEIGHT
-        } else {
-            COMPACT_ROW_HEIGHT
-        };
+        let mut state = Self::with_input(save_manager, config, input_state);
+        state.text_input_active = config.mode == SaveLoadMode::Save;
+        if state.text_input_active {
+            crate::window::start_text_input();
+        }
+        state
+    }
+
+    fn with_input(
+        save_manager: &SaveGameManager,
+        config: SavePickerConfig,
+        input_state: ModalInputState,
+    ) -> Self {
+        let mut name = WidgetInputField::new(1000);
+        name.set_max_length(MAX_NAME_LEN);
+        if config.mode == SaveLoadMode::Save {
+            name.enter_edit_mode();
+        }
         Self {
+            config,
             model: PickerModel::new(
-                SaveLoadMode::Load,
-                multiplayer_connected,
-                (LOAD_LIST_RECT.h / row_height).max(1) as usize,
+                config.mode,
+                config.multiplayer_connected,
+                (list_rect(config.mode).h / row_height(config.detailed_metadata)).max(1) as usize,
                 picker_slots(save_manager),
             ),
             thumb_widget: WidgetPicture::new(u32::MAX),
             thumb_cache: None,
             controller: PickerController::new(input_state),
+            name,
             noise_tracker: widget_bridge::NoisyTracker::new(),
-            delete_confirmation: None,
+            confirmation: None,
             error_notice: None,
-            detailed_metadata,
+            // Only the window-backed constructor acquires process IME state.
+            text_input_active: false,
             local_time_zone: TimeZone::try_system()
                 .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
                 .ok(),
@@ -98,13 +139,80 @@ impl LoadPickerModalState {
         }
     }
 
+    fn refresh(&mut self, manager: &SaveGameManager) {
+        let selected = self.model.selected_slot().cloned();
+        self.model.refresh(picker_slots(manager));
+        if selected.as_ref() != self.model.selected_slot() {
+            self.sync_name(manager);
+        }
+    }
+
+    fn sync_name(&mut self, manager: &SaveGameManager) {
+        sync_input_for_selection(
+            &mut self.name,
+            self.model.selected_manager_index(),
+            self.config.mode,
+            manager,
+        );
+    }
+
+    fn handle_event(
+        &mut self,
+        event: &GameEvent,
+        transform: MenuTransform,
+        manager: &SaveGameManager,
+    ) {
+        if self
+            .controller
+            .handle_event(&mut self.model, event, transform)
+        {
+            self.sync_name(manager);
+        }
+        if self.config.mode == SaveLoadMode::Save {
+            edit_save_name(&mut self.name, event);
+        }
+    }
+
+    /// Deliver the frame's input to the widgets; returns their events and
+    /// the virtual mouse position used for row hover.
+    fn finish_input(&mut self) -> (Vec<crate::ui::UiEvent>, engine_coordinates::ScreenPoint) {
+        let events = self.controller.process_widgets(&self.model);
+        let mouse = self.controller.input.as_widget_input().mouse_position;
+        if self.config.mode == SaveLoadMode::Save {
+            feed_save_name(
+                &mut self.name,
+                &self.controller.input.as_widget_input(),
+                &UiKeyboard::default(),
+            );
+        }
+        self.controller.input.end_frame();
+        (events, mouse)
+    }
+
+    fn sync_thumbnail(&mut self, save_manager: &SaveGameManager, renderer: &mut Renderer) {
+        if !self.config.previews {
+            return;
+        }
+        sync_thumbnail_cache(
+            &mut self.thumb_cache,
+            &mut self.thumb_widget,
+            self.model.selected_manager_index(),
+            save_manager,
+            renderer,
+            self.config.mode,
+        );
+    }
+
+    /// A window close request reports `Cancel`; owners that distinguish it
+    /// read `io.window.close_requested`.
     pub fn tick(
         &mut self,
         io: &mut ModalScreenIo<'_, '_>,
         save_manager: &mut SaveGameManager,
+        profiles: Option<&ProfileManager>,
         audio: ScreenAudio<'_>,
     ) -> Option<SaveLoadOutcome> {
-        self.model.refresh(picker_slots(save_manager));
+        self.refresh(save_manager);
         if self.error_notice.is_none()
             && let Some(error) = self.model.operation_error()
         {
@@ -122,20 +230,15 @@ impl LoadPickerModalState {
             // driver can still service networking and automation between ticks.
             return None;
         }
-        if let Some(confirmation) = self.delete_confirmation.as_mut() {
-            let outcome = confirmation.tick(io);
-            let confirmed = outcome?;
-            self.delete_confirmation = None;
-            finish_picker_delete(&mut self.model, save_manager, confirmed);
-            sync_thumbnail_cache(
-                &mut self.thumb_cache,
-                &mut self.thumb_widget,
-                self.model.selected_manager_index(),
-                save_manager,
-                io.renderer,
-                SaveLoadMode::Load,
-            );
-            return None;
+        if let Some((_, confirmation)) = self.confirmation.as_mut() {
+            let confirmed = confirmation.tick(io)?;
+            let (action, _) = self
+                .confirmation
+                .take()
+                .expect("resolved confirmation exists");
+            let outcome = self.finish_confirmation(action, confirmed, save_manager, profiles);
+            self.sync_thumbnail(save_manager, io.renderer);
+            return outcome;
         }
 
         let visible = self.model.visible();
@@ -145,18 +248,18 @@ impl LoadPickerModalState {
         let screen = ScreenFrame::poll(io);
         let transform = screen.transform;
         let resources = io.resources;
-        let row_height = if self.detailed_metadata {
-            DETAILED_ROW_HEIGHT
-        } else {
-            COMPACT_ROW_HEIGHT
-        };
+        let mode = self.config.mode;
+        let detailed_metadata = self.config.detailed_metadata;
         let (btn_w, btn_h) = resources.button_dimensions();
-        let load_label = resources.menu_text.get(MT_BTN_LOAD);
+        let accept_label = resources.menu_text.get(match mode {
+            SaveLoadMode::Save => MT_BTN_SAVE,
+            SaveLoadMode::Load => MT_BTN_LOAD,
+        });
         let delete_label = resources.menu_text.get(MT_BTN_DELETE);
         let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
         let bottom_buttons = align_bottom_right(
             &[
-                (&load_label, false),
+                (&accept_label, false),
                 (&delete_label, false),
                 (&cancel_label, true),
             ],
@@ -166,7 +269,7 @@ impl LoadPickerModalState {
         let btn_positions = [
             (
                 ID_LOAD_SAVE,
-                load_label.as_str(),
+                accept_label.as_str(),
                 bottom_buttons[0].x,
                 bottom_buttons[0].y,
             ),
@@ -183,19 +286,19 @@ impl LoadPickerModalState {
                 bottom_buttons[2].y,
             ),
         ];
-        self.controller
-            .configure_list(&mut self.model, LOAD_LIST_RECT, row_height, resources);
+        self.controller.configure_list(
+            &mut self.model,
+            list_rect(mode),
+            row_height(detailed_metadata),
+            resources,
+        );
         self.controller
             .begin_frame(&self.model, &btn_positions, btn_w, btn_h);
         for event in &screen.events {
-            self.controller
-                .handle_event(&mut self.model, event, transform);
+            self.handle_event(event, transform, save_manager);
         }
         let selected = self.model.selected_row();
-        let widget_events = self.controller.process_widgets(&self.model);
-        let widget_input = self.controller.input.as_widget_input();
-        let mouse_virt = widget_input.mouse_position;
-        self.controller.input.end_frame();
+        let (widget_events, mouse_virt) = self.finish_input();
         widget_bridge::play_frame_widget_noise(
             &widget_events,
             self.controller.frame(),
@@ -205,46 +308,40 @@ impl LoadPickerModalState {
         );
         match self.controller.take_action() {
             Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
-            Some(PickerAction::Accept(PickerTarget::Existing(name))) => {
-                match self.model.visible_slot_index(&name) {
-                    Some(slot) => return Some(SaveLoadOutcome::Slot(slot)),
-                    None => self
-                        .model
-                        .report_error("the selected save is no longer available".into()),
+            Some(PickerAction::Accept(PickerTarget::Existing(name)))
+                if mode == SaveLoadMode::Save =>
+            {
+                let message = resources.menu_text.get(MT_MSG_REALLY_OVERWRITE_SAVEGAME);
+                self.confirmation = Some((
+                    SaveConfirmation::Overwrite(name),
+                    YesNoModalState::new(io.window, io.renderer, resources, message),
+                ));
+            }
+            Some(PickerAction::Accept(target)) => {
+                if let Some(outcome) = self.accept_target(target, save_manager, profiles) {
+                    return Some(outcome);
                 }
             }
             Some(PickerAction::ConfirmDelete(name)) => {
                 if begin_picker_delete(&mut self.model, name) {
                     let message = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
-                    self.delete_confirmation = Some(YesNoModalState::new(
-                        io.window,
-                        io.renderer,
-                        resources,
-                        message,
+                    self.confirmation = Some((
+                        SaveConfirmation::Delete,
+                        YesNoModalState::new(io.window, io.renderer, resources, message),
                     ));
                 }
-            }
-            Some(PickerAction::Accept(PickerTarget::New)) => {
-                unreachable!("Load picker cannot create a save")
             }
             None => {}
         }
 
+        self.sync_thumbnail(save_manager, io.renderer);
         let renderer = &mut *io.renderer;
-        sync_thumbnail_cache(
-            &mut self.thumb_cache,
-            &mut self.thumb_widget,
-            self.model.selected_manager_index(),
-            save_manager,
-            renderer,
-            SaveLoadMode::Load,
-        );
         screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
         let metadata_text = SaveMetadataText::new(resources.menu_text.presentation_locale());
-        let now_unix = if self.detailed_metadata {
+        let now_unix = if detailed_metadata {
             match crate::save_file::unix_timestamp_now() {
                 Ok(now) => Some(now),
                 Err(error) => {
@@ -259,7 +356,7 @@ impl LoadPickerModalState {
             None
         };
         let view = self.controller.view();
-        let row_area_x = LOAD_LIST_RECT.x + 10;
+        let row_area_x = list_rect(mode).x + 10;
         let row_area_w = view.content_width() - 20;
         let hovered_row = view
             .row_at(mouse_virt.x as i32, mouse_virt.y as i32)
@@ -291,7 +388,7 @@ impl LoadPickerModalState {
                 now_unix,
                 self.local_time_zone.as_ref(),
                 &metadata_text,
-                self.detailed_metadata,
+                detailed_metadata,
             )
             .iter()
             .filter(|line| !line.is_empty())
@@ -316,6 +413,30 @@ impl LoadPickerModalState {
             }
         }
         view.draw_scrollbar(renderer, transform, resources);
+        if mode == SaveLoadMode::Save
+            && let Some(font) = resources.label_font_any()
+        {
+            let (before, after): (String, String) = (
+                self.name
+                    .edit_text
+                    .chars()
+                    .take(self.name.caret_offset)
+                    .collect(),
+                self.name
+                    .edit_text
+                    .chars()
+                    .skip(self.name.caret_offset)
+                    .collect(),
+            );
+            render_text_virt_font(
+                renderer,
+                font,
+                transform,
+                &format!("Name: {before}|{after}"),
+                SAVE_NAME_POS.0,
+                SAVE_NAME_POS.1,
+            );
+        }
         SavePreview {
             selected,
             visible: &visible,
@@ -326,7 +447,7 @@ impl LoadPickerModalState {
             now_unix,
             local_time_zone: self.local_time_zone.as_ref(),
             text: &metadata_text,
-            detailed_metadata: self.detailed_metadata,
+            detailed_metadata,
         }
         .draw(renderer, transform);
         widget_bridge::draw_frame_buttons(renderer, resources, transform, self.controller.frame());
@@ -334,11 +455,160 @@ impl LoadPickerModalState {
         None
     }
 
+    fn finish_confirmation(
+        &mut self,
+        action: SaveConfirmation,
+        confirmed: bool,
+        manager: &mut SaveGameManager,
+        profiles: Option<&ProfileManager>,
+    ) -> Option<SaveLoadOutcome> {
+        match action {
+            SaveConfirmation::Delete => {
+                let selected = self.model.selected_slot().cloned();
+                finish_picker_delete(&mut self.model, manager, confirmed);
+                if selected.as_ref() != self.model.selected_slot() {
+                    self.sync_name(manager);
+                }
+                None
+            }
+            SaveConfirmation::Overwrite(name) if confirmed => {
+                self.accept_target(PickerTarget::Existing(name), manager, profiles)
+            }
+            SaveConfirmation::Overwrite(_) => None,
+        }
+    }
+
+    fn accept_target(
+        &mut self,
+        target: PickerTarget,
+        manager: &mut SaveGameManager,
+        profiles: Option<&ProfileManager>,
+    ) -> Option<SaveLoadOutcome> {
+        let mode = self.config.mode;
+        let mission_id = self.config.mission_id;
+        let mission_id = || mission_id.expect("Save picker requires a mission id");
+        let result = (|| -> Result<usize, String> {
+            match target {
+                PickerTarget::New => {
+                    if mode != SaveLoadMode::Save {
+                        return Err("load picker cannot create a save".into());
+                    }
+                    let text = if self.name.edit_text.trim().is_empty() {
+                        mission_name(mission_id(), profiles)
+                            .unwrap_or_else(|| format!("Save {}", manager.count() + 1))
+                    } else {
+                        self.name.edit_text.trim().to_owned()
+                    };
+                    let handle = manager
+                        .create_draft(text, mission_id())
+                        .map_err(|error| format!("{error:#}"))?;
+                    Ok(manager
+                        .find_by_filename(handle.name().as_str())
+                        .expect("new save draft is catalogued"))
+                }
+                PickerTarget::Existing(name) => {
+                    self.refresh(manager);
+                    let slot = self
+                        .model
+                        .visible_slot_index(&name)
+                        .ok_or_else(|| "the selected save is no longer available".to_string())?;
+                    if mode == SaveLoadMode::Save {
+                        let text = accepted_name(
+                            &self.name.edit_text,
+                            manager,
+                            slot,
+                            mission_id(),
+                            profiles,
+                        );
+                        let handle = manager
+                            .slot_handle(slot)
+                            .expect("validated overwrite slot exists");
+                        manager
+                            .rename_slot(&handle, text)
+                            .map_err(|error| format!("{error:#}"))?;
+                    }
+                    Ok(slot)
+                }
+            }
+        })();
+        match result {
+            Ok(slot) => Some(SaveLoadOutcome::Slot(slot)),
+            Err(error) => {
+                self.model.report_error(error);
+                None
+            }
+        }
+    }
+
+    /// Release the preview surface. Required before drop when
+    /// [`SavePickerConfig::previews`] is set.
     pub fn close(&mut self, renderer: &mut Renderer) {
         clear_thumbnail_cache(&mut self.thumb_cache, &mut self.thumb_widget, renderer);
     }
+
+    /// Release process IME state acquired by a Save picker.
+    pub fn stop_text_input(&mut self) {
+        if self.text_input_active {
+            crate::window::stop_text_input();
+            self.text_input_active = false;
+        }
+    }
 }
 
+impl Drop for SavePickerModalState {
+    fn drop(&mut self) {
+        self.stop_text_input();
+    }
+}
+
+fn accepted_name(
+    input: &str,
+    save_manager: &SaveGameManager,
+    slot: usize,
+    mission_id: u32,
+    profiles: Option<&ProfileManager>,
+) -> String {
+    let trimmed = input.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    let existing = save_manager.get(slot).expect("accepted save slot exists");
+    if !existing.text.trim().is_empty() {
+        return existing.text.clone();
+    }
+    mission_name(mission_id, profiles)
+        .unwrap_or_else(|| format!("Save {}", save_manager.count() + 1))
+}
+
+fn mission_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<String> {
+    profiles?
+        .missions
+        .iter()
+        .find(|mission| mission.id == mission_id)
+        .map(|mission| mission.mission_name.clone())
+        .filter(|name| !name.trim().is_empty())
+}
+
+/// The Save picker gives up the list's bottom rows to the name line.
+fn list_rect(mode: SaveLoadMode) -> MenuRect {
+    match mode {
+        SaveLoadMode::Load => LOAD_LIST_RECT,
+        SaveLoadMode::Save => MenuRect {
+            h: SAVE_NAME_POS.1 - 8 - LOAD_LIST_RECT.y,
+            ..LOAD_LIST_RECT
+        },
+    }
+}
+
+fn row_height(detailed_metadata: bool) -> i32 {
+    if detailed_metadata {
+        DETAILED_ROW_HEIGHT
+    } else {
+        COMPACT_ROW_HEIGHT
+    }
+}
+
+const SAVE_NAME_POS: (i32, i32) = (34, 438);
 const LOAD_LIST_RECT: MenuRect = MenuRect {
     x: 30,
     y: 10,
@@ -523,22 +793,25 @@ impl<'a> SaveMetadataText<'a> {
 
 /// Longest allowed save name — passed to the input field as its
 /// max-length cap.
-#[cfg(test)]
 const MAX_NAME_LEN: usize = 45;
 
-/// Main-menu load picker. Mission-time loading drives the same state one tick
-/// at a time; saving belongs to the cooperative in-mission save task.
+/// Main-menu load picker: the shared picker state paced by [`widget_bridge::run_modal`].
 pub async fn show_load_picker(
     io: &mut ModalScreenIo<'_, '_>,
     save_manager: &mut SaveGameManager,
     detailed_metadata: bool,
 ) -> SaveLoadOutcome {
-    let mut state = LoadPickerModalState::new(
+    let mut state = SavePickerModalState::new(
         io.window,
         io.renderer,
         save_manager,
-        detailed_metadata,
-        false,
+        SavePickerConfig {
+            mode: SaveLoadMode::Load,
+            mission_id: None,
+            detailed_metadata,
+            multiplayer_connected: false,
+            previews: true,
+        },
     );
     let outcome = widget_bridge::run_modal(io, |io| {
         let no_audio = ScreenAudio {
@@ -546,7 +819,7 @@ pub async fn show_load_picker(
             backend: None,
             sample_loader: None,
         };
-        state.tick(io, save_manager, no_audio)
+        state.tick(io, save_manager, None, no_audio)
     })
     .await;
     state.close(io.renderer);
@@ -797,25 +1070,6 @@ fn existing_save_row_detail_lines(
         format!("{} | {}", text.mission(&mission), text.player(&player)),
         format!("{} | {}", text.saved(&relative), text.exact_date(&exact)),
     ]
-}
-
-/// Shared metadata presentation used by the frame-owned in-mission picker.
-/// Keeping this adapter here ensures the cooperative and standalone menus use
-/// the same relative-time, provenance, and compact-detail wording.
-pub(crate) fn cooperative_save_row_detail_lines(
-    save: &SaveGame,
-    detailed_metadata: bool,
-    now_unix: Option<u64>,
-    local_time_zone: Option<&TimeZone>,
-    locale: Option<&str>,
-) -> [String; 2] {
-    existing_save_row_detail_lines(
-        save,
-        now_unix,
-        local_time_zone,
-        &SaveMetadataText::new(locale),
-        detailed_metadata,
-    )
 }
 
 fn compact_row_detail(
@@ -1251,6 +1505,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::scroll_view::ScrollView;
 
     #[test]
     fn controller_leaves_committed_ime_text_and_caret_editing_to_save_adapter() {
@@ -1439,8 +1694,14 @@ mod tests {
             save.mission_elapsed_seconds = Some(seconds);
             for detailed in [false, true] {
                 assert!(
-                    cooperative_save_row_detail_lines(&save, detailed, Some(123), None, None)[0]
-                        .contains(expected)
+                    existing_save_row_detail_lines(
+                        &save,
+                        Some(123),
+                        None,
+                        &SaveMetadataText::default(),
+                        detailed,
+                    )[0]
+                    .contains(expected)
                 );
             }
             assert!(
@@ -1735,5 +1996,326 @@ mod tests {
         );
         assert!(!lines[0].contains("Player:"));
         assert!(!lines[0].contains("ago"));
+    }
+
+    fn pause_config(mode: SaveLoadMode, multiplayer_connected: bool) -> SavePickerConfig {
+        SavePickerConfig {
+            mode,
+            mission_id: Some(1),
+            detailed_metadata: false,
+            multiplayer_connected,
+            previews: false,
+        }
+    }
+
+    fn pause_picker(manager: &SaveGameManager, mode: SaveLoadMode) -> SavePickerModalState {
+        SavePickerModalState::with_input(manager, pause_config(mode, false), ModalInputState::new())
+    }
+
+    fn picker_fixture(manager: &mut SaveGameManager, name: &str) {
+        let mut save = SaveGame::new(name.into(), name.into(), 1);
+        save.timestamp = "123".into();
+        save.mission_name = "The Silver Arrow".into();
+        save.player_profile_id = Some(12);
+        save.player_name = "Alice".into();
+        save.campaign_progress = Some(0);
+        save.missions_done = Some(0);
+        save.missions_total = Some(1);
+        save.gang_size = Some(1);
+        save.ransom = Some(0);
+        save.blazons = Some(0);
+        save.amulets = Some(0);
+        save.validate_published_metadata().unwrap();
+        manager.insert_test_slot(save, crate::savegame::SlotState::Published);
+    }
+
+    fn picker_event_frame(
+        state: &mut SavePickerModalState,
+        manager: &SaveGameManager,
+        events: &[GameEvent],
+    ) -> Option<PickerAction> {
+        state.controller.scroll_view.get_or_insert_with(|| {
+            ScrollView::with_geometry([30, 42, 420, 360], 36, 16, 16, false)
+        });
+        state.refresh(manager);
+        state.controller.begin_frame(
+            &state.model,
+            &[
+                (0, "Accept", 460, 300),
+                (1, "Delete", 460, 350),
+                (2, "Cancel", 460, 400),
+            ],
+            150,
+            40,
+        );
+        for event in events {
+            state.handle_event(event, MenuTransform::centered(640, 480), manager);
+        }
+        state.finish_input();
+        state.controller.take_action()
+    }
+
+    fn picker_key(keycode: Keycode) -> GameEvent {
+        GameEvent::KeyDown {
+            keycode,
+            physical_key: None,
+        }
+    }
+
+    #[test]
+    fn pause_picker_uses_shared_draft_autosave_and_multiplayer_policy() {
+        let mut manager = SaveGameManager::new("unused-pause-picker-policy".into());
+        picker_fixture(&mut manager, "Autosave_100_0000");
+        picker_fixture(&mut manager, "Savegame_001");
+        manager.create_draft("Draft".into(), 1).unwrap();
+        let mut pause = pause_picker(&manager, SaveLoadMode::Load);
+        assert_eq!(
+            pause.model.visible().len(),
+            2,
+            "drafts never appear in load picker"
+        );
+        picker_event_frame(&mut pause, &manager, &[picker_key(Keycode::Down)]);
+        assert!(!pause.model.can_delete());
+        assert!(pause.model.request_delete().is_none());
+        for event in [
+            GameEvent::MouseMove {
+                x: 480,
+                y: 360,
+                xrel: 0,
+                yrel: 0,
+            },
+            GameEvent::MouseDown(480, 360, 1, 1),
+            GameEvent::MouseUp(480, 360, 1),
+        ] {
+            assert_eq!(
+                picker_event_frame(&mut pause, &manager, &[event]),
+                None,
+                "pause delete button must not offer protected autosave deletion"
+            );
+        }
+        assert_eq!(
+            pause.model.selected_slot().unwrap().as_str(),
+            "Autosave_100_0000"
+        );
+        let manual = manager.find_by_filename("Savegame_001").unwrap();
+        manager.get_mut(manual).unwrap().multiplayer_diagnostic = true;
+        let connected = SavePickerModalState::with_input(
+            &manager,
+            pause_config(SaveLoadMode::Load, true),
+            ModalInputState::new(),
+        );
+        assert_eq!(connected.model.visible().len(), 1);
+        let save = pause_picker(&manager, SaveLoadMode::Save);
+        assert_eq!(save.model.selected_row(), Some(ListRow::New));
+        assert!(
+            save.model
+                .visible()
+                .iter()
+                .all(|index| !manager.get(*index).unwrap().is_special())
+        );
+    }
+
+    #[test]
+    fn actual_pause_input_matches_standalone_actions_and_edits_non_ascii_at_caret() {
+        let manager = SaveGameManager::new("unused-pause-picker-input".into());
+        let mut pause = pause_picker(&manager, SaveLoadMode::Save);
+        let mut standalone = PickerModel::new(
+            SaveLoadMode::Save,
+            false,
+            (list_rect(SaveLoadMode::Save).h / row_height(false)) as usize,
+            picker_slots(&manager),
+        );
+        let mut controller = PickerController::new(ModalInputState::new());
+        controller.scroll_view = Some(ScrollView::with_geometry(
+            [30, 42, 420, 360],
+            36,
+            16,
+            16,
+            false,
+        ));
+        let traces = [
+            vec![GameEvent::TextInput {
+                text: "é雪".into()
+            }],
+            vec![
+                picker_key(Keycode::Left),
+                GameEvent::TextInput { text: "Ω".into() },
+            ],
+            vec![picker_key(Keycode::Backspace)],
+            vec![picker_key(Keycode::Delete)],
+            vec![picker_key(Keycode::Return)],
+            vec![picker_key(Keycode::Escape)],
+        ];
+        for events in traces {
+            let action = picker_event_frame(&mut pause, &manager, &events);
+            controller.begin_frame(
+                &standalone,
+                &[
+                    (0, "Save", 460, 300),
+                    (1, "Delete", 460, 350),
+                    (2, "Cancel", 460, 400),
+                ],
+                150,
+                40,
+            );
+            for event in &events {
+                controller.handle_event(&mut standalone, event, MenuTransform::centered(640, 480));
+            }
+            controller.process_widgets(&standalone);
+            controller.input.end_frame();
+            assert_eq!(action, controller.take_action());
+            assert_eq!(pause.model, standalone);
+        }
+        assert_eq!(pause.name.edit_text, "é");
+        assert_eq!(pause.name.caret_offset, 1);
+        assert_eq!(pause.name.base.state, crate::ui::UiState::SelectedEditable);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn pause_confirmation_handles_changed_catalog_and_surfaces_delete_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(directory.path().to_str().unwrap().into());
+        picker_fixture(&mut manager, "Savegame_000");
+        picker_fixture(&mut manager, "Savegame_001");
+        manager.save_index().unwrap();
+        let mut pause = pause_picker(&manager, SaveLoadMode::Load);
+        picker_event_frame(&mut pause, &manager, &[picker_key(Keycode::Down)]);
+        let name = pause.model.selected_slot().unwrap().clone();
+        assert!(begin_picker_delete(&mut pause.model, name.clone()));
+        manager.remove_by_filename(name.as_str()).unwrap();
+        pause.finish_confirmation(SaveConfirmation::Delete, true, &mut manager, None);
+        assert!(
+            pause
+                .model
+                .operation_error()
+                .unwrap()
+                .contains("no longer available")
+        );
+        assert_eq!(
+            manager.count(),
+            1,
+            "a changed catalog must not redirect deletion"
+        );
+        pause.model.dismiss_error();
+        picker_event_frame(&mut pause, &manager, &[picker_key(Keycode::Down)]);
+        let name = pause.model.selected_slot().unwrap().clone();
+        assert!(begin_picker_delete(&mut pause.model, name));
+        std::fs::create_dir(directory.path().join("Savegame_001.json")).unwrap();
+        pause.finish_confirmation(SaveConfirmation::Delete, true, &mut manager, None);
+        assert_eq!(
+            manager.count(),
+            0,
+            "published removal is not rolled back after cleanup failure"
+        );
+        assert!(pause.model.operation_error().unwrap().contains("cleanup"));
+        assert_eq!(pause.model.selected_row(), None);
+    }
+
+    #[test]
+    fn pause_overwrite_confirmation_revalidates_identity_after_catalog_change() {
+        let mut manager = SaveGameManager::new("unused-pause-overwrite".into());
+        picker_fixture(&mut manager, "Savegame_000");
+        let mut pause = pause_picker(&manager, SaveLoadMode::Save);
+        picker_event_frame(&mut pause, &manager, &[picker_key(Keycode::Down)]);
+        let name = pause.model.selected_slot().unwrap().clone();
+        pause.name.set_text("Edited but not saved");
+        assert!(begin_picker_delete(&mut pause.model, name.clone()));
+        assert!(
+            pause
+                .finish_confirmation(SaveConfirmation::Delete, false, &mut manager, None)
+                .is_none()
+        );
+        assert_eq!(
+            pause.name.edit_text, "Edited but not saved",
+            "cancelling deletion retains pending name edits"
+        );
+        // Switching to a fresh catalog simulates disappearance while the
+        // confirmation's stable identity remains alive.
+        let mut replacement = SaveGameManager::new("unused-pause-overwrite".into());
+        picker_fixture(&mut replacement, "Savegame_001");
+        assert!(
+            pause
+                .finish_confirmation(
+                    SaveConfirmation::Overwrite(name),
+                    true,
+                    &mut replacement,
+                    None
+                )
+                .is_none()
+        );
+        assert!(
+            pause
+                .model
+                .operation_error()
+                .unwrap()
+                .contains("no longer available")
+        );
+        assert_eq!(replacement.get(0).unwrap().text, "Savegame_001");
+    }
+
+    #[test]
+    fn pause_existing_slot_actions_match_standalone_controller() {
+        let mut manager = SaveGameManager::new("unused-pause-action-trace".into());
+        picker_fixture(&mut manager, "Savegame_000");
+        picker_fixture(&mut manager, "Savegame_001");
+        let mut pause = pause_picker(&manager, SaveLoadMode::Load);
+        let mut model = pause.model.clone();
+        let mut controller = PickerController::new(ModalInputState::new());
+        controller.scroll_view = Some(ScrollView::with_geometry(
+            [30, 42, 420, 360],
+            36,
+            16,
+            16,
+            false,
+        ));
+        let mut actions = Vec::new();
+        for events in [
+            vec![
+                picker_key(Keycode::Down),
+                picker_key(Keycode::Down),
+                picker_key(Keycode::Return),
+            ],
+            vec![GameEvent::MouseMove {
+                x: 480,
+                y: 360,
+                xrel: 0,
+                yrel: 0,
+            }],
+            vec![GameEvent::MouseDown(480, 360, 1, 1)],
+            vec![GameEvent::MouseUp(480, 360, 1)],
+            vec![picker_key(Keycode::Escape)],
+        ] {
+            let action = picker_event_frame(&mut pause, &manager, &events);
+            controller.begin_frame(
+                &model,
+                &[
+                    (0, "Load", 460, 300),
+                    (1, "Delete", 460, 350),
+                    (2, "Cancel", 460, 400),
+                ],
+                150,
+                40,
+            );
+            for event in &events {
+                controller.handle_event(&mut model, event, MenuTransform::centered(640, 480));
+            }
+            controller.process_widgets(&model);
+            controller.input.end_frame();
+            assert_eq!(action, controller.take_action());
+            assert_eq!(pause.model, model);
+            if let Some(action) = action {
+                actions.push(action);
+            }
+        }
+        let name = SlotName::new("Savegame_001").unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                PickerAction::Accept(PickerTarget::Existing(name.clone())),
+                PickerAction::ConfirmDelete(name),
+                PickerAction::Cancel
+            ]
+        );
     }
 }

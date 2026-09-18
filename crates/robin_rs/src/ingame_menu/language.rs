@@ -5,7 +5,7 @@ use crate::host::ApplicationContext;
 use crate::localization::{LanguageChange, LanguageSelection, PortTextKey};
 use crate::widget::FrameWnd;
 
-use super::layout::{align_bottom_right, draw_screen_background, render_text_virt_font};
+use super::layout::render_text_virt_font;
 use super::resources::MT_BTN_CANCEL;
 use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
@@ -88,8 +88,6 @@ impl LanguageModalState {
 
         let apply_label = require(application_context.port_text(PortTextKey::Apply), SCREEN);
         let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-        let bottom =
-            align_bottom_right(&[(apply_label, true), (&cancel_label, true)], btn_w, btn_h);
 
         let mut frame = FrameWnd::interactive();
         for (index, _) in choices.iter().enumerate() {
@@ -104,22 +102,12 @@ impl LanguageModalState {
                 row_h,
             ));
         }
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_APPLY,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        widget_bridge::add_bottom_right_pair(
+            &mut frame,
+            resources,
+            (ID_APPLY, apply_label),
+            (ID_CANCEL, &cancel_label),
+        );
 
         let title = require(application_context.port_text(PortTextKey::Language), SCREEN);
         let error_message: Option<String> = None;
@@ -189,16 +177,7 @@ impl LanguageModalState {
         let renderer = &mut *io.renderer;
         let resources = io.resources;
         let transform = screen.transform;
-        screen.begin_draw(renderer);
-        if let Some(bg) = resources.menu_bg[2] {
-            draw_screen_background(renderer, &bg);
-        }
-
-        if let Some(font) = resources.title_font_any() {
-            let title = self.title.as_str();
-            let x = (490 - font.text_width(title)) / 2;
-            render_text_virt_font(renderer, font, transform, title, x, 20);
-        }
+        widget_bridge::draw_titled_background(&screen, renderer, resources, 2, &self.title, 490);
         for (index, (label, selection)) in self.choices.iter().enumerate() {
             let Some(widget) = self.frame.widget(ID_LANGUAGE_BASE + index as u32) else {
                 continue;
@@ -247,11 +226,13 @@ impl LanguageModalState {
         {
             render_text_virt_font(renderer, font, transform, error, 30, 405);
         }
-        for id in [ID_APPLY, ID_CANCEL] {
-            if let Some(widget) = self.frame.widget(id) {
-                widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
-            }
-        }
+        widget_bridge::draw_buttons(
+            renderer,
+            resources,
+            transform,
+            &self.frame,
+            &[ID_APPLY, ID_CANCEL],
+        );
         screen.finish(io, &self.input);
 
         None
