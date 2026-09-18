@@ -30,6 +30,9 @@ const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
 const OPTION_ROW_GAP: i32 = 6;
 const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
+const PAGE_LABEL_Y: i32 = 362;
+/// Room kept for "Page N / M" before a value shown on the same line.
+const PAGE_LABEL_RESERVED_WIDTH: i32 = 80;
 pub(crate) use crate::gameplay_settings::GameplaySetting;
 
 impl GameplaySetting {
@@ -441,14 +444,23 @@ impl GameplayScreenState {
             .is_some()
             && let Some(font) = resources.label_font_any()
         {
+            // The option rows fill the column down to the page line, so the
+            // current mode shares that line, right-aligned to the column.
+            let value = format!(
+                "{}: {}",
+                self.localized
+                    .option_label(GameplaySetting::CampaignPresentation.index()),
+                self.localized
+                    .campaign_presentation(self.working.campaign_presentation),
+            );
+            let x = OPTION_COLUMN_LEFT_X + OPTION_COLUMN_WIDTH_LIMIT - font.text_width(&value);
             render_text_virt_font(
                 renderer,
                 font,
                 transform,
-                self.localized
-                    .campaign_presentation(self.working.campaign_presentation),
-                30,
-                335,
+                &value,
+                x.max(OPTION_COLUMN_LEFT_X + PAGE_LABEL_RESERVED_WIDTH),
+                PAGE_LABEL_Y,
             );
         }
 
@@ -463,7 +475,14 @@ impl GameplayScreenState {
         }
         if let Some(font) = resources.label_font_any() {
             let page_label = format!("Page {} / {}", self.page + 1, standalone_page_count());
-            render_text_virt_font(renderer, font, transform, &page_label, 30, 362);
+            render_text_virt_font(
+                renderer,
+                font,
+                transform,
+                &page_label,
+                OPTION_COLUMN_LEFT_X,
+                PAGE_LABEL_Y,
+            );
         }
 
         widget_bridge::draw_buttons(
