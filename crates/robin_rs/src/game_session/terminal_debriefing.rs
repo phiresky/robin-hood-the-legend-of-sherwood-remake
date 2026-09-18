@@ -202,7 +202,7 @@ enum TerminalDebriefingPhase {
     AwaitingMissionAuthority,
     Debriefing(crate::ingame_menu::DebriefingModalState),
     LoadPicker {
-        picker: crate::ingame_menu::LoadPickerModalState,
+        picker: crate::ingame_menu::SavePickerModalState,
         body: String,
         was_on_stat: bool,
     },
@@ -763,12 +763,17 @@ impl TerminalDebriefingState {
                     panic!("terminal debriefing load picker requires an active profile: {error}")
                 });
             self.phase = TerminalDebriefingPhase::LoadPicker {
-                picker: crate::ingame_menu::LoadPickerModalState::new(
+                picker: crate::ingame_menu::SavePickerModalState::new(
                     context.window,
                     &context.presentation.renderer,
                     &mut context.callbacks.save_manager,
-                    detailed_metadata,
-                    context.host.transport.net().is_some(),
+                    crate::ingame_menu::SavePickerConfig {
+                        mode: crate::ingame_menu::SaveLoadMode::Load,
+                        mission_id: None,
+                        detailed_metadata,
+                        multiplayer_connected: context.host.transport.net().is_some(),
+                        previews: true,
+                    },
                 ),
                 body,
                 was_on_stat,
@@ -826,6 +831,7 @@ impl TerminalDebriefingState {
                 cursor: Some(&cursor),
             },
             &mut context.callbacks.save_manager,
+            None,
             crate::ingame_menu::widget_bridge::ScreenAudio {
                 sound: Some(&mut context.host.audio.sound),
                 backend: context

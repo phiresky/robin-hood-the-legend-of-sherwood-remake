@@ -17,17 +17,14 @@ use crate::ui::{UiEvent, UiMsg, UiState};
 use crate::widget::{FrameWnd, Widget, WidgetSlider};
 use robin_engine::sound_config::SoundConfig;
 
-use super::layout::{
-    MenuRect, align_bottom_right, align_on_first_widget, draw_screen_background, draw_slider,
-    render_text_virt_font,
-};
+use super::layout::{MenuRect, align_on_first_widget, draw_slider, render_text_virt_font};
 use super::resources::{
-    MT_BTN_CANCEL, MT_BTN_OK, MT_STR_SOUND_3D, MT_STR_SOUND_COMMENT_FREQUENCY, MT_STR_SOUND_EAX,
-    MT_STR_SOUND_RES_HIGH, MT_STR_SOUND_RES_LOW, MT_STR_SOUND_STEREO, MT_STR_SOUND_VOL_COMMENT,
-    MT_STR_SOUND_VOL_DIALOGUE, MT_STR_SOUND_VOL_FX, MT_STR_SOUND_VOL_MUSIC, MT_TTL_SOUNDS,
+    MT_STR_SOUND_3D, MT_STR_SOUND_COMMENT_FREQUENCY, MT_STR_SOUND_EAX, MT_STR_SOUND_RES_HIGH,
+    MT_STR_SOUND_RES_LOW, MT_STR_SOUND_STEREO, MT_STR_SOUND_VOL_COMMENT, MT_STR_SOUND_VOL_DIALOGUE,
+    MT_STR_SOUND_VOL_FX, MT_STR_SOUND_VOL_MUSIC, MT_TTL_SOUNDS,
 };
 use super::widget_bridge::{
-    self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame, ScreenKey,
+    self, ModalInputState, ModalScreenIo, OkCancelScreen, ScreenAudio, ScreenFrame,
 };
 
 // Widget ID ranges.
@@ -77,9 +74,7 @@ pub(crate) struct SoundsScreen {
     slider_rects: [MenuRect; SOUND_SLIDERS.len()],
     slider_labels: [String; SOUND_SLIDERS.len()],
     title: String,
-    done: bool,
-    pub(crate) exit_requested: bool,
-    accepted: bool,
+    pub(crate) close: OkCancelScreen,
     input_state: ModalInputState,
     noisy_tracker: widget_bridge::NoisyTracker,
     slider_events: Vec<UiEvent>,
@@ -114,11 +109,7 @@ impl SoundsScreen {
             MT_STR_SOUND_3D
         };
 
-        let (btn_w, btn_h) = resources.button_dimensions();
-        let ok_label = resources.menu_text.get(MT_BTN_OK);
-        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-        let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-        let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
+        let close = OkCancelScreen::new(ID_OK, ID_CANCEL);
 
         // ── Stereo / EAX radios at (30,70) ────────────────────────────
         let (field_w, field_h) = resources.input_field_dimensions();
@@ -189,22 +180,7 @@ impl SoundsScreen {
                 mb.h,
             ));
         }
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_OK,
-            &bottom[0].label,
-            bottom[0].x,
-            bottom[0].y,
-            bottom[0].w,
-            bottom[0].h,
-        ));
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_CANCEL,
-            &bottom[1].label,
-            bottom[1].x,
-            bottom[1].y,
-            bottom[1].w,
-            bottom[1].h,
-        ));
+        close.add_buttons(&mut frame, resources);
 
         // ── Slider widgets ────────────────────────────────────────────
         // Same virtual rects the pre-widget version drew at; now they drive
@@ -232,8 +208,6 @@ impl SoundsScreen {
 
         let title = resources.menu_text.get(MT_TTL_SOUNDS);
 
-        let done = false;
-        let accepted = false;
         // Per-widget noise-tracking state. Kept alive across frames so
         // repeat events in the same widget state stay silent; resets on
         // state change.
@@ -248,9 +222,7 @@ impl SoundsScreen {
             slider_rects,
             slider_labels,
             title,
-            done,
-            exit_requested: false,
-            accepted,
+            close,
             input_state,
             noisy_tracker,
             slider_events,
@@ -276,24 +248,11 @@ impl SoundsScreen {
         io: &mut ModalScreenIo<'_, '_>,
         audio: &mut ScreenAudio<'_>,
     ) -> Option<()> {
-        if self.done {
+        if self.close.done {
             return Some(());
         }
         let screen = ScreenFrame::begin(io, &mut self.input_state);
-        for key in screen.keys() {
-            match key {
-                ScreenKey::Quit => {
-                    self.exit_requested = true;
-                    self.done = true;
-                }
-                ScreenKey::Cancel => self.done = true,
-                ScreenKey::Confirm => {
-                    self.accepted = true;
-                    self.done = true;
-                }
-                ScreenKey::Next => {}
-            }
-        }
+        self.close.poll_keys(&screen);
 
         // The first activation may be a slider drag release; button
         // activations are filtered from `button_events` below instead.
@@ -364,11 +323,7 @@ impl SoundsScreen {
             .map(|e| e.origin_widget_id)
         {
             match id {
-                ID_OK => {
-                    self.accepted = true;
-                    self.done = true;
-                }
-                ID_CANCEL => self.done = true,
+                id if self.close.activate(id) => {}
                 id if id == ID_MODE_BASE => {
                     self.edit.working.sound_3d = false;
                     self.dirty = true;
@@ -392,16 +347,8 @@ impl SoundsScreen {
         let transform = screen.transform;
         let renderer = &mut *io.renderer;
         let resources = io.resources;
-        screen.begin_draw(renderer);
-
-        if let Some(bg) = resources.menu_bg[0] {
-            draw_screen_background(renderer, &bg);
-        }
-
-        if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width(&self.title);
-            render_text_virt_font(renderer, font, transform, &self.title, (460 - tw) / 2, 20);
-        }
+        self.close
+            .draw_chrome(&screen, renderer, resources, &self.title, 460);
         if let Some(font) = resources.label_font_any() {
             for (i, label) in self.slider_labels.iter().enumerate() {
                 render_text_virt_font(
@@ -448,12 +395,8 @@ impl SoundsScreen {
         }
 
         // OK / Cancel as regular buttons.
-        if let Some(w) = self.frame.widget(ID_OK) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
-        if let Some(w) = self.frame.widget(ID_CANCEL) {
-            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
-        }
+        self.close
+            .draw_buttons(renderer, resources, transform, &self.frame);
 
         screen.finish(io, &self.input_state);
         None
@@ -464,7 +407,7 @@ impl SoundsScreen {
         // the already-selected radio. Any accepted+dirty exit triggers
         // sound-settings re-apply in the caller, regardless of whether the
         // edit.working config differs field-for-field from the original.
-        self.edit.commit(self.accepted && self.dirty, config)
+        self.edit.commit(self.close.accepted && self.dirty, config)
     }
 }
 
@@ -509,9 +452,12 @@ mod screen_state_tests {
                     }; SOUND_SLIDERS.len()],
                     slider_labels: std::array::from_fn(|_| String::new()),
                     title: String::new(),
-                    done: true,
-                    exit_requested: false,
-                    accepted,
+                    close: {
+                        let mut close = OkCancelScreen::new(ID_OK, ID_CANCEL);
+                        close.accepted = accepted;
+                        close.done = true;
+                        close
+                    },
                     input_state: ModalInputState::new(),
                     noisy_tracker: widget_bridge::NoisyTracker::new(),
                     slider_events: Vec::new(),

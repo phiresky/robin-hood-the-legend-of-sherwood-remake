@@ -322,6 +322,12 @@ impl WidgetButton {
                     slot.set(self.base.id);
                 }
                 Vec::new()
+            } else if buttons.contains(MouseButtons::LEFT_CLICK) {
+                // Press and release both arrived since the last frame (a
+                // frame longer than the click), so PUSHED was never seen.
+                // The pointer has not left since it was hovering unpressed:
+                // this is a complete click on this button.
+                vec![self.base.make_event(UiMsg::WidgetActivated)]
             } else {
                 // Re-emit WidgetFocused every frame while hovered —
                 // drives per-frame menu hover sounds (the focus event

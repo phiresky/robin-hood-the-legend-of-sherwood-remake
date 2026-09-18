@@ -198,6 +198,161 @@ impl ScreenFrame {
     }
 }
 
+/// Add two buttons in the shared bottom-right row: `first` leftmost
+/// (accept/OK), `second` rightmost (cancel/back). Both are enabled.
+pub fn add_bottom_right_pair(
+    frame: &mut FrameWnd,
+    resources: &IngameMenuResources,
+    first: (WidgetId, &str),
+    second: (WidgetId, &str),
+) {
+    let (button_w, button_h) = resources.button_dimensions();
+    let row =
+        super::layout::align_bottom_right(&[(first.1, true), (second.1, true)], button_w, button_h);
+    for (id, button) in [first.0, second.0].into_iter().zip(&row) {
+        frame.add_widget_absolute(make_button(
+            id,
+            &button.label,
+            button.x,
+            button.y,
+            button.w,
+            button.h,
+        ));
+    }
+}
+
+/// Start drawing a settings page: modal GPU phase, dim, full-screen
+/// `menu_bg[background]`, then `title` centred within `title_span` virtual
+/// pixels at y=20.
+pub fn draw_titled_background(
+    screen: &ScreenFrame,
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    background: usize,
+    title: &str,
+    title_span: i32,
+) {
+    screen.begin_draw(renderer);
+    if let Some(bg) = resources.menu_bg[background] {
+        super::layout::draw_screen_background(renderer, &bg);
+    }
+    if let Some(font) = resources.title_font_any() {
+        super::layout::render_text_virt_font(
+            renderer,
+            font,
+            screen.transform,
+            title,
+            (title_span - font.text_width(title)) / 2,
+            20,
+        );
+    }
+}
+
+/// Draw the listed plain buttons of `frame` in order; absent ids are skipped.
+pub fn draw_buttons(
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    transform: MenuTransform,
+    frame: &FrameWnd,
+    ids: &[WidgetId],
+) {
+    for &id in ids {
+        if let Some(widget) = frame.widget(id) {
+            draw_widget_button(renderer, resources, transform, widget, false);
+        }
+    }
+}
+
+/// Close state and chrome of a staged-settings page with OK and Cancel.
+///
+/// Escape and Cancel close, Return and OK accept, a window close request
+/// closes and sets `exit_requested`. The page keeps its own widgets and
+/// reads `accepted` when committing.
+#[derive(Debug, Clone, Copy)]
+pub struct OkCancelScreen {
+    ok: WidgetId,
+    cancel: WidgetId,
+    pub accepted: bool,
+    pub done: bool,
+    pub exit_requested: bool,
+}
+
+impl OkCancelScreen {
+    pub fn new(ok: WidgetId, cancel: WidgetId) -> Self {
+        Self {
+            ok,
+            cancel,
+            accepted: false,
+            done: false,
+            exit_requested: false,
+        }
+    }
+
+    /// Append the localized OK and Cancel buttons to `frame`.
+    pub fn add_buttons(&self, frame: &mut FrameWnd, resources: &IngameMenuResources) {
+        let ok = resources.menu_text.get(super::resources::MT_BTN_OK);
+        let cancel = resources.menu_text.get(super::resources::MT_BTN_CANCEL);
+        add_bottom_right_pair(frame, resources, (self.ok, &ok), (self.cancel, &cancel));
+    }
+
+    /// Apply this frame's standard keys in event order.
+    pub fn poll_keys(&mut self, screen: &ScreenFrame) {
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit => {
+                    self.exit_requested = true;
+                    self.done = true;
+                }
+                ScreenKey::Cancel => self.done = true,
+                ScreenKey::Confirm => {
+                    self.accepted = true;
+                    self.done = true;
+                }
+                ScreenKey::Next => {}
+            }
+        }
+    }
+
+    /// Handle an activated widget; `false` means it is one of the page's own.
+    pub fn activate(&mut self, id: WidgetId) -> bool {
+        if id == self.ok {
+            self.accepted = true;
+        } else if id != self.cancel {
+            return false;
+        }
+        self.done = true;
+        true
+    }
+
+    /// [`draw_titled_background`] on the shared settings background.
+    pub fn draw_chrome(
+        &self,
+        screen: &ScreenFrame,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        title: &str,
+        title_span: i32,
+    ) {
+        draw_titled_background(screen, renderer, resources, 0, title, title_span);
+    }
+
+    pub fn draw_buttons(
+        &self,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        transform: MenuTransform,
+        frame: &FrameWnd,
+    ) {
+        draw_buttons(
+            renderer,
+            resources,
+            transform,
+            frame,
+            &[self.ok, self.cancel],
+        );
+    }
+}
+
 /// Drive a one-frame `tick` until it yields a result, pacing with
 /// [`crate::window::sleep_ui_frame`] between frames.
 pub async fn run_modal<T>(

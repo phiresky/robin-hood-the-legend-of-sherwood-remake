@@ -464,6 +464,54 @@ mod tests {
     }
 
     #[test]
+    fn mouse_selected_row_is_accepted_by_a_click_delivered_in_one_frame() {
+        let mut model = model();
+        let mut controller = PickerController::new(ModalInputState::new());
+        // Row 1 of the list, selected by mouse.
+        for events in [
+            vec![GameEvent::MouseMove {
+                x: 40,
+                y: 40,
+                xrel: 0,
+                yrel: 0,
+            }],
+            vec![GameEvent::MouseDown(40, 40, 1, 1)],
+            vec![GameEvent::MouseUp(40, 40, 1)],
+        ] {
+            assert_eq!(frame(&mut controller, &mut model, &events), None);
+        }
+        assert_eq!(model.selected_slot().unwrap().as_str(), "Savegame_001");
+        // Hover Load, then a slow frame polls the press and release together.
+        assert_eq!(
+            frame(
+                &mut controller,
+                &mut model,
+                &[GameEvent::MouseMove {
+                    x: 480,
+                    y: 310,
+                    xrel: 0,
+                    yrel: 0,
+                }]
+            ),
+            None
+        );
+        assert_eq!(
+            frame(
+                &mut controller,
+                &mut model,
+                &[
+                    GameEvent::MouseDown(480, 310, 1, 1),
+                    GameEvent::MouseUp(480, 310, 1)
+                ]
+            ),
+            Some(PickerAction::Accept(PickerTarget::Existing(
+                SlotName::new("Savegame_001").unwrap()
+            )))
+        );
+        assert_eq!(controller.input.capture(), None);
+    }
+
+    #[test]
     fn accept_intent_keeps_exact_identity_after_reordering() {
         let mut model = model();
         let mut controller = PickerController::new(ModalInputState::new());
