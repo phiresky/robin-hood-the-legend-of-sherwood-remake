@@ -4,9 +4,11 @@ use crate::ai::{
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::parameters_ai;
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_seeking_event(
         &mut self,
         sim: &SimulationContext,
@@ -14,206 +16,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        use StimulusType::*;
-        use Substate::*;
-        if !stimulus.stimulus_type.is_expected_class() {
-            return Option::None;
-        }
-        let substate = self.seek_enemy(owner).base.current_substate;
-        if !matches!(
-            substate,
-            SeekingSeekpoint
-                | SeekingSeekpointWatching
-                | SeekingSeekpointWatchingSidewards
-                | SeekingSeekpointPassedAmbushPointLeft
-                | SeekingSeekpointPassedAmbushPointRight
-                | SeekingSeekpointCheckingAmbushPoint
-                | SeekingGotStopEvent
-                | SeekingNet
-                | DefaultPatrolEnroute
-                | DefaultPatrolEnrouteRunning
-                | DefaultPatrolEnrouteWaiting
-                | DefaultGotoChief
-                | DefaultPatrolChiefReturnToPatrol
-        ) {
-            return Option::None;
-        }
-        match (substate, stimulus.stimulus_type) {
-            (SeekingSeekpoint, EventReachPoint) => {
-                self.execute_seekpoint_arrival(sim, assets, owner)
-            }
-            (SeekingSeekpointWatching, EventTimer) => {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Seeking,
-                    SeekingSeekpointWatchingSidewards,
-                );
-                let direction = if crate::sim_rng::u32(
-                    sim,
-                    crate::sim_rng::RngSite::EnemySeekLook,
-                    0..2,
-                ) != 0
-                {
-                    crate::ai::LookDirection::LeftRight
-                } else {
-                    crate::ai::LookDirection::RightLeft
-                };
-                self.execute_ai_look_sidewards(sim, assets, owner, direction);
-            }
-            (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
-                if let Some(&direction) = self.seek_enemy(owner).seek_point_view_directions.first()
-                {
-                    self.seek_enemy_mut(owner)
-                        .seek_point_view_directions
-                        .remove(0);
-                    self.duty_face_direction(sim, assets, owner, direction);
-                    self.seek_enemy_mut(owner).base.number_of_looks = 0;
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Seeking,
-                        SeekingSeekpointWatching,
-                    );
-                    self.seek_event_timer(owner, parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32);
-                } else {
-                    self.execute_ai_seek_next_point(sim, assets, owner);
-                }
-            }
-            (
-                SeekingSeekpointPassedAmbushPointLeft | SeekingSeekpointPassedAmbushPointRight,
-                EventReachPoint,
-            ) => {
-                self.duty_set_state(sim, assets, owner, AiState::Seeking, SeekingSeekpoint);
-                self.execute_ai_callback(sim, assets, owner, &Stimulus::new(EventReachPoint));
-            }
-            (
-                SeekingSeekpointPassedAmbushPointLeft | SeekingSeekpointPassedAmbushPointRight,
-                EventTimer,
-            ) => {
-                self.stop_ai_owner(sim, assets, owner);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Seeking,
-                    SeekingSeekpointCheckingAmbushPoint,
-                );
-                self.execute_ai_look_sidewards(
-                    sim,
-                    assets,
-                    owner,
-                    if substate == SeekingSeekpointPassedAmbushPointLeft {
-                        crate::ai::LookDirection::Left
-                    } else {
-                        crate::ai::LookDirection::Right
-                    },
-                );
-            }
-            (SeekingSeekpointCheckingAmbushPoint, EventDone) => {
-                self.duty_set_state(sim, assets, owner, AiState::Seeking, SeekingSeekpoint);
-                let flags = if self
-                    .seek_enemy(owner)
-                    .seek_flags
-                    .contains(SeekFlags::WALKING)
-                {
-                    GotoFlags::empty()
-                } else {
-                    GotoFlags::RUN
-                };
-                let position = self.current_live_seekpoint(owner).position;
-                self.duty_go_to(sim, assets, owner, position, flags);
-            }
-            (SeekingGotStopEvent, EventTimer) => {
-                let ai = self.seek_enemy_mut(owner);
-                if let Some(path) = ai.base.alert_path_id
-                    && !ai.changed_to_alert_path
-                {
-                    ai.changed_to_alert_path = true;
-                    ai.base.patrol_path =
-                        crate::ai::PatrolPath::new(path, &assets.navigation.hiking_paths);
-                    ai.base.has_patrol_path = true;
-                }
-                ai.base.set_emoticon(EmoticonType::QuestionMark);
-                self.duty_set_state(sim, assets, owner, AiState::Wondering, WonderingLooking1);
-                self.seek_event_timer(owner, 30);
-            }
-            (SeekingNet, EventTimer | EventReachPoint) => {
-                self.execute_seeking_net(sim, assets, owner, stimulus.stimulus_type)
-            }
-            (DefaultPatrolEnroute | DefaultPatrolEnrouteRunning, EventReachPoint) => {
-                let direction = self.seek_enemy(owner).base.patrol_direction;
-                if direction
-                    != self
-                        .expect_entity(owner, "patrol arrival")
-                        .element_data()
-                        .direction() as u16
-                {
-                    self.duty_face_direction(sim, assets, owner, direction);
-                }
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Default,
-                    DefaultPatrolEnrouteWaiting,
-                );
-                self.seek_event_timer(owner, 200);
-            }
-            (DefaultPatrolEnrouteWaiting, EventTimer) => {
-                let chief = self
-                    .seek_enemy(owner)
-                    .base
-                    .patrol_chief
-                    .expect("waiting patrol follower requires chief");
-                let state = self
-                    .world
-                    .entities
-                    .expect_ai_controller(chief, format_args!("patrol chief state"))
-                    .current_state;
-                if matches!(state, AiState::Default | AiState::Wondering) {
-                    self.seek_event_timer(owner, 200);
-                } else {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            (DefaultGotoChief, EventReachPoint) => {
-                if let Some(chief) = self.seek_enemy(owner).base.patrol_chief {
-                    let position = self.live_ai_position(chief);
-                    let elevation = self
-                        .expect_entity(chief, "patrol chief facing")
-                        .position_iface()
-                        .get_elevation() as i16;
-                    let body = self
-                        .expect_entity(owner, "patrol follower facing")
-                        .element_data()
-                        .position();
-                    let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-                        position.x - body.x,
-                        (position.y - (body.y - body.z)) + (elevation as f32 - body.z),
-                    );
-                    self.duty_face_direction(sim, assets, owner, direction as u16);
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Default,
-                        DefaultPatrolEnrouteWaiting,
-                    );
-                    self.seek_event_timer(owner, 200);
-                } else {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            (DefaultPatrolChiefReturnToPatrol, EventReachPoint) => {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
-            }
-            _ => {}
-        }
-
-        Some(false)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seeking_event(stimulus)
     }
 
     fn seek_event_timer(&mut self, owner: EntityId, duration: u32) {
@@ -235,24 +38,208 @@ impl EngineInner {
         }
         .expect("actual seek point must resolve")
     }
+}
 
-    fn execute_seekpoint_arrival(
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_seeking_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        if self.seek_enemy(owner).actual_seek_point.is_none() {
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        use StimulusType::*;
+        use Substate::*;
+        if !stimulus.stimulus_type.is_expected_class() {
+            return Option::None;
+        }
+        let substate = self.engine.seek_enemy(self.owner).base.current_substate;
+        if !matches!(
+            substate,
+            SeekingSeekpoint
+                | SeekingSeekpointWatching
+                | SeekingSeekpointWatchingSidewards
+                | SeekingSeekpointPassedAmbushPointLeft
+                | SeekingSeekpointPassedAmbushPointRight
+                | SeekingSeekpointCheckingAmbushPoint
+                | SeekingGotStopEvent
+                | SeekingNet
+                | DefaultPatrolEnroute
+                | DefaultPatrolEnrouteRunning
+                | DefaultPatrolEnrouteWaiting
+                | DefaultGotoChief
+                | DefaultPatrolChiefReturnToPatrol
+        ) {
+            return Option::None;
+        }
+        match (substate, stimulus.stimulus_type) {
+            (SeekingSeekpoint, EventReachPoint) => self.execute_seekpoint_arrival(),
+            (SeekingSeekpointWatching, EventTimer) => {
+                self.duty_set_state(AiState::Seeking, SeekingSeekpointWatchingSidewards);
+                let direction =
+                    if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2)
+                        != 0
+                    {
+                        crate::ai::LookDirection::LeftRight
+                    } else {
+                        crate::ai::LookDirection::RightLeft
+                    };
+                self.execute_ai_look_sidewards(direction);
+            }
+            (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
+                if let Some(&direction) = self
+                    .engine
+                    .seek_enemy(self.owner)
+                    .seek_point_view_directions
+                    .first()
+                {
+                    self.engine
+                        .seek_enemy_mut(self.owner)
+                        .seek_point_view_directions
+                        .remove(0);
+                    self.duty_face_direction(direction);
+                    self.engine.seek_enemy_mut(self.owner).base.number_of_looks = 0;
+                    self.duty_set_state(AiState::Seeking, SeekingSeekpointWatching);
+                    self.engine
+                        .seek_event_timer(self.owner, parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32);
+                } else {
+                    self.execute_ai_seek_next_point();
+                }
+            }
+            (
+                SeekingSeekpointPassedAmbushPointLeft | SeekingSeekpointPassedAmbushPointRight,
+                EventReachPoint,
+            ) => {
+                self.duty_set_state(AiState::Seeking, SeekingSeekpoint);
+                self.execute_ai_callback(&Stimulus::new(EventReachPoint));
+            }
+            (
+                SeekingSeekpointPassedAmbushPointLeft | SeekingSeekpointPassedAmbushPointRight,
+                EventTimer,
+            ) => {
+                self.stop_ai_owner();
+                self.duty_set_state(AiState::Seeking, SeekingSeekpointCheckingAmbushPoint);
+                self.execute_ai_look_sidewards(
+                    if substate == SeekingSeekpointPassedAmbushPointLeft {
+                        crate::ai::LookDirection::Left
+                    } else {
+                        crate::ai::LookDirection::Right
+                    },
+                );
+            }
+            (SeekingSeekpointCheckingAmbushPoint, EventDone) => {
+                self.duty_set_state(AiState::Seeking, SeekingSeekpoint);
+                let flags = if self
+                    .engine
+                    .seek_enemy(self.owner)
+                    .seek_flags
+                    .contains(SeekFlags::WALKING)
+                {
+                    GotoFlags::empty()
+                } else {
+                    GotoFlags::RUN
+                };
+                let position = self.engine.current_live_seekpoint(self.owner).position;
+                self.duty_go_to(position, flags);
+            }
+            (SeekingGotStopEvent, EventTimer) => {
+                let ai = self.engine.seek_enemy_mut(self.owner);
+                if let Some(path) = ai.base.alert_path_id
+                    && !ai.changed_to_alert_path
+                {
+                    ai.changed_to_alert_path = true;
+                    ai.base.patrol_path =
+                        crate::ai::PatrolPath::new(path, &self.assets.navigation.hiking_paths);
+                    ai.base.has_patrol_path = true;
+                }
+                ai.base.set_emoticon(EmoticonType::QuestionMark);
+                self.duty_set_state(AiState::Wondering, WonderingLooking1);
+                self.engine.seek_event_timer(self.owner, 30);
+            }
+            (SeekingNet, EventTimer | EventReachPoint) => {
+                self.execute_seeking_net(stimulus.stimulus_type)
+            }
+            (DefaultPatrolEnroute | DefaultPatrolEnrouteRunning, EventReachPoint) => {
+                let direction = self.engine.seek_enemy(self.owner).base.patrol_direction;
+                if direction
+                    != self
+                        .engine
+                        .expect_entity(self.owner, "patrol arrival")
+                        .element_data()
+                        .direction() as u16
+                {
+                    self.duty_face_direction(direction);
+                }
+                self.duty_set_state(AiState::Default, DefaultPatrolEnrouteWaiting);
+                self.engine.seek_event_timer(self.owner, 200);
+            }
+            (DefaultPatrolEnrouteWaiting, EventTimer) => {
+                let chief = self
+                    .engine
+                    .seek_enemy(self.owner)
+                    .base
+                    .patrol_chief
+                    .expect("waiting patrol follower requires chief");
+                let state = self.engine.ai(chief, "patrol chief state").current_state;
+                if matches!(state, AiState::Default | AiState::Wondering) {
+                    self.engine.seek_event_timer(self.owner, 200);
+                } else {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            (DefaultGotoChief, EventReachPoint) => {
+                if let Some(chief) = self.engine.seek_enemy(self.owner).base.patrol_chief {
+                    let position = self.engine.live_ai_position(chief);
+                    let elevation = self
+                        .engine
+                        .expect_entity(chief, "patrol chief facing")
+                        .position_iface()
+                        .get_elevation() as i16;
+                    let body = self
+                        .engine
+                        .expect_entity(self.owner, "patrol follower facing")
+                        .element_data()
+                        .position();
+                    let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+                        position.x - body.x,
+                        (position.y - (body.y - body.z)) + (elevation as f32 - body.z),
+                    );
+                    self.duty_face_direction(direction as u16);
+                    self.duty_set_state(AiState::Default, DefaultPatrolEnrouteWaiting);
+                    self.engine.seek_event_timer(self.owner, 200);
+                } else {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            (DefaultPatrolChiefReturnToPatrol, EventReachPoint) => {
+                self.execute_ai_return_to_duty(DutyFlags::empty())
+            }
+            _ => {}
+        }
+
+        Some(false)
+    }
+
+    fn execute_seekpoint_arrival(&mut self) {
+        if self
+            .engine
+            .seek_enemy(self.owner)
+            .actual_seek_point
+            .is_none()
+        {
             return;
         }
-        self.seek_enemy_mut(owner)
+        self.engine
+            .seek_enemy_mut(self.owner)
             .seek_point_view_directions
             .clear();
-        let count = self.current_live_seekpoint(owner).directions.len();
+        let count = self
+            .engine
+            .current_live_seekpoint(self.owner)
+            .directions
+            .len();
         for index in 0..count {
-            let direction = self.current_live_seekpoint(owner).directions[index];
+            let direction = self.engine.current_live_seekpoint(self.owner).directions[index];
             let facing = self
-                .expect_entity(owner, "seek arrival facing")
+                .engine
+                .expect_entity(self.owner, "seek arrival facing")
                 .element_data()
                 .direction();
             let relative = ((i32::from(direction) + 16 - i32::from(facing)) ^ 8) & 15;
@@ -260,46 +247,50 @@ impl EngineInner {
                 continue;
             }
             let insertion = crate::sim_rng::usize(
-                sim,
+                self.sim,
                 crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
-                0..=self.seek_enemy(owner).seek_point_view_directions.len(),
+                0..=self
+                    .engine
+                    .seek_enemy(self.owner)
+                    .seek_point_view_directions
+                    .len(),
             );
-            self.seek_enemy_mut(owner)
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .seek_point_view_directions
                 .insert(insertion, direction);
         }
-        if let Some(&direction) = self.seek_enemy(owner).seek_point_view_directions.first() {
-            self.seek_enemy_mut(owner)
+        if let Some(&direction) = self
+            .engine
+            .seek_enemy(self.owner)
+            .seek_point_view_directions
+            .first()
+        {
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .seek_point_view_directions
                 .remove(0);
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingSeekpointWatching,
-            );
-            self.duty_face_direction(sim, assets, owner, direction);
-            self.seek_event_timer(owner, parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32);
+            self.duty_set_state(AiState::Seeking, Substate::SeekingSeekpointWatching);
+            self.duty_face_direction(direction);
+            self.engine
+                .seek_event_timer(self.owner, parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32);
         } else {
-            self.execute_ai_seek_next_point(sim, assets, owner);
+            self.execute_ai_seek_next_point();
         }
     }
 
-    fn execute_seeking_net(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        event: StimulusType,
-    ) {
+    fn execute_seeking_net(&mut self, event: StimulusType) {
         let handle = self
-            .seek_enemy(owner)
+            .engine
+            .seek_enemy(self.owner)
             .base
             .detected_body
             .expect("net rescue requires body");
-        let body = self.expect_human_id_for_ai_handle(handle.get(), "net rescue body");
+        let body = self
+            .engine
+            .expect_human_id_for_ai_handle(handle.get(), "net rescue body");
         let stuck = self
+            .engine
             .expect_entity(body, "net rescue body")
             .human_data()
             .expect("net victim must be human")
@@ -307,65 +298,65 @@ impl EngineInner {
             > 0;
         if event == StimulusType::EventTimer {
             if !stuck
-                && self.npc_is_detecting_human(assets, owner, body, self.control.frame_counter)
+                && self.engine.npc_is_detecting_human(
+                    self.assets,
+                    self.owner,
+                    body,
+                    self.engine.control.frame_counter,
+                )
             {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+                self.execute_ai_return_to_duty(DutyFlags::empty());
             } else {
-                self.seek_event_timer(owner, 10);
+                self.engine.seek_event_timer(self.owner, 10);
             }
         } else if !stuck {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(DutyFlags::empty());
         } else if self
-            .expect_entity(owner, "net rescuer")
+            .engine
+            .expect_entity(self.owner, "net rescuer")
             .soldier_data()
             .is_some_and(|s| s.rider)
         {
             self.execute_ai_seek_area(
-                sim,
-                assets,
-                owner,
-                self.live_ai_position(owner),
+                self.engine.live_ai_position(self.owner),
                 parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                 SeekFlags::BODY_SEEK,
                 UNDEFINED_DIRECTION,
             );
         } else {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Seeking,
-                Substate::SeekingTakingNet,
-            );
+            self.duty_set_state(AiState::Seeking, Substate::SeekingTakingNet);
             let net = self
-                .seek_enemy(owner)
+                .engine
+                .seek_enemy(self.owner)
                 .base
                 .interesting_object
                 .map(|handle| EntityId::Net(crate::entity_id::NetId(handle.get())));
             if let Some(net) = net
                 && self
+                    .engine
                     .get_entity(net)
                     .is_some_and(|entity| entity.is_active())
             {
-                self.stop_ai_owner(sim, assets, owner);
+                self.stop_ai_owner();
                 let mut sequence = crate::sequence::Sequence::new();
                 for step in 1..=4 {
                     sequence.append_element(crate::sequence::SequenceElement::new_interaction(
                         step,
                         crate::element::Command::SearchCmd,
-                        Some(owner),
+                        Some(self.owner),
                         Option::None,
                     ));
                 }
                 sequence.append_element(crate::sequence::SequenceElement::new_interaction(
                     5,
                     crate::element::Command::Take,
-                    Some(owner),
+                    Some(self.owner),
                     Some(net),
                 ));
-                self.launch_sequence(sim, assets, sequence);
+                self.engine.launch_sequence(self.sim, self.assets, sequence);
 
-                self.seek_enemy_mut(owner)
+                self.engine
+                    .seek_enemy_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::None);
             }

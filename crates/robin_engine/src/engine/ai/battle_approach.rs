@@ -16,60 +16,10 @@ impl EngineInner {
         target: EntityId,
     ) {
         if self.direct_enter_swordfight(sim, assets, owner, target) {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("combat rebalance"))
+            self.enemy_ai_mut(owner, "combat rebalance")
                 .base
                 .primary_target = Some(AiEntityHandle::new(target.index()));
         }
-    }
-
-    pub(in crate::engine) fn execute_ai_end_swordfight(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        if self
-            .expect_entity(owner, "end swordfight owner")
-            .human_data()
-            .expect("swordfighter is human")
-            .opponents
-            .is_empty()
-        {
-            return;
-        }
-        self.launch_element(
-            sim,
-            assets,
-            crate::sequence::SequenceElement::new(
-                1,
-                crate::element::Command::QuitSwordfight,
-                Some(owner),
-            ),
-        );
-    }
-
-    pub(in crate::engine) fn launch_ai_raise_sword(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let mut element = crate::sequence::SequenceElement::new_generic(
-            1,
-            crate::element::Command::EnterSwordfight,
-            Some(owner),
-        );
-        element.set_property(
-            crate::sequence::Field::Opponent,
-            crate::sequence::FieldValue::Integer(0),
-        );
-        element.set_property(
-            crate::sequence::Field::JumplineDestination,
-            crate::sequence::FieldValue::Integer(0),
-        );
-        self.launch_element(sim, assets, element);
     }
 
     pub(in crate::engine) fn set_live_guarded_pc(
@@ -77,27 +27,18 @@ impl EngineInner {
         owner: EntityId,
         new_pc: Option<crate::entity_id::PcId>,
     ) {
-        let old_pc = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("guard owner"))
-            .guarded_pc;
+        let old_pc = self.enemy_ai(owner, "guard owner").guarded_pc;
         if let Some(old_pc) = old_pc {
-            self.world
-                .entities
+            self.entities_mut()
                 .get_mut(EntityId::Pc(old_pc))
                 .expect("previous guarded PC exists")
                 .pc_data_mut()
                 .expect("guarded actor is a PC")
                 .guard = None;
         }
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("guard owner"))
-            .guarded_pc = new_pc;
+        self.enemy_ai_mut(owner, "guard owner").guarded_pc = new_pc;
         if let Some(new_pc) = new_pc {
-            self.world
-                .entities
+            self.entities_mut()
                 .get_mut(EntityId::Pc(new_pc))
                 .expect("new guarded PC exists")
                 .pc_data_mut()
@@ -108,24 +49,18 @@ impl EngineInner {
 
     pub(in crate::engine) fn clear_live_combat_neighbours(&mut self, owner: EntityId) {
         let left = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("clear left combat neighbour"))
+            .enemy_ai(owner, "clear left combat neighbour")
             .left_combat_neighbour;
         self.apply_update_left_combat_neighbour(owner.index(), left, None);
         let right = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("clear right combat neighbour"))
+            .enemy_ai(owner, "clear right combat neighbour")
             .right_combat_neighbour;
         self.apply_update_right_combat_neighbour(owner.index(), right, None);
     }
 
     fn approach_primary(&self, owner: EntityId) -> EntityId {
         let handle = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("approach primary"))
+            .ai(owner, "approach primary")
             .primary_target
             .expect("enemy approach requires a primary target");
         self.expect_human_id_for_ai_handle(handle.get(), "approach primary")
@@ -160,92 +95,10 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        self.stop_ai_owner(sim, assets, owner);
-        self.nearby_civilians_panic(sim, assets, owner);
-
-        let target = self.approach_primary(owner);
-        let entity = self.expect_entity(target, "swordfight target stop");
-        if entity
-            .human_data()
-            .expect("swordfight target is human")
-            .opponents
-            .is_empty()
-            && entity
-                .actor_data()
-                .expect("swordfight target is actor")
-                .action_state
-                .is_moving()
-        {
-            self.stop_actor_orders(
-                sim,
-                assets,
-                &mut Vec::new(),
-                target,
-                crate::sequence::SequencePriority::Normal,
-            );
-        }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("swordfight entry"));
-        let target = self.expect_human_id_for_ai_handle(
-            ai.base.primary_target.expect("swordfight primary").get(),
-            "swordfight entry target",
-        );
-        let jump_line = ai
-            .my_line_jump
-            .and_then(crate::jump_line::JumpLineIndex::new);
-        let mut element = crate::sequence::SequenceElement::new_generic(
-            1,
-            crate::element::Command::EnterSwordfight,
-            Some(owner),
-        );
-        element.set_property(
-            crate::sequence::Field::Opponent,
-            crate::sequence::FieldValue::Element(target),
-        );
-        element.set_property(
-            crate::sequence::Field::JumplineDestination,
-            jump_line
-                .map(crate::sequence::FieldValue::LineId)
-                .unwrap_or(crate::sequence::FieldValue::Integer(0)),
-        );
-        element.set_property(
-            crate::sequence::Field::SwordfightPrepared,
-            crate::sequence::FieldValue::Integer(0),
-        );
-        self.launch_element(sim, assets, element);
-
-        self.clear_live_combat_neighbours(owner);
-        self.approach_focus(owner, None);
-        let vip = self.expect_entity(owner, "swordfight speech").is_vip();
-        self.execute_ai_speech(
-            sim,
-            assets,
-            owner,
-            AiSpeechAttempt {
-                remark: if vip {
-                    Remark::VipStartsCombat
-                } else {
-                    Remark::StartsCombat
-                },
-                flags: 0,
-            },
-        );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight emoticon"))
-            .clear_emoticon();
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Attacking,
-            Substate::AttackingSwordfight,
-        );
-        self.approach_timer(owner, 20);
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_begin_swordfight()
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_reconsider_enemy_approach(
         &mut self,
         sim: &SimulationContext,
@@ -253,455 +106,17 @@ impl EngineInner {
         owner: EntityId,
         reachpoint: bool,
     ) {
-        if !self
-            .expect_entity(owner, "approach combat gate")
-            .human_data()
-            .expect("approach owner is human")
-            .opponents
-            .is_empty()
-        {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingSwordfight,
-            );
-            self.approach_timer(owner, 30);
-            return;
-        }
-        if self.refresh_ai_arrow_protection(sim, assets, owner, false) {
-            return;
-        }
-        let mut target = self.approach_primary(owner);
-        let entity = self.expect_entity(target, "approach carried target");
-        if entity.element_data().posture() == crate::element::Posture::OnShoulders {
-            target = entity
-                .human_data()
-                .expect("carried target is human")
-                .carrier
-                .expect("shoulder target requires carrier");
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("approach carrier substitution"))
-                .primary_target = Some(AiEntityHandle::new(target.index()));
-        }
-        let standard_range = self.approach_sword_range(assets, owner);
-        let sword_range = standard_range.wrapping_add(10);
-        let courage = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach courage"))
-            .get_courage(&assets.profile_manager);
-        let mut run_distance = (2 * (100 - courage)).max(sword_range);
-        let my_position = self.live_ai_position(owner);
-        let mut target_position = self.live_ai_position(target);
-        let mut distance = (target_position.map_point() - my_position.map_point())
-            .square_norm()
-            .sqrt() as u16;
-        let maximal_range = LiveCombatFighters {
-            engine: self,
-            assets,
-            owner,
-        }
-        .sword_range_maximal(owner.index());
-        let owner_element = self
-            .expect_entity(owner, "approach table owner")
-            .element_data();
-        let target_element = self
-            .expect_entity(target, "approach table target")
-            .element_data();
-        let line = crate::engine::melee::table_swordfight_jump_line(
-            &self.world.fast_grid,
-            owner_element.sector().map(i16::from).unwrap_or(-1),
-            target_element.sector().map(i16::from).unwrap_or(-1),
-            target_element.position_map(),
-            f32::from(maximal_range),
-        );
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("approach jump line"))
-            .my_line_jump = line;
-        let camp = self.expect_entity(owner, "approach friend camp").camp();
-        // Every successful exchange changes the next comparison's primary target.
-        let fighter_count = self.world.fighter_registry_ids.len();
-        for index in 0..fighter_count {
-            let friend = self.world.fighter_registry_ids[index];
-            if friend == owner
-                || !matches!(
-                    self.expect_entity(friend, "approach friend kind"),
-                    Entity::Soldier(_)
-                )
-                || self.expect_entity(friend, "approach friend camp").camp() != camp
-            {
-                continue;
-            }
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(friend, format_args!("approach friend"));
-            if ai.base.primary_target == Some(AiEntityHandle::new(target.index()))
-                || !matches!(
-                    ai.base.current_substate,
-                    Substate::AttackingRunningToEnemy
-                        | Substate::AttackingWalkingToEnemy
-                        | Substate::AttackingChargingEnemy
-                )
-            {
-                continue;
-            }
-            let friend_target = self.approach_primary(friend);
-            let friend_position = self.live_ai_position(friend);
-            let friend_target_position = self.live_ai_position(friend_target);
-            let to_friend_target = (my_position.map_point() - friend_target_position.map_point())
-                .square_norm()
-                .sqrt();
-            if to_friend_target
-                + (friend_position.map_point() - target_position.map_point())
-                    .square_norm()
-                    .sqrt()
-                < f32::from(distance)
-                    + (friend_position.map_point() - friend_target_position.map_point())
-                        .square_norm()
-                        .sqrt()
-            {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(friend, format_args!("approach exchange friend"))
-                    .primary_target = Some(AiEntityHandle::new(target.index()));
-                target = friend_target;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("approach exchange owner"))
-                    .primary_target = Some(AiEntityHandle::new(target.index()));
-                distance = to_friend_target as u16;
-                target_position = friend_target_position;
-            }
-        }
-
-        let layer = self
-            .expect_entity(owner, "approach lift layer")
-            .element_data()
-            .layer();
-        if let Some(Some(entry)) = crate::ai::enemy_lift_approach_for_position(
-            &self.world.fast_grid,
-            target_position,
-            Some(layer),
-        ) {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Attacking,
-                Substate::AttackingRunningToLadder,
-            );
-            self.approach_focus(owner, Some(self.approach_primary(owner)));
-            self.duty_go_near(sim, assets, owner, entry, 30, GotoFlags::RUN);
-            self.approach_timer(owner, 30);
-            return;
-        }
-        let lift = target_position.sector.is_some_and(|sector| {
-            self.world
-                .fast_grid
-                .sector_type_for_handle(sector)
-                .is_lift()
-        });
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach charge state"));
-        let mut reconsider = false;
-        let (mut charge, first) = match ai.base.current_substate {
-            Substate::AttackingRunningToEnemy | Substate::AttackingWalkingToEnemy => (false, false),
-            Substate::AttackingChargingEnemy => {
-                reconsider = ai.my_line_jump.is_some() || lift;
-                (!reconsider, false)
-            }
-            Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
-                ai.sword_is_charge_weapon
-                    && ai.get_courage(&assets.profile_manager)
-                        >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
-                    && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
-                    && ai.my_line_jump.is_none()
-                    && !self
-                        .expect_entity(owner, "approach rider")
-                        .soldier_data()
-                        .unwrap()
-                        .rider
-                    && !lift,
-                true,
-            ),
-            _ => (false, true),
-        };
-        if charge && first {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                AiSpeechAttempt {
-                    remark: Remark::Warcry,
-                    flags: 0,
-                },
-            );
-        }
-        self.approach_focus(owner, Some(self.approach_primary(owner)));
-        if self
-            .expect_entity(owner, "approach rider")
-            .soldier_data()
-            .unwrap()
-            .rider
-            && self.execute_ai_maybe_make_rider_attack(sim, assets, owner)
-        {
-            return;
-        }
-        if distance <= sword_range && (!charge || reachpoint) {
-            self.execute_ai_begin_swordfight(sim, assets, owner);
-            return;
-        }
-        reconsider |= reachpoint || first;
-        let position = self.live_ai_position(self.approach_primary(owner));
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach reconsider gates"));
-        reconsider |= (position.map_point() - ai.base.seek_position.map_point()).square_norm()
-            > if charge { 10.0 } else { 100.0 }
-            && !ai.pc_missed;
-        let mut below = !charge && distance < run_distance.wrapping_add(10);
-        reconsider |=
-            !charge && ai.base.current_substate == Substate::AttackingRunningToEnemy && below;
-        below &= !self
-            .expect_entity(owner, "approach rider")
-            .soldier_data()
-            .unwrap()
-            .rider;
-        if self.actor_command(self.approach_primary(owner)) as u16
-            != crate::order::OrderType::WalkingCarryingOnShoulders as u16
-        {
-            charge = false;
-            below = false;
-            reconsider = true;
-            run_distance = self.approach_sword_range(assets, owner);
-        }
-        if !reconsider {
-            self.approach_timer(owner, 10);
-            return;
-        }
-        target = self.approach_primary(owner);
-        let line = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach goal line"))
-            .my_line_jump;
-        let goal = if let Some(line) = line {
-            let raw = self
-                .expect_entity(target, "approach jump target")
-                .element_data()
-                .position_map();
-            self.world
-                .entities
-                .expect_enemy_ai(owner, format_args!("approach jump goal"))
-                .compute_jump_line_target(
-                    &self.world.fast_grid,
-                    line,
-                    Position {
-                        x: raw.x,
-                        y: raw.y,
-                        ..target_position
-                    },
-                )
-                .expect("approach jump line requires associated geometry")
-        } else {
-            self.live_ai_position(target)
-        };
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("approach seek goal"))
-            .seek_position = goal;
-        self.approach_focus(owner, Some(self.approach_primary(owner)));
-        let (state, flags, tolerance) = if !below {
-            if charge {
-                (
-                    Substate::AttackingChargingEnemy,
-                    GotoFlags::RUN | GotoFlags::CHARGE,
-                    self.approach_sword_range(assets, owner),
-                )
-            } else {
-                (
-                    Substate::AttackingRunningToEnemy,
-                    GotoFlags::RUN | GotoFlags::DONT_STOP,
-                    run_distance,
-                )
-            }
-        } else if self.live_actor_animation(self.approach_primary(owner))
-            == Some(crate::order::OrderType::RunningUpright)
-        {
-            (
-                Substate::AttackingRunningToEnemy,
-                GotoFlags::RUN | GotoFlags::DONT_STOP,
-                self.approach_sword_range(assets, owner),
-            )
-        } else {
-            (
-                Substate::AttackingWalkingToEnemy,
-                GotoFlags::empty(),
-                self.approach_sword_range(assets, owner),
-            )
-        };
-        if below && line.is_some() {
-            self.duty_go_to(sim, assets, owner, goal, flags);
-        } else {
-            self.duty_go_near(sim, assets, owner, goal, i32::from(tolerance), flags);
-        }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("approach completion"));
-        if ai.already_on_point {
-            ai.already_on_point = false;
-            self.execute_ai_begin_swordfight(sim, assets, owner);
-            return;
-        }
-        self.duty_set_state(sim, assets, owner, AiState::Attacking, state);
-        self.approach_timer(owner, 10);
-        if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("approach route result"))
-            .couldnt_reachpoint
-        {
-            let target = self.approach_primary(owner);
-            let wait = precompute_avenger_on_roof_wait_position(
-                &self.world.entities,
-                self.script_domains.interactables.doors.as_slice(),
-                &self.orders.sequence_manager,
-                owner,
-                target,
-                |element| super::ai_view_position_sector(self, element),
-                &|sector| self.building_sector_is_authorized(sector),
-                &|sector| self.get_sector_lift_type(sector),
-            );
-            if let Some(wait) = wait {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("roof route result"))
-                    .couldnt_reachpoint = false;
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingRunToAvengerOnRoof,
-                );
-                self.duty_go_near(sim, assets, owner, wait, 50, GotoFlags::RUN);
-                let position = self.live_ai_position(self.approach_primary(owner));
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("roof target"))
-                    .seek_position = position;
-            }
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_reconsider_enemy_approach(reachpoint)
     }
 
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_maybe_make_rider_attack(
         &mut self,
         sim: &SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        assert!(
-            self.expect_entity(owner, "rider attack")
-                .soldier_data()
-                .expect("rider is soldier")
-                .rider
-        );
-        let element = self
-            .expect_entity(owner, "rider raw position")
-            .element_data();
-        let raw = element.position_map();
-        let position = Position {
-            x: raw.x,
-            y: raw.y,
-            sector: element.sector(),
-            level: element.layer(),
-        };
-        let direction = self
-            .expect_entity(owner, "rider direction")
-            .element_data()
-            .direction() as u16;
-        let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("rider primary"))
-            .primary_target;
-        let mut goal = primary.and_then(|handle| {
-            let target = self.expect_human_id_for_ai_handle(handle.get(), "rider primary");
-            let entity = self.expect_entity(target, "rider primary gates");
-            (!entity.is_dead()
-                && !entity.is_unconscious()
-                && entity.element_data().posture() != crate::element::Posture::Tied)
-                .then(|| self.live_rider_attack_destination(owner, target, position, direction))
-                .flatten()
-        });
-        if goal.is_none() {
-            let count = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("rider enemy count"))
-                .list_them
-                .len();
-            for index in 0..count {
-                let handle = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("rider enemy"))
-                    .list_them[index];
-                if primary == Some(AiEntityHandle::new(handle)) {
-                    continue;
-                }
-                let target = self.expect_human_id_for_ai_handle(handle, "rider fallback target");
-                if let Some(found) =
-                    self.live_rider_attack_destination(owner, target, position, direction)
-                {
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("rider chosen target"))
-                        .primary_target = Some(AiEntityHandle::new(handle));
-                    goal = Some(found);
-                    break;
-                }
-            }
-        }
-        let Some((goal, hit)) = goal else {
-            return false;
-        };
-        let target = self.approach_primary(owner);
-        let position = self.live_ai_position(target);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("rider seek target"))
-            .seek_position = position;
-        self.approach_focus(owner, Some(target));
-        let mut flags = GotoFlags::RUN | GotoFlags::RIDER_CHARGE;
-        let state = if hit {
-            self.approach_focus(owner, None);
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                AiSpeechAttempt {
-                    remark: Remark::Warcry,
-                    flags: 0,
-                },
-            );
-            flags |= GotoFlags::RIDER_CHARGE_HIT;
-            Substate::AttackingRiderChargingPassing
-        } else {
-            Substate::AttackingRiderChargingApproaching
-        };
-        self.duty_set_state(sim, assets, owner, AiState::Attacking, state);
-        self.duty_go_to(sim, assets, owner, goal, flags);
-        true
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_maybe_make_rider_attack()
     }
 
     fn live_rider_attack_destination(
@@ -790,6 +205,546 @@ impl EngineInner {
                 + geometry.me_to_hit.1 * geometry.me_to_hit.1
                 < 6400.0,
         ))
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_end_swordfight(&mut self) {
+        if self
+            .engine
+            .expect_entity(self.owner, "end swordfight owner")
+            .human_data()
+            .expect("swordfighter is human")
+            .opponents
+            .is_empty()
+        {
+            return;
+        }
+        self.engine.launch_element(
+            self.sim,
+            self.assets,
+            crate::sequence::SequenceElement::new(
+                1,
+                crate::element::Command::QuitSwordfight,
+                Some(self.owner),
+            ),
+        );
+    }
+
+    pub(in crate::engine) fn launch_ai_raise_sword(&mut self) {
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::EnterSwordfight,
+            Some(self.owner),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        self.engine.launch_element(self.sim, self.assets, element);
+    }
+
+    pub(in crate::engine) fn execute_ai_begin_swordfight(&mut self) {
+        self.stop_ai_owner();
+        self.engine
+            .nearby_civilians_panic(self.sim, self.assets, self.owner);
+
+        let target = self.engine.approach_primary(self.owner);
+        let entity = self.engine.expect_entity(target, "swordfight target stop");
+        if entity
+            .human_data()
+            .expect("swordfight target is human")
+            .opponents
+            .is_empty()
+            && entity
+                .actor_data()
+                .expect("swordfight target is actor")
+                .action_state
+                .is_moving()
+        {
+            self.engine.stop_actor_orders(
+                self.sim,
+                self.assets,
+                &mut Vec::new(),
+                target,
+                crate::sequence::SequencePriority::Normal,
+            );
+        }
+        let ai = self.engine.enemy_ai(self.owner, "swordfight entry");
+        let target = self.engine.expect_human_id_for_ai_handle(
+            ai.base.primary_target.expect("swordfight primary").get(),
+            "swordfight entry target",
+        );
+        let jump_line = ai
+            .my_line_jump
+            .and_then(crate::jump_line::JumpLineIndex::new);
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::EnterSwordfight,
+            Some(self.owner),
+        );
+        element.set_property(
+            crate::sequence::Field::Opponent,
+            crate::sequence::FieldValue::Element(target),
+        );
+        element.set_property(
+            crate::sequence::Field::JumplineDestination,
+            jump_line
+                .map(crate::sequence::FieldValue::LineId)
+                .unwrap_or(crate::sequence::FieldValue::Integer(0)),
+        );
+        element.set_property(
+            crate::sequence::Field::SwordfightPrepared,
+            crate::sequence::FieldValue::Integer(0),
+        );
+        self.engine.launch_element(self.sim, self.assets, element);
+
+        self.engine.clear_live_combat_neighbours(self.owner);
+        self.engine.approach_focus(self.owner, None);
+        let vip = self
+            .engine
+            .expect_entity(self.owner, "swordfight speech")
+            .is_vip();
+        self.execute_ai_speech(AiSpeechAttempt {
+            remark: if vip {
+                Remark::VipStartsCombat
+            } else {
+                Remark::StartsCombat
+            },
+            flags: 0,
+        });
+        self.engine
+            .ai_mut(self.owner, "swordfight emoticon")
+            .clear_emoticon();
+        self.duty_set_state(AiState::Attacking, Substate::AttackingSwordfight);
+        self.engine.approach_timer(self.owner, 20);
+    }
+
+    pub(in crate::engine) fn execute_ai_reconsider_enemy_approach(&mut self, reachpoint: bool) {
+        if !self
+            .engine
+            .expect_entity(self.owner, "approach combat gate")
+            .human_data()
+            .expect("approach owner is human")
+            .opponents
+            .is_empty()
+        {
+            self.duty_set_state(AiState::Attacking, Substate::AttackingSwordfight);
+            self.engine.approach_timer(self.owner, 30);
+            return;
+        }
+        if self.refresh_ai_arrow_protection(false) {
+            return;
+        }
+        let mut target = self.engine.approach_primary(self.owner);
+        let entity = self.engine.expect_entity(target, "approach carried target");
+        if entity.element_data().posture() == crate::element::Posture::OnShoulders {
+            target = entity
+                .human_data()
+                .expect("carried target is human")
+                .carrier
+                .expect("shoulder target requires carrier");
+            self.engine
+                .ai_mut(self.owner, "approach carrier substitution")
+                .primary_target = Some(AiEntityHandle::new(target.index()));
+        }
+        let standard_range = self.engine.approach_sword_range(self.assets, self.owner);
+        let sword_range = standard_range.wrapping_add(10);
+        let courage = self
+            .engine
+            .enemy_ai(self.owner, "approach courage")
+            .get_courage(&self.assets.profile_manager);
+        let mut run_distance = (2 * (100 - courage)).max(sword_range);
+        let my_position = self.engine.live_ai_position(self.owner);
+        let mut target_position = self.engine.live_ai_position(target);
+        let mut distance = (target_position.map_point() - my_position.map_point())
+            .square_norm()
+            .sqrt() as u16;
+        let maximal_range = LiveCombatFighters {
+            engine: self.engine,
+            assets: self.assets,
+            owner: self.owner,
+        }
+        .sword_range_maximal(self.owner.index());
+        let owner_element = self
+            .engine
+            .expect_entity(self.owner, "approach table owner")
+            .element_data();
+        let target_element = self
+            .engine
+            .expect_entity(target, "approach table target")
+            .element_data();
+        let line = crate::engine::melee::table_swordfight_jump_line(
+            &self.engine.world.fast_grid,
+            owner_element.sector().map(i16::from).unwrap_or(-1),
+            target_element.sector().map(i16::from).unwrap_or(-1),
+            target_element.position_map(),
+            f32::from(maximal_range),
+        );
+        self.engine
+            .enemy_ai_mut(self.owner, "approach jump line")
+            .my_line_jump = line;
+        let camp = self
+            .engine
+            .expect_entity(self.owner, "approach friend camp")
+            .camp();
+        // Every successful exchange changes the next comparison's primary target.
+        let fighter_count = self.engine.world.fighter_registry_ids.len();
+        for index in 0..fighter_count {
+            let friend = self.engine.world.fighter_registry_ids[index];
+            if friend == self.owner
+                || !matches!(
+                    self.engine.expect_entity(friend, "approach friend kind"),
+                    Entity::Soldier(_)
+                )
+                || self
+                    .engine
+                    .expect_entity(friend, "approach friend camp")
+                    .camp()
+                    != camp
+            {
+                continue;
+            }
+            let ai = self.engine.enemy_ai(friend, "approach friend");
+            if ai.base.primary_target == Some(AiEntityHandle::new(target.index()))
+                || !matches!(
+                    ai.base.current_substate,
+                    Substate::AttackingRunningToEnemy
+                        | Substate::AttackingWalkingToEnemy
+                        | Substate::AttackingChargingEnemy
+                )
+            {
+                continue;
+            }
+            let friend_target = self.engine.approach_primary(friend);
+            let friend_position = self.engine.live_ai_position(friend);
+            let friend_target_position = self.engine.live_ai_position(friend_target);
+            let to_friend_target = (my_position.map_point() - friend_target_position.map_point())
+                .square_norm()
+                .sqrt();
+            if to_friend_target
+                + (friend_position.map_point() - target_position.map_point())
+                    .square_norm()
+                    .sqrt()
+                < f32::from(distance)
+                    + (friend_position.map_point() - friend_target_position.map_point())
+                        .square_norm()
+                        .sqrt()
+            {
+                self.engine
+                    .ai_mut(friend, "approach exchange friend")
+                    .primary_target = Some(AiEntityHandle::new(target.index()));
+                target = friend_target;
+                self.engine
+                    .ai_mut(self.owner, "approach exchange owner")
+                    .primary_target = Some(AiEntityHandle::new(target.index()));
+                distance = to_friend_target as u16;
+                target_position = friend_target_position;
+            }
+        }
+
+        let layer = self
+            .engine
+            .expect_entity(self.owner, "approach lift layer")
+            .element_data()
+            .layer();
+        if let Some(Some(entry)) = crate::ai::enemy_lift_approach_for_position(
+            &self.engine.world.fast_grid,
+            target_position,
+            Some(layer),
+        ) {
+            self.duty_set_state(AiState::Attacking, Substate::AttackingRunningToLadder);
+            self.engine
+                .approach_focus(self.owner, Some(self.engine.approach_primary(self.owner)));
+            self.duty_go_near(entry, 30, GotoFlags::RUN);
+            self.engine.approach_timer(self.owner, 30);
+            return;
+        }
+        let lift = target_position.sector.is_some_and(|sector| {
+            self.engine
+                .world
+                .fast_grid
+                .sector_type_for_handle(sector)
+                .is_lift()
+        });
+        let ai = self.engine.enemy_ai(self.owner, "approach charge state");
+        let mut reconsider = false;
+        let (mut charge, first) = match ai.base.current_substate {
+            Substate::AttackingRunningToEnemy | Substate::AttackingWalkingToEnemy => (false, false),
+            Substate::AttackingChargingEnemy => {
+                reconsider = ai.my_line_jump.is_some() || lift;
+                (!reconsider, false)
+            }
+            Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
+                ai.sword_is_charge_weapon
+                    && ai.get_courage(&self.assets.profile_manager)
+                        >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
+                    && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
+                    && ai.my_line_jump.is_none()
+                    && !self
+                        .engine
+                        .expect_entity(self.owner, "approach rider")
+                        .soldier_data()
+                        .unwrap()
+                        .rider
+                    && !lift,
+                true,
+            ),
+            _ => (false, true),
+        };
+        if charge && first {
+            self.execute_ai_speech(AiSpeechAttempt {
+                remark: Remark::Warcry,
+                flags: 0,
+            });
+        }
+        self.engine
+            .approach_focus(self.owner, Some(self.engine.approach_primary(self.owner)));
+        if self
+            .engine
+            .expect_entity(self.owner, "approach rider")
+            .soldier_data()
+            .unwrap()
+            .rider
+            && self.execute_ai_maybe_make_rider_attack()
+        {
+            return;
+        }
+        if distance <= sword_range && (!charge || reachpoint) {
+            self.execute_ai_begin_swordfight();
+            return;
+        }
+        reconsider |= reachpoint || first;
+        let position = self
+            .engine
+            .live_ai_position(self.engine.approach_primary(self.owner));
+        let ai = self
+            .engine
+            .enemy_ai(self.owner, "approach reconsider gates");
+        reconsider |= (position.map_point() - ai.base.seek_position.map_point()).square_norm()
+            > if charge { 10.0 } else { 100.0 }
+            && !ai.pc_missed;
+        let mut below = !charge && distance < run_distance.wrapping_add(10);
+        reconsider |=
+            !charge && ai.base.current_substate == Substate::AttackingRunningToEnemy && below;
+        below &= !self
+            .engine
+            .expect_entity(self.owner, "approach rider")
+            .soldier_data()
+            .unwrap()
+            .rider;
+        if self
+            .engine
+            .actor_command(self.engine.approach_primary(self.owner)) as u16
+            != crate::order::OrderType::WalkingCarryingOnShoulders as u16
+        {
+            charge = false;
+            below = false;
+            reconsider = true;
+            run_distance = self.engine.approach_sword_range(self.assets, self.owner);
+        }
+        if !reconsider {
+            self.engine.approach_timer(self.owner, 10);
+            return;
+        }
+        target = self.engine.approach_primary(self.owner);
+        let line = self
+            .engine
+            .enemy_ai(self.owner, "approach goal line")
+            .my_line_jump;
+        let goal = if let Some(line) = line {
+            let raw = self
+                .engine
+                .expect_entity(target, "approach jump target")
+                .element_data()
+                .position_map();
+            self.engine
+                .enemy_ai(self.owner, "approach jump goal")
+                .compute_jump_line_target(
+                    &self.engine.world.fast_grid,
+                    line,
+                    Position {
+                        x: raw.x,
+                        y: raw.y,
+                        ..target_position
+                    },
+                )
+                .expect("approach jump line requires associated geometry")
+        } else {
+            self.engine.live_ai_position(target)
+        };
+        self.engine
+            .ai_mut(self.owner, "approach seek goal")
+            .seek_position = goal;
+        self.engine
+            .approach_focus(self.owner, Some(self.engine.approach_primary(self.owner)));
+        let (state, flags, tolerance) = if !below {
+            if charge {
+                (
+                    Substate::AttackingChargingEnemy,
+                    GotoFlags::RUN | GotoFlags::CHARGE,
+                    self.engine.approach_sword_range(self.assets, self.owner),
+                )
+            } else {
+                (
+                    Substate::AttackingRunningToEnemy,
+                    GotoFlags::RUN | GotoFlags::DONT_STOP,
+                    run_distance,
+                )
+            }
+        } else if self
+            .engine
+            .live_actor_animation(self.engine.approach_primary(self.owner))
+            == Some(crate::order::OrderType::RunningUpright)
+        {
+            (
+                Substate::AttackingRunningToEnemy,
+                GotoFlags::RUN | GotoFlags::DONT_STOP,
+                self.engine.approach_sword_range(self.assets, self.owner),
+            )
+        } else {
+            (
+                Substate::AttackingWalkingToEnemy,
+                GotoFlags::empty(),
+                self.engine.approach_sword_range(self.assets, self.owner),
+            )
+        };
+        if below && line.is_some() {
+            self.duty_go_to(goal, flags);
+        } else {
+            self.duty_go_near(goal, i32::from(tolerance), flags);
+        }
+        let ai = self.engine.ai_mut(self.owner, "approach completion");
+        if ai.already_on_point {
+            ai.already_on_point = false;
+            self.execute_ai_begin_swordfight();
+            return;
+        }
+        self.duty_set_state(AiState::Attacking, state);
+        self.engine.approach_timer(self.owner, 10);
+        if self
+            .engine
+            .ai(self.owner, "approach route result")
+            .couldnt_reachpoint
+        {
+            let target = self.engine.approach_primary(self.owner);
+            let wait = precompute_avenger_on_roof_wait_position(
+                &self.engine.entities(),
+                self.engine.script_domains.interactables.doors.as_slice(),
+                &self.engine.seq(),
+                self.owner,
+                target,
+                |element| super::ai_view_position_sector(self.engine, element),
+                &|sector| self.engine.building_sector_is_authorized(sector),
+                &|sector| self.engine.get_sector_lift_type(sector),
+            );
+            if let Some(wait) = wait {
+                self.engine
+                    .ai_mut(self.owner, "roof route result")
+                    .couldnt_reachpoint = false;
+                self.duty_set_state(AiState::Attacking, Substate::AttackingRunToAvengerOnRoof);
+                self.duty_go_near(wait, 50, GotoFlags::RUN);
+                let position = self
+                    .engine
+                    .live_ai_position(self.engine.approach_primary(self.owner));
+                self.engine.ai_mut(self.owner, "roof target").seek_position = position;
+            }
+        }
+    }
+
+    pub(in crate::engine) fn execute_ai_maybe_make_rider_attack(&mut self) -> bool {
+        assert!(
+            self.engine
+                .expect_entity(self.owner, "rider attack")
+                .soldier_data()
+                .expect("rider is soldier")
+                .rider
+        );
+        let element = self
+            .engine
+            .expect_entity(self.owner, "rider raw position")
+            .element_data();
+        let raw = element.position_map();
+        let position = Position {
+            x: raw.x,
+            y: raw.y,
+            sector: element.sector(),
+            level: element.layer(),
+        };
+        let direction = self
+            .engine
+            .expect_entity(self.owner, "rider direction")
+            .element_data()
+            .direction() as u16;
+        let primary = self.engine.ai(self.owner, "rider primary").primary_target;
+        let mut goal = primary.and_then(|handle| {
+            let target = self
+                .engine
+                .expect_human_id_for_ai_handle(handle.get(), "rider primary");
+            let entity = self.engine.expect_entity(target, "rider primary gates");
+            (!entity.is_dead()
+                && !entity.is_unconscious()
+                && entity.element_data().posture() != crate::element::Posture::Tied)
+                .then(|| {
+                    self.engine
+                        .live_rider_attack_destination(self.owner, target, position, direction)
+                })
+                .flatten()
+        });
+        if goal.is_none() {
+            let count = self
+                .engine
+                .enemy_ai(self.owner, "rider enemy count")
+                .list_them
+                .len();
+            for index in 0..count {
+                let handle = self.engine.enemy_ai(self.owner, "rider enemy").list_them[index];
+                if primary == Some(AiEntityHandle::new(handle)) {
+                    continue;
+                }
+                let target = self
+                    .engine
+                    .expect_human_id_for_ai_handle(handle, "rider fallback target");
+                if let Some(found) = self
+                    .engine
+                    .live_rider_attack_destination(self.owner, target, position, direction)
+                {
+                    self.engine
+                        .ai_mut(self.owner, "rider chosen target")
+                        .primary_target = Some(AiEntityHandle::new(handle));
+                    goal = Some(found);
+                    break;
+                }
+            }
+        }
+        let Some((goal, hit)) = goal else {
+            return false;
+        };
+        let target = self.engine.approach_primary(self.owner);
+        let position = self.engine.live_ai_position(target);
+        self.engine
+            .ai_mut(self.owner, "rider seek target")
+            .seek_position = position;
+        self.engine.approach_focus(self.owner, Some(target));
+        let mut flags = GotoFlags::RUN | GotoFlags::RIDER_CHARGE;
+        let state = if hit {
+            self.engine.approach_focus(self.owner, None);
+            self.execute_ai_speech(AiSpeechAttempt {
+                remark: Remark::Warcry,
+                flags: 0,
+            });
+            flags |= GotoFlags::RIDER_CHARGE_HIT;
+            Substate::AttackingRiderChargingPassing
+        } else {
+            Substate::AttackingRiderChargingApproaching
+        };
+        self.duty_set_state(AiState::Attacking, state);
+        self.duty_go_to(goal, flags);
+        true
     }
 }
 

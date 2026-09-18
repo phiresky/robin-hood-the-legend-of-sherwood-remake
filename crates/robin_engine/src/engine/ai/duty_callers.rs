@@ -8,33 +8,6 @@ use crate::ai_enemy::SeekFlags;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_finish_exhausted_search(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("completed search"));
-        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
-            && !enemy
-                .seek_flags
-                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
-        {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                AiSpeechAttempt {
-                    remark: Remark::EndsSearch,
-                    flags: 0,
-                },
-            );
-        }
-    }
-
     pub(in crate::engine) fn execute_kill_nearby_sleeping_enemies(
         &mut self,
         sim: &SimulationContext,
@@ -45,9 +18,7 @@ impl EngineInner {
         self.execute_ai_unfocus(owner);
 
         let trainer = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy search duty gate"))
+            .enemy_ai(owner, "sleeping enemy search duty gate")
             .combat_trainer;
         let entity = self.expect_entity(owner, "sleeping enemy search forest gate");
         let forest_foot_soldier = self.is_player_aligned_camp(entity.camp())
@@ -57,9 +28,7 @@ impl EngineInner {
             self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
         }
 
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list reset"))
+        self.enemy_ai_mut(owner, "sleeping enemy list reset")
             .list_them
             .clear();
         // Registry membership is selected after duty callbacks. No callback occurs
@@ -80,9 +49,7 @@ impl EngineInner {
             {
                 continue;
             }
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list insertion"))
+            self.enemy_ai_mut(owner, "sleeping enemy list insertion")
                 .list_them
                 .push(target.index());
         }
@@ -97,10 +64,7 @@ impl EngineInner {
         owner: EntityId,
         targets: Vec<crate::ai::HumanHandle>,
     ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("retained sleeping enemies"));
+        let enemy = self.enemy_ai_mut(owner, "retained sleeping enemies");
         assert!(
             enemy.list_them.is_empty(),
             "retained sleeping enemies require an empty hostile list"
@@ -124,9 +88,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let nearest = self.select_nearest_battle_target(owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("sleeping enemy primary target"))
+        self.ai_mut(owner, "sleeping enemy primary target")
             .primary_target = nearest.map(|id| AiEntityHandle::new(id.index()));
         if nearest.is_some() {
             self.duty_set_state(
@@ -137,12 +99,7 @@ impl EngineInner {
                 Substate::AttackingApproachingSleepingEnemy,
             );
             let target = self
-                .world
-                .entities
-                .expect_ai_controller(
-                    owner,
-                    format_args!("sleeping enemy primary after state change"),
-                )
+                .ai(owner, "sleeping enemy primary after state change")
                 .primary_target
                 .expect("sleeping enemy approach requires primary target");
             let target =
@@ -160,13 +117,27 @@ impl EngineInner {
         target: EntityId,
     ) -> bool {
         let vip = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy attack authorization"))
+            .enemy_ai(owner, "sleeping enemy attack authorization")
             .is_vip;
         let target = self.expect_entity(target, "sleeping enemy authorization target");
         (!vip || matches!(target, Entity::Pc(pc) if pc.pc.robin))
             && (matches!(target, Entity::Pc(_)) || !target.is_vip())
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_finish_exhausted_search(&mut self) {
+        let enemy = self.engine.enemy_ai(self.owner, "completed search");
+        if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
+            && !enemy
+                .seek_flags
+                .intersects(SeekFlags::REPORT_OFFICER_AFTER | SeekFlags::LOOK_FOR_HELP_AFTER)
+        {
+            self.execute_ai_speech(AiSpeechAttempt {
+                remark: Remark::EndsSearch,
+                flags: 0,
+            });
+        }
     }
 }
 

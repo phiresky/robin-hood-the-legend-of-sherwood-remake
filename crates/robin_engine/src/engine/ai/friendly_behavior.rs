@@ -6,56 +6,6 @@ use crate::ai::{
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(in crate::engine) fn execute_friendly_remaining_event(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        use StimulusType::*;
-        match stimulus.stimulus_type {
-            EventReachPoint | EventDone | EventTimer | CallYourTalk1 | CallYourTalk2
-            | CallYourTalk3 | EventMyTalk1 | EventMyTalk2 | EventMyTalk3 => {
-                if let Some(result) =
-                    self.execute_ai_common_fleeing_event(sim, assets, owner, stimulus)
-                {
-                    return result;
-                }
-                if let Some(result) =
-                    self.execute_ai_common_expected_event(sim, assets, owner, stimulus)
-                {
-                    return result;
-                }
-            }
-            EventCouldntReachPoint => {
-                if self.friendly_brain(owner).base.current_substate == Substate::FleeingPanic {
-                    self.execute_ai_common_fleeing_event(sim, assets, owner, stimulus)
-                        .expect("panic failure requires common fleeing handler");
-                } else {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            EventFitAgain => {
-                self.broadcast_resurrection(owner);
-                let actor = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(owner, format_args!("civilian recovery eyes"));
-                crate::ai_vision::set_view_status(actor, crate::element::EyeStatus::LookForward);
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-            }
-            EventReturnToDuty => {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
-            }
-            EventOutOfView | EventSeesShadow | EventSeesSoldier => {}
-            _ => {
-                tracing::warn!(event = ?stimulus.stimulus_type, "unhandled civilian stimulus");
-            }
-        }
-        false
-    }
-
     pub(in crate::engine) fn begin_friendly_think(
         &mut self,
         sim: &SimulationContext,
@@ -104,10 +54,7 @@ impl EngineInner {
             _ => return true,
         };
         self.duty_set_state(sim, assets, owner, state, substate);
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("civilian admission eye status"));
+        let actor = self.ai_actor_mut(owner, "civilian admission eye status");
         crate::ai_vision::set_view_status(actor, eye_status);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(
@@ -124,6 +71,7 @@ impl EngineInner {
         false
     }
 
+    #[cfg(test)]
     pub(super) fn execute_friendly_behavior(
         &mut self,
         sim: &SimulationContext,
@@ -131,141 +79,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        use StimulusType::*;
-        let event = stimulus.stimulus_type;
-        let state = self.friendly_brain(owner).base.current_state;
-        match event {
-            EventView => {
-                let StimulusInfo::Human(handle) = stimulus.info else {
-                    panic!("civilian view needs human");
-                };
-                let target =
-                    self.expect_human_id_for_ai_handle(handle.get(), "civilian sight target");
-                match state {
-                    AiState::Default | AiState::Wondering => {
-                        self.execute_civilian_view(sim, assets, owner, target)
-                    }
-                    AiState::Seeking => {
-                        if self.expect_entity(owner, "civilian reporter").camp()
-                            != self.expect_entity(target, "civilian sight target").camp()
-                        {
-                            let position = self.live_ai_position(target);
-                            self.reporting_civilian_mut(owner)
-                                .base
-                                .my_reconnaissance_report
-                                .update(ReportType::Enemy, position);
-                        }
-                    }
-                    AiState::Fleeing => {
-                        let actor = self.expect_entity(target, "civilian feared human");
-                        let fear = actor.camp()
-                            != self.expect_entity(owner, "civilian observer").camp()
-                            || !actor
-                                .human_data()
-                                .expect("view target human")
-                                .opponents
-                                .is_empty();
-                        let ai = self.friendly_brain(owner);
-                        if fear
-                            && (ai.base.current_substate == Substate::FleeingHiding
-                                || ai.fleeing_seen_enemy_counter < 7)
-                        {
-                            self.reporting_civilian_mut(owner)
-                                .fleeing_seen_enemy_counter += 1;
-                            self.execute_ai_speech(
-                                sim,
-                                assets,
-                                owner,
-                                crate::ai::AiSpeechAttempt {
-                                    remark: Remark::CivPanic,
-                                    flags: SpeechFlags::HOUSE.bits(),
-                                },
-                            );
-
-                            self.civilian_panic_from_human(sim, assets, owner, target);
-                        }
-                    }
-                    _ => panic!("civilian view in invalid state {state:?}"),
-                }
-            }
-            EventSeesBody => {
-                if matches!(state, AiState::Default | AiState::Wondering) {
-                    let StimulusInfo::Human(handle) = stimulus.info else {
-                        panic!("civilian body sight needs human");
-                    };
-                    let target =
-                        self.expect_human_id_for_ai_handle(handle.get(), "civilian body target");
-                    self.execute_civilian_body_view(sim, assets, owner, target);
-                }
-            }
-            EventPanic => {
-                let StimulusInfo::Position(position) = stimulus.info else {
-                    panic!("civilian panic needs position");
-                };
-                self.execute_ai_panic(
-                    sim,
-                    assets,
-                    owner,
-                    Some(position),
-                    crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                    crate::ai::AlertLevel::Red,
-                );
-            }
-            EventStop => {
-                if state != AiState::Sleeping {
-                    self.civilian_stop(sim, assets, owner);
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Seeking,
-                        Substate::SeekingGotStopEvent,
-                    );
-                    self.civilian_timer(owner, 100);
-                }
-            }
-            CallYouJustWait | EventAppleChaseNear => {
-                let StimulusInfo::Human(chaser) = stimulus.info else {
-                    panic!("child chase requires soldier");
-                };
-                self.reporting_civilian_mut(owner).base.antagonist = Some(chaser);
-                if let Some(destination) = self.live_child_flee_destination(sim, owner) {
-                    let substate = if event == CallYouJustWait {
-                        Substate::FleeingChildChased
-                    } else {
-                        Substate::FleeingChildFriendChased
-                    };
-                    self.duty_set_state(sim, assets, owner, AiState::Fleeing, substate);
-                    self.duty_go_to(sim, assets, owner, destination, GotoFlags::RUN);
-                } else {
-                    let target = self.civilian_chaser(owner);
-                    self.civilian_panic_from_human(sim, assets, owner, target);
-                }
-            }
-            EventNetAway => {
-                let position = self.friendly_brain(owner).base.seek_position;
-                self.execute_ai_panic(
-                    sim,
-                    assets,
-                    owner,
-                    Some(position),
-                    crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                    crate::ai::AlertLevel::Red,
-                );
-            }
-            EventPcShotAtMe
-            | EventSeesObject
-            | EventSeesFriendInTrouble
-            | EventGotHit
-            | EventLoseConsciousness
-            | EventGetArrow => {}
-            EventReachPoint | EventDone | EventTimer | CallYourTalk1 | CallYourTalk2
-            | CallYourTalk3 | EventMyTalk1 | EventMyTalk2 | EventMyTalk3 => {
-                return self.execute_civilian_expected_behavior(sim, assets, owner, event);
-            }
-            _ => return None,
-        }
-        Some(false)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_friendly_behavior(stimulus)
     }
 
     fn friendly_brain(&self, owner: EntityId) -> &crate::ai_friendly::FriendlyAi {
@@ -281,10 +95,6 @@ impl EngineInner {
             .launch_timer(duration, frame);
     }
 
-    fn civilian_stop(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
-        self.stop_ai_owner(sim, assets, owner);
-    }
-
     fn civilian_chaser(&self, owner: EntityId) -> EntityId {
         self.expect_human_id_for_ai_handle(
             self.friendly_brain(owner)
@@ -294,29 +104,6 @@ impl EngineInner {
                 .get(),
             "child chaser",
         )
-    }
-
-    fn civilian_face_position(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        position: Position,
-    ) {
-        let target = crate::ai::ai_position_to_point_3d(
-            &self.world.fast_grid,
-            self.sight_obstacles(assets),
-            position,
-        );
-        let body = self
-            .expect_entity(owner, "civilian facing owner")
-            .element_data()
-            .position();
-        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
-            target.x - body.x,
-            target.y - body.y,
-        );
-        self.duty_face_direction(sim, assets, owner, direction as u16);
     }
 
     fn civilian_face_human(
@@ -332,326 +119,6 @@ impl EngineInner {
             .position_iface()
             .get_elevation() as i16;
         self.duty_face_position_at_elevation(sim, assets, owner, position, f32::from(elevation));
-    }
-
-    fn civilian_panic_from_human(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-    ) {
-        let position = self.live_ai_position(target);
-        self.execute_ai_panic(
-            sim,
-            assets,
-            owner,
-            Some(position),
-            crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-            crate::ai::AlertLevel::Red,
-        );
-    }
-
-    fn execute_civilian_view(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-    ) {
-        let entity = self.expect_entity(target, "civilian viewed human");
-        if !entity
-            .human_data()
-            .expect("viewed human")
-            .opponents
-            .is_empty()
-        {
-            self.civilian_panic_from_human(sim, assets, owner, target);
-        } else if entity.camp() == self.expect_entity(owner, "civilian viewer").camp() {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingCivilianAdmiringHero,
-            );
-            if matches!(self.expect_entity(target, "civilian admired human"), Entity::Pc(pc) if pc.is_robin())
-            {
-                self.execute_ai_speech(
-                    sim,
-                    assets,
-                    owner,
-                    crate::ai::AiSpeechAttempt {
-                        remark: Remark::CivAdmiresRobin,
-                        flags: 0,
-                    },
-                );
-            }
-            self.civilian_stop(sim, assets, owner);
-            self.civilian_face_human(sim, assets, owner, target);
-            self.civilian_timer(owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
-        } else if self.entity_data_in_building_sector(
-            self.expect_entity(owner, "civilian viewer").element_data(),
-        ) {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: Remark::CivPanic,
-                    flags: SpeechFlags::HOUSE.bits(),
-                },
-            );
-
-            self.execute_ai_panic(
-                sim,
-                assets,
-                owner,
-                None,
-                crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
-                crate::ai::AlertLevel::Red,
-            );
-        } else {
-            let position = self.live_ai_position(target);
-            let ai = self.reporting_civilian_mut(owner);
-            ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
-            ai.base.seek_position = position;
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingCivilianEnemyReactiontime,
-            );
-            self.civilian_stop(sim, assets, owner);
-            let position = self.friendly_brain(owner).base.seek_position;
-            self.reporting_civilian_mut(owner)
-                .base
-                .my_reconnaissance_report
-                .update(ReportType::Enemy, position);
-            self.civilian_face_position(sim, assets, owner, position);
-            self.civilian_timer(owner, 30);
-        }
-    }
-
-    fn execute_civilian_body_view(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-    ) {
-        let position = self.live_ai_position(target);
-        self.reporting_civilian_mut(owner).base.seek_position = position;
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Wondering,
-            Substate::WonderingCivilianBodyReactiontime,
-        );
-        self.civilian_stop(sim, assets, owner);
-        self.execute_ai_speech(
-            sim,
-            assets,
-            owner,
-            crate::ai::AiSpeechAttempt {
-                remark: Remark::CivSeesBody,
-                flags: 0,
-            },
-        );
-
-        let position = self.live_ai_position(target);
-        self.reporting_civilian_mut(owner)
-            .base
-            .my_reconnaissance_report
-            .update(ReportType::Body, position);
-        let position = self.friendly_brain(owner).base.seek_position;
-        self.civilian_face_position(sim, assets, owner, position);
-        self.civilian_timer(owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
-    }
-
-    fn execute_civilian_expected_behavior(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        event: StimulusType,
-    ) -> Option<bool> {
-        use StimulusType::*;
-        let substate = self.friendly_brain(owner).base.current_substate;
-        match substate {
-            Substate::DefaultPatrolEnroute | Substate::DefaultPatrolEnrouteRunning => {
-                if event == EventReachPoint {
-                    let direction = self.friendly_brain(owner).base.patrol_direction;
-                    if direction
-                        != self
-                            .expect_entity(owner, "patrol arrival")
-                            .element_data()
-                            .direction() as u16
-                    {
-                        self.duty_face_direction(sim, assets, owner, direction);
-                    }
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Default,
-                        Substate::DefaultPatrolEnrouteWaiting,
-                    );
-                }
-            }
-            Substate::DefaultChildApproachedWhistling
-            | Substate::WonderingCivilianAdmiringHero
-            | Substate::SeekingGotStopEvent
-            | Substate::FleeingChildChasedEnd => {
-                if event == EventTimer {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            Substate::WonderingWatchingWhistling => {
-                if event == EventTimer {
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        crate::ai::AiSpeechAttempt {
-                            remark: Remark::CivWhistling,
-                            flags: 0,
-                        },
-                    );
-
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Wondering,
-                        Substate::WonderingChildApproachingWhistling,
-                    );
-                    let position = self.friendly_brain(owner).base.seek_position;
-                    self.duty_go_near(sim, assets, owner, position, 50, GotoFlags::RUN);
-                }
-            }
-            Substate::WonderingChildApproachingWhistling => {
-                if event == EventReachPoint {
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Default,
-                        Substate::DefaultChildApproachedWhistling,
-                    );
-                    self.civilian_timer(owner, 100);
-                }
-            }
-            Substate::FleeingChildChased => match event {
-                CallYourTalk1 => self.execute_ai_speech(
-                    sim,
-                    assets,
-                    owner,
-                    crate::ai::AiSpeechAttempt {
-                        remark: Remark::CivChildChasedBySoldier,
-                        flags: 0,
-                    },
-                ),
-                EventReachPoint => {
-                    if let Some(goal) = self.live_child_flee_destination(sim, owner) {
-                        let target = self.civilian_chaser(owner);
-                        let here = self
-                            .expect_entity(owner, "fleeing child")
-                            .element_data()
-                            .position();
-                        let there = self
-                            .expect_entity(target, "child chaser")
-                            .element_data()
-                            .position();
-                        let distance = (here.x - there.x).abs().max(
-                            ((here.y - there.y) * crate::position_interface::INVERSE_ASPECT_RATIO)
-                                .abs(),
-                        );
-                        self.duty_go_to_speed(
-                            sim,
-                            assets,
-                            owner,
-                            goal,
-                            GotoFlags::RUN | GotoFlags::DONT_STOP,
-                            if distance < 150.0 { 1.2 } else { 1.0 },
-                        );
-                        let target = self.civilian_chaser(owner);
-                        let substate = self
-                            .expect_entity(target, "child chaser after movement")
-                            .ai_controller()
-                            .expect("chaser needs AI")
-                            .current_substate;
-                        if !matches!(
-                            substate,
-                            Substate::WonderingAppleChasingChild
-                                | Substate::WonderingAppleChasingChildWaiting
-                                | Substate::WonderingAppleChasingChildEnd
-                        ) {
-                            self.reporting_civilian_mut(owner).base.lasting_panic_runs = 1;
-                            self.duty_set_state(
-                                sim,
-                                assets,
-                                owner,
-                                AiState::Fleeing,
-                                Substate::FleeingChildChasedSupplementalRuns,
-                            );
-                        }
-                    } else {
-                        let target = self.civilian_chaser(owner);
-                        self.civilian_panic_from_human(sim, assets, owner, target);
-                    }
-                }
-                _ => {}
-            },
-            Substate::FleeingChildChasedSupplementalRuns => {
-                if event == EventReachPoint {
-                    let mut moved = false;
-                    if self.friendly_brain(owner).base.lasting_panic_runs > 0 {
-                        self.reporting_civilian_mut(owner).base.lasting_panic_runs -= 1;
-                        if let Some(goal) = self.live_child_flee_destination(sim, owner) {
-                            let flags = if self.friendly_brain(owner).base.lasting_panic_runs > 0 {
-                                GotoFlags::RUN | GotoFlags::DONT_STOP
-                            } else {
-                                GotoFlags::RUN
-                            };
-                            self.duty_go_to(sim, assets, owner, goal, flags);
-                            moved = true;
-                        }
-                    }
-                    if !moved {
-                        self.duty_set_state(
-                            sim,
-                            assets,
-                            owner,
-                            AiState::Fleeing,
-                            Substate::FleeingChildChasedEnd,
-                        );
-                        let target = self.civilian_chaser(owner);
-                        self.civilian_face_human(sim, assets, owner, target);
-                        self.civilian_timer(owner, 20);
-                    }
-                }
-            }
-            Substate::FleeingChildFriendChased => {
-                if event == EventReachPoint {
-                    let target = self.civilian_chaser(owner);
-                    let position = self.live_ai_position(target);
-                    self.civilian_face_position(sim, assets, owner, position);
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Fleeing,
-                        Substate::FleeingChildChasedEnd,
-                    );
-                    self.civilian_timer(owner, 50);
-                }
-            }
-            _ => return None,
-        }
-        Some(false)
     }
 
     fn live_child_flee_destination(
@@ -695,6 +162,489 @@ impl EngineInner {
             }
         }
         None
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_friendly_remaining_event(
+        &mut self,
+        stimulus: &Stimulus,
+    ) -> bool {
+        use StimulusType::*;
+        match stimulus.stimulus_type {
+            EventReachPoint | EventDone | EventTimer | CallYourTalk1 | CallYourTalk2
+            | CallYourTalk3 | EventMyTalk1 | EventMyTalk2 | EventMyTalk3 => {
+                if let Some(result) = self.execute_ai_common_fleeing_event(stimulus) {
+                    return result;
+                }
+                if let Some(result) = self.execute_ai_common_expected_event(stimulus) {
+                    return result;
+                }
+            }
+            EventCouldntReachPoint => {
+                if self.engine.friendly_brain(self.owner).base.current_substate
+                    == Substate::FleeingPanic
+                {
+                    self.execute_ai_common_fleeing_event(stimulus)
+                        .expect("panic failure requires common fleeing handler");
+                } else {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            EventFitAgain => {
+                self.engine.broadcast_resurrection(self.owner);
+                let actor = self
+                    .engine
+                    .ai_actor_mut(self.owner, "civilian recovery eyes");
+                crate::ai_vision::set_view_status(actor, crate::element::EyeStatus::LookForward);
+                self.execute_ai_return_to_duty(DutyFlags::empty());
+            }
+            EventReturnToDuty => self.execute_ai_return_to_duty(DutyFlags::empty()),
+            EventOutOfView | EventSeesShadow | EventSeesSoldier => {}
+            _ => {
+                tracing::warn!(event = ?stimulus.stimulus_type, "unhandled civilian stimulus");
+            }
+        }
+        false
+    }
+
+    pub(super) fn execute_friendly_behavior(&mut self, stimulus: &Stimulus) -> Option<bool> {
+        use StimulusType::*;
+        let event = stimulus.stimulus_type;
+        let state = self.engine.friendly_brain(self.owner).base.current_state;
+        match event {
+            EventView => {
+                let StimulusInfo::Human(handle) = stimulus.info else {
+                    panic!("civilian view needs human");
+                };
+                let target = self
+                    .engine
+                    .expect_human_id_for_ai_handle(handle.get(), "civilian sight target");
+                match state {
+                    AiState::Default | AiState::Wondering => self.execute_civilian_view(target),
+                    AiState::Seeking => {
+                        if self
+                            .engine
+                            .expect_entity(self.owner, "civilian reporter")
+                            .camp()
+                            != self
+                                .engine
+                                .expect_entity(target, "civilian sight target")
+                                .camp()
+                        {
+                            let position = self.engine.live_ai_position(target);
+                            self.engine
+                                .reporting_civilian_mut(self.owner)
+                                .base
+                                .my_reconnaissance_report
+                                .update(ReportType::Enemy, position);
+                        }
+                    }
+                    AiState::Fleeing => {
+                        let actor = self.engine.expect_entity(target, "civilian feared human");
+                        let fear = actor.camp()
+                            != self
+                                .engine
+                                .expect_entity(self.owner, "civilian observer")
+                                .camp()
+                            || !actor
+                                .human_data()
+                                .expect("view target human")
+                                .opponents
+                                .is_empty();
+                        let ai = self.engine.friendly_brain(self.owner);
+                        if fear
+                            && (ai.base.current_substate == Substate::FleeingHiding
+                                || ai.fleeing_seen_enemy_counter < 7)
+                        {
+                            self.engine
+                                .reporting_civilian_mut(self.owner)
+                                .fleeing_seen_enemy_counter += 1;
+                            self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                                remark: Remark::CivPanic,
+                                flags: SpeechFlags::HOUSE.bits(),
+                            });
+
+                            self.civilian_panic_from_human(target);
+                        }
+                    }
+                    _ => panic!("civilian view in invalid state {state:?}"),
+                }
+            }
+            EventSeesBody => {
+                if matches!(state, AiState::Default | AiState::Wondering) {
+                    let StimulusInfo::Human(handle) = stimulus.info else {
+                        panic!("civilian body sight needs human");
+                    };
+                    let target = self
+                        .engine
+                        .expect_human_id_for_ai_handle(handle.get(), "civilian body target");
+                    self.execute_civilian_body_view(target);
+                }
+            }
+            EventPanic => {
+                let StimulusInfo::Position(position) = stimulus.info else {
+                    panic!("civilian panic needs position");
+                };
+                self.engine.execute_ai_panic(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    Some(position),
+                    crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    crate::ai::AlertLevel::Red,
+                );
+            }
+            EventStop => {
+                if state != AiState::Sleeping {
+                    self.civilian_stop();
+                    self.duty_set_state(AiState::Seeking, Substate::SeekingGotStopEvent);
+                    self.engine.civilian_timer(self.owner, 100);
+                }
+            }
+            CallYouJustWait | EventAppleChaseNear => {
+                let StimulusInfo::Human(chaser) = stimulus.info else {
+                    panic!("child chase requires soldier");
+                };
+                self.engine
+                    .reporting_civilian_mut(self.owner)
+                    .base
+                    .antagonist = Some(chaser);
+                if let Some(destination) = self
+                    .engine
+                    .live_child_flee_destination(self.sim, self.owner)
+                {
+                    let substate = if event == CallYouJustWait {
+                        Substate::FleeingChildChased
+                    } else {
+                        Substate::FleeingChildFriendChased
+                    };
+                    self.duty_set_state(AiState::Fleeing, substate);
+                    self.duty_go_to(destination, GotoFlags::RUN);
+                } else {
+                    let target = self.engine.civilian_chaser(self.owner);
+                    self.civilian_panic_from_human(target);
+                }
+            }
+            EventNetAway => {
+                let position = self.engine.friendly_brain(self.owner).base.seek_position;
+                self.engine.execute_ai_panic(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    Some(position),
+                    crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                    crate::ai::AlertLevel::Red,
+                );
+            }
+            EventPcShotAtMe
+            | EventSeesObject
+            | EventSeesFriendInTrouble
+            | EventGotHit
+            | EventLoseConsciousness
+            | EventGetArrow => {}
+            EventReachPoint | EventDone | EventTimer | CallYourTalk1 | CallYourTalk2
+            | CallYourTalk3 | EventMyTalk1 | EventMyTalk2 | EventMyTalk3 => {
+                return self.execute_civilian_expected_behavior(event);
+            }
+            _ => return None,
+        }
+        Some(false)
+    }
+
+    fn civilian_stop(&mut self) {
+        self.stop_ai_owner();
+    }
+
+    fn civilian_face_position(&mut self, position: Position) {
+        let target = crate::ai::ai_position_to_point_3d(
+            &self.engine.world.fast_grid,
+            self.engine.sight_obstacles(self.assets),
+            position,
+        );
+        let body = self
+            .engine
+            .expect_entity(self.owner, "civilian facing owner")
+            .element_data()
+            .position();
+        let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
+            target.x - body.x,
+            target.y - body.y,
+        );
+        self.duty_face_direction(direction as u16);
+    }
+
+    fn civilian_panic_from_human(&mut self, target: EntityId) {
+        let position = self.engine.live_ai_position(target);
+        self.engine.execute_ai_panic(
+            self.sim,
+            self.assets,
+            self.owner,
+            Some(position),
+            crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+            crate::ai::AlertLevel::Red,
+        );
+    }
+
+    fn execute_civilian_view(&mut self, target: EntityId) {
+        let entity = self.engine.expect_entity(target, "civilian viewed human");
+        if !entity
+            .human_data()
+            .expect("viewed human")
+            .opponents
+            .is_empty()
+        {
+            self.civilian_panic_from_human(target);
+        } else if entity.camp()
+            == self
+                .engine
+                .expect_entity(self.owner, "civilian viewer")
+                .camp()
+        {
+            self.duty_set_state(AiState::Wondering, Substate::WonderingCivilianAdmiringHero);
+            if matches!(self.engine.expect_entity(target, "civilian admired human"), Entity::Pc(pc) if pc.is_robin())
+            {
+                self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                    remark: Remark::CivAdmiresRobin,
+                    flags: 0,
+                });
+            }
+            self.civilian_stop();
+            self.engine
+                .civilian_face_human(self.sim, self.assets, self.owner, target);
+            self.engine
+                .civilian_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
+        } else if self.engine.entity_data_in_building_sector(
+            self.engine
+                .expect_entity(self.owner, "civilian viewer")
+                .element_data(),
+        ) {
+            self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                remark: Remark::CivPanic,
+                flags: SpeechFlags::HOUSE.bits(),
+            });
+
+            self.engine.execute_ai_panic(
+                self.sim,
+                self.assets,
+                self.owner,
+                None,
+                crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
+                crate::ai::AlertLevel::Red,
+            );
+        } else {
+            let position = self.engine.live_ai_position(target);
+            let ai = self.engine.reporting_civilian_mut(self.owner);
+            ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
+            ai.base.seek_position = position;
+            self.duty_set_state(
+                AiState::Wondering,
+                Substate::WonderingCivilianEnemyReactiontime,
+            );
+            self.civilian_stop();
+            let position = self.engine.friendly_brain(self.owner).base.seek_position;
+            self.engine
+                .reporting_civilian_mut(self.owner)
+                .base
+                .my_reconnaissance_report
+                .update(ReportType::Enemy, position);
+            self.civilian_face_position(position);
+            self.engine.civilian_timer(self.owner, 30);
+        }
+    }
+
+    fn execute_civilian_body_view(&mut self, target: EntityId) {
+        let position = self.engine.live_ai_position(target);
+        self.engine
+            .reporting_civilian_mut(self.owner)
+            .base
+            .seek_position = position;
+        self.duty_set_state(
+            AiState::Wondering,
+            Substate::WonderingCivilianBodyReactiontime,
+        );
+        self.civilian_stop();
+        self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+            remark: Remark::CivSeesBody,
+            flags: 0,
+        });
+
+        let position = self.engine.live_ai_position(target);
+        self.engine
+            .reporting_civilian_mut(self.owner)
+            .base
+            .my_reconnaissance_report
+            .update(ReportType::Body, position);
+        let position = self.engine.friendly_brain(self.owner).base.seek_position;
+        self.civilian_face_position(position);
+        self.engine
+            .civilian_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
+    }
+
+    fn execute_civilian_expected_behavior(&mut self, event: StimulusType) -> Option<bool> {
+        use StimulusType::*;
+        let substate = self.engine.friendly_brain(self.owner).base.current_substate;
+        match substate {
+            Substate::DefaultPatrolEnroute | Substate::DefaultPatrolEnrouteRunning => {
+                if event == EventReachPoint {
+                    let direction = self.engine.friendly_brain(self.owner).base.patrol_direction;
+                    if direction
+                        != self
+                            .engine
+                            .expect_entity(self.owner, "patrol arrival")
+                            .element_data()
+                            .direction() as u16
+                    {
+                        self.duty_face_direction(direction);
+                    }
+                    self.duty_set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
+                }
+            }
+            Substate::DefaultChildApproachedWhistling
+            | Substate::WonderingCivilianAdmiringHero
+            | Substate::SeekingGotStopEvent
+            | Substate::FleeingChildChasedEnd => {
+                if event == EventTimer {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            Substate::WonderingWatchingWhistling => {
+                if event == EventTimer {
+                    self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                        remark: Remark::CivWhistling,
+                        flags: 0,
+                    });
+
+                    self.duty_set_state(
+                        AiState::Wondering,
+                        Substate::WonderingChildApproachingWhistling,
+                    );
+                    let position = self.engine.friendly_brain(self.owner).base.seek_position;
+                    self.duty_go_near(position, 50, GotoFlags::RUN);
+                }
+            }
+            Substate::WonderingChildApproachingWhistling => {
+                if event == EventReachPoint {
+                    self.duty_set_state(
+                        AiState::Default,
+                        Substate::DefaultChildApproachedWhistling,
+                    );
+                    self.engine.civilian_timer(self.owner, 100);
+                }
+            }
+            Substate::FleeingChildChased => match event {
+                CallYourTalk1 => self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                    remark: Remark::CivChildChasedBySoldier,
+                    flags: 0,
+                }),
+                EventReachPoint => {
+                    if let Some(goal) = self
+                        .engine
+                        .live_child_flee_destination(self.sim, self.owner)
+                    {
+                        let target = self.engine.civilian_chaser(self.owner);
+                        let here = self
+                            .engine
+                            .expect_entity(self.owner, "fleeing child")
+                            .element_data()
+                            .position();
+                        let there = self
+                            .engine
+                            .expect_entity(target, "child chaser")
+                            .element_data()
+                            .position();
+                        let distance = (here.x - there.x).abs().max(
+                            ((here.y - there.y) * crate::position_interface::INVERSE_ASPECT_RATIO)
+                                .abs(),
+                        );
+                        self.duty_go_to_speed(
+                            goal,
+                            GotoFlags::RUN | GotoFlags::DONT_STOP,
+                            if distance < 150.0 { 1.2 } else { 1.0 },
+                        );
+                        let target = self.engine.civilian_chaser(self.owner);
+                        let substate = self
+                            .engine
+                            .expect_entity(target, "child chaser after movement")
+                            .ai_controller()
+                            .expect("chaser needs AI")
+                            .current_substate;
+                        if !matches!(
+                            substate,
+                            Substate::WonderingAppleChasingChild
+                                | Substate::WonderingAppleChasingChildWaiting
+                                | Substate::WonderingAppleChasingChildEnd
+                        ) {
+                            self.engine
+                                .reporting_civilian_mut(self.owner)
+                                .base
+                                .lasting_panic_runs = 1;
+                            self.duty_set_state(
+                                AiState::Fleeing,
+                                Substate::FleeingChildChasedSupplementalRuns,
+                            );
+                        }
+                    } else {
+                        let target = self.engine.civilian_chaser(self.owner);
+                        self.civilian_panic_from_human(target);
+                    }
+                }
+                _ => {}
+            },
+            Substate::FleeingChildChasedSupplementalRuns => {
+                if event == EventReachPoint {
+                    let mut moved = false;
+                    if self
+                        .engine
+                        .friendly_brain(self.owner)
+                        .base
+                        .lasting_panic_runs
+                        > 0
+                    {
+                        self.engine
+                            .reporting_civilian_mut(self.owner)
+                            .base
+                            .lasting_panic_runs -= 1;
+                        if let Some(goal) = self
+                            .engine
+                            .live_child_flee_destination(self.sim, self.owner)
+                        {
+                            let flags = if self
+                                .engine
+                                .friendly_brain(self.owner)
+                                .base
+                                .lasting_panic_runs
+                                > 0
+                            {
+                                GotoFlags::RUN | GotoFlags::DONT_STOP
+                            } else {
+                                GotoFlags::RUN
+                            };
+                            self.duty_go_to(goal, flags);
+                            moved = true;
+                        }
+                    }
+                    if !moved {
+                        self.duty_set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
+                        let target = self.engine.civilian_chaser(self.owner);
+                        self.engine
+                            .civilian_face_human(self.sim, self.assets, self.owner, target);
+                        self.engine.civilian_timer(self.owner, 20);
+                    }
+                }
+            }
+            Substate::FleeingChildFriendChased => {
+                if event == EventReachPoint {
+                    let target = self.engine.civilian_chaser(self.owner);
+                    let position = self.engine.live_ai_position(target);
+                    self.civilian_face_position(position);
+                    self.duty_set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
+                    self.engine.civilian_timer(self.owner, 50);
+                }
+            }
+            _ => return None,
+        }
+        Some(false)
     }
 }
 

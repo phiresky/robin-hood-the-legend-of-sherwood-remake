@@ -12,8 +12,7 @@ impl EngineInner {
     pub(super) fn admit_ai_think_live(&mut self, owner: EntityId, stimulus: &Stimulus) -> bool {
         let frozen = self.ai.global.freeze;
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("live Think admission"));
         let unconscious = entity.is_unconscious();
         let dead = entity.is_dead();
@@ -230,10 +229,7 @@ impl EngineInner {
         }
 
         self.duty_set_state(sim, assets, owner, state, substate);
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("enemy admission eyes"));
+        let actor = self.ai_actor_mut(owner, "enemy admission eyes");
         crate::ai_vision::set_view_status(actor, eyes);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(

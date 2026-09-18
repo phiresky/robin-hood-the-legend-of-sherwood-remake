@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType, Substate};
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
@@ -261,6 +262,7 @@ mod tests {
 }
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_archery_expected_event(
         &mut self,
         sim: &SimulationContext,
@@ -268,20 +270,35 @@ impl EngineInner {
         owner: EntityId,
         event: StimulusType,
     ) -> bool {
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("bow callback"))
-            .current_substate;
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_archery_expected_event(event)
+    }
+
+    fn live_beggar_to_examine(&self, owner: EntityId) -> EntityId {
+        let handle = self
+            .enemy_ai(owner, "beggar inspection target")
+            .beggar_to_examine
+            .expect("beggar inspection requires a target");
+        self.expect_human_id_for_ai_handle(handle.get(), "beggar inspection target")
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_archery_expected_event(
+        &mut self,
+        event: StimulusType,
+    ) -> bool {
+        let substate = self.engine.ai(self.owner, "bow callback").current_substate;
         match (substate, event) {
             (Substate::SeekingSeekpointApproachingBeggar, StimulusType::EventReachPoint) => {
-                let beggar = self.live_beggar_to_examine(owner);
+                let beggar = self.engine.live_beggar_to_examine(self.owner);
                 let there = self
+                    .engine
                     .expect_entity(beggar, "beggar arrival distance")
                     .element_data()
                     .position();
                 let here = self
-                    .expect_entity(owner, "beggar inspector distance")
+                    .engine
+                    .expect_entity(self.owner, "beggar inspector distance")
                     .element_data()
                     .position();
                 let distance = (there.x - here.x)
@@ -292,32 +309,26 @@ impl EngineInner {
                     )
                     .max((there.z - here.z).abs());
                 if distance >= 100.0 {
-                    self.execute_ai_seek_next_point(sim, assets, owner);
+                    self.execute_ai_seek_next_point();
                 } else {
-                    self.stop_ai_owner(sim, assets, owner);
+                    self.stop_ai_owner();
                     self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
                         AiState::Seeking,
                         Substate::SeekingSeekpointIdentifyingBeggar1,
                     );
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        crate::ai::AiSpeechAttempt {
-                            remark: crate::ai::Remark::ControlsBeggar,
-                            flags: 0,
-                        },
-                    );
-                    let beggar = self.live_beggar_to_examine(owner);
+                    self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                        remark: crate::ai::Remark::ControlsBeggar,
+                        flags: 0,
+                    });
+                    let beggar = self.engine.live_beggar_to_examine(self.owner);
                     let there = self
+                        .engine
                         .expect_entity(beggar, "beggar inspection turn")
                         .element_data()
                         .position();
                     let here = self
-                        .expect_entity(owner, "beggar inspector turn")
+                        .engine
+                        .expect_entity(self.owner, "beggar inspector turn")
                         .element_data()
                         .position();
                     let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -329,14 +340,13 @@ impl EngineInner {
                     let mut turn = SequenceElement::new_generic(
                         1,
                         crate::element::Command::TurnFast,
-                        Some(owner),
+                        Some(self.owner),
                     );
                     turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
                     sequence.append_element(turn);
                     let archer = self
-                        .world
-                        .entities
-                        .expect_enemy_ai(owner, format_args!("beggar inspector weapon"))
+                        .engine
+                        .enemy_ai(self.owner, "beggar inspector weapon")
                         .is_archer();
                     sequence.append_element(SequenceElement::new(
                         2,
@@ -345,7 +355,7 @@ impl EngineInner {
                         } else {
                             crate::element::Command::StartMenace
                         },
-                        Some(owner),
+                        Some(self.owner),
                     ));
                     let time = if archer {
                         if matches!(beggar, EntityId::Civilian(_) | EntityId::Soldier(_)) {
@@ -356,30 +366,29 @@ impl EngineInner {
                     } else {
                         30
                     };
-                    let frame = self.control.frame_counter;
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("beggar inspection timer"))
+                    let frame = self.engine.control.frame_counter;
+                    self.engine
+                        .ai_mut(self.owner, "beggar inspection timer")
                         .launch_timer(time, frame);
-                    self.launch_sequence(sim, assets, sequence);
+                    self.engine.launch_sequence(self.sim, self.assets, sequence);
                 }
             }
             (Substate::SeekingSeekpointIdentifyingBeggar1, StimulusType::EventTimer) => {
-                let beggar = self.live_beggar_to_examine(owner);
+                let beggar = self.engine.live_beggar_to_examine(self.owner);
                 if matches!(beggar, EntityId::Civilian(_) | EntityId::Soldier(_)) {
-                    self.launch_element(
-                        sim,
-                        assets,
+                    self.engine.launch_element(
+                        self.sim,
+                        self.assets,
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::BeggarShowFace,
                             Some(beggar),
                         ),
                     );
-                    let beggar = self.live_beggar_to_examine(owner);
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
+                    let beggar = self.engine.live_beggar_to_examine(self.owner);
+                    self.engine.execute_ai_speech(
+                        self.sim,
+                        self.assets,
                         beggar,
                         crate::ai::AiSpeechAttempt {
                             remark: crate::ai::Remark::CivBeggarIdentifiesHimself,
@@ -387,242 +396,193 @@ impl EngineInner {
                         },
                     );
                     self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
                         AiState::Seeking,
                         Substate::SeekingSeekpointIdentifyingBeggar2,
                     );
-                    let frame = self.control.frame_counter;
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("identified beggar timer"))
+                    let frame = self.engine.control.frame_counter;
+                    self.engine
+                        .ai_mut(self.owner, "identified beggar timer")
                         .launch_timer(50, frame);
                 } else {
-                    let ai = self
-                        .world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("false beggar target"));
+                    let ai = self.engine.enemy_ai_mut(self.owner, "false beggar target");
                     ai.base.primary_target = ai.beggar_to_examine;
                     ai.list_them.clear();
                     ai.list_them.push(beggar.index());
                     if ai.is_archer() {
-                        self.launch_element(
-                            sim,
-                            assets,
+                        self.engine.launch_element(
+                            self.sim,
+                            self.assets,
                             crate::sequence::SequenceElement::new(
                                 1,
                                 crate::element::Command::LeaveBeggar,
                                 Some(beggar),
                             ),
                         );
-                        self.duty_set_state(
-                            sim,
-                            assets,
-                            owner,
-                            AiState::Attacking,
-                            Substate::AttackingBowShooting,
-                        );
+                        self.duty_set_state(AiState::Attacking, Substate::AttackingBowShooting);
                         let target = self
-                            .world
-                            .entities
-                            .expect_ai_controller(owner, format_args!("false beggar shot target"))
+                            .engine
+                            .ai(self.owner, "false beggar shot target")
                             .primary_target
                             .expect("false beggar shot requires target");
-                        let target = self.expect_human_id_for_ai_handle(
+                        let target = self.engine.expect_human_id_for_ai_handle(
                             target.get(),
                             "false beggar shot target",
                         );
-                        self.stop_ai_owner(sim, assets, owner);
-                        self.shoot_bow_at(sim, assets, owner, target);
+                        self.stop_ai_owner();
+                        self.engine
+                            .shoot_bow_at(self.sim, self.assets, self.owner, target);
                     } else {
-                        self.execute_ai_begin_swordfight(sim, assets, owner);
+                        self.execute_ai_begin_swordfight();
                     }
                 }
             }
             (Substate::SeekingSeekpointIdentifyingBeggar2, StimulusType::EventTimer) => {
-                self.execute_ai_seek_next_point(sim, assets, owner);
+                self.execute_ai_seek_next_point();
             }
             (Substate::AttackingBowObservingLoading, StimulusType::EventDone) => {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingBowObserving,
-                );
-                let frame = self.control.frame_counter;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow observation timer"))
+                self.duty_set_state(AiState::Attacking, Substate::AttackingBowObserving);
+                let frame = self.engine.control.frame_counter;
+                self.engine
+                    .ai_mut(self.owner, "bow observation timer")
                     .launch_timer(50, frame);
             }
             (Substate::AttackingBowLoading, StimulusType::EventDone) => {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Attacking,
-                    Substate::AttackingBowAiming,
-                );
+                self.duty_set_state(AiState::Attacking, Substate::AttackingBowAiming);
                 let (_, ability) = self
-                    .bow_profile_and_ability(assets, owner)
+                    .engine
+                    .bow_profile_and_ability(self.assets, self.owner)
                     .expect("loaded bow ability");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
-                let frame = self.control.frame_counter;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow aiming timer"))
+                let frame = self.engine.control.frame_counter;
+                self.engine
+                    .ai_mut(self.owner, "bow aiming timer")
                     .launch_timer(time, frame);
             }
             (Substate::AttackingBowAiming, StimulusType::EventTimer) => {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow emoticon"))
+                self.engine
+                    .ai_mut(self.owner, "bow emoticon")
                     .set_emoticon(EmoticonType::None);
 
                 let tower = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("bow tower guard"))
+                    .engine
+                    .enemy_ai(self.owner, "bow tower guard")
                     .tower_guard;
                 let safe = tower || {
                     let target = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("bow proximity target"))
+                        .engine
+                        .ai(self.owner, "bow proximity target")
                         .primary_target
                         .expect("aiming requires target");
-                    let target =
-                        self.expect_human_id_for_ai_handle(target.get(), "bow proximity target");
-                    !self.ai_archer_is_too_near_to_enemy(
-                        assets,
-                        owner,
-                        self.live_ai_position(owner),
+                    let target = self
+                        .engine
+                        .expect_human_id_for_ai_handle(target.get(), "bow proximity target");
+                    !self.engine.ai_archer_is_too_near_to_enemy(
+                        self.assets,
+                        self.owner,
+                        self.engine.live_ai_position(self.owner),
                         target,
                     )
                 };
                 if safe {
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Attacking,
-                        Substate::AttackingBowShooting,
-                    );
+                    self.duty_set_state(AiState::Attacking, Substate::AttackingBowShooting);
                     let target = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("aimed shot target"))
+                        .engine
+                        .ai(self.owner, "aimed shot target")
                         .primary_target
                         .expect("shooting requires target");
-                    let target =
-                        self.expect_human_id_for_ai_handle(target.get(), "aimed shot target");
-                    self.stop_ai_owner(sim, assets, owner);
-                    self.shoot_bow_at(sim, assets, owner, target);
+                    let target = self
+                        .engine
+                        .expect_human_id_for_ai_handle(target.get(), "aimed shot target");
+                    self.stop_ai_owner();
+                    self.engine
+                        .shoot_bow_at(self.sim, self.assets, self.owner, target);
                 } else {
-                    self.world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("unsafe aimed shot"))
+                    self.engine
+                        .enemy_ai_mut(self.owner, "unsafe aimed shot")
                         .enemy_seen_below = false;
-                    self.execute_battle_decisions(sim, assets, owner);
+                    self.execute_battle_decisions();
                 }
             }
             (Substate::AttackingBowShooting, StimulusType::EventDone)
             | (Substate::AttackingBowRunningBehindShieldBearer, StimulusType::EventTimer) => {
-                self.reinitialize_live_ai_enemies(owner);
-                self.execute_battle_decisions(sim, assets, owner);
+                self.engine.reinitialize_live_ai_enemies(self.owner);
+                self.execute_battle_decisions();
             }
             (Substate::AttackingBowShooting, StimulusType::CallCoordinate)
             | (Substate::AttackingBowObserving, StimulusType::EventTimer) => {
                 if substate == Substate::AttackingBowObserving
                     && self
-                        .expect_entity(owner, "bow observer posture")
+                        .engine
+                        .expect_entity(self.owner, "bow observer posture")
                         .element_data()
                         .posture()
                         == crate::element::Posture::LeaningOut
                 {
-                    self.reinitialize_live_ai_enemies(owner);
+                    self.engine.reinitialize_live_ai_enemies(self.owner);
                 } else {
-                    self.stop_ai_owner(sim, assets, owner);
+                    self.stop_ai_owner();
                 }
-                self.execute_battle_decisions(sim, assets, owner);
+                self.execute_battle_decisions();
             }
             (Substate::AttackingBowRunningBehindShieldBearer, StimulusType::EventReachPoint) => {
                 if let Some(target) = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("bow cover facing"))
+                    .engine
+                    .ai(self.owner, "bow cover facing")
                     .primary_target
                 {
-                    let target =
-                        self.expect_human_id_for_ai_handle(target.get(), "bow cover facing");
-                    let position = self.live_ai_position(target);
+                    let target = self
+                        .engine
+                        .expect_human_id_for_ai_handle(target.get(), "bow cover facing");
+                    let position = self.engine.live_ai_position(target);
                     let elevation = self
+                        .engine
                         .expect_entity(target, "bow cover elevation")
                         .position_iface()
                         .get_elevation() as u16;
-                    self.duty_face_position_at_elevation(
-                        sim,
-                        assets,
-                        owner,
-                        position,
-                        f32::from(elevation),
-                    );
+                    self.duty_face_position_at_elevation(position, f32::from(elevation));
                 }
             }
             (Substate::AttackingBowRunningBehindShieldBearer, StimulusType::EventDone) => {
-                let frame = self.control.frame_counter;
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow cover focus"));
+                let frame = self.engine.control.frame_counter;
+                let ai = self.engine.ai_mut(self.owner, "bow cover focus");
                 ai.launch_timer(5, frame);
                 let target = ai.primary_target;
-                self.execute_ai_focus(owner, target);
+                self.engine.execute_ai_focus(self.owner, target);
             }
             (Substate::AttackingArcherRunOnShootingPath, StimulusType::EventReachPoint) => loop {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("archery path cursor"));
+                let ai = self.engine.enemy_ai_mut(self.owner, "archery path cursor");
                 ai.my_archery_point_index = crate::sector::ArcheryPointIdx(
                     u16::from(ai.my_archery_point_index)
                         .wrapping_add_signed(i16::from(ai.my_archery_point_increment)),
                 );
                 let sector = ai.my_archery_sector.expect("archery path sector");
                 let index = u16::from(ai.my_archery_point_index);
-                let point = self.ai.global.archery_sectors[usize::from(sector)]
+                let point = self.engine.ai.global.archery_sectors[usize::from(sector)]
                     .points
                     .get(usize::from(index))
                     .expect("archery path ended without a destination");
                 if !point.is_shooting_point {
                     let position = point.position;
                     self.duty_go_to(
-                        sim,
-                        assets,
-                        owner,
                         position,
                         crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::DONT_STOP,
                     );
                     break;
                 }
-                if point.owner.is_none() || point.owner == Some(owner) {
+                if point.owner.is_none() || point.owner == Some(self.owner) {
                     self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
                         AiState::Attacking,
                         Substate::AttackingArcherRunOnShootingPathFinalSprint,
                     );
-                    self.world
+                    self.engine
+                        .world
                         .entities
-                        .expect_enemy_ai_mut(owner, format_args!("archery path reservation"))
-                        .set_my_shooting_point(&mut self.ai.global, Some((sector, index)));
-                    let position = self.ai.global.archery_sectors[usize::from(sector)].points
-                        [usize::from(index)]
+                        .expect_enemy_ai_mut(self.owner, format_args!("archery path reservation"))
+                        .set_my_shooting_point(&mut self.engine.ai.global, Some((sector, index)));
+                    let position = self.engine.ai.global.archery_sectors[usize::from(sector)]
+                        .points[usize::from(index)]
                     .position;
-                    self.duty_go_to(sim, assets, owner, position, crate::ai::GotoFlags::RUN);
+                    self.duty_go_to(position, crate::ai::GotoFlags::RUN);
                     break;
                 }
             },
@@ -631,55 +591,40 @@ impl EngineInner {
                 StimulusType::EventReachPoint,
             ) => {
                 self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
                     AiState::Attacking,
                     Substate::AttackingArcherRunOnShootingPathTurn,
                 );
                 let (sector, index) = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("archery path facing"))
+                    .engine
+                    .enemy_ai(self.owner, "archery path facing")
                     .my_shooting_point
                     .expect("archery path reserved point");
-                let direction = self.ai.global.archery_sectors[usize::from(sector)].points
+                let direction = self.engine.ai.global.archery_sectors[usize::from(sector)].points
                     [usize::from(index)]
                 .direction;
-                self.duty_face_direction(sim, assets, owner, direction);
+                self.duty_face_direction(direction);
             }
             (Substate::AttackingArcherRunOnShootingPathTurn, StimulusType::EventDone) => {
                 let elevation = self
-                    .expect_entity(owner, "archery path elevation")
+                    .engine
+                    .expect_entity(self.owner, "archery path elevation")
                     .position_iface()
                     .get_elevation();
                 let target_elevation = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("archery path target elevation"))
+                    .engine
+                    .enemy_ai(self.owner, "archery path target elevation")
                     .enemy_had_this_elevation;
                 if elevation >= f32::from(target_elevation) + 50.0 {
-                    self.world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("archery path target below"))
+                    self.engine
+                        .enemy_ai_mut(self.owner, "archery path target below")
                         .enemy_seen_below = true;
-                    self.execute_battle_decisions(sim, assets, owner);
+                    self.execute_battle_decisions();
                 } else {
-                    self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+                    self.execute_ai_get_battle_overview(0);
                 }
             }
             _ => return false,
         }
         true
-    }
-
-    fn live_beggar_to_examine(&self, owner: EntityId) -> EntityId {
-        let handle = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("beggar inspection target"))
-            .beggar_to_examine
-            .expect("beggar inspection requires a target");
-        self.expect_human_id_for_ai_handle(handle.get(), "beggar inspection target")
     }
 }

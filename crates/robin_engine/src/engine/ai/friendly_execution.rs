@@ -6,6 +6,7 @@ use crate::element::Human as _;
 use crate::parameters_ai::{AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_friendly_callback(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -13,330 +14,10 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        let frame = self.control.frame_counter;
-        let substate = self
-            .world
-            .entities
-            .get(owner)?
-            .friendly_ai()?
-            .base
-            .current_substate;
-        let event = stimulus.stimulus_type;
-        if event == StimulusType::CallPatrolCoordinate {
-            self.execute_ai_coordinate_patrol(sim, assets, owner, &stimulus.info);
-            return Some(false);
-        }
-        if event == StimulusType::EventHear {
-            let state = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("civilian hearing"))
-                .current_state;
-            if matches!(
-                state,
-                AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
-            ) {
-                if let StimulusInfo::Noise(noise) = stimulus.info {
-                    self.civilian_hear(sim, assets, owner, &noise);
-                }
-            }
-            return Some(false);
-        }
-        if event == StimulusType::EventSeesSoldier
-            && substate == Substate::SeekingCivilianRunningToSoldier
-        {
-            let StimulusInfo::Human(target) = stimulus.info else {
-                panic!("civilian soldier sighting requires a human target");
-            };
-            self.reporting_civilian_mut(owner).base.antagonist = Some(target);
-            self.clear_reporting_friends(owner);
-            self.civilian_call_alert(sim, assets, owner, false);
-            return Some(false);
-        }
-        if let Some(result) = self.execute_friendly_behavior(sim, assets, owner, stimulus) {
-            return Some(result);
-        }
-        if !matches!(
-            event,
-            StimulusType::EventReachPoint
-                | StimulusType::EventDone
-                | StimulusType::EventTimer
-                | StimulusType::CallYourTalk1
-                | StimulusType::CallYourTalk2
-                | StimulusType::CallYourTalk3
-                | StimulusType::EventMyTalk1
-                | StimulusType::EventMyTalk2
-                | StimulusType::EventMyTalk3
-        ) {
-            return None;
-        }
-        match substate {
-            Substate::DefaultPatrolEnrouteWaiting => {
-                if event == StimulusType::EventTimer {
-                    let chief = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("waiting civilian"))
-                        .patrol_chief
-                        .expect("waiting civilian requires a patrol chief");
-                    let state = self
-                        .world
-                        .entities
-                        .expect_ai_controller(chief, format_args!("civilian patrol chief"))
-                        .current_state;
-                    if matches!(state, AiState::Default | AiState::Wondering) {
-                        let frame = self.control.frame_counter;
-                        self.reporting_civilian_mut(owner)
-                            .base
-                            .launch_timer(200, frame);
-                    } else {
-                        self.execute_ai_return_to_duty(
-                            sim,
-                            assets,
-                            owner,
-                            crate::ai::DutyFlags::empty(),
-                        );
-                    }
-                }
-            }
-            Substate::WonderingCivilianEnemyReactiontime
-            | Substate::WonderingCivilianBodyReactiontime => {
-                if event == StimulusType::EventTimer
-                    && !self.civilian_alert_soldier(sim, assets, owner, false)
-                {
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        crate::ai::AiSpeechAttempt {
-                            remark: Remark::CivPanic,
-                            flags: 0,
-                        },
-                    );
-
-                    let center = self.reporting_civilian_mut(owner).base.seek_position;
-                    self.execute_ai_panic(
-                        sim,
-                        assets,
-                        owner,
-                        Some(center),
-                        AI_STANDARD_PANIC_RUNS as u8,
-                        crate::ai::AlertLevel::Red,
-                    );
-                }
-            }
-            Substate::SeekingCivilianRunningToSoldier => {
-                if event == StimulusType::EventReachPoint {
-                    let target = self.reporting_target(owner);
-                    let state = self
-                        .world
-                        .entities
-                        .expect_ai_controller(target, format_args!("civilian alert target"))
-                        .current_state;
-                    if state == AiState::Default {
-                        let position = self.live_ai_position(target);
-                        let own_position = self.live_ai_position(owner);
-                        let dx = position.x - own_position.x;
-                        let dy = position.y - own_position.y;
-                        if dx * dx + dy * dy > (AI_TALK_DISTANCE as f32).powi(2) {
-                            self.approach_reporting_soldier(sim, assets, owner);
-                        } else {
-                            self.civilian_call_alert(sim, assets, owner, true);
-                        }
-                    } else {
-                        if !self.civilian_alert_soldier(sim, assets, owner, false) {
-                            self.execute_ai_return_to_duty(
-                                sim,
-                                assets,
-                                owner,
-                                crate::ai::DutyFlags::empty(),
-                            );
-                        }
-                    }
-                }
-            }
-            Substate::SeekingCivilianRunningToSoldierSeen => {
-                if matches!(
-                    event,
-                    StimulusType::EventReachPoint | StimulusType::EventTimer
-                ) {
-                    let target = self.reporting_target(owner);
-                    let waiting = self
-                        .world
-                        .entities
-                        .expect_ai_controller(target, format_args!("civilian waiting target"))
-                        .current_substate
-                        == Substate::SeekingWaitForAlertingCivilian;
-                    if !waiting {
-                        self.execute_ai_return_to_duty(
-                            sim,
-                            assets,
-                            owner,
-                            crate::ai::DutyFlags::empty(),
-                        );
-                    } else if event == StimulusType::EventTimer {
-                        self.reporting_civilian_mut(owner)
-                            .base
-                            .launch_timer(20, frame);
-                    } else {
-                        self.reporting_state(
-                            sim,
-                            assets,
-                            owner,
-                            Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
-                        );
-                        self.reporting_civilian_mut(owner)
-                            .base
-                            .launch_timer(10, frame);
-                    }
-                }
-            }
-            Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
-                if event == StimulusType::EventTimer {
-                    self.reporting_state(
-                        sim,
-                        assets,
-                        owner,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
-                    );
-                    let target = self.reporting_target(owner);
-                    self.execute_ai_callback(
-                        sim,
-                        assets,
-                        target,
-                        &Stimulus::with_human(StimulusType::CallReport, owner.index()),
-                    );
-                    self.execute_ai_speech(
-                        sim,
-                        assets,
-                        owner,
-                        crate::ai::AiSpeechAttempt {
-                            remark: Remark::CivDenunciates,
-                            flags: 0,
-                        },
-                    );
-
-                    let position = self.reporting_civilian_mut(owner).base.seek_position;
-                    self.duty_point_to(sim, assets, owner, position);
-                }
-            }
-            Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
-                if event == StimulusType::EventDone {
-                    self.reporting_state(
-                        sim,
-                        assets,
-                        owner,
-                        Substate::SeekingCivilianGiveAlertingReportToSoldierEnd,
-                    );
-                    let target = self.reporting_target(owner);
-                    let position = self.live_ai_position(target);
-                    let elevation = self
-                        .expect_entity(target, "civilian report facing target")
-                        .element_data()
-                        .position()
-                        .z as i16;
-                    self.duty_face_position_at_elevation(
-                        sim,
-                        assets,
-                        owner,
-                        position,
-                        f32::from(elevation),
-                    );
-                    let frame = self.control.frame_counter;
-                    self.reporting_civilian_mut(owner)
-                        .base
-                        .launch_timer(30, frame);
-                }
-            }
-            Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
-                if event == StimulusType::EventTimer {
-                    let civilian = self.reporting_civilian_mut(owner);
-                    let center = civilian.base.seek_position;
-                    self.execute_ai_panic(
-                        sim,
-                        assets,
-                        owner,
-                        Some(center),
-                        AI_STANDARD_PANIC_RUNS as u8,
-                        crate::ai::AlertLevel::Red,
-                    );
-                }
-            }
-            _ => return None,
-        }
-
-        Some(false)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_friendly_callback(stimulus)
     }
 
-    fn civilian_hear(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        noise: &crate::ai::Noise,
-    ) {
-        match noise.noise_type {
-            crate::ai::NoiseType::Pfiiit => {
-                let Entity::Civilian(civilian) = self.expect_entity(owner, "civilian whistle")
-                else {
-                    unreachable!("friendly owner is not civilian")
-                };
-                if civilian.civilian.cached_civilian_type != crate::profiles::CivilianType::Child {
-                    return;
-                }
-                self.reporting_civilian_mut(owner)
-                    .base
-                    .set_emoticon(crate::ai::EmoticonType::QuestionMark);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingWatchingWhistling,
-                );
-                let origin = noise
-                    .origin
-                    .position()
-                    .expect("delivered whistle has no spatial layer");
-                self.reporting_civilian_mut(owner).base.seek_position = origin;
-                self.duty_face_position_at_elevation(
-                    sim,
-                    assets,
-                    owner,
-                    origin,
-                    f32::from(noise.elevation),
-                );
-                let frame = self.control.frame_counter;
-                self.reporting_civilian_mut(owner)
-                    .base
-                    .launch_timer(70, frame);
-            }
-            crate::ai::NoiseType::Aaargh => {
-                let origin = noise
-                    .origin
-                    .position()
-                    .expect("delivered scream has no spatial layer");
-                self.reporting_civilian_mut(owner).base.seek_position = origin;
-                if self.expect_entity(owner, "screaming civilian").camp()
-                    == crate::element::Camp::Royalists
-                    || !self.civilian_alert_soldier(sim, assets, owner, false)
-                {
-                    let center = self.reporting_civilian_mut(owner).base.seek_position;
-                    self.execute_ai_panic(
-                        sim,
-                        assets,
-                        owner,
-                        Some(center),
-                        AI_STANDARD_PANIC_RUNS as u8,
-                        crate::ai::AlertLevel::Red,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Select in registry order, then finish the route before evaluating its result.
+    #[cfg(test)]
     pub(in crate::engine) fn civilian_alert_soldier(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -344,37 +25,7 @@ impl EngineInner {
         owner: EntityId,
         check_door_path: bool,
     ) -> bool {
-        let Some(target) = self.select_civilian_alert_soldier(assets, owner, check_door_path)
-        else {
-            return false;
-        };
-        self.reporting_state(
-            sim,
-            assets,
-            owner,
-            Substate::SeekingCivilianRunningToSoldier,
-        );
-        self.reporting_civilian_mut(owner).base.antagonist =
-            Some(crate::ai::AiEntityHandle::new(target.index()));
-        self.approach_reporting_soldier(sim, assets, owner);
-        if std::mem::take(&mut self.reporting_civilian_mut(owner).base.couldnt_reachpoint) {
-            if !check_door_path {
-                return self.civilian_alert_soldier(sim, assets, owner, true);
-            }
-            self.clear_civilian_alert_friends(owner);
-            return false;
-        }
-        self.execute_ai_speech(
-            sim,
-            assets,
-            owner,
-            crate::ai::AiSpeechAttempt {
-                remark: Remark::CivPanic,
-                flags: 0,
-            },
-        );
-
-        true
+        AiOwnerCtx::new(self, sim, assets, owner).civilian_alert_soldier(check_door_path)
     }
 
     fn select_civilian_alert_soldier(
@@ -419,12 +70,7 @@ impl EngineInner {
                     true,
                 );
             }
-            match self
-                .world
-                .entities
-                .expect_ai_controller(target, format_args!("alert candidate"))
-                .current_state
-            {
+            match self.ai(target, "alert candidate").current_state {
                 AiState::Default => {
                     let source = self
                         .expect_entity(owner, "alert distance owner")
@@ -468,8 +114,7 @@ impl EngineInner {
     }
 
     fn clear_civilian_alert_friends(&mut self, owner: EntityId) {
-        self.world
-            .entities
+        self.entities_mut()
             .expect_entity_mut(owner, format_args!("alert friend cleanup"))
             .npc_data_mut()
             .expect("civilian lacks NPC data")
@@ -528,8 +173,7 @@ impl EngineInner {
         &mut self,
         owner: EntityId,
     ) -> &mut crate::ai_friendly::FriendlyAi {
-        self.world
-            .entities
+        self.entities_mut()
             .get_mut(owner)
             .and_then(Entity::friendly_ai_mut)
             .expect("reporting civilian lost its brain")
@@ -537,49 +181,356 @@ impl EngineInner {
 
     fn reporting_target(&self, owner: EntityId) -> EntityId {
         let handle = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("reporting civilian"))
+            .ai(owner, "reporting civilian")
             .antagonist
             .expect("reporting civilian requires an antagonist")
             .get();
         self.expect_human_id_for_ai_handle(handle, "reporting civilian antagonist")
     }
 
-    fn reporting_state(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        substate: Substate,
-    ) {
-        self.duty_set_state(sim, assets, owner, AiState::Seeking, substate);
-    }
-
     fn clear_reporting_friends(&mut self, owner: EntityId) {
         self.execute_ai_delete_detectable_type(owner, crate::element::DetectableType::Friend);
     }
+}
 
-    fn civilian_call_alert(
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_friendly_callback(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        reached: bool,
-    ) {
-        let frame = self.control.frame_counter;
-        let target = self.reporting_target(owner);
-        let accepted = self.execute_ai_callback(
-            sim,
-            assets,
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        let frame = self.engine.control.frame_counter;
+        let substate = self
+            .engine
+            .entities()
+            .get(self.owner)?
+            .friendly_ai()?
+            .base
+            .current_substate;
+        let event = stimulus.stimulus_type;
+        if event == StimulusType::CallPatrolCoordinate {
+            self.execute_ai_coordinate_patrol(&stimulus.info);
+            return Some(false);
+        }
+        if event == StimulusType::EventHear {
+            let state = self.engine.ai(self.owner, "civilian hearing").current_state;
+            if matches!(
+                state,
+                AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
+            ) {
+                if let StimulusInfo::Noise(noise) = stimulus.info {
+                    self.civilian_hear(&noise);
+                }
+            }
+            return Some(false);
+        }
+        if event == StimulusType::EventSeesSoldier
+            && substate == Substate::SeekingCivilianRunningToSoldier
+        {
+            let StimulusInfo::Human(target) = stimulus.info else {
+                panic!("civilian soldier sighting requires a human target");
+            };
+            self.engine
+                .reporting_civilian_mut(self.owner)
+                .base
+                .antagonist = Some(target);
+            self.engine.clear_reporting_friends(self.owner);
+            self.civilian_call_alert(false);
+            return Some(false);
+        }
+        if let Some(result) = self.execute_friendly_behavior(stimulus) {
+            return Some(result);
+        }
+        if !matches!(
+            event,
+            StimulusType::EventReachPoint
+                | StimulusType::EventDone
+                | StimulusType::EventTimer
+                | StimulusType::CallYourTalk1
+                | StimulusType::CallYourTalk2
+                | StimulusType::CallYourTalk3
+                | StimulusType::EventMyTalk1
+                | StimulusType::EventMyTalk2
+                | StimulusType::EventMyTalk3
+        ) {
+            return None;
+        }
+        match substate {
+            Substate::DefaultPatrolEnrouteWaiting => {
+                if event == StimulusType::EventTimer {
+                    let chief = self
+                        .engine
+                        .ai(self.owner, "waiting civilian")
+                        .patrol_chief
+                        .expect("waiting civilian requires a patrol chief");
+                    let state = self.engine.ai(chief, "civilian patrol chief").current_state;
+                    if matches!(state, AiState::Default | AiState::Wondering) {
+                        let frame = self.engine.control.frame_counter;
+                        self.engine
+                            .reporting_civilian_mut(self.owner)
+                            .base
+                            .launch_timer(200, frame);
+                    } else {
+                        self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
+                    }
+                }
+            }
+            Substate::WonderingCivilianEnemyReactiontime
+            | Substate::WonderingCivilianBodyReactiontime => {
+                if event == StimulusType::EventTimer && !self.civilian_alert_soldier(false) {
+                    self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                        remark: Remark::CivPanic,
+                        flags: 0,
+                    });
+
+                    let center = self
+                        .engine
+                        .reporting_civilian_mut(self.owner)
+                        .base
+                        .seek_position;
+                    self.engine.execute_ai_panic(
+                        self.sim,
+                        self.assets,
+                        self.owner,
+                        Some(center),
+                        AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
+                    );
+                }
+            }
+            Substate::SeekingCivilianRunningToSoldier => {
+                if event == StimulusType::EventReachPoint {
+                    let target = self.engine.reporting_target(self.owner);
+                    let state = self
+                        .engine
+                        .ai(target, "civilian alert target")
+                        .current_state;
+                    if state == AiState::Default {
+                        let position = self.engine.live_ai_position(target);
+                        let own_position = self.engine.live_ai_position(self.owner);
+                        let dx = position.x - own_position.x;
+                        let dy = position.y - own_position.y;
+                        if dx * dx + dy * dy > (AI_TALK_DISTANCE as f32).powi(2) {
+                            self.approach_reporting_soldier();
+                        } else {
+                            self.civilian_call_alert(true);
+                        }
+                    } else {
+                        if !self.civilian_alert_soldier(false) {
+                            self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
+                        }
+                    }
+                }
+            }
+            Substate::SeekingCivilianRunningToSoldierSeen => {
+                if matches!(
+                    event,
+                    StimulusType::EventReachPoint | StimulusType::EventTimer
+                ) {
+                    let target = self.engine.reporting_target(self.owner);
+                    let waiting = self
+                        .engine
+                        .ai(target, "civilian waiting target")
+                        .current_substate
+                        == Substate::SeekingWaitForAlertingCivilian;
+                    if !waiting {
+                        self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
+                    } else if event == StimulusType::EventTimer {
+                        self.engine
+                            .reporting_civilian_mut(self.owner)
+                            .base
+                            .launch_timer(20, frame);
+                    } else {
+                        self.reporting_state(
+                            Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
+                        );
+                        self.engine
+                            .reporting_civilian_mut(self.owner)
+                            .base
+                            .launch_timer(10, frame);
+                    }
+                }
+            }
+            Substate::SeekingCivilianGiveAlertingReportToSoldierStart => {
+                if event == StimulusType::EventTimer {
+                    self.reporting_state(Substate::SeekingCivilianGiveAlertingReportToSoldierPoint);
+                    let target = self.engine.reporting_target(self.owner);
+                    self.engine.execute_ai_callback(
+                        self.sim,
+                        self.assets,
+                        target,
+                        &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
+                    );
+                    self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                        remark: Remark::CivDenunciates,
+                        flags: 0,
+                    });
+
+                    let position = self
+                        .engine
+                        .reporting_civilian_mut(self.owner)
+                        .base
+                        .seek_position;
+                    self.duty_point_to(position);
+                }
+            }
+            Substate::SeekingCivilianGiveAlertingReportToSoldierPoint => {
+                if event == StimulusType::EventDone {
+                    self.reporting_state(Substate::SeekingCivilianGiveAlertingReportToSoldierEnd);
+                    let target = self.engine.reporting_target(self.owner);
+                    let position = self.engine.live_ai_position(target);
+                    let elevation = self
+                        .engine
+                        .expect_entity(target, "civilian report facing target")
+                        .element_data()
+                        .position()
+                        .z as i16;
+                    self.duty_face_position_at_elevation(position, f32::from(elevation));
+                    let frame = self.engine.control.frame_counter;
+                    self.engine
+                        .reporting_civilian_mut(self.owner)
+                        .base
+                        .launch_timer(30, frame);
+                }
+            }
+            Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
+                if event == StimulusType::EventTimer {
+                    let civilian = self.engine.reporting_civilian_mut(self.owner);
+                    let center = civilian.base.seek_position;
+                    self.engine.execute_ai_panic(
+                        self.sim,
+                        self.assets,
+                        self.owner,
+                        Some(center),
+                        AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
+                    );
+                }
+            }
+            _ => return None,
+        }
+
+        Some(false)
+    }
+
+    fn civilian_hear(&mut self, noise: &crate::ai::Noise) {
+        match noise.noise_type {
+            crate::ai::NoiseType::Pfiiit => {
+                let Entity::Civilian(civilian) =
+                    self.engine.expect_entity(self.owner, "civilian whistle")
+                else {
+                    unreachable!("friendly owner is not civilian")
+                };
+                if civilian.civilian.cached_civilian_type != crate::profiles::CivilianType::Child {
+                    return;
+                }
+                self.engine
+                    .reporting_civilian_mut(self.owner)
+                    .base
+                    .set_emoticon(crate::ai::EmoticonType::QuestionMark);
+                self.duty_set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered whistle has no spatial layer");
+                self.engine
+                    .reporting_civilian_mut(self.owner)
+                    .base
+                    .seek_position = origin;
+                self.duty_face_position_at_elevation(origin, f32::from(noise.elevation));
+                let frame = self.engine.control.frame_counter;
+                self.engine
+                    .reporting_civilian_mut(self.owner)
+                    .base
+                    .launch_timer(70, frame);
+            }
+            crate::ai::NoiseType::Aaargh => {
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered scream has no spatial layer");
+                self.engine
+                    .reporting_civilian_mut(self.owner)
+                    .base
+                    .seek_position = origin;
+                if self
+                    .engine
+                    .expect_entity(self.owner, "screaming civilian")
+                    .camp()
+                    == crate::element::Camp::Royalists
+                    || !self.civilian_alert_soldier(false)
+                {
+                    let center = self
+                        .engine
+                        .reporting_civilian_mut(self.owner)
+                        .base
+                        .seek_position;
+                    self.engine.execute_ai_panic(
+                        self.sim,
+                        self.assets,
+                        self.owner,
+                        Some(center),
+                        AI_STANDARD_PANIC_RUNS as u8,
+                        crate::ai::AlertLevel::Red,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Select in registry order, then finish the route before evaluating its result.
+    pub(in crate::engine) fn civilian_alert_soldier(&mut self, check_door_path: bool) -> bool {
+        let Some(target) =
+            self.engine
+                .select_civilian_alert_soldier(self.assets, self.owner, check_door_path)
+        else {
+            return false;
+        };
+        self.reporting_state(Substate::SeekingCivilianRunningToSoldier);
+        self.engine
+            .reporting_civilian_mut(self.owner)
+            .base
+            .antagonist = Some(crate::ai::AiEntityHandle::new(target.index()));
+        self.approach_reporting_soldier();
+        if std::mem::take(
+            &mut self
+                .engine
+                .reporting_civilian_mut(self.owner)
+                .base
+                .couldnt_reachpoint,
+        ) {
+            if !check_door_path {
+                return self.civilian_alert_soldier(true);
+            }
+            self.engine.clear_civilian_alert_friends(self.owner);
+            return false;
+        }
+        self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+            remark: Remark::CivPanic,
+            flags: 0,
+        });
+
+        true
+    }
+
+    fn reporting_state(&mut self, substate: Substate) {
+        self.duty_set_state(AiState::Seeking, substate);
+    }
+
+    fn civilian_call_alert(&mut self, reached: bool) {
+        let frame = self.engine.control.frame_counter;
+        let target = self.engine.reporting_target(self.owner);
+        let accepted = self.engine.execute_ai_callback(
+            self.sim,
+            self.assets,
             target,
-            &Stimulus::with_human(StimulusType::CallAlert, owner.index()),
+            &Stimulus::with_human(StimulusType::CallAlert, self.owner.index()),
         );
         if !accepted {
-            self.execute_ai_panic(
-                sim,
-                assets,
-                owner,
+            self.engine.execute_ai_panic(
+                self.sim,
+                self.assets,
+                self.owner,
                 None,
                 AI_STANDARD_PANIC_RUNS as u8,
                 crate::ai::AlertLevel::Red,
@@ -588,71 +539,44 @@ impl EngineInner {
             return;
         }
         if reached {
-            self.clear_reporting_friends(owner);
+            self.engine.clear_reporting_friends(self.owner);
         }
-        self.reporting_state(
-            sim,
-            assets,
-            owner,
-            Substate::SeekingCivilianRunningToSoldierSeen,
-        );
+        self.reporting_state(Substate::SeekingCivilianRunningToSoldierSeen);
         if reached {
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint),
-            );
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventReachPoint));
         } else {
-            self.execute_ai_speech(
-                sim,
-                assets,
-                owner,
-                crate::ai::AiSpeechAttempt {
-                    remark: Remark::CivCallsSoldier,
-                    flags: 0,
-                },
-            );
+            self.execute_ai_speech(crate::ai::AiSpeechAttempt {
+                remark: Remark::CivCallsSoldier,
+                flags: 0,
+            });
 
-            self.approach_reporting_soldier(sim, assets, owner);
-            self.reporting_civilian_mut(owner)
+            self.approach_reporting_soldier();
+            self.engine
+                .reporting_civilian_mut(self.owner)
                 .base
                 .launch_timer(20, frame);
         }
     }
 
-    fn approach_reporting_soldier(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let target = self.reporting_target(owner);
-        let entity = self.expect_entity(target, "civilian approach forecast");
-        let passing_door = selected_pass_door_movement(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            target,
-        )
-        .is_some();
-        let input = extract_exact_forecast_input(self, entity, passing_door)
+    fn approach_reporting_soldier(&mut self) {
+        let target = self.engine.reporting_target(self.owner);
+        let entity = self
+            .engine
+            .expect_entity(target, "civilian approach forecast");
+        let passing_door =
+            selected_pass_door_movement(&self.engine.entities(), &self.engine.seq(), target)
+                .is_some();
+        let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("soldier forecast requires an actor");
         let position = crate::ai::forecast_destination_for_ia(
-            sim,
+            self.sim,
             &input,
-            &self.script_domains.interactables.doors,
-            &self.world.fast_grid.level.sectors,
-            &self.world.fast_grid.level.sector_number_map,
+            &self.engine.script_domains.interactables.doors,
+            &self.engine.world.fast_grid.level.sectors,
+            &self.engine.world.fast_grid.level.sector_number_map,
         )
         .position;
-        self.duty_go_near(
-            sim,
-            assets,
-            owner,
-            position,
-            AI_TALK_DISTANCE,
-            GotoFlags::RUN,
-        );
+        self.duty_go_near(position, AI_TALK_DISTANCE, GotoFlags::RUN);
     }
 }
 

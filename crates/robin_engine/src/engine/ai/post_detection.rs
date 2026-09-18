@@ -51,7 +51,7 @@ impl EngineInner {
             return;
         }
         let command = self.actor_command(npc_id);
-        let ai = self.world.entities.expect_ai_controller(
+        let ai = self.entities().expect_ai_controller(
             npc_id,
             format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
         );
@@ -154,10 +154,7 @@ impl EngineInner {
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
         let timer_fires = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("normal-timer NPC"));
+            let ai = self.ai(npc_id, "normal-timer NPC");
 
             ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
@@ -166,9 +163,7 @@ impl EngineInner {
         if !timer_fires {
             return;
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("normal-timer NPC before Think"))
+        self.ai_mut(npc_id, "normal-timer NPC before Think")
             .timer_is_running = false;
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
         self.execute_ai_callback(sim, assets, npc_id, &timer_stimulus);
@@ -211,13 +206,13 @@ impl EngineInner {
             if stimulus
                 .info
                 .live_target()
-                .is_some_and(|target| self.world.entities.get_legacy_slot(target.get()).is_none())
+                .is_some_and(|target| self.entities().get_legacy_slot(target.get()).is_none())
             {
                 tracing::warn!(npc = npc_id.index(), info = ?stimulus.info,
                     "dropping detached detection stimulus after its target left the live world");
                 continue;
             }
-            if self.world.entities.get(npc_id).is_none() {
+            if self.entities().get(npc_id).is_none() {
                 break;
             }
             match stimulus.info {
@@ -245,14 +240,8 @@ impl EngineInner {
                 crate::ai::StimulusType::EventSeesShadow
             );
             if trace_shadow_delivery {
-                let npc = self.world.entities.expect_ai_actor_data(
-                    npc_id,
-                    format_args!("shadow-event receiver before Think"),
-                );
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("shadow-event receiver before Think"),
-                );
+                let npc = self.ai_actor(npc_id, "shadow-event receiver before Think");
+                let ai = self.ai(npc_id, "shadow-event receiver before Think");
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -274,14 +263,8 @@ impl EngineInner {
             }
             self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
             if trace_shadow_delivery {
-                let npc = self.world.entities.expect_ai_actor_data(
-                    npc_id,
-                    format_args!("shadow-event receiver after Think"),
-                );
-                let ai = self.world.entities.expect_ai_controller(
-                    npc_id,
-                    format_args!("shadow-event receiver after Think"),
-                );
+                let npc = self.ai_actor(npc_id, "shadow-event receiver after Think");
+                let ai = self.ai(npc_id, "shadow-event receiver after Think");
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -317,7 +300,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<_> = self.entities().ai_owner_ids().collect();
         for npc_id in npc_ids {
             self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
         }
@@ -331,10 +314,7 @@ impl EngineInner {
     ) {
         loop {
             let stimulus = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("retained-FIFO NPC"));
+                let ai = self.ai_mut(npc_id, "retained-FIFO NPC");
                 // A previous queued Think may acquire a new lock. The
                 // original loop stops immediately and preserves the rest.
                 if !ai.locks_flag_field.is_empty() || ai.script_locked {

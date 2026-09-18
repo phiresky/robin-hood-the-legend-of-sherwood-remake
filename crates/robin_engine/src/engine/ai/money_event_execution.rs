@@ -4,9 +4,11 @@ use crate::ai::{
     ReportType, Stimulus, StimulusInfo, StimulusType, Substate,
 };
 use crate::parameters_ai;
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_money_event(
         &mut self,
         sim: &SimulationContext,
@@ -14,211 +16,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        use StimulusType::*;
-        use Substate::*;
-        if !stimulus.stimulus_type.is_expected_class() {
-            return Option::None;
-        }
-        let state = self.seek_enemy(owner).base.current_substate;
-        if !matches!(
-            state,
-            WonderingMoneyReactiontime
-                | WonderingApproachingMoney
-                | WonderingRunningForMoney
-                | WonderingTakingMoney
-                | WonderingWatchingForMoreMoney
-                | WonderingBrawlReactiontime
-                | WonderingBrawlApproaching
-                | WonderingBrawlHitting
-                | WonderingBrawlGotHit
-                | WonderingBrawlRecovering
-                | WonderingApproachingToLoot
-                | WonderingLooting
-                | WonderingDrinkingAle
-                | WonderingAleAway
-        ) {
-            return Option::None;
-        }
-        match (state, stimulus.stimulus_type) {
-            (WonderingMoneyReactiontime, EventTimer) => {
-                self.money_reaction_live(sim, assets, owner)
-            }
-            (WonderingApproachingMoney | WonderingRunningForMoney, EventTimer) => {
-                self.money_race_live(sim, assets, owner)
-            }
-            (WonderingApproachingMoney | WonderingRunningForMoney, EventReachPoint) => {
-                self.money_arrival_live(sim, assets, owner)
-            }
-            (WonderingTakingMoney, _) => {
-                let next = self.take_nearest_live_money(owner).map(AiEntityHandle::new);
-                self.seek_enemy_mut(owner).base.interesting_object = next;
-                if next.is_some() {
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Wondering,
-                        WonderingMoneyReactiontime,
-                    );
-                    self.money_event_timer(owner, 1);
-                } else {
-                    self.watch_money_live(sim, assets, owner);
-                }
-            }
-            (WonderingWatchingForMoreMoney, EventDone) => self.execute_money_fight(
-                sim,
-                assets,
-                owner,
-                MoneyFightOperation::CollectOrLootAfterLook,
-            ),
-            (WonderingDrinkingAle, EventDone) | (WonderingAleAway, EventTimer) => {
-                if !self.seek_enemy(owner).other_seen_ale.is_empty() {
-                    let next =
-                        AiEntityHandle::new(self.seek_enemy_mut(owner).other_seen_ale.remove(0));
-                    let ai = self.seek_enemy_mut(owner);
-                    ai.base.interesting_object = Some(next);
-                    ai.base.object_of_desire = Some(next);
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Wondering,
-                        WonderingApproachingAle,
-                    );
-                    let target = self.money_object(owner);
-                    self.duty_go_near(
-                        sim,
-                        assets,
-                        owner,
-                        self.live_ai_position(target),
-                        parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
-                        GotoFlags::FIND_ACCESSIBLE,
-                    );
-                    let here = self.live_ai_position(owner);
-                    self.seek_enemy_mut(owner).return_to_patrol_point = here;
-                    self.money_event_timer(owner, 1);
-                } else {
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
-                }
-            }
-            (WonderingBrawlReactiontime, EventTimer) => {
-                self.clean_live_seen_money(owner);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    WonderingBrawlApproaching,
-                );
-                self.seek_enemy_mut(owner)
-                    .base
-                    .set_emoticon(EmoticonType::Thunderstorm);
-                self.money_say_live(sim, assets, owner, Remark::GoldBrawl);
-                let position = self.live_ai_position(self.money_friend(owner));
-                self.seek_enemy_mut(owner).base.seek_position = position;
-                self.duty_go_near(
-                    sim,
-                    assets,
-                    owner,
-                    position,
-                    parameters_ai::AI_HIT_DISTANCE,
-                    GotoFlags::RUN,
-                );
-                self.money_event_timer(owner, 1);
-            }
-            (WonderingBrawlApproaching, EventTimer) => {
-                let position = self.live_ai_position(self.money_friend(owner));
-                let old = self.seek_enemy(owner).base.seek_position;
-                if (old.x - position.x).abs().max((old.y - position.y).abs()) > 3.0 {
-                    self.seek_enemy_mut(owner).base.seek_position = position;
-                    self.duty_go_near(
-                        sim,
-                        assets,
-                        owner,
-                        position,
-                        parameters_ai::AI_HIT_DISTANCE,
-                        GotoFlags::RUN,
-                    );
-                    self.money_event_timer(owner, 1);
-                }
-            }
-            (WonderingBrawlApproaching, EventReachPoint) => {
-                self.brawl_arrival_live(sim, assets, owner)
-            }
-            (WonderingBrawlHitting, EventDone) => {
-                let center = self.live_ai_position(owner);
-                let count = self.world.npc_registry_ids.len();
-                for index in 0..count {
-                    let target = self.world.npc_registry_ids[index];
-                    if matches!(self.get_entity(target), Some(Entity::Civilian(_)))
-                        && self.live_ai_detects_180(assets, target, owner)
-                    {
-                        let mut panic = Stimulus::new(EventPanic);
-                        panic.info = StimulusInfo::Position(center);
-                        self.execute_ai_callback(sim, assets, target, &panic);
-                    }
-                }
-                self.execute_maybe_officer_sees_me_fighting(sim, assets, owner);
-                self.execute_money_fight(
-                    sim,
-                    assets,
-                    owner,
-                    MoneyFightOperation::FinishHitAfterOfficer,
-                );
-            }
-            (WonderingBrawlGotHit, EventDone) => {
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    WonderingBrawlRecovering,
-                );
-                self.execute_maybe_officer_sees_me_fighting(sim, assets, owner);
-                self.seek_enemy_mut(owner)
-                    .base
-                    .set_emoticon(EmoticonType::Thunderstorm);
-                if let Some(friend) = self.seek_enemy(owner).base.friend_in_trouble {
-                    let target = self.expect_human_id_for_ai_handle(friend.get(), "brawl attacker");
-                    if self
-                        .expect_entity(target, "brawl attacker")
-                        .soldier_data()
-                        .is_some()
-                    {
-                        assert_ne!(target, owner, "brawler cannot hit himself");
-                        self.seek_enemy_mut(owner)
-                            .money_fight_enemies
-                            .push(friend.get());
-                    }
-                }
-                if self.expect_entity(owner, "brawler posture").posture()
-                    == crate::element::Posture::Lying
-                {
-                    self.stop_ai_owner(sim, assets, owner);
-                    self.launch_element(
-                        sim,
-                        assets,
-                        crate::sequence::SequenceElement::new(
-                            1,
-                            crate::element::Command::StandUp,
-                            Some(owner),
-                        ),
-                    );
-                } else {
-                    self.execute_ai_callback(sim, assets, owner, &Stimulus::new(EventDone));
-                }
-            }
-            (WonderingBrawlRecovering, EventDone) => {
-                self.execute_money_fight(sim, assets, owner, MoneyFightOperation::RecoverBrawl)
-            }
-            (WonderingApproachingToLoot, EventReachPoint) => {
-                self.loot_arrival_live(sim, assets, owner)
-            }
-            (WonderingLooting, EventDone) => self.loot_done_live(sim, assets, owner),
-            _ => {}
-        }
-
-        Some(false)
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_money_event(stimulus)
     }
 
     fn money_event_timer(&mut self, owner: EntityId, duration: u32) {
@@ -226,20 +24,6 @@ impl EngineInner {
         self.seek_enemy_mut(owner)
             .base
             .launch_timer(duration, frame);
-    }
-    fn money_say_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        remark: Remark,
-    ) {
-        self.execute_ai_speech(
-            sim,
-            assets,
-            owner,
-            crate::ai::AiSpeechAttempt { remark, flags: 0 },
-        );
     }
     fn money_object(&self, owner: EntityId) -> EntityId {
         let handle = self
@@ -270,32 +54,224 @@ impl EngineInner {
             self.world.soldier_registry.camp(camp)[index],
         ))
     }
-    fn money_reaction_live(
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_money_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let actor = self.expect_entity(owner, "money reaction owner");
-        let ai = self.seek_enemy(owner);
+        stimulus: &Stimulus,
+    ) -> Option<bool> {
+        use StimulusType::*;
+        use Substate::*;
+        if !stimulus.stimulus_type.is_expected_class() {
+            return Option::None;
+        }
+        let state = self.engine.seek_enemy(self.owner).base.current_substate;
+        if !matches!(
+            state,
+            WonderingMoneyReactiontime
+                | WonderingApproachingMoney
+                | WonderingRunningForMoney
+                | WonderingTakingMoney
+                | WonderingWatchingForMoreMoney
+                | WonderingBrawlReactiontime
+                | WonderingBrawlApproaching
+                | WonderingBrawlHitting
+                | WonderingBrawlGotHit
+                | WonderingBrawlRecovering
+                | WonderingApproachingToLoot
+                | WonderingLooting
+                | WonderingDrinkingAle
+                | WonderingAleAway
+        ) {
+            return Option::None;
+        }
+        match (state, stimulus.stimulus_type) {
+            (WonderingMoneyReactiontime, EventTimer) => self.money_reaction_live(),
+            (WonderingApproachingMoney | WonderingRunningForMoney, EventTimer) => {
+                self.money_race_live()
+            }
+            (WonderingApproachingMoney | WonderingRunningForMoney, EventReachPoint) => {
+                self.money_arrival_live()
+            }
+            (WonderingTakingMoney, _) => {
+                let next = self
+                    .engine
+                    .take_nearest_live_money(self.owner)
+                    .map(AiEntityHandle::new);
+                self.engine
+                    .seek_enemy_mut(self.owner)
+                    .base
+                    .interesting_object = next;
+                if next.is_some() {
+                    self.duty_set_state(AiState::Wondering, WonderingMoneyReactiontime);
+                    self.engine.money_event_timer(self.owner, 1);
+                } else {
+                    self.watch_money_live();
+                }
+            }
+            (WonderingWatchingForMoreMoney, EventDone) => {
+                self.execute_money_fight(MoneyFightOperation::CollectOrLootAfterLook)
+            }
+            (WonderingDrinkingAle, EventDone) | (WonderingAleAway, EventTimer) => {
+                if !self.engine.seek_enemy(self.owner).other_seen_ale.is_empty() {
+                    let next = AiEntityHandle::new(
+                        self.engine
+                            .seek_enemy_mut(self.owner)
+                            .other_seen_ale
+                            .remove(0),
+                    );
+                    let ai = self.engine.seek_enemy_mut(self.owner);
+                    ai.base.interesting_object = Some(next);
+                    ai.base.object_of_desire = Some(next);
+                    self.duty_set_state(AiState::Wondering, WonderingApproachingAle);
+                    let target = self.engine.money_object(self.owner);
+                    self.duty_go_near(
+                        self.engine.live_ai_position(target),
+                        parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
+                        GotoFlags::FIND_ACCESSIBLE,
+                    );
+                    let here = self.engine.live_ai_position(self.owner);
+                    self.engine
+                        .seek_enemy_mut(self.owner)
+                        .return_to_patrol_point = here;
+                    self.engine.money_event_timer(self.owner, 1);
+                } else {
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
+                }
+            }
+            (WonderingBrawlReactiontime, EventTimer) => {
+                self.engine.clean_live_seen_money(self.owner);
+                self.duty_set_state(AiState::Wondering, WonderingBrawlApproaching);
+                self.engine
+                    .seek_enemy_mut(self.owner)
+                    .base
+                    .set_emoticon(EmoticonType::Thunderstorm);
+                self.money_say_live(Remark::GoldBrawl);
+                let position = self
+                    .engine
+                    .live_ai_position(self.engine.money_friend(self.owner));
+                self.engine.seek_enemy_mut(self.owner).base.seek_position = position;
+                self.duty_go_near(position, parameters_ai::AI_HIT_DISTANCE, GotoFlags::RUN);
+                self.engine.money_event_timer(self.owner, 1);
+            }
+            (WonderingBrawlApproaching, EventTimer) => {
+                let position = self
+                    .engine
+                    .live_ai_position(self.engine.money_friend(self.owner));
+                let old = self.engine.seek_enemy(self.owner).base.seek_position;
+                if (old.x - position.x).abs().max((old.y - position.y).abs()) > 3.0 {
+                    self.engine.seek_enemy_mut(self.owner).base.seek_position = position;
+                    self.duty_go_near(position, parameters_ai::AI_HIT_DISTANCE, GotoFlags::RUN);
+                    self.engine.money_event_timer(self.owner, 1);
+                }
+            }
+            (WonderingBrawlApproaching, EventReachPoint) => self.brawl_arrival_live(),
+            (WonderingBrawlHitting, EventDone) => {
+                let center = self.engine.live_ai_position(self.owner);
+                let count = self.engine.world.npc_registry_ids.len();
+                for index in 0..count {
+                    let target = self.engine.world.npc_registry_ids[index];
+                    if matches!(self.engine.get_entity(target), Some(Entity::Civilian(_)))
+                        && self
+                            .engine
+                            .live_ai_detects_180(self.assets, target, self.owner)
+                    {
+                        let mut panic = Stimulus::new(EventPanic);
+                        panic.info = StimulusInfo::Position(center);
+                        self.engine
+                            .execute_ai_callback(self.sim, self.assets, target, &panic);
+                    }
+                }
+                self.execute_maybe_officer_sees_me_fighting();
+                self.execute_money_fight(MoneyFightOperation::FinishHitAfterOfficer);
+            }
+            (WonderingBrawlGotHit, EventDone) => {
+                self.duty_set_state(AiState::Wondering, WonderingBrawlRecovering);
+                self.execute_maybe_officer_sees_me_fighting();
+                self.engine
+                    .seek_enemy_mut(self.owner)
+                    .base
+                    .set_emoticon(EmoticonType::Thunderstorm);
+                if let Some(friend) = self.engine.seek_enemy(self.owner).base.friend_in_trouble {
+                    let target = self
+                        .engine
+                        .expect_human_id_for_ai_handle(friend.get(), "brawl attacker");
+                    if self
+                        .engine
+                        .expect_entity(target, "brawl attacker")
+                        .soldier_data()
+                        .is_some()
+                    {
+                        assert_ne!(target, self.owner, "brawler cannot hit himself");
+                        self.engine
+                            .seek_enemy_mut(self.owner)
+                            .money_fight_enemies
+                            .push(friend.get());
+                    }
+                }
+                if self
+                    .engine
+                    .expect_entity(self.owner, "brawler posture")
+                    .posture()
+                    == crate::element::Posture::Lying
+                {
+                    self.stop_ai_owner();
+                    self.engine.launch_element(
+                        self.sim,
+                        self.assets,
+                        crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::StandUp,
+                            Some(self.owner),
+                        ),
+                    );
+                } else {
+                    self.execute_ai_callback(&Stimulus::new(EventDone));
+                }
+            }
+            (WonderingBrawlRecovering, EventDone) => {
+                self.execute_money_fight(MoneyFightOperation::RecoverBrawl)
+            }
+            (WonderingApproachingToLoot, EventReachPoint) => self.loot_arrival_live(),
+            (WonderingLooting, EventDone) => self.loot_done_live(),
+            _ => {}
+        }
+
+        Some(false)
+    }
+
+    fn money_say_live(&mut self, remark: Remark) {
+        self.execute_ai_speech(crate::ai::AiSpeechAttempt { remark, flags: 0 });
+    }
+
+    fn money_reaction_live(&mut self) {
+        let actor = self
+            .engine
+            .expect_entity(self.owner, "money reaction owner");
+        let ai = self.engine.seek_enemy(self.owner);
         let wants = i32::from(ai.base.blood_alcohol) > parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || (actor.is_active()
-                && !self.entity_data_in_building_sector(actor.element_data())
-                && ai.profile(&assets.profile_manager).money > 0);
+                && !self
+                    .engine
+                    .entity_data_in_building_sector(actor.element_data())
+                && ai.profile(&self.assets.profile_manager).money > 0);
         let angry = if wants {
-            let position = self.live_ai_position(self.money_object(owner));
+            let position = self
+                .engine
+                .live_ai_position(self.engine.money_object(self.owner));
             let camp = actor.camp();
-            (0..self.world.soldier_registry.camp(camp).len()).any(|index| {
-                let officer = self.money_soldier_at(camp, index);
+            (0..self.engine.world.soldier_registry.camp(camp).len()).any(|index| {
+                let officer = self.engine.money_soldier_at(camp, index);
                 if !matches!(
-                    self.seek_enemy(officer).base.current_substate,
+                    self.engine.seek_enemy(officer).base.current_substate,
                     Substate::WonderingOfficerSeeingBrawl
                         | Substate::WonderingOfficerApproachingBrawl
                         | Substate::WonderingOfficerFinishingBrawl
                 ) {
                     return false;
                 }
-                let there = self.live_ai_position(officer);
+                let there = self.engine.live_ai_position(officer);
                 (position.x - there.x)
                     .abs()
                     .max((position.y - there.y).abs())
@@ -305,257 +281,242 @@ impl EngineInner {
             false
         };
         if wants && !angry {
-            if self.seek_enemy(owner).base.interesting_object.is_none()
+            if self
+                .engine
+                .seek_enemy(self.owner)
+                .base
+                .interesting_object
+                .is_none()
                 || !self
-                    .expect_entity(self.money_object(owner), "reacted coin")
+                    .engine
+                    .expect_entity(self.engine.money_object(self.owner), "reacted coin")
                     .is_active()
             {
-                let next = self.take_nearest_live_money(owner).map(AiEntityHandle::new);
-                self.seek_enemy_mut(owner).base.interesting_object = next;
+                let next = self
+                    .engine
+                    .take_nearest_live_money(self.owner)
+                    .map(AiEntityHandle::new);
+                self.engine
+                    .seek_enemy_mut(self.owner)
+                    .base
+                    .interesting_object = next;
             }
-            self.money_say_live(sim, assets, owner, Remark::GoldYes);
-            if self.seek_enemy(owner).base.interesting_object.is_some() {
-                self.clean_live_seen_money(owner);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingApproachingMoney,
-                );
-                let frame = self.control.frame_counter;
-                self.seek_enemy_mut(owner).base.set_transient_emoticon(
-                    EmoticonType::Sun,
-                    20,
-                    frame,
-                );
+            self.money_say_live(Remark::GoldYes);
+            if self
+                .engine
+                .seek_enemy(self.owner)
+                .base
+                .interesting_object
+                .is_some()
+            {
+                self.engine.clean_live_seen_money(self.owner);
+                self.duty_set_state(AiState::Wondering, Substate::WonderingApproachingMoney);
+                let frame = self.engine.control.frame_counter;
+                self.engine
+                    .seek_enemy_mut(self.owner)
+                    .base
+                    .set_transient_emoticon(EmoticonType::Sun, 20, frame);
 
-                let target = self.money_object(owner);
+                let target = self.engine.money_object(self.owner);
                 self.duty_go_near(
-                    sim,
-                    assets,
-                    owner,
-                    self.live_ai_position(target),
+                    self.engine.live_ai_position(target),
                     parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
                     GotoFlags::FIND_ACCESSIBLE,
                 );
-                self.money_event_timer(owner, 5);
+                self.engine.money_event_timer(self.owner, 5);
             } else {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+                self.execute_ai_return_to_duty(DutyFlags::empty());
             }
         } else {
-            let frame = self.control.frame_counter;
-            self.seek_enemy_mut(owner)
+            let frame = self.engine.control.frame_counter;
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .base
                 .set_transient_emoticon(EmoticonType::Cloud, 50, frame);
-            let remark = if self.expect_entity(owner, "coin refusal").is_vip() {
+            let remark = if self
+                .engine
+                .expect_entity(self.owner, "coin refusal")
+                .is_vip()
+            {
                 Remark::VipGoldNo
             } else {
                 Remark::GoldNo
             };
-            self.money_say_live(sim, assets, owner, remark);
-            self.seek_enemy_mut(owner).other_seen_money.clear();
-            self.forget_ai_nearby_coins_live(owner);
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::KEEP_EMOTICON);
+            self.money_say_live(remark);
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .other_seen_money
+                .clear();
+            self.engine.forget_ai_nearby_coins_live(self.owner);
+            self.execute_ai_return_to_duty(DutyFlags::KEEP_EMOTICON);
         }
     }
-    fn money_race_live(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
-        let camp = self.expect_entity(owner, "money race camp").camp();
-        let racing = (0..self.world.soldier_registry.camp(camp).len()).any(|index| {
-            let other = self.money_soldier_at(camp, index);
-            let state = self.seek_enemy(other).base.current_substate;
-            other != owner
+
+    fn money_race_live(&mut self) {
+        let camp = self
+            .engine
+            .expect_entity(self.owner, "money race camp")
+            .camp();
+        let racing = (0..self.engine.world.soldier_registry.camp(camp).len()).any(|index| {
+            let other = self.engine.money_soldier_at(camp, index);
+            let state = self.engine.seek_enemy(other).base.current_substate;
+            other != self.owner
                 && (state.is_take_money() || state.is_fight_for_money())
                 && state != Substate::WonderingMoneyReactiontime
-                && self.live_ai_detects_180(assets, owner, other)
+                && self
+                    .engine
+                    .live_ai_detects_180(self.assets, self.owner, other)
         });
         if racing {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingRunningForMoney,
-            );
-            let target = self.money_object(owner);
+            self.duty_set_state(AiState::Wondering, Substate::WonderingRunningForMoney);
+            let target = self.engine.money_object(self.owner);
             self.duty_go_near(
-                sim,
-                assets,
-                owner,
-                self.live_ai_position(target),
+                self.engine.live_ai_position(target),
                 parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
                 GotoFlags::RUN | GotoFlags::FIND_ACCESSIBLE,
             );
-            if let Some(chief) = self.seek_enemy(owner).base.patrol_chief
+            if let Some(chief) = self.engine.seek_enemy(self.owner).base.patrol_chief
                 && self
+                    .engine
                     .expect_entity(chief, "money patrol chief")
                     .soldier_data()
                     .is_some()
-                && self.seek_enemy(chief).profile(&assets.profile_manager).rank
+                && self
+                    .engine
+                    .seek_enemy(chief)
+                    .profile(&self.assets.profile_manager)
+                    .rank
                     == crate::profiles::ProfileRank::Officer
-                && self.live_ai_detects_180(assets, chief, owner)
+                && self
+                    .engine
+                    .live_ai_detects_180(self.assets, chief, self.owner)
             {
                 let mut event = Stimulus::new(StimulusType::EventSeesBrawl);
-                event.info = StimulusInfo::Human(AiEntityHandle::new(owner.index()));
-                self.execute_ai_callback(sim, assets, chief, &event);
+                event.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
+                self.engine
+                    .execute_ai_callback(self.sim, self.assets, chief, &event);
             }
         } else {
-            self.money_event_timer(owner, 20);
+            self.engine.money_event_timer(self.owner, 20);
         }
     }
-    fn watch_money_live(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
-        self.duty_set_state(
-            sim,
-            assets,
-            owner,
-            AiState::Wondering,
-            Substate::WonderingWatchingForMoreMoney,
-        );
-        self.execute_ai_look_sidewards(sim, assets, owner, crate::ai::LookDirection::LeftRight);
+
+    fn watch_money_live(&mut self) {
+        self.duty_set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
+        self.execute_ai_look_sidewards(crate::ai::LookDirection::LeftRight);
     }
-    fn money_interaction_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-        command: crate::element::Command,
-    ) {
+
+    fn money_interaction_live(&mut self, target: EntityId, command: crate::element::Command) {
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(crate::sequence::SequenceElement::new_interaction(
             1,
             command,
-            Some(owner),
+            Some(self.owner),
             Some(target),
         ));
-        self.launch_sequence(sim, assets, sequence);
+        self.engine.launch_sequence(self.sim, self.assets, sequence);
     }
-    fn money_arrival_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let target = self.money_object(owner);
-        let position = self.live_ai_position(target);
-        let here = self.live_ai_position(owner);
-        if self.expect_entity(target, "coin arrival").is_active()
+
+    fn money_arrival_live(&mut self) {
+        let target = self.engine.money_object(self.owner);
+        let position = self.engine.live_ai_position(target);
+        let here = self.engine.live_ai_position(self.owner);
+        if self
+            .engine
+            .expect_entity(target, "coin arrival")
+            .is_active()
             && (position.x - here.x).abs().max((position.y - here.y).abs()) < 25.0
         {
-            let camp = self.expect_entity(owner, "coin recipient camp").camp();
-            self.stop_ai_owner(sim, assets, owner);
+            let camp = self
+                .engine
+                .expect_entity(self.owner, "coin recipient camp")
+                .camp();
+            self.stop_ai_owner();
             self.money_interaction_live(
-                sim,
-                assets,
-                owner,
-                self.money_object(owner),
+                self.engine.money_object(self.owner),
                 crate::element::Command::Take,
             );
             let stolen = crate::ai::StolenObject {
                 object: self
-                    .seek_enemy(owner)
+                    .engine
+                    .seek_enemy(self.owner)
                     .base
                     .interesting_object
                     .expect("taken coin"),
-                thief: AiEntityHandle::new(owner.index()),
+                thief: AiEntityHandle::new(self.owner.index()),
             };
-            let count = self.world.soldier_registry.camp(camp).len();
+            let count = self.engine.world.soldier_registry.camp(camp).len();
             for index in 0..count {
-                let other = self.money_soldier_at(camp, index);
-                let state = self.seek_enemy(other).base.current_substate;
-                if other != owner && (state.is_take_money() || state.is_fight_for_money()) {
+                let other = self.engine.money_soldier_at(camp, index);
+                let state = self.engine.seek_enemy(other).base.current_substate;
+                if other != self.owner && (state.is_take_money() || state.is_fight_for_money()) {
                     let mut event = Stimulus::new(StimulusType::EventObjectAway);
                     event.info = StimulusInfo::Stolen(stolen);
-                    self.execute_ai_callback(sim, assets, other, &event);
+                    self.engine
+                        .execute_ai_callback(self.sim, self.assets, other, &event);
                 }
             }
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingTakingMoney,
-            );
+            self.duty_set_state(AiState::Wondering, Substate::WonderingTakingMoney);
         } else {
-            self.watch_money_live(sim, assets, owner);
+            self.watch_money_live();
         }
     }
-    fn brawl_arrival_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        if self.seek_enemy(owner).base.friend_in_trouble.is_none() {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+
+    fn brawl_arrival_live(&mut self) {
+        if self
+            .engine
+            .seek_enemy(self.owner)
+            .base
+            .friend_in_trouble
+            .is_none()
+        {
+            self.execute_ai_return_to_duty(DutyFlags::empty());
             return;
         }
-        let friend = self.money_friend(owner);
-        if self
-            .world
-            .entities
-            .expect_ai_controller(friend, format_args!("brawl partner state"))
-            .current_state
-            == AiState::Sleeping
-        {
-            self.seek_enemy_mut(owner)
+        let friend = self.engine.money_friend(self.owner);
+        if self.engine.ai(friend, "brawl partner state").current_state == AiState::Sleeping {
+            self.engine
+                .seek_enemy_mut(self.owner)
                 .money_fight_enemies
                 .retain(|&handle| handle != friend.index());
-            self.seek_enemy_mut(owner).base.friend_in_trouble = Option::None;
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingBrawlHitting,
-            );
-            self.execute_ai_callback(sim, assets, owner, &Stimulus::new(StimulusType::EventDone));
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .base
+                .friend_in_trouble = Option::None;
+            self.duty_set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventDone));
         } else {
-            let a = self.live_ai_position(owner);
-            let b = self.live_ai_position(friend);
+            let a = self.engine.live_ai_position(self.owner);
+            let b = self.engine.live_ai_position(friend);
             let dx = b.x - a.x;
             let dy = b.y - a.y;
             if dx.hypot(dy) > parameters_ai::AI_HIT_DISTANCE as f32 + 3.0 {
                 self.duty_go_near(
-                    sim,
-                    assets,
-                    owner,
-                    self.live_ai_position(friend),
+                    self.engine.live_ai_position(friend),
                     parameters_ai::AI_HIT_DISTANCE,
                     GotoFlags::RUN,
                 );
             } else {
-                assert_ne!(owner, friend, "brawler cannot hit himself");
-                self.stop_ai_owner(sim, assets, owner);
+                assert_ne!(self.owner, friend, "brawler cannot hit himself");
+                self.stop_ai_owner();
                 self.money_interaction_live(
-                    sim,
-                    assets,
-                    owner,
-                    self.money_friend(owner),
+                    self.engine.money_friend(self.owner),
                     crate::element::Command::HitCmd,
                 );
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingBrawlHitting,
-                );
+                self.duty_set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
             }
         }
     }
-    fn loot_arrival_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        let body = self.money_body(owner);
+
+    fn loot_arrival_live(&mut self) {
+        let body = self.engine.money_body(self.owner);
         let a = self
-            .expect_entity(owner, "looter position")
+            .engine
+            .expect_entity(self.owner, "looter position")
             .element_data()
             .position();
         let b = self
+            .engine
             .expect_entity(body, "loot body position")
             .element_data()
             .position();
@@ -564,107 +525,107 @@ impl EngineInner {
             .max(((b.y - a.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs())
             .max((b.z - a.z).abs());
         if distance > 100.0 {
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingLooting,
-            );
-            self.execute_ai_callback(sim, assets, owner, &Stimulus::new(StimulusType::EventDone));
-        } else if self.expect_entity(body, "loot posture").posture()
+            self.duty_set_state(AiState::Wondering, Substate::WonderingLooting);
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventDone));
+        } else if self.engine.expect_entity(body, "loot posture").posture()
             == crate::element::Posture::Tied
         {
-            let position = self.live_ai_position(body);
-            let report = &mut self.seek_enemy_mut(owner).base.my_reconnaissance_report;
+            let position = self.engine.live_ai_position(body);
+            let report = &mut self
+                .engine
+                .seek_enemy_mut(self.owner)
+                .base
+                .my_reconnaissance_report;
             report.add_seen_body(body.index());
             report.update(ReportType::Body, position);
-            self.duty_set_state(sim, assets, owner, AiState::Seeking, Substate::SeekingBody);
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint),
-            );
+            self.duty_set_state(AiState::Seeking, Substate::SeekingBody);
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventReachPoint));
         } else {
-            self.seek_enemy_mut(owner).old_money = self
-                .expect_entity(owner, "looter money")
+            self.engine.seek_enemy_mut(self.owner).old_money = self
+                .engine
+                .expect_entity(self.owner, "looter money")
                 .npc_data()
                 .unwrap()
                 .money as u16;
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingLooting,
-            );
-            self.stop_ai_owner(sim, assets, owner);
+            self.duty_set_state(AiState::Wondering, Substate::WonderingLooting);
+            self.stop_ai_owner();
             self.money_interaction_live(
-                sim,
-                assets,
-                owner,
-                self.money_body(owner),
+                self.engine.money_body(self.owner),
                 crate::element::Command::SearchCmd,
             );
         }
     }
-    fn loot_done_live(&mut self, sim: &SimulationContext, assets: &LevelAssets, owner: EntityId) {
+
+    fn loot_done_live(&mut self) {
         let gained = self
-            .expect_entity(owner, "looter money")
+            .engine
+            .expect_entity(self.owner, "looter money")
             .npc_data()
             .unwrap()
             .money
-            > u32::from(self.seek_enemy(owner).old_money);
-        let frame = self.control.frame_counter;
-        self.seek_enemy_mut(owner).base.set_transient_emoticon(
-            if gained {
-                EmoticonType::Sun
-            } else {
-                EmoticonType::Cloud
-            },
-            20,
-            frame,
-        );
-        self.money_say_live(
-            sim,
-            assets,
-            owner,
-            if gained {
-                Remark::SearchingSoldierGold
-            } else {
-                Remark::SearchingSoldierNothing
-            },
-        );
-        while let Some(&next) = self.seek_enemy(owner).money_fight_victims.first() {
-            let body = self.expect_human_id_for_ai_handle(next, "next looted victim");
-            if !self.seek_enemy(body).base.looted_after_money_fight {
+            > u32::from(self.engine.seek_enemy(self.owner).old_money);
+        let frame = self.engine.control.frame_counter;
+        self.engine
+            .seek_enemy_mut(self.owner)
+            .base
+            .set_transient_emoticon(
+                if gained {
+                    EmoticonType::Sun
+                } else {
+                    EmoticonType::Cloud
+                },
+                20,
+                frame,
+            );
+        self.money_say_live(if gained {
+            Remark::SearchingSoldierGold
+        } else {
+            Remark::SearchingSoldierNothing
+        });
+        while let Some(&next) = self
+            .engine
+            .seek_enemy(self.owner)
+            .money_fight_victims
+            .first()
+        {
+            let body = self
+                .engine
+                .expect_human_id_for_ai_handle(next, "next looted victim");
+            if !self.engine.seek_enemy(body).base.looted_after_money_fight {
                 break;
             }
-            self.seek_enemy_mut(owner).money_fight_victims.remove(0);
+            self.engine
+                .seek_enemy_mut(self.owner)
+                .money_fight_victims
+                .remove(0);
         }
-        if !self.seek_enemy(owner).money_fight_victims.is_empty() {
-            let next = self.seek_enemy_mut(owner).money_fight_victims.remove(0);
-            self.seek_enemy_mut(owner).base.detected_body = Some(AiEntityHandle::new(next));
-            let body = self.money_body(owner);
-            self.seek_enemy_mut(body).base.looted_after_money_fight = true;
-            self.duty_set_state(
-                sim,
-                assets,
-                owner,
-                AiState::Wondering,
-                Substate::WonderingApproachingToLoot,
-            );
+        if !self
+            .engine
+            .seek_enemy(self.owner)
+            .money_fight_victims
+            .is_empty()
+        {
+            let next = self
+                .engine
+                .seek_enemy_mut(self.owner)
+                .money_fight_victims
+                .remove(0);
+            self.engine.seek_enemy_mut(self.owner).base.detected_body =
+                Some(AiEntityHandle::new(next));
+            let body = self.engine.money_body(self.owner);
+            self.engine
+                .seek_enemy_mut(body)
+                .base
+                .looted_after_money_fight = true;
+            self.duty_set_state(AiState::Wondering, Substate::WonderingApproachingToLoot);
             self.duty_go_near(
-                sim,
-                assets,
-                owner,
-                self.live_ai_position(self.money_body(owner)),
+                self.engine
+                    .live_ai_position(self.engine.money_body(self.owner)),
                 parameters_ai::AI_STOP_BEFORE_MONEY_DISTANCE,
                 GotoFlags::empty(),
             );
         } else {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::KEEP_EMOTICON);
+            self.execute_ai_return_to_duty(DutyFlags::KEEP_EMOTICON);
         }
     }
 }

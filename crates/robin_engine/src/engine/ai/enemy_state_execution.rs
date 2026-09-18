@@ -19,8 +19,7 @@ impl EngineInner {
         if ai.base.current_state == AiState::Menacing && state != AiState::Menacing {
             if let Some(pc) = ai.guarded_pc.take() {
                 let entity = self
-                    .world
-                    .entities
+                    .entities_mut()
                     .expect_entity_mut(EntityId::Pc(pc), format_args!("released guarded PC"));
                 let Entity::Pc(pc) = entity else {
                     unreachable!("typed PC guard")
@@ -67,10 +66,7 @@ impl EngineInner {
         if self.seek_enemy(owner).base.current_state == AiState::Sleeping
             && state != AiState::Sleeping
         {
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("awakening state owner"));
+            let npc = self.ai_actor_mut(owner, "awakening state owner");
             crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::LookForward);
         }
         if !matches!(
@@ -152,9 +148,7 @@ impl EngineInner {
         if self.seek_enemy(owner).base.current_state == AiState::Seeking
             && state != AiState::Seeking
         {
-            self.world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("departing search owner"))
+            self.ai_actor_mut(owner, "departing search owner")
                 .detectable_lists[crate::element::DetectableType::Beggar as usize]
                 .clear();
             self.seek_enemy_mut(owner).beggar_to_examine = None;

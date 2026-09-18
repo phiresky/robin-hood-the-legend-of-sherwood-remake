@@ -267,7 +267,7 @@ impl EngineInner {
         self.ai.global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
-        let npc_ids: Vec<EntityId> = self.world.entities.ai_owner_ids().collect();
+        let npc_ids: Vec<EntityId> = self.entities().ai_owner_ids().collect();
         let hiking_paths = assets.navigation.hiking_paths.clone();
         let ambush_points_count = self.ai.global.ambush_points.len();
 
@@ -368,7 +368,7 @@ impl EngineInner {
         // -- Phase 1: Peek at the entity to classify (enemy / friendly,
         //    camp) and read the fields we need for the obstacle fix. --
         let (is_enemy, is_friendly, self_camp, move_box_opt) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
+            let Some(entity) = self.entities().get(npc_id) else {
                 return;
             };
             let (is_enemy, is_friendly, self_camp) = match entity {
@@ -411,8 +411,7 @@ impl EngineInner {
         // their chief when their own initialization begins.
         {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .get_mut(npc_id)
                 .expect("AI initialization owner");
             let direction = entity.element_data().direction();
@@ -426,10 +425,7 @@ impl EngineInner {
             npc.view_radius_goal = standard_view_radius;
         }
         if is_enemy {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("patrol initialization owner"));
+            let ai = self.ai_mut(npc_id, "patrol initialization owner");
             // Resolve patrol member IDs
             // Runs exactly once at AI init from the enemy AI's
             // `init_ai` before the first `initialize_patrol()`.
@@ -462,8 +458,7 @@ impl EngineInner {
 
         // -- Phase 3: Build the detectable-enemy list for this NPC. --
         let detectables = self
-            .world
-            .entities
+            .entities()
             .humans()
             .filter_map(|(id, entity)| {
                 let id: EntityId = id.into();
@@ -498,8 +493,7 @@ impl EngineInner {
 
         {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(npc_id, format_args!("AI initial state owner"));
             let life = entity.human_life_points().clamp(0, 255) as u8;
             entity
@@ -516,10 +510,7 @@ impl EngineInner {
         }
         let state_allows_duty = self.initialize_ai_state(sim, assets, npc_id);
         let go_to_duty = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("AI initialization duty gate"));
+            let ai = self.ai(npc_id, "AI initialization duty gate");
             state_allows_duty && !ai.ai_is_script_locked() && !ai.ai_is_locked()
         };
 
@@ -528,8 +519,7 @@ impl EngineInner {
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
             let entity = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(npc_id, format_args!("AI bootstrap obstacle owner"));
             let pos_map = entity.element_data().position_map();
             let layer = entity.element_data().layer();
@@ -541,7 +531,7 @@ impl EngineInner {
                     .find_authorized_position(&mut abs_box, layer)
             {
                 let new_center = abs_box.center();
-                if let Some(entity) = self.world.entities.get_mut(npc_id)
+                if let Some(entity) = self.entities_mut().get_mut(npc_id)
                     && entity.actor_data().is_some()
                 {
                     let new_center_map = new_center;
@@ -587,7 +577,7 @@ impl EngineInner {
 
         // Write-back block: mutate every field this init pass owns.
         {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+            let Some(entity) = self.entities_mut().get_mut(npc_id) else {
                 return;
             };
             if let Some(npc) = entity.ai_actor_data_mut() {
@@ -613,7 +603,7 @@ impl EngineInner {
         // Initialize the path from path_id, then test it; on failure,
         // assert in debug and silently clear in release.
         let patrol_path_opt = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
+            let Some(entity) = self.entities().get(npc_id) else {
                 return;
             };
             entity
@@ -648,7 +638,7 @@ impl EngineInner {
         };
 
         {
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
+            let Some(entity) = self.entities_mut().get_mut(npc_id) else {
                 return;
             };
             if let Some(ai) = entity.ai_controller_mut() {
@@ -685,8 +675,7 @@ impl EngineInner {
 
         if is_friendly {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(npc_id, format_args!("civilian bootstrap owner"));
             let is_beggar = matches!(&*entity, Entity::Civilian(civilian)
                 if civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar);
@@ -699,10 +688,7 @@ impl EngineInner {
             }
         }
         let has_path = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("AI bootstrap path owner"));
+            let ai = self.ai_mut(npc_id, "AI bootstrap path owner");
             let has_path = ai.has_patrol_path && (!is_friendly || !ai.ai_is_locked());
             ai.has_patrol_path = has_path;
             if has_path {
@@ -729,9 +715,7 @@ impl EngineInner {
                     0..crate::parameters_ai::AB_DELTA_DEFAULT_LOOK_TIME,
                 );
             let frame = self.control.frame_counter;
-            self.world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer"))
+            self.ai_mut(npc_id, "civilian bootstrap timer")
                 .launch_timer(duration as u32, frame);
             self.duty_set_state(
                 sim,
@@ -740,16 +724,12 @@ impl EngineInner {
                 crate::ai::AiState::Default,
                 crate::ai::Substate::DefaultOnPost,
             );
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer state"));
+            let ai = self.ai_mut(npc_id, "civilian bootstrap timer state");
             ai.substate_at_last_timer_launch = ai.current_substate;
         }
         let frame = self.control.frame_counter;
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(npc_id, format_args!("AI bootstrap completion"));
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.ambush_point_array_reset = true;
@@ -776,18 +756,14 @@ impl EngineInner {
 
         let in_building = self
             .entity_building_sector(
-                self.world
-                    .entities
+                self.entities()
                     .expect_entity(owner, format_args!("initial AI building owner"))
                     .element_data()
                     .sector(),
             )
             .is_some();
         let initial_action = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("initial AI state"));
+            let ai = self.ai_mut(owner, "initial AI state");
             ai.likes_to_sit_around = false;
             ai.special_action = false;
             ai.is_stay_at_home = in_building;
@@ -825,10 +801,7 @@ impl EngineInner {
         if posture.is_none() || action == Some(OrderType::Sitting) {
             let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("initial AI bored timer"));
+            let ai = self.ai_mut(owner, "initial AI bored timer");
             ai.launch_timer(bored as u32, frame);
         }
         let Some(posture) = posture else {
@@ -846,8 +819,7 @@ impl EngineInner {
         };
         {
             let entity = self
-                .world
-                .entities
+                .entities_mut()
                 .expect_entity_mut(owner, format_args!("initial AI posture owner"));
             if action == Some(OrderType::SleepingUpright) {
                 crate::ai_vision::set_view_status(
@@ -886,8 +858,7 @@ impl EngineInner {
         self.actor_wait(sim, assets, owner);
 
         let entity = self
-            .world
-            .entities
+            .entities_mut()
             .expect_entity_mut(owner, format_args!("initial AI state completion"));
         match action {
             Some(OrderType::SleepingUpright) => entity
@@ -990,7 +961,7 @@ impl EngineInner {
             Vec<EntityId>,
         > = std::collections::HashMap::new();
 
-        for (entity_id, entity) in self.world.entities.actors() {
+        for (entity_id, entity) in self.entities().actors() {
             let elem = entity.element_data();
             let sector_raw = match elem.sector() {
                 Some(s) => crate::sector::SectorNumber::new(u16::from(s) as i16),
@@ -1015,7 +986,7 @@ impl EngineInner {
             // occupant — used by the departure scheduler to stagger
             // NPCs exiting during alerts.
             for (n, &eid) in occupant_ids.iter().enumerate() {
-                if let Some(entity) = self.world.entities.get_mut(eid)
+                if let Some(entity) = self.entities_mut().get_mut(eid)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
                     ai.leave_house_number = n as u16;

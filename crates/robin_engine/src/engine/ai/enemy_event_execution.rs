@@ -5,9 +5,11 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, EnemyRecovery, MoneyFightOperation, Remark, Stimulus,
     StimulusInfo, Substate,
 };
+#[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
+    #[cfg(test)]
     pub(in crate::engine) fn execute_ai_enemy_event(
         &mut self,
         sim: &SimulationContext,
@@ -15,98 +17,105 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
-        if let Some(result) = self.execute_ai_officer_rpc(sim, assets, owner, stimulus) {
-            return result;
-        }
-        if self.execute_ai_combat_impact_event(sim, assets, owner, stimulus) {
-            return false;
-        }
-        if let Some(result) = self.execute_ai_default_event(sim, assets, owner, stimulus) {
-            return result;
-        }
-        if let Some(result) = self.execute_ai_remaining_search_event(sim, assets, owner, stimulus) {
-            return result;
-        }
+        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_enemy_event(stimulus)
+    }
+}
+
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_enemy_event(&mut self, stimulus: &Stimulus) -> bool {
         if let Some(result) =
-            self.execute_ai_remaining_wondering_event(sim, assets, owner, stimulus)
+            self.engine
+                .execute_ai_officer_rpc(self.sim, self.assets, self.owner, stimulus)
         {
             return result;
         }
-        if let Some(result) = self.execute_ai_enemy_fleeing_event(sim, assets, owner, stimulus) {
+        if self.execute_ai_combat_impact_event(stimulus) {
+            return false;
+        }
+        if let Some(result) = self.execute_ai_default_event(stimulus) {
+            return result;
+        }
+        if let Some(result) = self.execute_ai_remaining_search_event(stimulus) {
+            return result;
+        }
+        if let Some(result) = self.execute_ai_remaining_wondering_event(stimulus) {
+            return result;
+        }
+        if let Some(result) = self.execute_ai_enemy_fleeing_event(stimulus) {
             return result;
         }
         let event = stimulus.stimulus_type;
-        let state = self.observation_ai(owner).base.current_state;
-        let substate = self.observation_ai(owner).base.current_substate;
+        let state = self.engine.observation_ai(self.owner).base.current_state;
+        let substate = self.engine.observation_ai(self.owner).base.current_substate;
         let peaceful = matches!(
             state,
             AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
         );
         match event {
             StimulusType::EventView => {
-                self.execute_ai_view_event(sim, assets, owner, stimulus);
+                self.execute_ai_view_event(stimulus);
                 return false;
             }
             StimulusType::EventHear if peaceful => {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Noise(noise) = stimulus.info else {
                     panic!("hearing event requires noise");
                 };
-                self.execute_ai_heard_noise(sim, assets, owner, &noise);
+                self.execute_ai_heard_noise(&noise);
                 return false;
             }
             StimulusType::EventGetArrow if peaceful => {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Position(origin) = stimulus.info else {
                     panic!("arrow event requires origin");
                 };
-                self.execute_ai_received_arrow(sim, assets, owner, origin);
+                self.execute_ai_received_arrow(origin);
                 return false;
             }
             StimulusType::EventSeesObject if peaceful => {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Object(target) = stimulus.info else {
                     panic!("object sighting requires object");
                 };
-                self.execute_ai_seen_object(sim, assets, owner, target.get());
+                self.execute_ai_seen_object(target.get());
                 return false;
             }
             StimulusType::EventSeesShadow if state == AiState::Default => {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Position(position) = stimulus.info else {
                     panic!("shadow sighting requires position");
                 };
-                self.execute_ai_seen_shadow(sim, assets, owner, position);
+                self.execute_ai_seen_shadow(position);
                 return false;
             }
             StimulusType::CallLookThere => {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("look-there call requires hint");
                 };
-                self.execute_ai_look_there_reaction(sim, assets, owner, hint.seek_point);
+                self.execute_ai_look_there_reaction(hint.seek_point);
                 return false;
             }
             StimulusType::CallTowerGuardAlert
                 if matches!(state, AiState::Default | AiState::Wondering) =>
             {
-                if self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus) {
+                if self.dispatch_live_stimulus_to_patrol(stimulus) {
                     return false;
                 }
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("tower alert requires hint");
                 };
-                self.execute_ai_tower_alert_reaction(sim, assets, owner, hint);
+                self.execute_ai_tower_alert_reaction(hint);
                 return false;
             }
             StimulusType::CallTowerGuardCallsMe
@@ -115,7 +124,7 @@ impl EngineInner {
                 let StimulusInfo::Hint(ref hint) = stimulus.info else {
                     panic!("tower call requires hint");
                 };
-                self.execute_ai_tower_call_reaction(sim, assets, owner, hint);
+                self.execute_ai_tower_call_reaction(hint);
                 return false;
             }
             StimulusType::EventSeesCharly
@@ -129,12 +138,14 @@ impl EngineInner {
                 let StimulusInfo::Human(target) = stimulus.info else {
                     panic!("Charly sighting requires human");
                 };
-                self.execute_ai_seen_charly(sim, assets, owner, target.get());
+                self.execute_ai_seen_charly(target.get());
                 return false;
             }
             StimulusType::CallCombatAlert => {
                 assert_eq!(
-                    self.observation_ai(owner).get_rank(&assets.profile_manager),
+                    self.engine
+                        .observation_ai(self.owner)
+                        .get_rank(&self.assets.profile_manager),
                     crate::profiles::ProfileRank::Soldier
                 );
                 if matches!(
@@ -144,7 +155,7 @@ impl EngineInner {
                     let StimulusInfo::Position(position) = stimulus.info else {
                         panic!("combat alert requires position");
                     };
-                    self.execute_ai_combat_alert_reaction(sim, assets, owner, position);
+                    self.execute_ai_combat_alert_reaction(position);
                     return true;
                 }
                 return state == AiState::Attacking;
@@ -176,132 +187,124 @@ impl EngineInner {
             _ => None,
         };
         if let Some(operation) = recovery {
-            self.execute_ai_enemy_recovery(sim, assets, owner, operation);
+            self.execute_ai_enemy_recovery(operation);
             return false;
         }
         match event {
             StimulusType::EventOutOfView => {
-                return self.execute_ai_out_of_view(sim, assets, owner, stimulus);
+                return self.execute_ai_out_of_view(stimulus);
             }
-            StimulusType::EventCouldntReachPoint => {
-                self.execute_ai_reachability_failure(sim, assets, owner)
-            }
+            StimulusType::EventCouldntReachPoint => self.execute_ai_reachability_failure(),
             StimulusType::EventImpossible => {
                 if substate == Substate::AttackingKillingSleepingEnemy {
-                    self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+                    self.execute_ai_get_battle_overview(0);
                 } else {
-                    self.execute_ai_callback(
-                        sim,
-                        assets,
-                        owner,
-                        &Stimulus::new(StimulusType::EventDone),
-                    );
+                    self.execute_ai_callback(&Stimulus::new(StimulusType::EventDone));
                 }
             }
             StimulusType::EventObjectAway => {
                 let StimulusInfo::Stolen(stolen) = stimulus.info else {
                     panic!("object-away requires stolen object");
                 };
-                self.execute_money_fight(
-                    sim,
-                    assets,
-                    owner,
-                    MoneyFightOperation::StolenMoney {
-                        object: stolen.object,
-                        thief: stolen.thief,
-                    },
-                );
+                self.execute_money_fight(MoneyFightOperation::StolenMoney {
+                    object: stolen.object,
+                    thief: stolen.thief,
+                });
             }
             StimulusType::CallCleanUpAfterBrawl
                 if substate == Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl =>
             {
-                self.execute_money_fight(
-                    sim,
-                    assets,
-                    owner,
-                    MoneyFightOperation::CleanUpAfterBrawl,
-                );
+                self.execute_money_fight(MoneyFightOperation::CleanUpAfterBrawl);
             }
             StimulusType::EventSeesBeggar if substate.is_seek_area() => {
                 let StimulusInfo::Human(target) = stimulus.info else {
                     panic!("beggar sighting requires human");
                 };
-                let id = self.expect_human_id_for_ai_handle(target.get(), "seen beggar");
+                let id = self
+                    .engine
+                    .expect_human_id_for_ai_handle(target.get(), "seen beggar");
                 assert!(
                     !self
-                        .observation_ai(owner)
+                        .engine
+                        .observation_ai(self.owner)
                         .beggars_to_control
                         .contains(&target.get())
                 );
-                if self.observation_ai(owner).beggar_to_examine != Some(target) {
-                    let position = self.live_ai_position(id);
-                    self.observation_ai_mut(owner)
+                if self.engine.observation_ai(self.owner).beggar_to_examine != Some(target) {
+                    let position = self.engine.live_ai_position(id);
+                    self.engine
+                        .observation_ai_mut(self.owner)
                         .beggars_to_control
                         .push(target.get());
-                    self.observation_ai_mut(owner)
+                    self.engine
+                        .observation_ai_mut(self.owner)
                         .positions_of_beggars_to_control
                         .push(position);
                 }
-                self.delete_beggar_detectable_for_all_npc(id);
+                self.engine.delete_beggar_detectable_for_all_npc(id);
             }
             StimulusType::EventSeesBrawl if state == AiState::Default => {
-                self.observation_stop(sim, assets, owner);
-                self.observation_say(sim, assets, owner, Remark::OfficerSeesBrawl);
+                self.observation_stop();
+                self.observation_say(Remark::OfficerSeesBrawl);
                 let StimulusInfo::Human(friend) = stimulus.info else {
                     panic!("brawl sighting requires human");
                 };
-                self.observation_ai_mut(owner).base.friend_in_trouble = Some(friend);
-                let friend = self.expect_human_id_for_ai_handle(friend.get(), "brawling friend");
-                self.observation_face_entity(sim, assets, owner, friend, false);
-                self.observation_emoticon(owner);
-                let next = if self.observation_ai(owner).base.blood_alcohol == 0 {
+                self.engine
+                    .observation_ai_mut(self.owner)
+                    .base
+                    .friend_in_trouble = Some(friend);
+                let friend = self
+                    .engine
+                    .expect_human_id_for_ai_handle(friend.get(), "brawling friend");
+                self.observation_face_entity(friend, false);
+                self.engine.observation_emoticon(self.owner);
+                let next = if self.engine.observation_ai(self.owner).base.blood_alcohol == 0 {
                     Substate::WonderingOfficerSeeingBrawl
                 } else {
                     Substate::WonderingBrawlReactiontime
                 };
-                self.duty_set_state(sim, assets, owner, AiState::Wondering, next);
-                self.observation_timer(owner, 30);
+                self.duty_set_state(AiState::Wondering, next);
+                self.engine.observation_timer(self.owner, 30);
             }
             StimulusType::CallFinishBrawl
                 if substate.is_take_money() || substate.is_fight_for_money() =>
             {
-                self.observation_stop(sim, assets, owner);
+                self.observation_stop();
                 let StimulusInfo::Human(officer) = stimulus.info else {
                     panic!("finish brawl requires officer");
                 };
-                let id = self.expect_human_id_for_ai_handle(officer.get(), "brawl officer");
-                self.observation_face_entity(sim, assets, owner, id, false);
-                self.observation_ai_mut(owner)
+                let id = self
+                    .engine
+                    .expect_human_id_for_ai_handle(officer.get(), "brawl officer");
+                self.observation_face_entity(id, false);
+                self.engine
+                    .observation_ai_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::None);
 
-                self.observation_ai_mut(owner).base.antagonist = Some(officer);
-                self.forget_ai_nearby_coins_live(owner);
+                self.engine.observation_ai_mut(self.owner).base.antagonist = Some(officer);
+                self.engine.forget_ai_nearby_coins_live(self.owner);
                 self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
                     AiState::Wondering,
                     Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl,
                 );
-                let extra =
-                    crate::sim_rng::u32(sim, crate::sim_rng::RngSite::SoldierBrawlCooldown, 0..32);
-                self.observation_timer(owner, 300 + extra);
+                let extra = crate::sim_rng::u32(
+                    self.sim,
+                    crate::sim_rng::RngSite::SoldierBrawlCooldown,
+                    0..32,
+                );
+                self.engine.observation_timer(self.owner, 300 + extra);
             }
             StimulusType::EventAdversaryWeak | StimulusType::EventAfterCombatInjury
                 if substate.is_real_swordfight() =>
             {
                 if event == StimulusType::EventAfterCombatInjury {
-                    self.observation_stop(sim, assets, owner);
+                    self.observation_stop();
                 }
-                self.execute_reconsider_swordfight(
-                    sim,
-                    assets,
-                    owner,
-                    event == StimulusType::EventAdversaryWeak,
-                );
+                self.execute_reconsider_swordfight(event == StimulusType::EventAdversaryWeak);
                 if event == StimulusType::EventAfterCombatInjury {
-                    self.combat_insult_after_reconsider(sim, assets, owner);
+                    self.engine
+                        .combat_insult_after_reconsider(self.sim, self.assets, self.owner);
                 }
             }
             StimulusType::EventSwordStrike
@@ -316,70 +319,86 @@ impl EngineInner {
                 let StimulusInfo::Human(attacker) = stimulus.info else {
                     panic!("sword strike requires attacker");
                 };
-                self.execute_ai_consider_to_begin_parade(sim, assets, owner, attacker.get());
+                self.engine.execute_ai_consider_to_begin_parade(
+                    self.sim,
+                    self.assets,
+                    self.owner,
+                    attacker.get(),
+                );
             }
             StimulusType::EventGoodStrike | StimulusType::EventLethalStrike
                 if substate == Substate::AttackingSwordfightSpecialStrike =>
             {
-                let vip = self.observation_ai(owner).is_vip;
+                let vip = self.engine.observation_ai(self.owner).is_vip;
                 let remark = match (event == StimulusType::EventGoodStrike, vip) {
                     (true, true) => Remark::VipGoodStrikeCombat,
                     (true, false) => Remark::GoodStrikeCombat,
                     (false, true) => Remark::VipVictory,
                     (false, false) => Remark::KilledAdversary,
                 };
-                self.observation_say(sim, assets, owner, remark);
+                self.observation_say(remark);
             }
-            StimulusType::EventReturnToDuty => {
-                self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty())
-            }
+            StimulusType::EventReturnToDuty => self.execute_ai_return_to_duty(DutyFlags::empty()),
             _ => {}
         }
         false
     }
 
-    fn execute_ai_view_event(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) {
+    fn execute_ai_view_event(&mut self, stimulus: &Stimulus) {
         let StimulusInfo::Human(target) = stimulus.info else {
             panic!("view event requires human");
         };
-        let id = self.expect_human_id_for_ai_handle(target.get(), "view target");
-        let state = self.observation_ai(owner).base.current_state;
-        let substate = self.observation_ai(owner).base.current_substate;
+        let id = self
+            .engine
+            .expect_human_id_for_ai_handle(target.get(), "view target");
+        let state = self.engine.observation_ai(self.owner).base.current_state;
+        let substate = self.engine.observation_ai(self.owner).base.current_substate;
         let mut observe = false;
         match state {
             // Eyes are restored before the awakening timer leaves Sleeping.
             // Sightings during that delay do not interrupt recovery.
             AiState::Sleeping => {}
             AiState::Default | AiState::Wondering | AiState::Seeking => {
-                observe = !self.dispatch_live_stimulus_to_patrol(sim, assets, owner, stimulus)
+                observe = !self.dispatch_live_stimulus_to_patrol(stimulus)
             }
             AiState::Menacing => {
-                observe = self.observation_ai(owner).guarded_pc.map(EntityId::Pc) != Some(id)
+                observe = self
+                    .engine
+                    .observation_ai(self.owner)
+                    .guarded_pc
+                    .map(EntityId::Pc)
+                    != Some(id)
             }
             AiState::Fleeing => {
                 if !matches!(
                     substate,
                     Substate::FleeingMerryManRunToLeaveMap | Substate::FleeingRunForArrowReserves
                 ) && (substate == Substate::FleeingHiding
-                    || self.observation_ai(owner).fleeing_seen_enemy_counter < 20)
+                    || self
+                        .engine
+                        .observation_ai(self.owner)
+                        .fleeing_seen_enemy_counter
+                        < 20)
                 {
-                    self.observation_ai_mut(owner).fleeing_seen_enemy_counter += 1;
-                    if self.entity_data_in_building_sector(
-                        self.expect_entity(owner, "fleeing observer").element_data(),
+                    self.engine
+                        .observation_ai_mut(self.owner)
+                        .fleeing_seen_enemy_counter += 1;
+                    if self.engine.entity_data_in_building_sector(
+                        self.engine
+                            .expect_entity(self.owner, "fleeing observer")
+                            .element_data(),
                     ) {
-                        self.dispatch_enemy_in_house_alert(sim, owner, assets);
+                        self.engine.dispatch_enemy_in_house_alert(
+                            self.sim,
+                            self.owner,
+                            self.assets,
+                        );
                     } else {
-                        let position = self.live_ai_position(id);
-                        self.execute_ai_panic(
-                            sim,
-                            assets,
-                            owner,
+                        let position = self.engine.live_ai_position(id);
+                        self.engine.execute_ai_panic(
+                            self.sim,
+                            self.assets,
+                            self.owner,
                             Some(position),
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
                             crate::ai::AlertLevel::Red,
@@ -394,7 +413,7 @@ impl EngineInner {
                 | Substate::AttackingOverviewLookLeft
                 | Substate::AttackingOverviewLookRight
                 | Substate::AttackingTooProudToAttackOverview => {
-                    let enemies = &mut self.observation_ai_mut(owner).list_them;
+                    let enemies = &mut self.engine.observation_ai_mut(self.owner).list_them;
                     if !enemies.contains(&target.get()) {
                         enemies.push(target.get());
                     }
@@ -402,34 +421,41 @@ impl EngineInner {
                 Substate::AttackingArcherWaitOnArcheryPath
                 | Substate::AttackingArcherWaitOnBendPoint
                 | Substate::AttackingArcherWaitOnArcheryPathBending => {
-                    self.execute_ai_seen_enemy_as_archer(sim, assets, owner, target.get());
+                    self.execute_ai_seen_enemy_as_archer(target.get());
                 }
                 Substate::AttackingApproachingSleepingEnemy
                 | Substate::AttackingKillingSleepingEnemy => {
                     observe = !self
+                        .engine
                         .expect_entity(id, "view unconscious gate")
                         .is_unconscious()
                 }
                 Substate::AttackingDoorFightDelay | Substate::AttackingDoorFightLeaving => {
-                    if self.entity_data_in_building_sector(
-                        self.expect_entity(owner, "door observer").element_data(),
+                    if self.engine.entity_data_in_building_sector(
+                        self.engine
+                            .expect_entity(self.owner, "door observer")
+                            .element_data(),
                     ) {
-                        self.dispatch_enemy_in_house_alert(sim, owner, assets);
+                        self.engine.dispatch_enemy_in_house_alert(
+                            self.sim,
+                            self.owner,
+                            self.assets,
+                        );
                     }
                 }
                 Substate::AttackingRiderChargingGettingDistance
                 | Substate::AttackingRiderChargingReturning
                 | Substate::AttackingRiderChargingApproachingBlindly => {
-                    self.reinitialize_live_ai_enemies(owner);
-                    if !self.execute_ai_maybe_make_rider_attack(sim, assets, owner) {
-                        self.execute_battle_decisions(sim, assets, owner);
+                    self.engine.reinitialize_live_ai_enemies(self.owner);
+                    if !self.execute_ai_maybe_make_rider_attack() {
+                        self.execute_battle_decisions();
                     }
                 }
                 _ => {}
             },
         }
         if observe {
-            self.execute_ai_seen_enemy(sim, assets, owner, target.get());
+            self.execute_ai_seen_enemy(target.get());
         }
     }
 }

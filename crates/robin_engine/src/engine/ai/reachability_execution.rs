@@ -3,63 +3,37 @@
 use super::*;
 use crate::ai::{AiLockFlags, AiState, BodyReaction, DutyFlags, Stimulus, Substate};
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-use crate::sim_rng::SimulationContext;
 
-impl EngineInner {
-    pub(in crate::engine) fn execute_ai_reachability_failure(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_reachability_failure(&mut self) {
         match self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("route failure substate"))
+            .engine
+            .ai(self.owner, "route failure substate")
             .current_substate
         {
-            Substate::SeekingSeekpoint => self.execute_ai_seek_next_point(sim, assets, owner),
+            Substate::SeekingSeekpoint => self.execute_ai_seek_next_point(),
             Substate::SeekingBody => {
-                self.execute_ai_body_reaction(sim, assets, owner, BodyReaction::Unreachable);
+                self.execute_ai_body_reaction(BodyReaction::Unreachable);
             }
             Substate::FleeingPanic => {
-                self.execute_ai_panic_segment(
-                    sim,
-                    assets,
-                    owner,
-                    StimulusType::EventCouldntReachPoint,
-                );
+                self.execute_ai_panic_segment(StimulusType::EventCouldntReachPoint);
             }
             Substate::AttackingObserve => {}
-            _ => self.execute_ai_reachability_emergency(sim, assets, owner),
+            _ => self.execute_ai_reachability_emergency(),
         }
     }
 
-    fn execute_ai_reachability_emergency(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        if self.is_very_very_busy(owner) {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("busy route failure"));
+    fn execute_ai_reachability_emergency(&mut self) {
+        if self.engine.is_very_very_busy(self.owner) {
+            let ai = self.engine.ai_mut(self.owner, "busy route failure");
             ai.non_script_lock(AiLockFlags::BUSY);
             ai.was_busy = true;
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventCouldntReachPoint),
-            );
+            self.execute_ai_callback(&Stimulus::new(StimulusType::EventCouldntReachPoint));
             return;
         }
         match self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("route failure state"))
+            .engine
+            .ai(self.owner, "route failure state")
             .current_state
         {
             AiState::Sleeping
@@ -67,19 +41,11 @@ impl EngineInner {
             | AiState::Wondering
             | AiState::Menacing
             | AiState::Fleeing => {
-                self.execute_ai_return_to_duty(
-                    sim,
-                    assets,
-                    owner,
-                    DutyFlags::BECAUSE_COULDNT_REACHPOINT,
-                );
+                self.execute_ai_return_to_duty(DutyFlags::BECAUSE_COULDNT_REACHPOINT);
             }
             AiState::Seeking => {
                 self.execute_ai_seek_area(
-                    sim,
-                    assets,
-                    owner,
-                    self.live_ai_position(owner),
+                    self.engine.live_ai_position(self.owner),
                     crate::parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
                     SeekFlags::empty(),
                     UNDEFINED_DIRECTION,
@@ -87,25 +53,24 @@ impl EngineInner {
             }
             AiState::Attacking => {
                 let swordfighting = !self
-                    .expect_entity(owner, "route failure combat")
+                    .engine
+                    .expect_entity(self.owner, "route failure combat")
                     .human_data()
                     .expect("route failure owner must be human")
                     .opponents
                     .is_empty();
                 if swordfighting {
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Attacking,
-                        Substate::AttackingSwordfight,
-                    );
-                    self.world
+                    self.duty_set_state(AiState::Attacking, Substate::AttackingSwordfight);
+                    self.engine
+                        .world
                         .entities
-                        .expect_ai_controller_mut(owner, format_args!("route failure combat timer"))
-                        .launch_timer(20, self.control.frame_counter);
+                        .expect_ai_controller_mut(
+                            self.owner,
+                            format_args!("route failure combat timer"),
+                        )
+                        .launch_timer(20, self.engine.control.frame_counter);
                 } else {
-                    self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+                    self.execute_ai_get_battle_overview(0);
                 }
             }
         }

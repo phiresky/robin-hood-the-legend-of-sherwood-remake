@@ -69,8 +69,7 @@ impl EngineInner {
             return;
         }
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(npc_id, format_args!("RVLIFE owner at stage {stage}"));
         let Some(npc) = entity.ai_actor_data() else {
             return;
@@ -91,7 +90,7 @@ impl EngineInner {
         let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let installed_order = actor
             .installed_order
-            .map(|handle| handle.resolve(&self.orders.sequence_manager).order_type as u32)
+            .map(|handle| handle.resolve(&self.seq()).order_type as u32)
             .map_or(-1_i64, i64::from);
         let derived_tail_order = derived_tail_order_type
             .map(|order| order as u32)

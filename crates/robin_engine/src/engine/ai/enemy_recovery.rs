@@ -2,15 +2,11 @@
 use super::*;
 use crate::ai::{AiState, DutyFlags, EmoticonType, EnemyRecovery, Remark, Substate};
 use crate::element::{DetectableType, EyeStatus};
-use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     fn recovery_open_eyes(&mut self, owner: EntityId) {
         let radius = self.ai.standard_view_polygon_radius;
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery eyes"));
+        let actor = self.ai_actor_mut(owner, "recovery eyes");
         actor.view_transition = true;
         actor.view_radius = 5;
         actor.view_radius_base = 5;
@@ -19,10 +15,7 @@ impl EngineInner {
     }
 
     fn recovery_blink_enemies(&mut self, owner: EntityId) {
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery enemy blinks"));
+        let actor = self.ai_actor_mut(owner, "recovery enemy blinks");
         let enemies = actor
             .detectable_lists
             .get_mut(DetectableType::Enemy as usize)
@@ -34,139 +27,127 @@ impl EngineInner {
     }
 
     fn recovery_view_forward(&mut self, owner: EntityId) {
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery view status"));
+        let actor = self.ai_actor_mut(owner, "recovery view status");
         crate::ai_vision::set_view_status(actor, EyeStatus::LookForward);
     }
+}
 
-    pub(in crate::engine) fn execute_ai_enemy_recovery(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        operation: EnemyRecovery,
-    ) {
+impl AiOwnerCtx<'_> {
+    pub(in crate::engine) fn execute_ai_enemy_recovery(&mut self, operation: EnemyRecovery) {
         match operation {
             EnemyRecovery::FitAgain => {
-                if self.observation_ai(owner).base.current_substate != Substate::SleepingUnconscious
+                if self.engine.observation_ai(self.owner).base.current_substate
+                    != Substate::SleepingUnconscious
                 {
                     return;
                 }
-                let knocked_out = self.observation_ai(owner).base.knocked_out_in_money_fight;
-                self.restore_detectable_objects_for_npc(owner, knocked_out);
-                self.broadcast_resurrection(owner);
-                if self.observation_ai(owner).base.knocked_out_in_money_fight {
-                    self.observation_ai_mut(owner)
+                let knocked_out = self
+                    .engine
+                    .observation_ai(self.owner)
+                    .base
+                    .knocked_out_in_money_fight;
+                self.engine
+                    .restore_detectable_objects_for_npc(self.owner, knocked_out);
+                self.engine.broadcast_resurrection(self.owner);
+                if self
+                    .engine
+                    .observation_ai(self.owner)
+                    .base
+                    .knocked_out_in_money_fight
+                {
+                    self.engine
+                        .observation_ai_mut(self.owner)
                         .base
                         .knocked_out_in_money_fight = false;
-                    self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+                    self.execute_ai_return_to_duty(DutyFlags::empty());
                 } else {
-                    self.duty_set_state(
-                        sim,
-                        assets,
-                        owner,
-                        AiState::Sleeping,
-                        Substate::SleepingAwakening,
-                    );
-                    self.observation_timer(
-                        owner,
+                    self.duty_set_state(AiState::Sleeping, Substate::SleepingAwakening);
+                    self.engine.observation_timer(
+                        self.owner,
                         crate::parameters_ai::AI_WAKEUP_IDLING_TIME as u32,
                     );
-                    self.recovery_view_forward(owner);
+                    self.engine.recovery_view_forward(self.owner);
                 }
             }
             EnemyRecovery::WaspAway | EnemyRecovery::NetAway => {
                 if matches!(operation, EnemyRecovery::WaspAway) {
-                    if self.observation_ai(owner).base.current_substate
+                    if self.engine.observation_ai(self.owner).base.current_substate
                         != Substate::WonderingWaspInArmour
                     {
                         return;
                     }
-                    self.recovery_open_eyes(owner);
+                    self.engine.recovery_open_eyes(self.owner);
                 } else {
-                    self.recovery_view_forward(owner);
+                    self.engine.recovery_view_forward(self.owner);
                 }
-                self.observation_ai_mut(owner)
+                self.engine
+                    .observation_ai_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
-                self.recovery_blink_enemies(owner);
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingLooking1,
-                );
-                self.observation_timer(owner, 30);
+                self.engine.recovery_blink_enemies(self.owner);
+                self.duty_set_state(AiState::Wondering, Substate::WonderingLooking1);
+                self.engine.observation_timer(self.owner, 30);
             }
             EnemyRecovery::Stop => {
-                let ai = self.observation_ai(owner);
+                let ai = self.engine.observation_ai(self.owner);
                 if ai.base.current_state == AiState::Sleeping
                     || ai.base.current_state == AiState::Attacking
                         && ai.base.current_substate.is_real_swordfight()
                 {
                     return;
                 }
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Seeking,
-                    Substate::SeekingGotStopEvent,
-                );
-                self.observation_stop(sim, assets, owner);
-                self.observation_ai_mut(owner)
+                self.duty_set_state(AiState::Seeking, Substate::SeekingGotStopEvent);
+                self.observation_stop();
+                self.engine
+                    .observation_ai_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
-                self.recovery_blink_enemies(owner);
-                self.observation_timer(owner, 100);
+                self.engine.recovery_blink_enemies(self.owner);
+                self.engine.observation_timer(self.owner, 100);
             }
             EnemyRecovery::Apple { position } => {
                 let fighting = !self
-                    .expect_entity(owner, "apple owner")
+                    .engine
+                    .expect_entity(self.owner, "apple owner")
                     .human_data()
                     .expect("apple owner must be human")
                     .opponents
                     .is_empty();
-                let interrupt = sim.config().item_gameplay.apple_combat_interrupt;
+                let interrupt = self.sim.config().item_gameplay.apple_combat_interrupt;
                 if fighting && !interrupt {
                     return;
                 }
-                self.observation_stop(sim, assets, owner);
+                self.observation_stop();
                 if interrupt
                     && !self
-                        .expect_entity(owner, "apple interrupt owner")
+                        .engine
+                        .expect_entity(self.owner, "apple interrupt owner")
                         .human_data()
                         .expect("apple owner must be human")
                         .opponents
                         .is_empty()
                 {
-                    self.launch_element(
-                        sim,
-                        assets,
+                    self.engine.launch_element(
+                        self.sim,
+                        self.assets,
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::QuitSwordfight,
-                            Some(owner),
+                            Some(self.owner),
                         ),
                     );
                 }
-                self.observation_ai_mut(owner).base.seek_position = position;
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingAppleSauceInTheVisor,
-                );
-                self.add_weak_stunned(owner);
-                self.recovery_open_eyes(owner);
-                self.observation_timer(owner, 60);
+                self.engine
+                    .observation_ai_mut(self.owner)
+                    .base
+                    .seek_position = position;
+                self.duty_set_state(AiState::Wondering, Substate::WonderingAppleSauceInTheVisor);
+                self.engine.add_weak_stunned(self.owner);
+                self.engine.recovery_open_eyes(self.owner);
+                self.engine.observation_timer(self.owner, 60);
             }
             EnemyRecovery::Stone { position } => {
-                let ai = self.observation_ai_mut(owner);
+                let ai = self.engine.observation_ai_mut(self.owner);
                 if !matches!(
                     ai.base.current_state,
                     AiState::Sleeping | AiState::Default | AiState::Wondering
@@ -180,27 +161,28 @@ impl EngineInner {
                 if let Some(object) = ai.base.object_of_desire.take() {
                     ai.base.forgotten_objects.push(object.get());
                 }
-                self.observation_stop(sim, assets, owner);
-                self.observation_ai_mut(owner).base.seek_position = position;
-                self.duty_set_state(
-                    sim,
-                    assets,
-                    owner,
-                    AiState::Wondering,
-                    Substate::WonderingAppleReactiontime,
-                );
-                let remark = if self.observation_ai(owner).is_vip {
+                self.observation_stop();
+                self.engine
+                    .observation_ai_mut(self.owner)
+                    .base
+                    .seek_position = position;
+                self.duty_set_state(AiState::Wondering, Substate::WonderingAppleReactiontime);
+                let remark = if self.engine.observation_ai(self.owner).is_vip {
                     Remark::VipAppleNo
                 } else {
                     Remark::HitByApple
                 };
-                self.observation_say(sim, assets, owner, remark);
-                let position = self.observation_ai(owner).base.seek_position;
-                self.duty_face_position_ground(sim, assets, owner, position);
-                self.observation_ai_mut(owner)
+                self.observation_say(remark);
+                let position = self.engine.observation_ai(self.owner).base.seek_position;
+                self.duty_face_position_ground(position);
+                self.engine
+                    .observation_ai_mut(self.owner)
                     .base
                     .set_emoticon(EmoticonType::QuestionMark);
-                self.observation_timer(owner, crate::ai_enemy::combat::APPLE_REACTIONTIME as u32);
+                self.engine.observation_timer(
+                    self.owner,
+                    crate::ai_enemy::combat::APPLE_REACTIONTIME as u32,
+                );
             }
         }
     }

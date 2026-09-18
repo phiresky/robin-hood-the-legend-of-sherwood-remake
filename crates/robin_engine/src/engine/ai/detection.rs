@@ -31,19 +31,18 @@ pub(crate) fn capture_heard_callbacks<T>(
 
 #[cfg(test)]
 fn observe_heard_callback(engine: &EngineInner, target_id: EntityId) {
-    let Some(Entity::Target(target)) = engine.world.entities.get(target_id) else {
+    let Some(Entity::Target(target)) = engine.entities().get(target_id) else {
         panic!("Heard callback target {target_id:?} is no longer a target");
     };
     let listen_cleared = !target
         .target
         .action_filter
         .contains(crate::element::TargetFilter::LISTEN);
-    let blipped = (0..engine.world.entities.len())
-        .filter_map(|slot| engine.world.entities.id_at_legacy_slot(slot as u32))
+    let blipped = (0..engine.entities().len())
+        .filter_map(|slot| engine.entities().id_at_legacy_slot(slot as u32))
         .filter(|&id| {
             engine
-                .world
-                .entities
+                .entities()
                 .get(id)
                 .is_some_and(|entity| entity.element_data().blipped)
         })
@@ -132,8 +131,7 @@ impl EngineInner {
         detection_frequency_sounds: u32,
     ) {
         let substate = self
-            .world
-            .entities
+            .entities()
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .expect("HEARINGGATE owner lost its AI controller")
@@ -731,7 +729,7 @@ impl EngineInner {
         npc_id: EntityId,
     ) {
         let frame = self.control.frame_counter;
-        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
+        let Some(Entity::Soldier(soldier)) = self.entities().get(npc_id) else {
             panic!("nearby-enemy check owner {} disappeared", npc_id.index());
         };
         if !soldier.element.active {
@@ -753,8 +751,7 @@ impl EngineInner {
         let target_count = enemy_ai.list_them.len();
         for index in 0..target_count {
             let target_handle = *self
-                .world
-                .entities
+                .entities()
                 .expect_entity(npc_id, format_args!("nearby-enemy owner"))
                 .enemy_ai()
                 .expect("nearby-enemy owner lost its enemy brain")
@@ -765,8 +762,7 @@ impl EngineInner {
                 .entity_id_for_index(target_handle)
                 .unwrap_or_else(|| panic!("nearby-enemy target {target_handle} disappeared"));
             let target = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(target_id, format_args!("nearby-enemy target"));
             assert!(
                 target.human_data().is_some(),
@@ -817,16 +813,14 @@ impl EngineInner {
         // The action state stays `Listening` through the
         // countdown — the exit transition in owner-local `tick_ability`
         // will flip it back to `Waiting`.
-        let Some(ability) = crate::abilities::selected_ability(
-            &self.world.entities,
-            &self.orders.sequence_manager,
-            pc_id,
-        )
-        .filter(|ability| ability.order_type == crate::order::OrderType::Listening) else {
+        let Some(ability) =
+            crate::abilities::selected_ability(&self.entities(), &self.seq(), pc_id)
+                .filter(|ability| ability.order_type == crate::order::OrderType::Listening)
+        else {
             return None;
         };
         let listener_position = {
-            let pc = match self.world.entities.get_mut(pc_id) {
+            let pc = match self.entities_mut().get_mut(pc_id) {
                 Some(Entity::Pc(pc)) => pc,
                 Some(_) => panic!("Listen owner {pc_id:?} is not a PC"),
                 None => panic!("Listen owner {pc_id:?} disappeared"),
@@ -873,12 +867,12 @@ impl EngineInner {
         {
             // The original game captures the size once, then resolves each live slot and
             // applies blip reveals and hearing synchronously in that mixed order.
-            let captured_len = self.world.entities.len();
+            let captured_len = self.entities().len();
             for slot in 0..captured_len {
-                let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) else {
+                let Some(entity_id) = self.entities().id_at_legacy_slot(slot as u32) else {
                     continue;
                 };
-                let Some(entity) = self.world.entities.get(entity_id) else {
+                let Some(entity) = self.entities().get(entity_id) else {
                     continue;
                 };
                 let elem = entity.element_data();
@@ -905,14 +899,13 @@ impl EngineInner {
                     self.reveal_entity_from_listen(entity_id);
                 }
                 if reveal {
-                    self.world
-                        .entities
+                    self.entities_mut()
                         .get_mut(entity_id)
                         .unwrap()
                         .reveal_blip();
                 }
                 if heard && sim.config().script_enabled {
-                    let target = match self.world.entities.get_mut(entity_id) {
+                    let target = match self.entities_mut().get_mut(entity_id) {
                         Some(Entity::Target(target)) => target,
                         _ => panic!("Listen target {entity_id:?} changed type before Heard"),
                     };
@@ -975,7 +968,7 @@ impl EngineInner {
             .iter()
             .copied()
             .any(|pc_id| {
-                let entity = self.world.entities.expect_entity(
+                let entity = self.entities().expect_entity(
                     pc_id,
                     format_args!("bonus {bonus_id:?} discovery refresh PC registry id"),
                 );
@@ -1008,8 +1001,7 @@ impl EngineInner {
                     )
             });
         if discovered {
-            self.world
-                .entities
+            self.entities_mut()
                 .get_mut(bonus_id)
                 .expect("discovered bonus disappeared before clearing its blip")
                 .reveal_blip();
@@ -1051,8 +1043,7 @@ impl EngineInner {
         if matches!(entity, Entity::Soldier(s)
             if self.is_player_aligned_camp(s.soldier.cached_camp))
         {
-            self.world
-                .entities
+            self.entities_mut()
                 .get_mut(npc_id)
                 .expect("blipped Royalist NPC disappeared before reveal")
                 .reveal_blip();
@@ -1118,8 +1109,7 @@ impl EngineInner {
         let Some((pc_id, perched)) = detecting_pc else {
             return;
         };
-        self.world
-            .entities
+        self.entities_mut()
             .get_mut(npc_id)
             .expect("blipped NPC disappeared before reveal")
             .reveal_blip();
@@ -1158,7 +1148,7 @@ impl EngineInner {
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
         let (current_state, hearing_factor) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
+            let Some(entity) = self.entities().get(npc_id) else {
                 return;
             };
             // Detection refresh's first gate admits inactive NPCs only while
@@ -1229,8 +1219,7 @@ impl EngineInner {
 
         let enemy_idx = DetectableType::Enemy as usize;
         let target_count = self
-            .world
-            .entities
+            .entities()
             .expect_entity(npc_id, format_args!("hearing owner"))
             .ai_actor_data()
             .expect("hearing owner lost its AI actor data")
@@ -1238,8 +1227,7 @@ impl EngineInner {
             .len();
         for index in 0..target_count {
             let listener = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(npc_id, format_args!("hearing owner"));
             let target_id = listener
                 .ai_actor_data()
@@ -1257,8 +1245,7 @@ impl EngineInner {
             // The list length belongs to the outer scan; noise and geometry
             // belong to each individual call after the preceding Think returns.
             let pc = match self
-                .world
-                .entities
+                .entities()
                 .expect_entity(pc_id, format_args!("hearing PC"))
             {
                 Entity::Pc(pc) => pc,
@@ -1281,8 +1268,7 @@ impl EngineInner {
                 );
             let stimulus = {
                 let npc = self
-                    .world
-                    .entities
+                    .entities_mut()
                     .expect_entity_mut(npc_id, format_args!("hearing latch owner"))
                     .ai_actor_data_mut()
                     .expect("hearing owner lost its AI actor data");
@@ -1452,7 +1438,7 @@ impl EngineInner {
         // EVENT_HEAR can synchronously run Think/script and mutate the
         // viewer. Once these gates pass, original control flow always
         // reaches the pre-optical maxima reset.
-        let passed_pre_acoustic_gates = self.world.entities.get(npc_id).is_some_and(|entity| {
+        let passed_pre_acoustic_gates = self.entities().get(npc_id).is_some_and(|entity| {
             let elem = entity.element_data();
             let entered_refresh = elem.active
                 || elem.is_in_door_transit()
@@ -1471,8 +1457,7 @@ impl EngineInner {
         // the entry gate and must retain the old value.
         if passed_pre_acoustic_gates
             && let Some(npc) = self
-                .world
-                .entities
+                .entities_mut()
                 .get_mut(npc_id)
                 .and_then(Entity::ai_actor_data_mut)
         {
@@ -1490,8 +1475,7 @@ impl EngineInner {
             let owner_creation_order = self.original_static_creation_order(npc_id);
             if detectable_mutation_debug_owner_matches(npc_id.index(), owner_creation_order) {
                 let npc = self
-                    .world
-                    .entities
+                    .entities()
                     .get(npc_id)
                     .and_then(Entity::ai_actor_data)
                     .expect("DETMUT owner lost AI actor data before detection refresh");
@@ -1507,11 +1491,7 @@ impl EngineInner {
             }
         }
         if let Some(creation_order) = detectable_list_debug_creation_order
-            && let Some(npc) = self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::ai_actor_data)
+            && let Some(npc) = self.entities().get(npc_id).and_then(Entity::ai_actor_data)
         {
             debug_all_detectable_list_buckets(
                 "optical_entry",
@@ -1526,8 +1506,7 @@ impl EngineInner {
             // The broad-phase box belongs to optical entry, while each
             // target's position and visibility parameters are queried live.
             let owner = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(npc_id, format_args!("optical entry"));
             let ground = owner.ground_position();
             let radius = owner
@@ -1563,11 +1542,7 @@ impl EngineInner {
             );
         }
         if let Some(creation_order) = detectable_list_debug_creation_order
-            && let Some(npc) = self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::ai_actor_data)
+            && let Some(npc) = self.entities().get(npc_id).and_then(Entity::ai_actor_data)
         {
             debug_all_detectable_list_buckets(
                 "optical_exit",
@@ -1590,7 +1565,7 @@ impl EngineInner {
         mutate_live_state: impl FnOnce(&mut Self),
     ) {
         mutate_live_state(self);
-        let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let owners: Vec<_> = self.entities().ai_owner_ids().collect();
         for owner in owners {
             self.tick_enemy_ai_refresh_detection(sim, assets, owner);
         }
@@ -1602,7 +1577,7 @@ impl EngineInner {
     }
 
     fn optical_viewer_is_eligible(&self, npc_id: EntityId) -> bool {
-        let Some(entity) = self.world.entities.get(npc_id) else {
+        let Some(entity) = self.entities().get(npc_id) else {
             return false;
         };
         let Some(npc) = entity.ai_actor_data() else {
@@ -1667,22 +1642,11 @@ impl EngineInner {
         // Cleanup removes dead enemies only. Admission policy does not
         // retroactively remove an existing entry after a camp change.
         let mut index = 0;
-        while index
-            < self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
-                .detectable_lists[bucket]
-                .len()
-        {
-            let target = self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
-                .detectable_lists[bucket][index]
+        while index < self.ai_actor(npc_id, "Enemy cleanup").detectable_lists[bucket].len() {
+            let target = self.ai_actor(npc_id, "Enemy cleanup").detectable_lists[bucket][index]
                 .element
                 .expect("Enemy detectable has no target");
-            let entity = self.world.entities.expect_entity(
+            let entity = self.entities().expect_entity(
                 target,
                 format_args!("Enemy cleanup target for NPC {npc_id:?}"),
             );
@@ -1691,19 +1655,12 @@ impl EngineInner {
                 "Enemy detectable requires a PC or soldier"
             );
             if entity.is_dead() {
-                self.world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy cleanup"))
-                    .detectable_lists[bucket]
-                    .remove(index);
+                self.ai_actor_mut(npc_id, "Enemy cleanup").detectable_lists[bucket].remove(index);
             } else {
                 index += 1;
             }
         }
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data(npc_id, format_args!("Enemy scan"));
+        let npc = self.ai_actor(npc_id, "Enemy scan");
         debug_detectable_list_entries(
             "post_cleanup",
             bucket,
@@ -1716,20 +1673,14 @@ impl EngineInner {
         let mut sum = 0u16;
         let mut observed_pcs = Vec::new();
         for index in 0..count {
-            let entry = &self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy scan"))
-                .detectable_lists[bucket][index];
+            let entry = &self.ai_actor(npc_id, "Enemy scan").detectable_lists[bucket][index];
             let target = entry.element.expect("Enemy scan target");
             let owner = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(npc_id, format_args!("Enemy scan owner"));
             let inside = self.entity_data_inside_building(owner.element_data());
             let target_ground = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(target, format_args!("Enemy scan target"))
                 .ground_position();
             if !refresh_detection_scans_target(
@@ -1740,9 +1691,7 @@ impl EngineInner {
                 target_ground,
             ) {
                 let entry = &mut self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy outer gate"))
+                    .ai_actor_mut(npc_id, "Enemy outer gate")
                     .detectable_lists[bucket][index];
                 entry.seen_now = false;
                 entry.last_visibility = 0.0;
@@ -1757,8 +1706,7 @@ impl EngineInner {
                 modified_frame,
             );
             let entity = self
-                .world
-                .entities
+                .entities()
                 .expect_entity(target, format_args!("Enemy predetection target"));
             let is_pc = matches!(entity, Entity::Pc(_));
             let guarded = matches!(entity, Entity::Pc(pc) if pc.pc.guard.is_some());
@@ -1770,15 +1718,11 @@ impl EngineInner {
                 level: entity.element_data().layer(),
             };
             let hostile = self.is_hostile_to_player_camp(
-                self.world
-                    .entities
+                self.entities()
                     .expect_entity(npc_id, format_args!("Enemy observer camp"))
                     .camp(),
             );
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy sharpness"));
+            let npc = self.ai_actor_mut(npc_id, "Enemy sharpness");
             let speed = if npc.view_lean_out {
                 ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
             } else {
@@ -1815,8 +1759,7 @@ impl EngineInner {
         }
 
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(npc_id, format_args!("Enemy instant detection"));
         let aligned = self
             .mission_domain
@@ -1833,10 +1776,7 @@ impl EngineInner {
                     | crate::ai::AiState::Default
                     | crate::ai::AiState::Wondering
             );
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(npc_id, format_args!("Enemy suspect"));
+        let npc = self.ai_actor_mut(npc_id, "Enemy suspect");
         npc.detection_suspects[bucket] = npc.detection_suspects[bucket].wrapping_add(sum);
         if sum > 0 && (npc.worst_detected_type as usize) > bucket {
             npc.worst_detected_type = DetectableType::Enemy;
@@ -1852,11 +1792,7 @@ impl EngineInner {
         npc.maximal_detection_suspect = npc.detection_suspects[bucket];
 
         for index in 0..count {
-            let entry = &self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy detection"))
-                .detectable_lists[bucket][index];
+            let entry = &self.ai_actor(npc_id, "Enemy detection").detectable_lists[bucket][index];
             let target = entry.element.expect("Enemy detection target");
             let rising = committed && entry.seen_now && !entry.seen_last_frame;
             let falling = !entry.seen_now && entry.seen_last_frame;
@@ -1866,13 +1802,11 @@ impl EngineInner {
                     target.index(),
                 ));
                 let entity = self
-                    .world
-                    .entities
+                    .entities()
                     .expect_entity(target, format_args!("Enemy reveal target"));
                 if aligned && matches!(entity, Entity::Soldier(_)) && entity.element_data().blipped
                 {
-                    self.world
-                        .entities
+                    self.entities_mut()
                         .expect_entity_mut(target, format_args!("Enemy reveal target"))
                         .reveal_blip();
                 }
@@ -1884,9 +1818,7 @@ impl EngineInner {
                 ));
             }
             let entry = &mut self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy detection latch"))
+                .ai_actor_mut(npc_id, "Enemy detection latch")
                 .detectable_lists[bucket][index];
             if committed {
                 entry.seen_last_frame = entry.seen_now;
@@ -1909,8 +1841,7 @@ impl EngineInner {
         modified_frame: u32,
     ) -> f32 {
         let viewer = self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("Enemy visibility owner"));
         let npc = viewer
             .ai_actor_data()
@@ -1927,8 +1858,7 @@ impl EngineInner {
         let seen_last = entry.seen_last_frame;
         let cached = entry.last_visibility;
         let target = self
-            .world
-            .entities
+            .entities()
             .expect_entity(target_id, format_args!("Enemy visibility target"));
         let hostile = self.is_hostile_to_player_camp(viewer.camp());
         let aligned = self
@@ -1973,8 +1903,7 @@ impl EngineInner {
             );
             let speed = if hostile && is_pc {
                 let Entity::Pc(pc) = self
-                    .world
-                    .entities
+                    .entities()
                     .expect_entity(target_id, format_args!("Enemy PC detection speed"))
                 else {
                     unreachable!()
@@ -1999,18 +1928,12 @@ impl EngineInner {
         // animation check before the next detectable is scanned.
         if hostile && is_pc {
             let order = self
-                .world
-                .entities
+                .entities()
                 .current_element_for_actor(target_id)
-                .and_then(|(sequence, index)| {
-                    self.orders.sequence_manager.get_element(sequence, index)
-                })
+                .and_then(|(sequence, index)| self.seq().get_element(sequence, index))
                 .and_then(|element| element.current_order())
                 .map_or(crate::order::OrderType::Invalid, |order| order.order_type);
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("Enemy disguise learning"));
+            let ai = self.ai_mut(owner, "Enemy disguise learning");
             visibility = apply_enemy_beggar_disguise_with_relationship(
                 hostile,
                 true,
@@ -2029,8 +1952,7 @@ impl EngineInner {
         target: EntityId,
     ) -> (crate::ai::Position, crate::coordinates::WorldPoint3D) {
         let entity = self
-            .world
-            .entities
+            .entities()
             .expect_entity(target, format_args!("test optical target"));
         assert!(!entity.is_dead(), "test optical target must be alive");
         let element = entity.element_data();
@@ -2146,22 +2068,19 @@ impl EngineInner {
             ),
         ] {
             if kind == DetectableType::Object {
-                Self::cleanup_live_detectables(&mut self.world.entities, npc_id, kind, |entity| {
+                Self::cleanup_live_detectables(self.entities_mut(), npc_id, kind, |entity| {
                     entity.is_active()
                 });
             } else if kind == DetectableType::Beggar {
                 Self::cleanup_live_detectables(
-                    &mut self.world.entities,
+                    self.entities_mut(),
                     npc_id,
                     kind,
                     super::actor_queries::is_live_beggar,
                 );
             }
             let bucket = kind as usize;
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("optical bucket"));
+            let npc = self.ai_actor(npc_id, "optical bucket");
             debug_detectable_list_bucket(
                 "post_cleanup",
                 bucket,
@@ -2177,21 +2096,16 @@ impl EngineInner {
             let mut maximum = 0u32;
             let mut shadows = Vec::new();
             for index in 0..count {
-                let npc = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data(npc_id, format_args!("optical entry"));
+                let npc = self.ai_actor(npc_id, "optical entry");
                 let det = &npc.detectable_lists[bucket][index];
                 let target_id = det.element.expect("optical detectable requires a target");
                 let previous = det.last_visibility;
                 let seen_last_frame = det.seen_last_frame;
                 let owner = self
-                    .world
-                    .entities
+                    .entities()
                     .expect_entity(npc_id, format_args!("optical viewer"));
                 let target = self
-                    .world
-                    .entities
+                    .entities()
                     .expect_entity(target_id, format_args!("optical target"));
                 let npc = owner
                     .ai_actor_data()
@@ -2272,8 +2186,7 @@ impl EngineInner {
                     sum = accumulate_detection_sharpness(sum, sharpness);
                 }
                 let target = self
-                    .world
-                    .entities
+                    .entities()
                     .expect_entity(target_id, format_args!("optical predetection target"));
                 let pc = matches!(target, Entity::Pc(_));
                 let guarded = matches!(target, Entity::Pc(pc) if pc.pc.guard.is_some());
@@ -2284,10 +2197,7 @@ impl EngineInner {
                     sector: raw.sector(),
                     level: raw.layer(),
                 };
-                let npc = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("optical latches"));
+                let npc = self.ai_actor_mut(npc_id, "optical latches");
                 let det = &mut npc.detectable_lists[bucket][index];
                 if scan
                     && kind == DetectableType::Body
@@ -2304,10 +2214,7 @@ impl EngineInner {
                 det.seen_now = sharpness > 0;
                 det.last_visibility = visibility;
             }
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("optical commit"));
+            let npc = self.ai_actor_mut(npc_id, "optical commit");
             let state = npc
                 .ai_brain
                 .base()
@@ -2361,11 +2268,7 @@ impl EngineInner {
                 stimuli.extend(queued_human_detection_stimuli(event, shadows, rising));
             }
         }
-        finalize_detection_summary(
-            self.world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("optical summary")),
-        );
+        finalize_detection_summary(self.ai_actor_mut(npc_id, "optical summary"));
     }
 
     fn cleanup_live_detectables(
@@ -2405,15 +2308,13 @@ impl EngineInner {
         target: EntityId,
     ) -> f32 {
         let viewer = self
-            .world
-            .entities
+            .entities()
             .expect_entity(owner, format_args!("object visibility viewer"));
         let npc = viewer
             .ai_actor_data()
             .expect("object visibility requires NPC data");
         let target = self
-            .world
-            .entities
+            .entities()
             .expect_entity(target, format_args!("object visibility target"));
         let element = target.element_data();
         let (eye, eye_world) = human_eye_point_for_visibility(viewer);
