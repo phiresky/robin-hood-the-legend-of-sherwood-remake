@@ -444,7 +444,7 @@ impl AiOwnerCtx<'_> {
                 crate::element::Command::EquipBow
             };
             self.engine.launch_element(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
             );
 

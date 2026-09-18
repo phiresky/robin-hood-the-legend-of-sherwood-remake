@@ -343,17 +343,18 @@ impl AiOwnerCtx<'_> {
 
     fn battle_command(&mut self, command: crate::element::Command) {
         self.engine.launch_element(
-            TickCtx::new(self.sim, self.assets),
+            self.tcx,
             crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
         );
     }
 
     fn battle_panic_remark(&mut self) {
-        let remark = if crate::sim_rng::bool(self.sim, crate::sim_rng::RngSite::BattlePanicRemark) {
-            Remark::Cassos
-        } else {
-            Remark::Panic
-        };
+        let remark =
+            if crate::sim_rng::bool(self.tcx.sim, crate::sim_rng::RngSite::BattlePanicRemark) {
+                Remark::Cassos
+            } else {
+                Remark::Panic
+            };
         self.execute_ai_speech(AiSpeechAttempt { remark, flags: 0 });
     }
 
@@ -450,7 +451,7 @@ impl AiOwnerCtx<'_> {
                     &self.engine.world.fast_grid.level.sectors,
                     &self.engine.world.fast_grid.level.sector_number_map,
                 )
-                .resolve_retaining_direction(self.sim, ai.pc_gone_away_in_this_direction);
+                .resolve_retaining_direction(self.tcx.sim, ai.pc_gone_away_in_this_direction);
                 let ai = self
                     .engine
                     .enemy_ai_mut(self.owner, "missed battle forecast result");
@@ -466,21 +467,15 @@ impl AiOwnerCtx<'_> {
                 direction,
             );
         } else if !unconscious.is_empty() && !self.engine.battle_forest_merry_man(self.owner) {
-            self.engine.execute_approach_sleeping_enemies(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                unconscious,
-            );
+            self.engine
+                .execute_approach_sleeping_enemies(self.tcx, self.owner, unconscious);
         } else {
             let camp = self
                 .engine
                 .expect_entity(self.owner, "sleeping enemy search camp")
                 .camp();
-            self.engine.execute_kill_nearby_sleeping_enemies(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                camp,
-            );
+            self.engine
+                .execute_kill_nearby_sleeping_enemies(self.tcx, self.owner, camp);
         }
     }
 
@@ -528,7 +523,7 @@ impl AiOwnerCtx<'_> {
                         .is_sword()
                     {
                         if crate::sim_rng::u32(
-                            self.sim,
+                            self.tcx.sim,
                             crate::sim_rng::RngSite::BattleProvoke,
                             0..4,
                         ) == 0
@@ -566,7 +561,7 @@ impl AiOwnerCtx<'_> {
                             .select_battle_primary(self.owner, PrimaryTargetFlags::VIPS_ALLOWED);
                         let center = target.map(|target| self.engine.live_ai_position(target));
                         self.engine.execute_ai_panic(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             self.owner,
                             center,
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -585,11 +580,10 @@ impl AiOwnerCtx<'_> {
                             .ai_mut(self.owner, "battle alert latch")
                             .friends_are_alerted = true;
                         let center = self.engine.live_ai_position(target);
-                        if self.engine.execute_ai_command_soldiers_to_attack(
-                            TickCtx::new(self.sim, self.assets),
-                            self.owner,
-                            center,
-                        ) {
+                        if self
+                            .engine
+                            .execute_ai_command_soldiers_to_attack(self.tcx, self.owner, center)
+                        {
                             self.execute_ai_speech(AiSpeechAttempt {
                                 remark: Remark::OfficerGivesAttackOrder,
                                 flags: 0,
@@ -677,22 +671,19 @@ impl AiOwnerCtx<'_> {
                     ControlFlow::Break(true)
                 }
                 Decision::RunForNewArrows => self.execute_ai_battle_run_for_arrows(),
-                Decision::RunToArcheryPoint => self.engine.execute_ai_battle_archery_point(
-                    TickCtx::new(self.sim, self.assets),
-                    self.owner,
-                ),
+                Decision::RunToArcheryPoint => self
+                    .engine
+                    .execute_ai_battle_archery_point(self.tcx, self.owner),
                 Decision::TooProudToAttack => self.execute_ai_battle_too_proud(old_substate),
                 Decision::ArcherStepBack => self.engine.execute_ai_battle_archer_step_back(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     self.owner,
                     old_substate,
                 ),
                 Decision::ArcherObserve => self.execute_ai_battle_archer_observe(),
-                Decision::CoverBehindShieldBearer => self.engine.execute_ai_battle_cover(
-                    TickCtx::new(self.sim, self.assets),
-                    self.owner,
-                    cover,
-                ),
+                Decision::CoverBehindShieldBearer => self
+                    .engine
+                    .execute_ai_battle_cover(self.tcx, self.owner, cover),
                 _ => panic!("unsupported battle decision {decision:?}"),
             };
             match outcome {
@@ -736,7 +727,7 @@ impl AiOwnerCtx<'_> {
             let distance = crate::ai::AiController::value_between(
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
                 crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-                ai.get_courage(&self.assets.profile_manager) as u8,
+                ai.get_courage(&self.tcx.assets.profile_manager) as u8,
             );
             self.duty_go_near(destination, i32::from(distance), GotoFlags::empty());
         }

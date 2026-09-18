@@ -217,7 +217,7 @@ impl AiOwnerCtx<'_> {
             return;
         }
         self.engine.launch_element(
-            TickCtx::new(self.sim, self.assets),
+            self.tcx,
             crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
@@ -240,14 +240,12 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::JumplineDestination,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine
-            .launch_element(TickCtx::new(self.sim, self.assets), element);
+        self.engine.launch_element(self.tcx, element);
     }
 
     pub(in crate::engine) fn execute_ai_begin_swordfight(&mut self) {
         self.stop_ai_owner();
-        self.engine
-            .nearby_civilians_panic(TickCtx::new(self.sim, self.assets), self.owner);
+        self.engine.nearby_civilians_panic(self.tcx, self.owner);
 
         let target = self.engine.approach_primary(self.owner);
         let entity = self.engine.expect_entity(target, "swordfight target stop");
@@ -263,7 +261,7 @@ impl AiOwnerCtx<'_> {
                 .is_moving()
         {
             self.engine.stop_actor_orders(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 &mut Vec::new(),
                 target,
                 crate::sequence::SequencePriority::Normal,
@@ -296,8 +294,7 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine
-            .launch_element(TickCtx::new(self.sim, self.assets), element);
+        self.engine.launch_element(self.tcx, element);
 
         self.engine.clear_live_combat_neighbours(self.owner);
         self.engine.approach_focus(self.owner, None);
@@ -348,12 +345,14 @@ impl AiOwnerCtx<'_> {
                 .ai_mut(self.owner, "approach carrier substitution")
                 .primary_target = Some(AiEntityHandle::new(target.index()));
         }
-        let standard_range = self.engine.approach_sword_range(self.assets, self.owner);
+        let standard_range = self
+            .engine
+            .approach_sword_range(self.tcx.assets, self.owner);
         let sword_range = standard_range.wrapping_add(10);
         let courage = self
             .engine
             .enemy_ai(self.owner, "approach courage")
-            .get_courage(&self.assets.profile_manager);
+            .get_courage(&self.tcx.assets.profile_manager);
         let mut run_distance = (2 * (100 - courage)).max(sword_range);
         let my_position = self.engine.live_ai_position(self.owner);
         let mut target_position = self.engine.live_ai_position(target);
@@ -362,7 +361,7 @@ impl AiOwnerCtx<'_> {
             .sqrt() as u16;
         let maximal_range = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         }
         .sword_range_maximal(self.owner.index());
@@ -477,7 +476,7 @@ impl AiOwnerCtx<'_> {
             }
             Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning => (
                 ai.sword_is_charge_weapon
-                    && ai.get_courage(&self.assets.profile_manager)
+                    && ai.get_courage(&self.tcx.assets.profile_manager)
                         >= crate::ai_enemy::combat::CHARGE_MIN_COURAGE
                     && i32::from(distance) >= crate::ai_enemy::combat::CHARGE_MIN_DISTANCE
                     && ai.my_line_jump.is_none()
@@ -541,7 +540,9 @@ impl AiOwnerCtx<'_> {
             charge = false;
             below = false;
             reconsider = true;
-            run_distance = self.engine.approach_sword_range(self.assets, self.owner);
+            run_distance = self
+                .engine
+                .approach_sword_range(self.tcx.assets, self.owner);
         }
         if !reconsider {
             self.engine.approach_timer(self.owner, 10);
@@ -583,7 +584,8 @@ impl AiOwnerCtx<'_> {
                 (
                     Substate::AttackingChargingEnemy,
                     GotoFlags::RUN | GotoFlags::CHARGE,
-                    self.engine.approach_sword_range(self.assets, self.owner),
+                    self.engine
+                        .approach_sword_range(self.tcx.assets, self.owner),
                 )
             } else {
                 (
@@ -600,13 +602,15 @@ impl AiOwnerCtx<'_> {
             (
                 Substate::AttackingRunningToEnemy,
                 GotoFlags::RUN | GotoFlags::DONT_STOP,
-                self.engine.approach_sword_range(self.assets, self.owner),
+                self.engine
+                    .approach_sword_range(self.tcx.assets, self.owner),
             )
         } else {
             (
                 Substate::AttackingWalkingToEnemy,
                 GotoFlags::empty(),
-                self.engine.approach_sword_range(self.assets, self.owner),
+                self.engine
+                    .approach_sword_range(self.tcx.assets, self.owner),
             )
         };
         if below && line.is_some() {

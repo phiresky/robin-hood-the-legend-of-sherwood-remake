@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType, Substate};
-use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
@@ -342,15 +341,14 @@ impl AiOwnerCtx<'_> {
                     self.engine
                         .ai_mut(self.owner, "beggar inspection timer")
                         .launch_timer(time, frame);
-                    self.engine
-                        .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+                    self.engine.launch_sequence(self.tcx, sequence);
                 }
             }
             (Substate::SeekingSeekpointIdentifyingBeggar1, StimulusType::EventTimer) => {
                 let beggar = self.engine.live_beggar_to_examine(self.owner);
                 if matches!(beggar, EntityId::Civilian(_) | EntityId::Soldier(_)) {
                     self.engine.launch_element(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::BeggarShowFace,
@@ -359,7 +357,7 @@ impl AiOwnerCtx<'_> {
                     );
                     let beggar = self.engine.live_beggar_to_examine(self.owner);
                     self.engine.execute_ai_speech(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         beggar,
                         crate::ai::AiSpeechAttempt {
                             remark: crate::ai::Remark::CivBeggarIdentifiesHimself,
@@ -381,7 +379,7 @@ impl AiOwnerCtx<'_> {
                     ai.list_them.push(beggar.index());
                     if ai.is_archer() {
                         self.engine.launch_element(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             crate::sequence::SequenceElement::new(
                                 1,
                                 crate::element::Command::LeaveBeggar,
@@ -399,11 +397,7 @@ impl AiOwnerCtx<'_> {
                             "false beggar shot target",
                         );
                         self.stop_ai_owner();
-                        self.engine.shoot_bow_at(
-                            TickCtx::new(self.sim, self.assets),
-                            self.owner,
-                            target,
-                        );
+                        self.engine.shoot_bow_at(self.tcx, self.owner, target);
                     } else {
                         self.execute_ai_begin_swordfight();
                     }
@@ -423,7 +417,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingBowAiming);
                 let (_, ability) = self
                     .engine
-                    .bow_profile_and_ability(self.assets, self.owner)
+                    .bow_profile_and_ability(self.tcx.assets, self.owner)
                     .expect("loaded bow ability");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.engine.control.frame_counter;
@@ -450,7 +444,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target.get(), "bow proximity target");
                     !self.engine.ai_archer_is_too_near_to_enemy(
-                        self.assets,
+                        self.tcx.assets,
                         self.owner,
                         self.engine.live_ai_position(self.owner),
                         target,
@@ -467,11 +461,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target.get(), "aimed shot target");
                     self.stop_ai_owner();
-                    self.engine.shoot_bow_at(
-                        TickCtx::new(self.sim, self.assets),
-                        self.owner,
-                        target,
-                    );
+                    self.engine.shoot_bow_at(self.tcx, self.owner, target);
                 } else {
                     self.engine
                         .enemy_ai_mut(self.owner, "unsafe aimed shot")

@@ -535,16 +535,14 @@ impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_battle_decisions(&mut self) {
         let (old_substate, inputs, unconscious) = self
             .engine
-            .prepare_live_battle_decisions(self.assets, self.owner);
+            .prepare_live_battle_decisions(self.tcx.assets, self.owner);
         if inputs.num_enemies_i_can_see == 0 {
             self.execute_live_battle_without_visible_enemies(unconscious);
             return;
         }
-        let (decision, cover) = self.engine.choose_live_battle_decision(
-            TickCtx::new(self.sim, self.assets),
-            self.owner,
-            inputs,
-        );
+        let (decision, cover) = self
+            .engine
+            .choose_live_battle_decision(self.tcx, self.owner, inputs);
         if let Some(decision) = self.execute_live_battle_decision(
             decision,
             old_substate,

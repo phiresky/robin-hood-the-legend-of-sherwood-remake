@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType, Stimulus, StimulusInfo, StimulusType, Substate};
-use crate::engine::TickCtx;
 
 impl EngineInner {
     #[cfg(test)]
@@ -77,8 +76,7 @@ impl AiOwnerCtx<'_> {
                     .set_transient_emoticon(EmoticonType::XMark, 30, frame);
 
                 self.duty_set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                self.engine
-                    .nearby_civilians_panic(TickCtx::new(self.sim, self.assets), self.owner);
+                self.engine.nearby_civilians_panic(self.tcx, self.owner);
                 self.engine.combat_impact_timer(self.owner, 20);
             }
             StimulusType::EventGotHit => self.execute_ai_got_hit_live(stimulus),
@@ -157,8 +155,7 @@ impl AiOwnerCtx<'_> {
                 z: danger.z,
             },
         );
-        self.engine
-            .launch_element(TickCtx::new(self.sim, self.assets), element);
+        self.engine.launch_element(self.tcx, element);
         let entity = self
             .engine
             .expect_entity_mut(self.owner, "incoming arrow shield pose");
@@ -168,7 +165,7 @@ impl AiOwnerCtx<'_> {
             .expect("shield owner is actor")
             .action_state = crate::element::ActionState::HoldingShield;
         self.engine
-            .refresh_retained_shield_obstacle(self.assets, self.owner);
+            .refresh_retained_shield_obstacle(self.tcx.assets, self.owner);
         let ai = self.engine.ai_mut(self.owner, "incoming arrow focus");
         let target = ai.primary_target;
         self.engine.execute_ai_focus(self.owner, target);
@@ -194,11 +191,8 @@ impl AiOwnerCtx<'_> {
                 != entity.camp()
                 && !human.opponents.contains(&attacker)
             {
-                self.engine.direct_enter_swordfight(
-                    TickCtx::new(self.sim, self.assets),
-                    self.owner,
-                    attacker,
-                );
+                self.engine
+                    .direct_enter_swordfight(self.tcx, self.owner, attacker);
             }
         } else if self.engine.ai(self.owner, "hit substate").current_substate
             == Substate::MenacingPcInComa
@@ -222,8 +216,7 @@ impl AiOwnerCtx<'_> {
             element.set_property(Field::Opponent, FieldValue::Integer(0));
             element.set_property(Field::JumplineDestination, FieldValue::Integer(0));
             element.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
-            self.engine
-                .launch_element(TickCtx::new(self.sim, self.assets), element);
+            self.engine.launch_element(self.tcx, element);
             let target = self
                 .engine
                 .ai(self.owner, "menacing hit direction target")

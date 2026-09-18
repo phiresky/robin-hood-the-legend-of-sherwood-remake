@@ -3,7 +3,6 @@
 use super::*;
 use crate::ai::{AiState, GotoFlags, Remark, Stimulus, StimulusInfo, Substate};
 use crate::element::Human as _;
-use crate::engine::TickCtx;
 use crate::parameters_ai::{AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
 
 impl EngineInner {
@@ -287,7 +286,7 @@ impl AiOwnerCtx<'_> {
                         .base
                         .seek_position;
                     self.engine.execute_ai_panic(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -353,7 +352,7 @@ impl AiOwnerCtx<'_> {
                     self.reporting_state(Substate::SeekingCivilianGiveAlertingReportToSoldierPoint);
                     let target = self.engine.reporting_target(self.owner);
                     self.engine.execute_ai_callback(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         target,
                         &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                     );
@@ -394,7 +393,7 @@ impl AiOwnerCtx<'_> {
                     let civilian = self.engine.reporting_civilian_mut(self.owner);
                     let center = civilian.base.seek_position;
                     self.engine.execute_ai_panic(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -461,7 +460,7 @@ impl AiOwnerCtx<'_> {
                         .base
                         .seek_position;
                     self.engine.execute_ai_panic(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -477,7 +476,7 @@ impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn civilian_alert_soldier(&mut self, check_door_path: bool) -> bool {
         let Some(target) =
             self.engine
-                .select_civilian_alert_soldier(self.assets, self.owner, check_door_path)
+                .select_civilian_alert_soldier(self.tcx.assets, self.owner, check_door_path)
         else {
             return false;
         };
@@ -516,13 +515,13 @@ impl AiOwnerCtx<'_> {
         let frame = self.engine.control.frame_counter;
         let target = self.engine.reporting_target(self.owner);
         let accepted = self.engine.execute_ai_callback(
-            TickCtx::new(self.sim, self.assets),
+            self.tcx,
             target,
             &Stimulus::with_human(StimulusType::CallAlert, self.owner.index()),
         );
         if !accepted {
             self.engine.execute_ai_panic(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 self.owner,
                 None,
                 AI_STANDARD_PANIC_RUNS as u8,
@@ -562,7 +561,7 @@ impl AiOwnerCtx<'_> {
         let input = extract_exact_forecast_input(self.engine, entity, passing_door)
             .expect("soldier forecast requires an actor");
         let position = crate::ai::forecast_destination_for_ia(
-            self.sim,
+            self.tcx.sim,
             &input,
             &self.engine.script_domains.interactables.doors,
             &self.engine.world.fast_grid.level.sectors,

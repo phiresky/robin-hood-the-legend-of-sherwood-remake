@@ -338,7 +338,7 @@ impl AiOwnerCtx<'_> {
                     | Substate::AttackingBowAiming
             ) {
                 self.engine.execute_ai_callback(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     archer,
                     &Stimulus::new(StimulusType::CallCoordinate),
                 );
@@ -353,24 +353,16 @@ impl AiOwnerCtx<'_> {
     ) {
         if tell_left {
             if let Some(left) = self.engine.phalanx_neighbour(self.owner, false) {
-                self.engine.execute_ai_break_phalanx(
-                    TickCtx::new(self.sim, self.assets),
-                    left,
-                    false,
-                    true,
-                );
+                self.engine
+                    .execute_ai_break_phalanx(self.tcx, left, false, true);
             } else {
                 self.engine
-                    .reinitialize_live_phalanx_enemies(self.assets, self.owner);
+                    .reinitialize_live_phalanx_enemies(self.tcx.assets, self.owner);
             }
         }
         if tell_right && let Some(right) = self.engine.phalanx_neighbour(self.owner, true) {
-            self.engine.execute_ai_break_phalanx(
-                TickCtx::new(self.sim, self.assets),
-                right,
-                true,
-                false,
-            );
+            self.engine
+                .execute_ai_break_phalanx(self.tcx, right, true, false);
         }
         let right = self
             .engine
@@ -413,7 +405,7 @@ impl AiOwnerCtx<'_> {
             return false;
         }
         self.engine
-            .reinitialize_live_phalanx_enemies(self.assets, self.owner);
+            .reinitialize_live_phalanx_enemies(self.tcx.assets, self.owner);
         if self
             .engine
             .enemy_ai(self.owner, "phalanx enemies")
@@ -424,7 +416,7 @@ impl AiOwnerCtx<'_> {
             return true;
         }
         self.engine
-            .refresh_retained_shield_obstacle(self.assets, self.owner);
+            .refresh_retained_shield_obstacle(self.tcx.assets, self.owner);
 
         // This membership list deliberately survives the callbacks that issue moves.
         let mut members = Vec::new();
@@ -479,7 +471,8 @@ impl AiOwnerCtx<'_> {
                 return true;
             }
             if self.engine.live_phalanx_protects_archers(self.owner)
-                || crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::PhalanxAdvance, 0..3) != 0
+                || crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::PhalanxAdvance, 0..3)
+                    != 0
             {
                 return false;
             }
@@ -509,13 +502,8 @@ impl AiOwnerCtx<'_> {
             {
                 return false;
             }
-            self.engine.instruct_live_phalanx(
-                TickCtx::new(self.sim, self.assets),
-                &members,
-                new_left,
-                right,
-                ideal,
-            );
+            self.engine
+                .instruct_live_phalanx(self.tcx, &members, new_left, right, ideal);
             true
         } else {
             let [x, y] = crate::shadow_polygon::sector_to_direction(((ideal + 4) & 15) as i16);
@@ -539,13 +527,8 @@ impl AiOwnerCtx<'_> {
                     .engine
                     .phalanx_line_accessible(self.owner, left, last, last.level)
                 {
-                    self.engine.instruct_live_phalanx(
-                        TickCtx::new(self.sim, self.assets),
-                        &members,
-                        left,
-                        right,
-                        ideal,
-                    );
+                    self.engine
+                        .instruct_live_phalanx(self.tcx, &members, left, right, ideal);
                     return true;
                 }
             }

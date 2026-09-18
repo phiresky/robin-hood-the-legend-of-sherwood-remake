@@ -181,7 +181,7 @@ impl AiOwnerCtx<'_> {
             self.engine.expect_entity(self.owner, "seek IQ camp").camp(),
         );
         let iq = self.engine.seek_enemy(self.owner).iq_for_difficulty(
-            &self.assets.profile_manager,
+            &self.tcx.assets.profile_manager,
             self.engine.control.sim_config.difficulty,
             hostile,
         );
@@ -268,7 +268,7 @@ impl AiOwnerCtx<'_> {
                 .enemy_ai_mut()
                 .expect("seek point selection requires enemy AI");
             ai.append_global_area_seek_points(
-                self.sim,
+                self.tcx.sim,
                 frame,
                 creation_order,
                 seeking_friends,
@@ -293,7 +293,7 @@ impl AiOwnerCtx<'_> {
             .expect_entity_mut(self.owner, format_args!("personal seek points"))
             .enemy_ai_mut()
             .expect("personal seek points require enemy AI");
-        ai.append_personal_area_seek_points(self.sim, spec, frame, creation_order);
+        ai.append_personal_area_seek_points(self.tcx.sim, spec, frame, creation_order);
         ai.actual_seek_point = None;
         assert!(
             !ai.my_seek_points.is_empty(),
@@ -372,7 +372,7 @@ impl AiOwnerCtx<'_> {
                 .seek_point_mut(self.owner, id)
                 .calculate_interest(frame);
             if crate::sim_rng::u8(
-                self.sim,
+                self.tcx.sim,
                 crate::sim_rng::RngSite::SeekPointAcceptance,
                 0..100,
             ) >= interest

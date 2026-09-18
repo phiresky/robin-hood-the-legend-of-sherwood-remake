@@ -171,7 +171,7 @@ impl EngineInner {
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn run_ai_macro(&mut self) {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner).run();
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).run();
     }
 }
 
@@ -185,7 +185,7 @@ impl AiOwnerCtx<'_> {
             self_rank: entity
                 .enemy_ai()
                 .map_or(crate::profiles::ProfileRank::None, |ai| {
-                    ai.profile(&self.assets.profile_manager).rank
+                    ai.profile(&self.tcx.assets.profile_manager).rank
                 }),
         }
     }
@@ -212,7 +212,7 @@ impl AiOwnerCtx<'_> {
     }
 
     fn run(&mut self) {
-        self.execute_next_macro_command(self.sim);
+        self.execute_next_macro_command();
     }
 
     fn set_macro_state(&mut self, substate: Substate) {
@@ -239,15 +239,12 @@ impl AiOwnerCtx<'_> {
     }
 
     fn assign_path(&mut self, assignment: PatrolAssignment) {
-        self.engine.execute_ai_assign_patrol_path(
-            TickCtx::new(self.sim, self.assets),
-            self.owner,
-            assignment,
-            false,
-        );
+        self.engine
+            .execute_ai_assign_patrol_path(self.tcx, self.owner, assignment, false);
     }
 
-    fn execute_next_macro_command(&mut self, sim: &crate::sim_rng::SimulationContext) {
+    fn execute_next_macro_command(&mut self) {
+        let sim = self.tcx.sim;
         let mut point_already_set = false;
         'vm: loop {
             let entry_ctx = self.owner_state();
@@ -292,7 +289,7 @@ impl AiOwnerCtx<'_> {
                 };
                 self.debug_macro_lifecycle(ctx, "opcode_started", opcode);
 
-                match self.execute_macro_opcode(opcode, &mut point_already_set, sim, ctx) {
+                match self.execute_macro_opcode(opcode, &mut point_already_set, ctx) {
                     std::ops::ControlFlow::Continue(()) => continue 'vm,
                     std::ops::ControlFlow::Break(()) => return,
                 }
@@ -327,7 +324,7 @@ impl AiOwnerCtx<'_> {
 
                     self.set_macro_state(Substate::DefaultEnroute);
                     let ctx = &self.owner_state();
-                    let assets = self.assets;
+                    let assets = self.tcx.assets;
                     let hiking_paths = &assets.navigation.hiking_paths;
                     let will_stop = self.controller_mut().will_stop_at_next_waypoint_at(
                         sim,
@@ -359,19 +356,15 @@ impl AiOwnerCtx<'_> {
                             level: wp.level,
                         })
                     {
-                        self.engine.duty_go_to(
-                            TickCtx::new(sim, self.assets),
-                            self.owner,
-                            next_wp,
-                            walk_flags,
-                        );
+                        self.engine
+                            .duty_go_to(self.tcx, self.owner, next_wp, walk_flags);
                         // An already-reached waypoint can start another macro.
                         // Its deadline survives this invocation's cancellation.
 
                         self.finish_patrol_macro_debug(ctx, "goto_completed");
                     } else {
                         self.engine.execute_ai_return_to_duty(
-                            TickCtx::new(sim, self.assets),
+                            self.tcx,
                             self.owner,
                             DutyFlags::empty(),
                         );
@@ -389,7 +382,6 @@ impl AiOwnerCtx<'_> {
         &mut self,
         opcode: MacroOpcode,
         point_already_set: &mut bool,
-        sim: &crate::sim_rng::SimulationContext,
         ctx: &MacroOwner,
     ) -> std::ops::ControlFlow<()> {
         match opcode {
@@ -431,11 +423,8 @@ impl AiOwnerCtx<'_> {
                     self.break_macro_debug(ctx, "face_to_truncated");
                     return std::ops::ControlFlow::Break(());
                 };
-                self.engine.duty_face_direction(
-                    TickCtx::new(sim, self.assets),
-                    self.owner,
-                    direction,
-                );
+                self.engine
+                    .duty_face_direction(self.tcx, self.owner, direction);
 
                 self.consume_macro_operand();
                 return std::ops::ControlFlow::Break(());
@@ -469,7 +458,7 @@ impl AiOwnerCtx<'_> {
                     );
                 }
                 self.engine.initialize_ai_friend_check(
-                    TickCtx::new(sim, self.assets),
+                    self.tcx,
                     self.owner,
                     friend_id,
                     frames,
@@ -499,13 +488,8 @@ impl AiOwnerCtx<'_> {
                         self.controller().me
                     );
                 }
-                self.engine.initialize_ai_friend_check(
-                    TickCtx::new(sim, self.assets),
-                    self.owner,
-                    friend_id,
-                    frames,
-                    index,
-                );
+                self.engine
+                    .initialize_ai_friend_check(self.tcx, self.owner, friend_id, frames, index);
 
                 self.controller_mut().macro_started_in_this_frame = false;
                 return std::ops::ControlFlow::Break(());
@@ -529,11 +513,8 @@ impl AiOwnerCtx<'_> {
                 // Assignment's nested decision finishes before this explicit
                 // second cancellation and actor-specific duty call.
                 self.engine.execute_ai_break_macro(self.owner);
-                self.engine.execute_ai_return_to_duty(
-                    TickCtx::new(sim, self.assets),
-                    self.owner,
-                    DutyFlags::empty(),
-                );
+                self.engine
+                    .execute_ai_return_to_duty(self.tcx, self.owner, DutyFlags::empty());
                 return std::ops::ControlFlow::Break(());
             }
 
@@ -649,11 +630,8 @@ impl AiOwnerCtx<'_> {
                         self.controller().me
                     );
                 }
-                self.engine.instruct_patrol_direction_to_patrol_members(
-                    TickCtx::new(sim, self.assets),
-                    self.owner,
-                    direction,
-                );
+                self.engine
+                    .instruct_patrol_direction_to_patrol_members(self.tcx, self.owner, direction);
                 self.consume_macro_operand();
                 self.run();
                 return std::ops::ControlFlow::Break(());
@@ -671,7 +649,7 @@ impl AiOwnerCtx<'_> {
                     self.speak(Remark::OfficerStartsPatrol);
                 }
                 self.engine
-                    .initialize_patrol_for_npc(self.assets, self.owner);
+                    .initialize_patrol_for_npc(self.tcx.assets, self.owner);
                 self.run();
                 return std::ops::ControlFlow::Break(());
             }

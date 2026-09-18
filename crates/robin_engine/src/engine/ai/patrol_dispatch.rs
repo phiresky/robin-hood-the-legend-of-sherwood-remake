@@ -96,13 +96,11 @@ impl AiOwnerCtx<'_> {
                 Entity::Soldier(_)
             ) && self
                 .engine
-                .patrol_member_visible(self.assets, self.owner, chief)
+                .patrol_member_visible(self.tcx.assets, self.owner, chief)
             {
-                return self.engine.dispatch_live_stimulus_to_patrol(
-                    TickCtx::new(self.sim, self.assets),
-                    chief,
-                    stimulus,
-                );
+                return self
+                    .engine
+                    .dispatch_live_stimulus_to_patrol(self.tcx, chief, stimulus);
             }
         }
 
@@ -118,12 +116,8 @@ impl AiOwnerCtx<'_> {
         let members = ai.base.patrol.iter().map(|member| member.index()).collect();
         let mut forwarded = *stimulus;
         forwarded.to_whole_patrol = true;
-        self.engine.execute_ai_patrol_broadcast(
-            TickCtx::new(self.sim, self.assets),
-            self.owner,
-            forwarded,
-            members,
-        );
+        self.engine
+            .execute_ai_patrol_broadcast(self.tcx, self.owner, forwarded, members);
         true
     }
 }

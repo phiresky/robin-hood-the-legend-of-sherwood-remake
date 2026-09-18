@@ -1022,7 +1022,7 @@ impl AiOwnerCtx<'_> {
         {
             Some(
                 self.engine
-                    .begin_live_enemy_state(self.assets, self.owner, state, substate),
+                    .begin_live_enemy_state(self.tcx.assets, self.owner, state, substate),
             )
         } else {
             let entity = self
@@ -1043,7 +1043,7 @@ impl AiOwnerCtx<'_> {
                 _ => panic!("Civilian AI entered invalid state: {state:?}"),
             };
             self.engine.execute_ai_set_alert_status(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 alert,
                 crate::ai::AlertFlags::empty(),
@@ -1060,16 +1060,12 @@ impl AiOwnerCtx<'_> {
             _ => crate::ai::AiStateChangeSource::SelfActor,
         };
         if notify {
-            self.engine.call_live_ai_state_change_filter(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                state,
-                source,
-            );
+            self.engine
+                .call_live_ai_state_change_filter(self.tcx, self.owner, state, source);
         }
         if let Some(forced_attentive) = forced_attentive {
             self.engine.finish_live_enemy_state(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 self.owner,
                 state,
                 substate,
@@ -1109,12 +1105,8 @@ impl AiOwnerCtx<'_> {
                 .expect("facing requires controller")
                 .already_turned = true;
         } else {
-            self.engine.launch_live_ai_turn(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                direction as i16,
-                false,
-            );
+            self.engine
+                .launch_live_ai_turn(self.tcx, self.owner, direction as i16, false);
         }
     }
 
@@ -1131,7 +1123,7 @@ impl AiOwnerCtx<'_> {
             .expect_entity(self.owner, "duty facing position owner");
         let (dx, dy) = if elevation == -1 {
             let target = self.engine.position_to_point_3d(
-                self.assets,
+                self.tcx.assets,
                 position.sector,
                 position.level,
                 position.x,
@@ -1153,7 +1145,7 @@ impl AiOwnerCtx<'_> {
 
     pub(in crate::engine) fn duty_point_to(&mut self, position: Position) {
         let target = self.engine.position_to_point_3d(
-            self.assets,
+            self.tcx.assets,
             position.sector,
             position.level,
             position.x,
@@ -1178,8 +1170,7 @@ impl AiOwnerCtx<'_> {
         let mut sequence = Sequence::new();
         sequence.append_element(turn);
         sequence.append_element(point);
-        self.engine
-            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+        self.engine.launch_sequence(self.tcx, sequence);
     }
 
     pub(in crate::engine) fn duty_go_to(&mut self, destination: Position, flags: GotoFlags) {
@@ -1298,13 +1289,8 @@ impl AiOwnerCtx<'_> {
         ) {
             return;
         }
-        self.engine.launch_ai_move(
-            TickCtx::new(self.sim, self.assets),
-            self.owner,
-            destination,
-            flags,
-            speed,
-        );
+        self.engine
+            .launch_ai_move(self.tcx, self.owner, destination, flags, speed);
     }
 
     pub(in crate::engine) fn duty_go_near(
@@ -1322,7 +1308,7 @@ impl AiOwnerCtx<'_> {
 
     pub(in crate::engine) fn execute_common_ai_duty(&mut self, flags: DutyFlags) {
         self.engine.execute_ai_set_alert_status(
-            self.assets,
+            self.tcx.assets,
             self.owner,
             AlertLevel::Green,
             AlertFlags::empty(),
@@ -1364,7 +1350,7 @@ impl AiOwnerCtx<'_> {
             if able
                 && self
                     .engine
-                    .patrol_member_visible(self.assets, self.owner, chief)
+                    .patrol_member_visible(self.tcx.assets, self.owner, chief)
             {
                 self.duty_set_state(AiState::Default, Substate::DefaultGotoChief);
                 // State notifications may replace the chief before the approach.
@@ -1393,7 +1379,7 @@ impl AiOwnerCtx<'_> {
             .has_patrol_path
         {
             let here = self.engine.live_ai_position(self.owner);
-            let paths = &self.assets.navigation.hiking_paths;
+            let paths = &self.tcx.assets.navigation.hiking_paths;
             let nearest_distance = {
                 let ai = self.engine.ai_mut(self.owner, "duty path selection");
                 let path = ai
@@ -1446,14 +1432,14 @@ impl AiOwnerCtx<'_> {
                         .as_mut()
                         .expect("duty route state requires path")
                         .initialize_history_entries_on_path(paths, |p, w, s| {
-                            self.assets.navigation.hiking_waypoint_sector(p, w, s)
+                            self.tcx.assets.navigation.hiking_waypoint_sector(p, w, s)
                         });
                 }
             }
             let walk_flags = {
                 let ai = self.engine.ai_mut(self.owner, "duty route forecast");
                 let stop = ai.will_stop_at_next_waypoint_at(
-                    self.sim,
+                    self.tcx.sim,
                     paths,
                     frame,
                     Some(creation_order),
@@ -1479,7 +1465,7 @@ impl AiOwnerCtx<'_> {
                 Position {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
-                    sector: self.assets.navigation.hiking_waypoint_sector(
+                    sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                         usize::from(path.hiking_path_index),
                         usize::from(path.current_waypoint_index),
                         waypoint.sector,
@@ -1512,9 +1498,7 @@ impl AiOwnerCtx<'_> {
             && (here.x - initial.x).abs().max((here.y - initial.y).abs()) < 3.0
         {
             self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-            let bored = self
-                .engine
-                .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
+            let bored = self.engine.ai_bored_time(self.tcx, self.owner);
             let frame = self.engine.control.frame_counter;
             let ai = self.engine.ai_mut(self.owner, "duty post timer");
             ai.launch_timer(bored as u32, frame);

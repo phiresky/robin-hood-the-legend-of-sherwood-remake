@@ -280,7 +280,7 @@ impl AiOwnerCtx<'_> {
                     panic!("civilian panic needs position");
                 };
                 self.engine.execute_ai_panic(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     self.owner,
                     Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -304,7 +304,7 @@ impl AiOwnerCtx<'_> {
                     .antagonist = Some(chaser);
                 if let Some(destination) = self
                     .engine
-                    .live_child_flee_destination(self.sim, self.owner)
+                    .live_child_flee_destination(self.tcx.sim, self.owner)
                 {
                     let substate = if event == CallYouJustWait {
                         Substate::FleeingChildChased
@@ -321,7 +321,7 @@ impl AiOwnerCtx<'_> {
             EventNetAway => {
                 let position = self.engine.friendly_brain(self.owner).base.seek_position;
                 self.engine.execute_ai_panic(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     self.owner,
                     Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -350,7 +350,7 @@ impl AiOwnerCtx<'_> {
     fn civilian_face_position(&mut self, position: Position) {
         let target = crate::ai::ai_position_to_point_3d(
             &self.engine.world.fast_grid,
-            self.engine.sight_obstacles(self.assets),
+            self.engine.sight_obstacles(self.tcx.assets),
             position,
         );
         let body = self
@@ -368,7 +368,7 @@ impl AiOwnerCtx<'_> {
     fn civilian_panic_from_human(&mut self, target: EntityId) {
         let position = self.engine.live_ai_position(target);
         self.engine.execute_ai_panic(
-            TickCtx::new(self.sim, self.assets),
+            self.tcx,
             self.owner,
             Some(position),
             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -400,11 +400,8 @@ impl AiOwnerCtx<'_> {
                 });
             }
             self.civilian_stop();
-            self.engine.civilian_face_human(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                target,
-            );
+            self.engine
+                .civilian_face_human(self.tcx, self.owner, target);
             self.engine
                 .civilian_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
         } else if self.engine.entity_data_in_building_sector(
@@ -418,7 +415,7 @@ impl AiOwnerCtx<'_> {
             });
 
             self.engine.execute_ai_panic(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 self.owner,
                 None,
                 crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -532,7 +529,7 @@ impl AiOwnerCtx<'_> {
                 EventReachPoint => {
                     if let Some(goal) = self
                         .engine
-                        .live_child_flee_destination(self.sim, self.owner)
+                        .live_child_flee_destination(self.tcx.sim, self.owner)
                     {
                         let target = self.engine.civilian_chaser(self.owner);
                         let here = self
@@ -599,7 +596,7 @@ impl AiOwnerCtx<'_> {
                             .lasting_panic_runs -= 1;
                         if let Some(goal) = self
                             .engine
-                            .live_child_flee_destination(self.sim, self.owner)
+                            .live_child_flee_destination(self.tcx.sim, self.owner)
                         {
                             let flags = if self
                                 .engine
@@ -619,11 +616,8 @@ impl AiOwnerCtx<'_> {
                     if !moved {
                         self.duty_set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
                         let target = self.engine.civilian_chaser(self.owner);
-                        self.engine.civilian_face_human(
-                            TickCtx::new(self.sim, self.assets),
-                            self.owner,
-                            target,
-                        );
+                        self.engine
+                            .civilian_face_human(self.tcx, self.owner, target);
                         self.engine.civilian_timer(self.owner, 20);
                     }
                 }

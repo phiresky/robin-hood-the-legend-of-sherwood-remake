@@ -24,8 +24,7 @@ impl AiOwnerCtx<'_> {
                 .execute_ai_set_checkpoint_charly(self.owner, None);
         }
 
-        self.engine
-            .halt_actor(TickCtx::new(self.sim, self.assets), self.owner);
+        self.engine.halt_actor(self.tcx, self.owner);
 
         let ai = self.engine.ai_mut(self.owner, "stop owner after halt");
         if !matches!(

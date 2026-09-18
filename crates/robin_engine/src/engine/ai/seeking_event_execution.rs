@@ -3,7 +3,6 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, GotoFlags, SeekPoint, Stimulus, StimulusType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-use crate::engine::TickCtx;
 use crate::parameters_ai;
 
 impl EngineInner {
@@ -71,14 +70,16 @@ impl AiOwnerCtx<'_> {
             (SeekingSeekpoint, EventReachPoint) => self.execute_seekpoint_arrival(),
             (SeekingSeekpointWatching, EventTimer) => {
                 self.duty_set_state(AiState::Seeking, SeekingSeekpointWatchingSidewards);
-                let direction =
-                    if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2)
-                        != 0
-                    {
-                        crate::ai::LookDirection::LeftRight
-                    } else {
-                        crate::ai::LookDirection::RightLeft
-                    };
+                let direction = if crate::sim_rng::u32(
+                    self.tcx.sim,
+                    crate::sim_rng::RngSite::EnemySeekLook,
+                    0..2,
+                ) != 0
+                {
+                    crate::ai::LookDirection::LeftRight
+                } else {
+                    crate::ai::LookDirection::RightLeft
+                };
                 self.execute_ai_look_sidewards(direction);
             }
             (SeekingSeekpointWatchingSidewards, EventDone | EventTimer) => {
@@ -144,7 +145,7 @@ impl AiOwnerCtx<'_> {
                 {
                     ai.changed_to_alert_path = true;
                     ai.base.patrol_path =
-                        crate::ai::PatrolPath::new(path, &self.assets.navigation.hiking_paths);
+                        crate::ai::PatrolPath::new(path, &self.tcx.assets.navigation.hiking_paths);
                     ai.base.has_patrol_path = true;
                 }
                 ai.base.set_emoticon(EmoticonType::QuestionMark);
@@ -245,7 +246,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let insertion = crate::sim_rng::usize(
-                self.sim,
+                self.tcx.sim,
                 crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
                 0..=self
                     .engine
@@ -297,7 +298,7 @@ impl AiOwnerCtx<'_> {
         if event == StimulusType::EventTimer {
             if !stuck
                 && self.engine.npc_is_detecting_human(
-                    self.assets,
+                    self.tcx.assets,
                     self.owner,
                     body,
                     self.engine.control.frame_counter,
@@ -351,8 +352,7 @@ impl AiOwnerCtx<'_> {
                     Some(self.owner),
                     Some(net),
                 ));
-                self.engine
-                    .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+                self.engine.launch_sequence(self.tcx, sequence);
 
                 self.engine
                     .seek_enemy_mut(self.owner)

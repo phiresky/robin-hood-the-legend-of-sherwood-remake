@@ -5,7 +5,6 @@ use crate::ai::{
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::element::Element as _;
-use crate::engine::TickCtx;
 use crate::profiles::{CivilianType, ProfileRank};
 
 impl EngineInner {
@@ -127,11 +126,12 @@ impl AiOwnerCtx<'_> {
                 let officer = if self
                     .engine
                     .seek_enemy(self.owner)
-                    .profile(&self.assets.profile_manager)
+                    .profile(&self.tcx.assets.profile_manager)
                     .rank
                     == ProfileRank::Soldier
                 {
-                    self.engine.live_whistle_officer(self.assets, self.owner)
+                    self.engine
+                        .live_whistle_officer(self.tcx.assets, self.owner)
                 } else {
                     None
                 };
@@ -162,21 +162,23 @@ impl AiOwnerCtx<'_> {
             }
             (Substate::SeekingJustWatching, EventTimer) => {
                 self.duty_set_state(AiState::Seeking, Substate::SeekingJustWatchingSidewards);
-                let direction =
-                    if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::EnemySeekLook, 0..2)
-                        != 0
-                    {
-                        crate::ai::LookDirection::RightLeft
-                    } else {
-                        crate::ai::LookDirection::LeftRight
-                    };
+                let direction = if crate::sim_rng::u32(
+                    self.tcx.sim,
+                    crate::sim_rng::RngSite::EnemySeekLook,
+                    0..2,
+                ) != 0
+                {
+                    crate::ai::LookDirection::RightLeft
+                } else {
+                    crate::ai::LookDirection::LeftRight
+                };
                 self.execute_ai_look_sidewards(direction);
             }
             (Substate::SeekingJustWatchingSidewards, EventDone) => {
                 match self
                     .engine
                     .seek_enemy(self.owner)
-                    .profile(&self.assets.profile_manager)
+                    .profile(&self.tcx.assets.profile_manager)
                     .rank
                 {
                     ProfileRank::Soldier => self.execute_ai_return_to_duty(DutyFlags::empty()),
@@ -211,18 +213,16 @@ impl AiOwnerCtx<'_> {
                     && !self
                         .engine
                         .entity_data_in_building_sector(entity.element_data());
-                let react = drunk || outside && ai.profile(&self.assets.profile_manager).apple > 0;
+                let react =
+                    drunk || outside && ai.profile(&self.tcx.assets.profile_manager).apple > 0;
                 if !react || !self.chase_live_children() {
                     self.execute_ai_return_to_duty(DutyFlags::empty());
                 }
             }
             (Substate::WonderingAppleChasingChild, EventMyTalk1) => {
                 let target = self.engine.wondering_antagonist(self.owner);
-                self.engine.execute_ai_callback(
-                    TickCtx::new(self.sim, self.assets),
-                    target,
-                    &Stimulus::new(CallYourTalk1),
-                );
+                self.engine
+                    .execute_ai_callback(self.tcx, target, &Stimulus::new(CallYourTalk1));
             }
             (Substate::WonderingAppleChasingChild, EventTimer) => {
                 if self.engine.seek_enemy(self.owner).base.lasting_panic_runs > 0 {
@@ -274,7 +274,7 @@ impl AiOwnerCtx<'_> {
         let decline = if ai.investigating_distraction {
             false
         } else {
-            match ai.profile(&self.assets.profile_manager).rank {
+            match ai.profile(&self.tcx.assets.profile_manager).rank {
                 ProfileRank::Officer => {
                     let here = self.engine.live_ai_position(self.owner);
                     let source = ai.base.seek_position;
@@ -290,7 +290,7 @@ impl AiOwnerCtx<'_> {
                         || self
                             .engine
                             .entity_data_in_building_sector(entity.element_data())
-                        || ai.profile(&self.assets.profile_manager).duty
+                        || ai.profile(&self.tcx.assets.profile_manager).duty
                         || ai.company_number == 100
                 }
                 ProfileRank::None => false,
@@ -335,7 +335,7 @@ impl AiOwnerCtx<'_> {
     fn wondering_face_position(&mut self, position: Position) {
         let target = crate::ai::ai_position_to_point_3d(
             &self.engine.world.fast_grid,
-            self.engine.sight_obstacles(self.assets),
+            self.engine.sight_obstacles(self.tcx.assets),
             position,
         );
         let body = self
@@ -381,7 +381,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             if !self.engine.npc_is_detecting_human(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 target,
                 self.engine.control.frame_counter,
@@ -425,13 +425,13 @@ impl AiOwnerCtx<'_> {
                 StimulusType::EventAppleChaseNear
             };
             self.engine.execute_ai_callback(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 target,
                 &Stimulus::with_human(event, self.owner.index()),
             );
         }
         let ai = self.engine.seek_enemy_mut(self.owner);
-        ai.base.lasting_panic_runs = (ai.profile(&self.assets.profile_manager).apple / 2) as u8;
+        ai.base.lasting_panic_runs = (ai.profile(&self.tcx.assets.profile_manager).apple / 2) as u8;
         ai.base.set_emoticon(EmoticonType::Thunderstorm);
         self.execute_ai_speech(crate::ai::AiSpeechAttempt {
             remark: Remark::ChasesChild,
@@ -481,20 +481,22 @@ impl AiOwnerCtx<'_> {
                 .entity_data_in_building_sector(entity.element_data());
         if ai.base.blood_alcohol as i32 > crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             || !outside
-            || ai.profile(&self.assets.profile_manager).whistle <= 1
+            || ai.profile(&self.tcx.assets.profile_manager).whistle <= 1
             || ai.company_number == 100
         {
             self.execute_ai_return_to_duty(DutyFlags::empty());
             return;
         }
-        let officer = if ai.profile(&self.assets.profile_manager).rank == ProfileRank::Soldier {
-            self.engine.live_whistle_officer(self.assets, self.owner)
+        let officer = if ai.profile(&self.tcx.assets.profile_manager).rank == ProfileRank::Soldier {
+            self.engine
+                .live_whistle_officer(self.tcx.assets, self.owner)
         } else {
             None
         };
         let ai = self.engine.seek_enemy(self.owner);
-        let send_soldier = ai.profile(&self.assets.profile_manager).rank == ProfileRank::Officer
-            && (ai.profile(&self.assets.profile_manager).initiative < 50
+        let send_soldier = ai.profile(&self.tcx.assets.profile_manager).rank
+            == ProfileRank::Officer
+            && (ai.profile(&self.tcx.assets.profile_manager).initiative < 50
                 || !ai.base.patrol.is_empty());
         if let Some(officer) = officer {
             self.wondering_face_entity(officer);
@@ -509,8 +511,8 @@ impl AiOwnerCtx<'_> {
         } else {
             let ai = self.engine.seek_enemy(self.owner);
             let position = ai.base.seek_position;
-            let radius =
-                (400 * (ai.profile(&self.assets.profile_manager).whistle as u32 - 2) / 98) as u16;
+            let radius = (400 * (ai.profile(&self.tcx.assets.profile_manager).whistle as u32 - 2)
+                / 98) as u16;
             self.execute_ai_seek_area(
                 position,
                 radius,

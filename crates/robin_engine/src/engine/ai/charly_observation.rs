@@ -5,7 +5,6 @@ use crate::ai::{
     StoredEnumWord, Substate,
 };
 use crate::ai_enemy::SeekFlags;
-use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 
 #[cfg(test)]
@@ -87,7 +86,7 @@ impl AiOwnerCtx<'_> {
             match self
                 .engine
                 .observation_ai(self.owner)
-                .get_rank(&self.assets.profile_manager)
+                .get_rank(&self.tcx.assets.profile_manager)
             {
                 ProfileRank::Officer => {
                     if matches!(
@@ -110,17 +109,13 @@ impl AiOwnerCtx<'_> {
                         .expect_entity(charly, "checkpoint rank")
                         .enemy_ai()
                         .is_some_and(|ai| {
-                            ai.get_rank(&self.assets.profile_manager) == ProfileRank::Soldier
+                            ai.get_rank(&self.tcx.assets.profile_manager) == ProfileRank::Soldier
                         })
                     {
                         self.observation_say(Remark::FoundCharly);
                         let mut call = Stimulus::new(StimulusType::CallGoToOfficer);
                         call.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-                        self.engine.execute_ai_callback(
-                            TickCtx::new(self.sim, self.assets),
-                            charly,
-                            &call,
-                        );
+                        self.engine.execute_ai_callback(self.tcx, charly, &call);
                         self.engine.observation_ai_mut(self.owner).base.antagonist =
                             Some(AiEntityHandle::new(target));
                         assert_eq!(
@@ -128,7 +123,7 @@ impl AiOwnerCtx<'_> {
                                 .world
                                 .entities
                                 .expect_enemy_ai(charly, format_args!("called checkpoint rank"))
-                                .get_rank(&self.assets.profile_manager),
+                                .get_rank(&self.tcx.assets.profile_manager),
                             ProfileRank::Soldier
                         );
                         self.observation_face_entity(charly, false);
@@ -152,7 +147,8 @@ impl AiOwnerCtx<'_> {
                             .expect_entity(charly, "checkpoint referral")
                             .enemy_ai()
                             .is_some_and(|ai| {
-                                ai.get_rank(&self.assets.profile_manager) == ProfileRank::Soldier
+                                ai.get_rank(&self.tcx.assets.profile_manager)
+                                    == ProfileRank::Soldier
                                     && !ai.reported_to_officer
                             })
                     {
@@ -202,11 +198,10 @@ impl AiOwnerCtx<'_> {
             || ai.synchronize_charly.is_none()
             || !ai.macro_in_progress
         {
-            self.engine
-                .halt_actor(TickCtx::new(self.sim, self.assets), self.owner);
+            self.engine.halt_actor(self.tcx, self.owner);
 
             self.engine.execute_ai_set_alert_status(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 AlertLevel::Green,
                 crate::ai::AlertFlags::empty(),
@@ -274,7 +269,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let ai = self.engine.observation_ai(self.owner);
-            if ai.get_rank(&self.assets.profile_manager) != ProfileRank::Officer
+            if ai.get_rank(&self.tcx.assets.profile_manager) != ProfileRank::Officer
                 && ai
                     .base
                     .antagonist
@@ -284,14 +279,14 @@ impl AiOwnerCtx<'_> {
             }
             if self
                 .engine
-                .live_ai_detects_180(self.assets, candidate, charly)
+                .live_ai_detects_180(self.tcx.assets, candidate, charly)
                 || charly != self.owner
                     && self
                         .engine
-                        .live_ai_detects_180(self.assets, candidate, self.owner)
+                        .live_ai_detects_180(self.tcx.assets, candidate, self.owner)
             {
                 self.engine.execute_ai_callback(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     candidate,
                     &Stimulus::with_human(StimulusType::CallCharlyIsBack, charly.index()),
                 );

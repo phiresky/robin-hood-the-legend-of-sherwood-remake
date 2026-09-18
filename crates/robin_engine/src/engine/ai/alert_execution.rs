@@ -190,21 +190,18 @@ impl AiOwnerCtx<'_> {
         &mut self,
         center: Position,
     ) -> bool {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
-            .run_and_alert_soldiers(center)
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).run_and_alert_soldiers(center)
     }
 
     pub(in crate::engine) fn execute_ai_officer_look_for_soldier(
         &mut self,
         reason: crate::ai::ReportType,
     ) {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
-            .officer_look_for_soldier(reason);
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).officer_look_for_soldier(reason);
     }
 
     pub(in crate::engine) fn execute_ai_tower_guard_alert(&mut self, center: Position) {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
-            .tower_guard_alert(center);
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).tower_guard_alert(center);
         self.execute_battle_decisions();
     }
 
@@ -245,8 +242,7 @@ impl AiOwnerCtx<'_> {
     }
 
     pub(in crate::engine) fn execute_ai_alert_officer(&mut self) -> bool {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
-            .alert_officer()
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).alert_officer()
     }
 
     fn execute_failed_ai_alert(&mut self, failure: crate::ai::AlertSoldiersFailureContinuation) {
@@ -295,15 +291,14 @@ impl AiOwnerCtx<'_> {
         center: Position,
         flags: u16,
     ) -> bool {
-        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
-            .alert_soldiers(center, flags)
+        AiOwnerCtx::new(self.engine, self.tcx, self.owner).alert_soldiers(center, flags)
     }
 
     pub(in crate::engine) fn execute_maybe_officer_sees_me_fighting(&mut self) {
         if self
             .engine
             .enemy_ai(self.owner, "brawl owner")
-            .profile(&self.assets.profile_manager)
+            .profile(&self.tcx.assets.profile_manager)
             .rank
             != ProfileRank::Soldier
         {
@@ -325,7 +320,7 @@ impl AiOwnerCtx<'_> {
                 .ai_brain
                 .enemy()
                 .expect("officer candidate has no brain");
-            if enemy.profile(&self.assets.profile_manager).rank != ProfileRank::Officer
+            if enemy.profile(&self.tcx.assets.profile_manager).rank != ProfileRank::Officer
                 || !(enemy.base.current_state == AiState::Default
                     || enemy.base.current_substate == Substate::WonderingMoneyReactiontime)
             {
@@ -345,10 +340,10 @@ impl AiOwnerCtx<'_> {
                 true
             } else if distance < 350.0 * 350.0 {
                 self.engine
-                    .live_ai_detects_180(self.assets, candidate, self.owner)
+                    .live_ai_detects_180(self.tcx.assets, candidate, self.owner)
             } else {
                 self.engine.npc_is_detecting_human(
-                    self.assets,
+                    self.tcx.assets,
                     candidate,
                     self.owner,
                     self.engine.control.frame_counter,
@@ -357,11 +352,8 @@ impl AiOwnerCtx<'_> {
             if reacts {
                 let mut stimulus = Stimulus::new(StimulusType::EventSeesBrawl);
                 stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-                self.engine.execute_ai_callback(
-                    TickCtx::new(self.sim, self.assets),
-                    candidate,
-                    &stimulus,
-                );
+                self.engine
+                    .execute_ai_callback(self.tcx, candidate, &stimulus);
                 return;
             }
         }
@@ -430,7 +422,7 @@ impl AiOwnerCtx<'_> {
                         .ai_brain
                         .enemy()
                         .expect("reservist brain")
-                        .profile(&self.assets.profile_manager)
+                        .profile(&self.tcx.assets.profile_manager)
                         .rank
                         == ProfileRank::Soldier
                     && soldier.is_able_to_help()
@@ -482,12 +474,12 @@ impl AiOwnerCtx<'_> {
     }
     fn officer_look_for_soldier(&mut self, reason: crate::ai::ReportType) {
         assert_eq!(
-            self.enemy().profile(&self.assets.profile_manager).rank,
+            self.enemy().profile(&self.tcx.assets.profile_manager).rank,
             ProfileRank::Officer
         );
         let head = self.enemy().base.patrol.first().copied().filter(|id| {
             matches!(self.engine.world.entities.get(*id), Some(Entity::Soldier(soldier))
-                if soldier.npc.ai_brain.enemy().expect("patrol soldier brain").profile(&self.assets.profile_manager).rank == ProfileRank::Soldier)
+                if soldier.npc.ai_brain.enemy().expect("patrol soldier brain").profile(&self.tcx.assets.profile_manager).rank == ProfileRank::Soldier)
         });
         let camp = self.engine.expect_entity(self.owner, "officer camp").camp();
         let count = self.engine.world.soldier_registry.camp(camp).len();
@@ -511,7 +503,7 @@ impl AiOwnerCtx<'_> {
                     continue;
                 }
                 let brain = soldier.npc.ai_brain.enemy().expect("soldier brain");
-                if brain.profile(&self.assets.profile_manager).rank != ProfileRank::Soldier
+                if brain.profile(&self.tcx.assets.profile_manager).rank != ProfileRank::Soldier
                     || !(brain.base.current_state == AiState::Default
                         || (brain.base.current_state == AiState::Seeking
                             && brain.base.current_substate == Substate::SeekingBodyReactiontime))
@@ -550,7 +542,7 @@ impl AiOwnerCtx<'_> {
             if self
                 .engine
                 .enemy_ai(id, "alert-list soldier rank")
-                .profile(&self.assets.profile_manager)
+                .profile(&self.tcx.assets.profile_manager)
                 .rank
                 != ProfileRank::Soldier
             {
@@ -648,12 +640,11 @@ impl AiOwnerCtx<'_> {
             if distance < crate::ai_enemy::combat::SQR_TOWER_GUARD_ALERT_RADIUS as u32 {
                 let mut stimulus = Stimulus::new(StimulusType::CallTowerGuardAlert);
                 stimulus.info = StimulusInfo::Hint(hint);
-                self.engine
-                    .execute_ai_callback(TickCtx::new(self.sim, self.assets), id, &stimulus);
+                self.engine.execute_ai_callback(self.tcx, id, &stimulus);
                 match self
                     .engine
                     .enemy_ai(id, "alerted recipient rank")
-                    .profile(&self.assets.profile_manager)
+                    .profile(&self.tcx.assets.profile_manager)
                     .rank
                 {
                     ProfileRank::Soldier if nearest.is_none() => hearing_soldiers += 1,
@@ -666,7 +657,7 @@ impl AiOwnerCtx<'_> {
             } else if self
                 .engine
                 .enemy_ai(id, "far officer rank")
-                .profile(&self.assets.profile_manager)
+                .profile(&self.tcx.assets.profile_manager)
                 .rank
                 == ProfileRank::Officer
                 && distance < officer_distance
@@ -692,11 +683,8 @@ impl AiOwnerCtx<'_> {
         if let Some(recipient) = recipient {
             let mut stimulus = Stimulus::new(StimulusType::CallTowerGuardCallsMe);
             stimulus.info = StimulusInfo::Hint(hint);
-            self.engine.execute_ai_callback(
-                TickCtx::new(self.sim, self.assets),
-                recipient,
-                &stimulus,
-            );
+            self.engine
+                .execute_ai_callback(self.tcx, recipient, &stimulus);
         }
     }
 
@@ -714,7 +702,7 @@ impl AiOwnerCtx<'_> {
             &self.engine.world.fast_grid.level.sectors,
             &self.engine.world.fast_grid.level.sector_number_map,
         )
-        .resolve(self.sim)
+        .resolve(self.tcx.sim)
         .position
     }
 
@@ -722,7 +710,7 @@ impl AiOwnerCtx<'_> {
         use crate::ai::{AiEntityHandle, GotoFlags};
         use crate::ai_enemy::SeekFlags;
         assert_eq!(
-            self.enemy().profile(&self.assets.profile_manager).rank,
+            self.enemy().profile(&self.tcx.assets.profile_manager).rank,
             ProfileRank::Soldier
         );
         self.engine.execute_ai_unfocus(self.owner);
@@ -779,7 +767,7 @@ impl AiOwnerCtx<'_> {
                     .ai_brain
                     .enemy()
                     .expect("officer candidate requires brain");
-                match brain.profile(&self.assets.profile_manager).rank {
+                match brain.profile(&self.tcx.assets.profile_manager).rank {
                     ProfileRank::Officer => {
                         if !crate::element::Human::is_able_to_fight(soldier)
                             || brain.base.current_state != AiState::Default
@@ -814,7 +802,7 @@ impl AiOwnerCtx<'_> {
                     {
                         if self
                             .engine
-                            .patrol_member_visible(self.assets, self.owner, id)
+                            .patrol_member_visible(self.tcx.assets, self.owner, id)
                         {
                             return false;
                         }
@@ -884,7 +872,7 @@ impl AiOwnerCtx<'_> {
             enemy.base.list_us.clear();
         }
         assert_eq!(
-            self.enemy().profile(&self.assets.profile_manager).rank,
+            self.enemy().profile(&self.tcx.assets.profile_manager).rank,
             ProfileRank::Officer
         );
         let member_count = self.engine.world.soldier_registry.camp(camp).len();
@@ -901,7 +889,7 @@ impl AiOwnerCtx<'_> {
                 .ai_brain
                 .enemy()
                 .expect("alert candidate requires a brain");
-            if brain.profile(&self.assets.profile_manager).rank != ProfileRank::Soldier
+            if brain.profile(&self.tcx.assets.profile_manager).rank != ProfileRank::Soldier
                 || !crate::element::Human::is_able_to_help(soldier)
             {
                 continue;
@@ -911,7 +899,7 @@ impl AiOwnerCtx<'_> {
                 || (soldier.element.active
                     && !self.engine.entity_data_in_building_sector(&soldier.element)
                     && (brain.tower_guard
-                        || brain.profile(&self.assets.profile_manager).duty
+                        || brain.profile(&self.tcx.assets.profile_manager).duty
                         || brain.company_number == 100));
             if stays && brain.base.patrol_chief != Some(self.owner) {
                 continue;
@@ -932,11 +920,7 @@ impl AiOwnerCtx<'_> {
                 Some(AiEntityHandle::new(self.owner.index()));
             let mut stimulus = Stimulus::new(StimulusType::CallAlert);
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-            if !self.engine.execute_ai_callback(
-                TickCtx::new(self.sim, self.assets),
-                target,
-                &stimulus,
-            ) {
+            if !self.engine.execute_ai_callback(self.tcx, target, &stimulus) {
                 continue;
             }
             let target_world = self
@@ -1145,8 +1129,7 @@ impl AiOwnerCtx<'_> {
                 Command::GatherSoldiers,
                 Some(self.owner),
             ));
-            self.engine
-                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+            self.engine.launch_sequence(self.tcx, sequence);
 
             self.execute_ai_speech(crate::ai::AiSpeechAttempt {
                 remark: Remark::OfficerCallsGroup,
@@ -1233,7 +1216,7 @@ impl AiOwnerCtx<'_> {
 
     fn command_soldiers_to_attack(&mut self, center: Position) -> bool {
         assert_eq!(
-            self.enemy().profile(&self.assets.profile_manager).rank,
+            self.enemy().profile(&self.tcx.assets.profile_manager).rank,
             ProfileRank::Officer
         );
         let initial_position = self.engine.live_ai_position(self.owner);
@@ -1253,13 +1236,13 @@ impl AiOwnerCtx<'_> {
                 .ai_brain
                 .enemy()
                 .expect("soldier has no hostile brain")
-                .profile(&self.assets.profile_manager)
+                .profile(&self.tcx.assets.profile_manager)
                 .rank
                 != ProfileRank::Soldier
                 || !crate::element::Human::is_able_to_fight(soldier)
                 || !self
                     .engine
-                    .patrol_member_visible(self.assets, member, self.owner)
+                    .patrol_member_visible(self.tcx.assets, member, self.owner)
             {
                 continue;
             }
@@ -1271,11 +1254,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let stimulus = Stimulus::with_position(StimulusType::CallCombatAlert, center);
-            if self.engine.execute_ai_callback(
-                TickCtx::new(self.sim, self.assets),
-                member,
-                &stimulus,
-            ) {
+            if self.engine.execute_ai_callback(self.tcx, member, &stimulus) {
                 accepted += 1;
                 let member_position = self.engine.live_ai_position(member);
                 let owner_position = self.engine.live_ai_position(self.owner);
@@ -1291,9 +1270,13 @@ impl AiOwnerCtx<'_> {
         }
 
         let seek = self.enemy().base.seek_position;
-        let target_world =
-            self.engine
-                .position_to_point_3d(self.assets, seek.sector, seek.level, seek.x, seek.y);
+        let target_world = self.engine.position_to_point_3d(
+            self.tcx.assets,
+            seek.sector,
+            seek.level,
+            seek.x,
+            seek.y,
+        );
         let owner_world = self
             .engine
             .expect_entity(self.owner, "combat alert pointing")
@@ -1332,8 +1315,7 @@ impl AiOwnerCtx<'_> {
             FieldValue::Integer(point_direction as u32),
         );
         sequence.append_element(point);
-        self.engine
-            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+        self.engine.launch_sequence(self.tcx, sequence);
 
         let frame = self.engine.control.frame_counter;
         self.enemy_mut()

@@ -1,7 +1,6 @@
 //! Default and sleeping decisions executed against live actor state.
 use super::*;
 use crate::ai::*;
-use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -73,7 +72,8 @@ impl AiOwnerCtx<'_> {
         self.duty_set_state(AiState::Default, Substate::DefaultOnPostLookingSidewards);
         self.stop_ai_owner();
         let direction =
-            match crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::DefaultPostLook, 0..4) {
+            match crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::DefaultPostLook, 0..4)
+            {
                 0 => LookDirection::Left,
                 1 => LookDirection::Right,
                 2 => LookDirection::LeftRight,
@@ -104,7 +104,7 @@ impl AiOwnerCtx<'_> {
                     {
                         enemy.changed_to_alert_path = true;
                         enemy.base.patrol_path =
-                            PatrolPath::new(path, &self.assets.navigation.hiking_paths);
+                            PatrolPath::new(path, &self.tcx.assets.navigation.hiking_paths);
                         enemy.base.has_patrol_path = enemy.base.patrol_path.is_some();
                     }
                     enemy.base.set_emoticon(EmoticonType::QuestionMark);
@@ -115,9 +115,7 @@ impl AiOwnerCtx<'_> {
             Substate::DefaultOnPostLookingSidewards => {
                 if kind == StimulusType::EventDone {
                     self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-                    let frames = self
-                        .engine
-                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
+                    let frames = self.engine.ai_bored_time(self.tcx, self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
@@ -177,17 +175,13 @@ impl AiOwnerCtx<'_> {
                             .set_posture(posture);
                     }
                     self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-                    let frames = self
-                        .engine
-                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
+                    let frames = self.engine.ai_bored_time(self.tcx, self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
             Substate::DefaultOnPost => {
                 if kind == StimulusType::EventTimer && !self.default_bored_live() {
-                    let frames = self
-                        .engine
-                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
+                    let frames = self.engine.ai_bored_time(self.tcx, self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
@@ -232,7 +226,7 @@ impl AiOwnerCtx<'_> {
         // The selected waypoint remains the branch discriminator across partner callbacks.
         let script_waypoint = (path.hiking_path_index, path.current_waypoint_index);
         let command = &path
-            .current_waypoint(&self.assets.navigation.hiking_paths)
+            .current_waypoint(&self.tcx.assets.navigation.hiking_paths)
             .expect("route waypoint")
             .command;
         let mut remaining = self
@@ -256,11 +250,7 @@ impl AiOwnerCtx<'_> {
                     .current_waypoint_index;
                 let mut event = Stimulus::new(StimulusType::EventSyncCharly);
                 event.info = StimulusInfo::Index(waypoint.into());
-                self.engine.dispatch_think_with_drain(
-                    TickCtx::new(self.sim, self.assets),
-                    id,
-                    &event,
-                );
+                self.engine.dispatch_think_with_drain(self.tcx, id, &event);
             }
             if self.engine.default_ai(id).current_substate != Substate::DefaultSynchronizing {
                 self.engine
@@ -320,12 +310,8 @@ impl AiOwnerCtx<'_> {
             }
             crate::level_data::WaypointCommand::Script(_) => {
                 let (path, waypoint) = script_waypoint;
-                self.engine.execute_ai_waypoint_script(
-                    TickCtx::new(self.sim, self.assets),
-                    self.owner,
-                    path,
-                    waypoint,
-                );
+                self.engine
+                    .execute_ai_waypoint_script(self.tcx, self.owner, path, waypoint);
             }
             crate::level_data::WaypointCommand::Macro(_) => {
                 // Macro data is fetched again after synchronization, like the path pointer.
@@ -336,7 +322,7 @@ impl AiOwnerCtx<'_> {
                     .as_ref()
                     .expect("macro route");
                 let crate::level_data::WaypointCommand::Macro(data) = &path
-                    .current_waypoint(&self.assets.navigation.hiking_paths)
+                    .current_waypoint(&self.tcx.assets.navigation.hiking_paths)
                     .expect("macro waypoint")
                     .command
                 else {
@@ -345,7 +331,7 @@ impl AiOwnerCtx<'_> {
                 if self
                     .engine
                     .default_ai_mut(self.owner)
-                    .prepare_waypoint_macro(self.sim, data)
+                    .prepare_waypoint_macro(self.tcx.sim, data)
                 {
                     self.duty_set_state(AiState::Default, Substate::DefaultInMacro);
                     self.engine
@@ -387,12 +373,12 @@ impl AiOwnerCtx<'_> {
         let ai = self.engine.default_ai_mut(self.owner);
         let path = ai.patrol_path.as_ref().expect("route movement path");
         let waypoint = path
-            .current_waypoint(&self.assets.navigation.hiking_paths)
+            .current_waypoint(&self.tcx.assets.navigation.hiking_paths)
             .expect("route movement waypoint");
         let destination = Position {
             x: waypoint.x as f32,
             y: waypoint.y as f32,
-            sector: self.assets.navigation.hiking_waypoint_sector(
+            sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                 usize::from(path.hiking_path_index),
                 usize::from(path.current_waypoint_index),
                 waypoint.sector,
@@ -401,8 +387,8 @@ impl AiOwnerCtx<'_> {
         };
         let mut flags = ai.default_path_walking_flags;
         if !ai.will_stop_at_next_waypoint_at(
-            self.sim,
-            &self.assets.navigation.hiking_paths,
+            self.tcx.sim,
+            &self.tcx.assets.navigation.hiking_paths,
             frame,
             Some(creation),
             caller,

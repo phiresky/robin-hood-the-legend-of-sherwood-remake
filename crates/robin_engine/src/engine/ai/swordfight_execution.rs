@@ -4,7 +4,6 @@ use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, GotoFlags, Stimulus, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, SwordfightLists};
-use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -720,7 +719,7 @@ impl AiOwnerCtx<'_> {
             .primary_target = Some(AiEntityHandle::new(primary.index()));
         if !self
             .engine
-            .patrol_member_visible(self.assets, self.owner, primary)
+            .patrol_member_visible(self.tcx.assets, self.owner, primary)
         {
             self.finish_live_swordfight_target_loss(primary);
             return;
@@ -750,7 +749,7 @@ impl AiOwnerCtx<'_> {
         }
         let lists = self
             .engine
-            .rebuild_live_swordfight_lists(self.assets, self.owner);
+            .rebuild_live_swordfight_lists(self.tcx.assets, self.owner);
         self.reconsider_live_swordfight_tactics(enemy_weak, lists);
     }
 
@@ -771,7 +770,7 @@ impl AiOwnerCtx<'_> {
             &self.engine.world.fast_grid.level.sector_number_map,
         )
         .resolve_retaining_direction(
-            self.sim,
+            self.tcx.sim,
             self.engine
                 .enemy_ai(self.owner, "lost direction")
                 .pc_gone_away_in_this_direction,
@@ -809,7 +808,7 @@ impl AiOwnerCtx<'_> {
         }
         let fighters = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         };
         let mut primary = fighters
@@ -832,18 +831,15 @@ impl AiOwnerCtx<'_> {
                 .nearest_live_opponent(friend, self.owner)
                 .expect("solo fighter requires an opponent");
             if self.engine.nearest_live_opponent(primary_id, nearest) == Some(self.owner) {
-                self.engine.execute_ai_rebalance_swordfight(
-                    TickCtx::new(self.sim, self.assets),
-                    self.owner,
-                    nearest,
-                );
+                self.engine
+                    .execute_ai_rebalance_swordfight(self.tcx, self.owner, nearest);
 
                 return;
             }
         }
         primary = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         }
         .principal(self.owner.index())
@@ -858,12 +854,12 @@ impl AiOwnerCtx<'_> {
             .engine
             .ai(self.owner, "combat intoxication")
             .blood_alcohol;
-        if crate::ai_enemy::drunk_combat_freezes(self.sim, alcohol) {
+        if crate::ai_enemy::drunk_combat_freezes(self.tcx.sim, alcohol) {
             return;
         }
         let fighters = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         };
         let range = fighters.sword_range_maximal(self.owner.index());
@@ -889,7 +885,7 @@ impl AiOwnerCtx<'_> {
             self.duty_set_state(AiState::Attacking, Substate::AttackingMovingAroundOldEnemy);
             let fighters = LiveCombatFighters {
                 engine: self.engine,
-                assets: self.assets,
+                assets: self.tcx.assets,
                 owner: self.owner,
             };
             let target = fighters.position(
@@ -902,7 +898,7 @@ impl AiOwnerCtx<'_> {
                 target,
                 LiveCombatFighters {
                     engine: self.engine,
-                    assets: self.assets,
+                    assets: self.tcx.assets,
                     owner: self.owner,
                 }
                 .range(self.owner.index(), crate::weapons::WeaponDistance::Default)
@@ -917,11 +913,15 @@ impl AiOwnerCtx<'_> {
             .combat_trainer;
         if !trainer
             && (lists.number_of_friends != 1 || lists.number_of_swordfighting_enemies != 1)
-            && crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0
+            && crate::sim_rng::u32(
+                self.tcx.sim,
+                crate::sim_rng::RngSite::CombatReposition,
+                0..3,
+            ) == 0
         {
             let candidate = self
                 .engine
-                .propose_live_combat_position(self.assets, self.owner);
+                .propose_live_combat_position(self.tcx.assets, self.owner);
 
             let ai = self
                 .engine
@@ -943,11 +943,8 @@ impl AiOwnerCtx<'_> {
                         let target = self
                             .engine
                             .expect_human_id_for_ai_handle(target.get(), "combat new principal");
-                        self.engine.set_as_new_principal_opponent(
-                            TickCtx::new(self.sim, self.assets),
-                            self.owner,
-                            target,
-                        );
+                        self.engine
+                            .set_as_new_principal_opponent(self.tcx, self.owner, target);
                     }
 
                     let frame = self.engine.control.frame_counter;
@@ -966,7 +963,7 @@ impl AiOwnerCtx<'_> {
         // Candidate scoring can replace the principal and run reciprocal callbacks.
         let fighters = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         };
         let primary = self
@@ -987,7 +984,7 @@ impl AiOwnerCtx<'_> {
             self.duty_set_state(AiState::Attacking, Substate::AttackingMovingAroundOldEnemy);
             let fighters = LiveCombatFighters {
                 engine: self.engine,
-                assets: self.assets,
+                assets: self.tcx.assets,
                 owner: self.owner,
             };
             let distance =
@@ -1019,7 +1016,7 @@ impl AiOwnerCtx<'_> {
                 .is_sword()
         {
             self.engine
-                .execute_ai_sword_strike_proposal(TickCtx::new(self.sim, self.assets), self.owner);
+                .execute_ai_sword_strike_proposal(self.tcx, self.owner);
         }
     }
 
@@ -1030,7 +1027,7 @@ impl AiOwnerCtx<'_> {
             return;
         }
         self.engine
-            .rebuild_live_observation_lists(self.assets, self.owner);
+            .rebuild_live_observation_lists(self.tcx.assets, self.owner);
         let primary = self.engine.select_live_ai_primary_target(
             self.owner,
             crate::ai_enemy::PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED,
@@ -1053,7 +1050,7 @@ impl AiOwnerCtx<'_> {
         }
         if self
             .engine
-            .execute_ai_make_battle_predecisions(TickCtx::new(self.sim, self.assets), self.owner)
+            .execute_ai_make_battle_predecisions(self.tcx, self.owner)
             == crate::ai::Decision::PredecisionDefensive
         {
             let target = self
@@ -1080,7 +1077,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_go_to(goal, GotoFlags::RUN);
             } else {
                 self.engine.execute_ai_panic(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     self.owner,
                     Some(enemy_position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -1122,7 +1119,7 @@ impl AiOwnerCtx<'_> {
             .expect("observation attack requires a target");
         let fighters = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         };
         let target = fighters.id(primary.get());
@@ -1187,13 +1184,13 @@ impl AiOwnerCtx<'_> {
         let ideal = crate::ai::AiController::value_between(
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
-            ai.get_courage(&self.assets.profile_manager) as u8,
+            ai.get_courage(&self.tcx.assets.profile_manager) as u8,
         );
         let aspect = crate::position_interface::ASPECT_RATIO;
         let mut distance = (me.map_point() - reference.map_point()).iso_norm(aspect) as u16;
         let fighters = LiveCombatFighters {
             engine: self.engine,
-            assets: self.assets,
+            assets: self.tcx.assets,
             owner: self.owner,
         };
         if let Some(friend) = fighters.principal(ai.base.primary_target.unwrap().get())
@@ -1243,7 +1240,7 @@ impl AiOwnerCtx<'_> {
         }
         if destination.is_none()
             && crate::sim_rng::u32(
-                self.sim,
+                self.tcx.sim,
                 crate::sim_rng::RngSite::CombatObserveSideStep,
                 0..2,
             ) == 0

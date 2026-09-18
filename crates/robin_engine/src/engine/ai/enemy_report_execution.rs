@@ -6,7 +6,6 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::SeekFlags;
-use crate::engine::TickCtx;
 
 impl EngineInner {
     #[cfg(test)]
@@ -139,7 +138,7 @@ impl AiOwnerCtx<'_> {
                         }
                     } else if waiting {
                         self.engine.execute_ai_callback(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
@@ -158,7 +157,7 @@ impl AiOwnerCtx<'_> {
                 StimulusType::EventMyTalk1 => {
                     let officer = self.engine.report_antagonist(self.owner);
                     self.engine.execute_ai_callback(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         officer,
                         &Stimulus::with_human(StimulusType::CallYourTalk1, self.owner.index()),
                     );
@@ -203,7 +202,7 @@ impl AiOwnerCtx<'_> {
                     if kind == StimulusType::EventMyTalk0 {
                         if waiting {
                             self.engine.execute_ai_callback(
-                                TickCtx::new(self.sim, self.assets),
+                                self.tcx,
                                 officer,
                                 &Stimulus::new(StimulusType::CallYourTalk0),
                             );
@@ -258,14 +257,14 @@ impl AiOwnerCtx<'_> {
                     };
                     if point {
                         self.engine.execute_ai_callback(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
                         // The recipient can redirect the conversation during the report.
                         let officer = self.engine.report_antagonist(self.owner);
                         self.engine.execute_ai_callback(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             officer,
                             &Stimulus::new(StimulusType::CallYourTalk1),
                         );
@@ -275,7 +274,7 @@ impl AiOwnerCtx<'_> {
                         self.report_state(Substate::SeekingSoldierGiveAlertingReportToOfficerEnd);
                         let officer = self.engine.report_antagonist(self.owner);
                         self.engine.execute_ai_callback(
-                            TickCtx::new(self.sim, self.assets),
+                            self.tcx,
                             officer,
                             &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                         );
@@ -328,7 +327,7 @@ impl AiOwnerCtx<'_> {
                 } else {
                     let soldier = self.engine.report_antagonist(self.owner);
                     self.engine.execute_ai_callback(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         soldier,
                         &Stimulus::new(StimulusType::CallYourTalk1),
                     );

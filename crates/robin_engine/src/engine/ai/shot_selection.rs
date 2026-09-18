@@ -187,10 +187,7 @@ impl AiOwnerCtx<'_> {
         {
             return ControlFlow::Continue(Decision::RunForNewArrows);
         }
-        let Some(target) = self
-            .engine
-            .propose_live_shot_target(TickCtx::new(self.sim, self.assets), self.owner)
-        else {
+        let Some(target) = self.engine.propose_live_shot_target(self.tcx, self.owner) else {
             return ControlFlow::Continue(Decision::ArcherObserve);
         };
         let ai = self.engine.ai_mut(self.owner, "shot selected target");
@@ -218,13 +215,12 @@ impl AiOwnerCtx<'_> {
                 let target = self
                     .engine
                     .expect_human_id_for_ai_handle(target.get(), "shot target");
-                self.engine
-                    .shoot_bow_at(TickCtx::new(self.sim, self.assets), self.owner, target);
+                self.engine.shoot_bow_at(self.tcx, self.owner, target);
             } else {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingBowAiming);
                 let (_, ability) = self
                     .engine
-                    .bow_profile_and_ability(self.assets, self.owner)
+                    .bow_profile_and_ability(self.tcx.assets, self.owner)
                     .expect("aiming bow");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.engine.control.frame_counter;
@@ -242,7 +238,7 @@ impl AiOwnerCtx<'_> {
                 crate::element::Command::EquipBow
             };
             self.engine.launch_element(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
             );
         }

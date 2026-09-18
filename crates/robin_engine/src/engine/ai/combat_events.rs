@@ -158,7 +158,7 @@ impl AiOwnerCtx<'_> {
     pub(super) fn duty_face_position_ground(&mut self, position: Position) {
         let target = crate::ai::ai_position_to_point_3d(
             &self.engine.world.fast_grid,
-            self.engine.sight_obstacles(self.assets),
+            self.engine.sight_obstacles(self.tcx.assets),
             position,
         );
         let body = self
@@ -194,7 +194,7 @@ impl AiOwnerCtx<'_> {
         let direction = if elevation == -1 {
             let target = crate::ai::ai_position_to_point_3d(
                 &self.engine.world.fast_grid,
-                self.engine.sight_obstacles(self.assets),
+                self.engine.sight_obstacles(self.tcx.assets),
                 position,
             );
             let body = self
@@ -237,12 +237,8 @@ impl AiOwnerCtx<'_> {
                 .base
                 .already_turned = true;
         } else {
-            self.engine.launch_live_ai_turn(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                direction,
-                true,
-            );
+            self.engine
+                .launch_live_ai_turn(self.tcx, self.owner, direction, true);
         }
     }
 
@@ -252,7 +248,7 @@ impl AiOwnerCtx<'_> {
 
     fn combat_event_command(&mut self, command: crate::element::Command) {
         self.engine.launch_element(
-            TickCtx::new(self.sim, self.assets),
+            self.tcx,
             crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
         );
     }
@@ -331,10 +327,8 @@ impl AiOwnerCtx<'_> {
                         .set_emoticon(EmoticonType::None);
 
                     self.execute_reconsider_swordfight(false);
-                    self.engine.combat_insult_after_reconsider(
-                        TickCtx::new(self.sim, self.assets),
-                        self.owner,
-                    );
+                    self.engine
+                        .combat_insult_after_reconsider(self.tcx, self.owner);
                 }
             }
             (AttackingSwordfightSpecialStrike, EventDone | EventTimer) => {
@@ -513,7 +507,7 @@ impl AiOwnerCtx<'_> {
             (AttackingWaitForAvengerOnRoof, EventTimer) => {
                 if self
                     .engine
-                    .combat_event_visible_primary(self.assets, self.owner)
+                    .combat_event_visible_primary(self.tcx.assets, self.owner)
                 {
                     let position = self
                         .engine
@@ -584,7 +578,8 @@ impl AiOwnerCtx<'_> {
                     .set_emoticon(EmoticonType::None);
 
                 self.duty_set_state(AiState::Attacking, AttackingTooProudToAttackOverview);
-                if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::TooProudLook, 0..16) == 0
+                if crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::TooProudLook, 0..16)
+                    == 0
                 {
                     self.execute_ai_look_sidewards(crate::ai::LookDirection::LeftRight);
                 } else {
@@ -616,7 +611,7 @@ impl AiOwnerCtx<'_> {
             | (AttackingTooProudToAttackApproach, EventReachPoint) => {
                 if self
                     .engine
-                    .combat_event_visible_primary(self.assets, self.owner)
+                    .combat_event_visible_primary(self.tcx.assets, self.owner)
                 {
                     self.execute_battle_decisions();
                 } else {
@@ -649,7 +644,7 @@ impl AiOwnerCtx<'_> {
             (AttackingArcherRetireFromCombatTurn, EventDone) => {
                 if self
                     .engine
-                    .combat_event_visible_primary(self.assets, self.owner)
+                    .combat_event_visible_primary(self.tcx.assets, self.owner)
                 {
                     let target = self
                         .engine
@@ -697,7 +692,7 @@ impl AiOwnerCtx<'_> {
                     self.duty_go_to(goal, GotoFlags::RUN);
                 } else {
                     self.engine.dispatch_think_with_drain(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         self.owner,
                         &crate::ai::Stimulus::new(EventReachPoint),
                     );
@@ -782,8 +777,7 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(target),
             ));
-            self.engine
-                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+            self.engine.launch_sequence(self.tcx, sequence);
         }
     }
 
@@ -795,6 +789,7 @@ impl AiOwnerCtx<'_> {
         );
         let weapon = self.engine.combat_event_ai(self.owner).hth_weapon_id;
         let range = self
+            .tcx
             .assets
             .profile_manager
             .get_hth_weapon(weapon)
@@ -825,11 +820,8 @@ impl AiOwnerCtx<'_> {
             let target = self
                 .engine
                 .expect_human_id_for_ai_handle(target.get(), "combat principal");
-            self.engine.set_as_new_principal_opponent(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                target,
-            );
+            self.engine
+                .set_as_new_principal_opponent(self.tcx, self.owner, target);
         }
     }
 
@@ -853,7 +845,7 @@ impl AiOwnerCtx<'_> {
                         == Substate::AttackingReserve
                 {
                     self.engine.dispatch_think_with_drain(
-                        TickCtx::new(self.sim, self.assets),
+                        self.tcx,
                         friend,
                         &crate::ai::Stimulus::new(StimulusType::CallCoordinate),
                     );

@@ -59,7 +59,7 @@ impl AiOwnerCtx<'_> {
         if (bow || substate.is_any_swordfight())
             && ai.base.primary_target == Some(target)
             && self.engine.patrol_member_visible(
-                self.assets,
+                self.tcx.assets,
                 self.owner,
                 self.engine
                     .expect_human_id_for_ai_handle(target.get(), "visibility loss target"),
@@ -147,7 +147,7 @@ impl AiOwnerCtx<'_> {
             &self.engine.world.fast_grid.level.sectors,
             &self.engine.world.fast_grid.level.sector_number_map,
         )
-        .resolve_retaining_direction(self.sim, direction);
+        .resolve_retaining_direction(self.tcx.sim, direction);
         let ai = self
             .engine
             .enemy_ai_mut(self.owner, "visibility loss forecast");

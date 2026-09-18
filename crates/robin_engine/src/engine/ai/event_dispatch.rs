@@ -1392,7 +1392,7 @@ impl AiOwnerCtx<'_> {
             (attempt.remark, attempt.flags),
         );
         self.engine
-            .debug_speech_attempt_gate_snapshot(self.assets, self.owner, attempt);
+            .debug_speech_attempt_gate_snapshot(self.tcx.assets, self.owner, attempt);
         #[derive(Clone, Copy)]
         enum OwnerProfile {
             Character(crate::profiles::CharacterProfileIdx),
@@ -1444,7 +1444,7 @@ impl AiOwnerCtx<'_> {
             if cached.is_none() {
                 *cached = Some(match owner_profile {
                     OwnerProfile::Character(profile_index) => {
-                        let profile = self.assets
+                        let profile = self.tcx.assets
                             .profile_manager
                             .get_character(profile_index)
                             .unwrap_or_else(|| {
@@ -1457,7 +1457,7 @@ impl AiOwnerCtx<'_> {
                         (false, profile.exclamation_id)
                     }
                     OwnerProfile::Soldier(profile_index) => {
-                        let profile = self.assets
+                        let profile = self.tcx.assets
                             .profile_manager
                             .get_soldier(profile_index)
                             .unwrap_or_else(|| {
@@ -1470,7 +1470,7 @@ impl AiOwnerCtx<'_> {
                         (profile.vip, profile.exclamation_id)
                     }
                     OwnerProfile::Civilian(profile_index) => {
-                        let profile = self.assets
+                        let profile = self.tcx.assets
                             .profile_manager
                             .civilians
                             .get(usize::from(profile_index))

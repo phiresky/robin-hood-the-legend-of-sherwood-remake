@@ -3314,7 +3314,6 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
             ));
         }
-        self.engine
-            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+        self.engine.launch_sequence(self.tcx, sequence);
     }
 }

@@ -223,15 +223,15 @@ impl AiOwnerCtx<'_> {
         let partner = self.engine.ai(target, "friend-check partner");
         if !partner.has_patrol_path {
             let post = partner.initial_position;
-            let mut point = self.engine.friend_check_world_point(self.assets, post);
+            let mut point = self.engine.friend_check_world_point(self.tcx.assets, post);
             if !self
                 .engine
-                .friend_check_detects_point(self.owner, self.assets, point)
+                .friend_check_detects_point(self.owner, self.tcx.assets, point)
             {
                 point.z += 15.0;
                 assert!(
                     self.engine
-                        .friend_check_detects_point(self.owner, self.assets, point),
+                        .friend_check_detects_point(self.owner, self.tcx.assets, point),
                     "friend-check partner's post is not visible"
                 );
             }
@@ -244,7 +244,7 @@ impl AiOwnerCtx<'_> {
             let path = path_status(partner)
                 .3
                 .expect("friend-check partner has no authored path");
-            let waypoints = &self.assets.navigation.hiking_paths[path.get() as usize].waypoints;
+            let waypoints = &self.tcx.assets.navigation.hiking_paths[path.get() as usize].waypoints;
             let count = waypoints.len() as u16;
             let mut visible = false;
             for waypoint_index in 0..count {
@@ -253,17 +253,19 @@ impl AiOwnerCtx<'_> {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
                     level: waypoint.level,
-                    sector: self.assets.navigation.hiking_waypoint_sector(
+                    sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                         path.get() as usize,
                         waypoint_index as usize,
                         waypoint.sector,
                     ),
                 };
-                let mut point = self.engine.friend_check_world_point(self.assets, position);
+                let mut point = self
+                    .engine
+                    .friend_check_world_point(self.tcx.assets, position);
                 point.z += 15.0;
                 if self
                     .engine
-                    .friend_check_detects_point(self.owner, self.assets, point)
+                    .friend_check_detects_point(self.owner, self.tcx.assets, point)
                 {
                     visible = true;
                     break;
@@ -295,7 +297,7 @@ impl AiOwnerCtx<'_> {
         ai.delta_sorrow_level = 1000 / ai.number_of_looks as u16;
         self.friend_check_state(Substate::DefaultLookingSidewardsForCharly);
         let direction = if crate::sim_rng::u32(
-            self.sim,
+            self.tcx.sim,
             crate::sim_rng::RngSite::CheckForLookDirection,
             0..2,
         ) != 0

@@ -191,8 +191,7 @@ impl AiOwnerCtx<'_> {
         if human {
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
         }
-        self.engine
-            .execute_ai_callback(TickCtx::new(self.sim, self.assets), target, &stimulus);
+        self.engine.execute_ai_callback(self.tcx, target, &stimulus);
     }
     fn face_target(&mut self) {
         let target = self.target();
@@ -235,11 +234,7 @@ impl AiOwnerCtx<'_> {
                         .is_some(),
                     "officer call requires enemy-soldier target {target:?}"
                 );
-                if self.engine.execute_ai_callback(
-                    TickCtx::new(self.sim, self.assets),
-                    target,
-                    &call,
-                ) {
+                if self.engine.execute_ai_callback(self.tcx, target, &call) {
                     self.seek_state(SeekingOfficerWaitForSoldier);
                     let frame = self.engine.control.frame_counter;
                     self.enemy_mut().base.set_transient_emoticon(
@@ -273,7 +268,7 @@ impl AiOwnerCtx<'_> {
             SeekingGetAlertingReportFromCivilian if event == EventTimer => {
                 let point = self.enemy().base.seek_position;
                 let point = self.engine.position_to_point_3d(
-                    self.assets,
+                    self.tcx.assets,
                     point.sector,
                     point.level,
                     point.x,
@@ -358,9 +353,9 @@ impl AiOwnerCtx<'_> {
                 CallYourTalk1 => self.say(Remark::OfficerAsksWhatsup, SpeechFlags::empty()),
                 EventTimer => {
                     let target = self.target();
-                    let visible = self
-                        .engine
-                        .live_ai_detects_180(self.assets, self.owner, target);
+                    let visible =
+                        self.engine
+                            .live_ai_detects_180(self.tcx.assets, self.owner, target);
                     let target_entity = self.engine.expect_entity(target, "instructed soldier");
                     if visible
                         && target_entity.human_life_points() > 0
@@ -532,7 +527,7 @@ impl AiOwnerCtx<'_> {
             }
             SeekingOfficerInstructGroupPointing if event == EventDone => self
                 .engine
-                .execute_ai_officer_instruct_group(TickCtx::new(self.sim, self.assets), self.owner),
+                .execute_ai_officer_instruct_group(self.tcx, self.owner),
             SeekingOfficerWaitForInstructedGroup if event == EventTimer => {
                 self.wait_for_instructed_group()
             }
@@ -632,7 +627,7 @@ impl AiOwnerCtx<'_> {
             &self.engine.world.fast_grid.level.sectors,
             &self.engine.world.fast_grid.level.sector_number_map,
         )
-        .resolve(self.sim)
+        .resolve(self.tcx.sim)
         .position;
         self.enemy_mut().gather_position = destination;
         self.duty_go_near(destination, parameters_ai::AI_TALK_DISTANCE, GotoFlags::RUN);
@@ -680,10 +675,7 @@ impl AiOwnerCtx<'_> {
                         self.seek_state(Substate::SeekingRunningToOfficerSeen);
                         self.call(self.owner, StimulusType::EventReachPoint, false);
                     }
-                } else if !self
-                    .engine
-                    .execute_ai_alert_officer(TickCtx::new(self.sim, self.assets), self.owner)
-                {
+                } else if !self.engine.execute_ai_alert_officer(self.tcx, self.owner) {
                     self.duty();
                 }
             }
@@ -705,13 +697,13 @@ impl AiOwnerCtx<'_> {
             return false;
         }
         self.enemy()
-            .profile(&self.assets.profile_manager)
+            .profile(&self.tcx.assets.profile_manager)
             .initiative
             >= 50
     }
 
     fn act_on_civilian_report(&mut self) {
-        match self.enemy().get_rank(&self.assets.profile_manager) {
+        match self.enemy().get_rank(&self.tcx.assets.profile_manager) {
             ProfileRank::Officer => {
                 if self.seek_before_alert() {
                     self.seek(
@@ -730,10 +722,7 @@ impl AiOwnerCtx<'_> {
                         parameters_ai::AI_HINT_SEEK_RADIUS as u16,
                         SeekFlags::LOCATION_FIRST | SeekFlags::LOOK_FOR_HELP_AFTER,
                     );
-                } else if !self
-                    .engine
-                    .execute_ai_alert_officer(TickCtx::new(self.sim, self.assets), self.owner)
-                {
+                } else if !self.engine.execute_ai_alert_officer(self.tcx, self.owner) {
                     self.seek(
                         self.enemy().base.seek_position,
                         parameters_ai::AI_HINT_SEEK_RADIUS as u16,

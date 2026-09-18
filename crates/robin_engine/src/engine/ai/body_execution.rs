@@ -4,7 +4,6 @@ use crate::ai::{
     AiState, BodyReaction, DutyFlags, EmoticonType, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
-use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
 
@@ -61,7 +60,7 @@ impl AiOwnerCtx<'_> {
                 if entity.human_life_points() > 0
                     && !entity.is_unconscious()
                     && self.engine.npc_is_detecting_human(
-                        self.assets,
+                        self.tcx.assets,
                         self.owner,
                         body,
                         self.engine.control.frame_counter,
@@ -190,7 +189,7 @@ impl AiOwnerCtx<'_> {
                 match self
                     .engine
                     .seek_enemy(self.owner)
-                    .get_rank(&self.assets.profile_manager)
+                    .get_rank(&self.tcx.assets.profile_manager)
                 {
                     ProfileRank::Officer => {
                         let center = self.engine.live_ai_position(self.owner);
@@ -246,8 +245,7 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(body),
             ));
-            self.engine
-                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
+            self.engine.launch_sequence(self.tcx, sequence);
 
             self.engine.body_timer(self.owner, 50);
             self.engine.seek_enemy_mut(self.owner).base.clear_emoticon();
@@ -265,7 +263,7 @@ impl AiOwnerCtx<'_> {
         match self
             .engine
             .seek_enemy(self.owner)
-            .get_rank(&self.assets.profile_manager)
+            .get_rank(&self.tcx.assets.profile_manager)
         {
             ProfileRank::Soldier => {
                 let entity = self.engine.expect_entity(self.owner, "body alert owner");
@@ -276,7 +274,7 @@ impl AiOwnerCtx<'_> {
                     && !self
                         .engine
                         .entity_data_in_building_sector(entity.element_data())
-                    && ai.profile(&self.assets.profile_manager).initiative >= 50
+                    && ai.profile(&self.tcx.assets.profile_manager).initiative >= 50
                     && ai.base.antagonist.is_none();
                 let flags = if seek_first {
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK | SeekFlags::LOOK_FOR_HELP_AFTER
@@ -286,7 +284,7 @@ impl AiOwnerCtx<'_> {
                     }
                     SeekFlags::LOCATION_END | SeekFlags::BODY_SEEK
                 };
-                let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                 self.execute_ai_seek_area(center, radius, flags, UNDEFINED_DIRECTION);
             }
             ProfileRank::Officer => {
@@ -299,7 +297,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_face_direction(direction);
                 let position = self.engine.live_ai_position(self.owner);
                 if !self.execute_ai_alert_soldiers(position, SeekFlags::BODY_SEEK.bits()) {
-                    let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                    let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                     self.execute_ai_seek_area(
                         center,
                         radius,
@@ -310,7 +308,7 @@ impl AiOwnerCtx<'_> {
             }
             ProfileRank::Knight => {
                 let position = self.engine.live_ai_position(self.owner);
-                let radius = self.engine.body_alert_radius(self.assets, self.owner);
+                let radius = self.engine.body_alert_radius(self.tcx.assets, self.owner);
                 self.execute_ai_seek_area(
                     position,
                     radius,

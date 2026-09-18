@@ -178,7 +178,7 @@ impl AiOwnerCtx<'_> {
         if ai
             .patrol_path
             .as_ref()
-            .and_then(|path| path.current_waypoint(&self.assets.navigation.hiking_paths))
+            .and_then(|path| path.current_waypoint(&self.tcx.assets.navigation.hiking_paths))
             .is_none()
         {
             self.execute_ai_return_to_duty(crate::ai::DutyFlags::empty());
@@ -197,12 +197,12 @@ impl AiOwnerCtx<'_> {
             .as_ref()
             .expect("AfterScript path after callback");
         let waypoint = path
-            .current_waypoint(&self.assets.navigation.hiking_paths)
+            .current_waypoint(&self.tcx.assets.navigation.hiking_paths)
             .expect("AfterScript waypoint after callback");
         let destination = crate::ai::Position {
             x: waypoint.x as f32,
             y: waypoint.y as f32,
-            sector: self.assets.navigation.hiking_waypoint_sector(
+            sector: self.tcx.assets.navigation.hiking_waypoint_sector(
                 usize::from(path.hiking_path_index),
                 usize::from(path.current_waypoint_index),
                 waypoint.sector,
@@ -260,11 +260,8 @@ impl AiOwnerCtx<'_> {
 
     /// Execute a nested actor decision to completion before its caller resumes.
     pub(crate) fn execute_ai_callback(&mut self, stimulus: &crate::ai::Stimulus) -> bool {
-        self.engine.dispatch_think_with_drain(
-            TickCtx::new(self.sim, self.assets),
-            self.owner,
-            stimulus,
-        )
+        self.engine
+            .dispatch_think_with_drain(self.tcx, self.owner, stimulus)
     }
 
     /// Run the body of an already admitted decision without entering a new frame.
@@ -346,8 +343,7 @@ impl AiOwnerCtx<'_> {
                 == crate::ai::Substate::AttackingPhalanx
         {
             if stimulus.stimulus_type == StimulusType::EventTimer {
-                self.engine
-                    .execute_ai_phalanx_timer(TickCtx::new(self.sim, self.assets), self.owner);
+                self.engine.execute_ai_phalanx_timer(self.tcx, self.owner);
             } else {
                 self.execute_ai_phalanx_instruction();
             }
@@ -364,19 +360,16 @@ impl AiOwnerCtx<'_> {
         } else if enemy_owner && self.execute_ai_archery_expected_event(stimulus.stimulus_type) {
             false
         } else if enemy_owner
-            && (self.engine.execute_ai_combat_unexpected_event(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                stimulus,
-            ) || self.execute_ai_combat_expected_event(stimulus.stimulus_type))
+            && (self
+                .engine
+                .execute_ai_combat_unexpected_event(self.tcx, self.owner, stimulus)
+                || self.execute_ai_combat_expected_event(stimulus.stimulus_type))
         {
             false
         } else if enemy_owner
-            && let Some(handled) = self.engine.execute_ai_officer_rendezvous_event(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                stimulus,
-            )
+            && let Some(handled) = self
+                .engine
+                .execute_ai_officer_rendezvous_event(self.tcx, self.owner, stimulus)
         {
             handled
         } else if enemy_owner && let Some(handled) = self.execute_ai_wondering_event(stimulus) {
@@ -421,13 +414,10 @@ impl AiOwnerCtx<'_> {
             .is_some()
         {
             self.engine
-                .begin_enemy_think(TickCtx::new(self.sim, self.assets), self.owner, stimulus)
+                .begin_enemy_think(self.tcx, self.owner, stimulus)
         } else {
-            self.engine.begin_friendly_think(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                stimulus,
-            )
+            self.engine
+                .begin_friendly_think(self.tcx, self.owner, stimulus)
         };
         if !admitted {
             self.execute_ai_end_think();

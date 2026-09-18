@@ -391,7 +391,7 @@ impl AiOwnerCtx<'_> {
             .element_data()
             .position();
         self.engine
-            .launch_ai_raise_shield(TickCtx::new(self.sim, self.assets), self.owner, point);
+            .launch_ai_raise_shield(self.tcx, self.owner, point);
     }
 
     fn execute_ai_protecting_shield_timer(&mut self) {
@@ -453,7 +453,7 @@ impl AiOwnerCtx<'_> {
             self.engine.execute_ai_direction_goal(self.owner, direction);
 
             self.engine
-                .refresh_retained_shield_obstacle(self.assets, self.owner);
+                .refresh_retained_shield_obstacle(self.tcx.assets, self.owner);
 
             self.engine.shield_timer(self.owner, 30);
         } else if self
@@ -464,10 +464,11 @@ impl AiOwnerCtx<'_> {
             .action_state
             .is_bow()
         {
-            if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0 {
+            if crate::sim_rng::u32(self.tcx.sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0
+            {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingAdvancingWithShield);
                 self.engine.launch_element(
-                    TickCtx::new(self.sim, self.assets),
+                    self.tcx,
                     crate::sequence::SequenceElement::new(
                         1,
                         crate::element::Command::LowerShield,
@@ -542,7 +543,7 @@ impl AiOwnerCtx<'_> {
         }
         if !self
             .engine
-            .live_ai_is_shield_bearer(self.assets, self.owner)
+            .live_ai_is_shield_bearer(self.tcx.assets, self.owner)
         {
             return false;
         }
@@ -589,7 +590,7 @@ impl AiOwnerCtx<'_> {
         if dangerous.is_none()
             && self
                 .engine
-                .live_archers_needing_protection(self.assets, self.owner)
+                .live_archers_needing_protection(self.tcx.assets, self.owner)
                 <= 0
         {
             return false;
@@ -601,7 +602,7 @@ impl AiOwnerCtx<'_> {
         self.engine.execute_ai_focus(self.owner, Some(handle));
 
         if let Some((position, direction, left, right)) =
-            self.engine.live_phalanx_place(self.assets, self.owner)
+            self.engine.live_phalanx_place(self.tcx.assets, self.owner)
         {
             self.execute_ai_speech(crate::ai::AiSpeechAttempt {
                 remark: Remark::ShieldBearersLineFormation,
@@ -642,11 +643,8 @@ impl AiOwnerCtx<'_> {
                 .expect_entity(target, "shield danger point")
                 .element_data()
                 .position();
-            self.engine.launch_ai_raise_shield(
-                TickCtx::new(self.sim, self.assets),
-                self.owner,
-                point,
-            );
+            self.engine
+                .launch_ai_raise_shield(self.tcx, self.owner, point);
 
             let ai = self
                 .engine

@@ -3,7 +3,6 @@
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, DutyFlags, GotoFlags, MoneyFightOperation, Substate};
 use crate::ai_enemy::EnemyAi;
-use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
@@ -399,12 +398,12 @@ impl AiOwnerCtx<'_> {
         match operation {
             MoneyFightOperation::CleanUpAfterBrawl => {
                 self.engine
-                    .create_live_money_fight_victims(self.assets, self.owner);
+                    .create_live_money_fight_victims(self.tcx.assets, self.owner);
                 self.approach_next_money_victim(false);
             }
             MoneyFightOperation::CollectOrLootAfterLook => {
                 self.engine
-                    .create_live_money_fight_victims(self.assets, self.owner);
+                    .create_live_money_fight_victims(self.tcx.assets, self.owner);
                 while let Some(&handle) =
                     self.engine.money_ai(self.owner).money_fight_victims.first()
                 {
@@ -524,9 +523,12 @@ impl AiOwnerCtx<'_> {
             .is_empty()
         {
             self.engine
-                .create_live_money_fight_enemies(self.assets, self.owner);
+                .create_live_money_fight_enemies(self.tcx.assets, self.owner);
         }
-        if !self.engine.wants_live_money_fight(self.assets, self.owner) {
+        if !self
+            .engine
+            .wants_live_money_fight(self.tcx.assets, self.owner)
+        {
             self.engine
                 .money_ai_mut(self.owner)
                 .money_fight_enemies
@@ -575,7 +577,7 @@ impl AiOwnerCtx<'_> {
         assert_eq!(
             self.engine
                 .money_ai(self.owner)
-                .get_rank(&self.assets.profile_manager),
+                .get_rank(&self.tcx.assets.profile_manager),
             crate::profiles::ProfileRank::Officer
         );
         self.engine.money_ai_mut(self.owner).base.antagonist = None;
@@ -583,17 +585,18 @@ impl AiOwnerCtx<'_> {
         for index in 0..self.engine.world.soldier_registry.camp(camp).len() {
             let target = self.engine.money_camp_soldier(camp, index);
             let ai = self.engine.money_ai(target);
-            if ai.get_rank(&self.assets.profile_manager) != crate::profiles::ProfileRank::Soldier
+            if ai.get_rank(&self.tcx.assets.profile_manager)
+                != crate::profiles::ProfileRank::Soldier
                 || !(ai.base.current_substate.is_take_money()
                     || ai.base.current_substate.is_fight_for_money())
                 || !self
                     .engine
-                    .patrol_member_visible(self.assets, target, self.owner)
+                    .patrol_member_visible(self.tcx.assets, target, self.owner)
             {
                 continue;
             }
             self.engine.execute_ai_callback(
-                TickCtx::new(self.sim, self.assets),
+                self.tcx,
                 target,
                 &crate::ai::Stimulus::with_human(StimulusType::CallFinishBrawl, self.owner.index()),
             );
@@ -678,7 +681,7 @@ impl AiOwnerCtx<'_> {
             .expect_human_id_for_ai_handle(thief.get(), "coin thief");
         if !self
             .engine
-            .live_ai_detects_180(self.assets, self.owner, target)
+            .live_ai_detects_180(self.tcx.assets, self.owner, target)
         {
             return;
         }
@@ -697,11 +700,14 @@ impl AiOwnerCtx<'_> {
                     .engine
                     .entity_building_sector(entity.element_data().sector())
                     .is_none()
-                && ai.profile(&self.assets.profile_manager).money > 0);
+                && ai.profile(&self.tcx.assets.profile_manager).money > 0);
         if !wants_money {
             return;
         }
-        if !self.engine.wants_live_money_fight(self.assets, self.owner) {
+        if !self
+            .engine
+            .wants_live_money_fight(self.tcx.assets, self.owner)
+        {
             self.engine
                 .money_ai_mut(self.owner)
                 .money_fight_enemies
@@ -748,7 +754,7 @@ impl AiOwnerCtx<'_> {
         let difficulty = self.engine.control.sim_config.difficulty;
         let modifier = if self.engine.is_hostile_to_player_camp(entity.camp()) {
             if difficulty == crate::player_profile::DifficultyLevel::Hard
-                && !self.sim.config().fix_hard_reaction_times
+                && !self.tcx.sim.config().fix_hard_reaction_times
             {
                 2.0
             } else {
@@ -763,7 +769,7 @@ impl AiOwnerCtx<'_> {
             - self
                 .engine
                 .money_ai(self.owner)
-                .profile(&self.assets.profile_manager)
+                .profile(&self.tcx.assets.profile_manager)
                 .intelligence as f32)
             * 0.01
             * crate::parameters_ai::AI_MAX_ENEMY_REACTIONTIME as f32
