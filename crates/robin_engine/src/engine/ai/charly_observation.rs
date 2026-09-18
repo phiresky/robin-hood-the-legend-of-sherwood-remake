@@ -77,9 +77,7 @@ impl EngineInner {
                         return;
                     }
                     if self
-                        .world
-                        .entities
-                        .expect_enemy_ai(charly, format_args!("checkpoint report status"))
+                        .enemy_ai(charly, "checkpoint report status")
                         .reported_to_officer
                     {
                         return;
@@ -131,9 +129,7 @@ impl EngineInner {
                             .seek_flags
                             .remove(SeekFlags::REPORT_OFFICER_AFTER);
                         let state = self
-                            .world
-                            .entities
-                            .expect_ai_controller(charly, format_args!("checkpoint referral state"))
+                            .ai(charly, "checkpoint referral state")
                             .current_substate;
                         if matches!(
                             state,
@@ -219,10 +215,7 @@ impl EngineInner {
             ai.synchronize_charly.unwrap().get(),
             "checkpoint synchronization partner",
         );
-        let partner = self
-            .world
-            .entities
-            .expect_ai_controller(friend, format_args!("checkpoint synchronization partner"));
+        let partner = self.ai(friend, "checkpoint synchronization partner");
         let index = ai.synchronize_index;
         let partner_default = partner.current_state == AiState::Default;
         let path = partner.patrol_path.as_ref();
@@ -251,12 +244,7 @@ impl EngineInner {
             );
             self.run_ai_macro(sim, assets, owner);
         } else {
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    friend,
-                    format_args!("checkpoint synchronization registration"),
-                )
+            self.ai_mut(friend, "checkpoint synchronization registration")
                 .synchronizing_actors
                 .push(owner.index());
             self.duty_set_state(

@@ -14,11 +14,7 @@ impl EngineInner {
     ) -> bool {
         match stimulus.stimulus_type {
             StimulusType::EventQuitSwordfight => {
-                let substate = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("combat quit substate"))
-                    .current_substate;
+                let substate = self.ai(owner, "combat quit substate").current_substate;
                 if substate.is_real_swordfight() {
                     let entity = self.expect_entity(owner, "combat quit forest");
                     let forest = entity.camp() == Camp::Royalists
@@ -33,15 +29,11 @@ impl EngineInner {
                             Substate::AttackingQuittingSwordfight,
                         );
                         let left = self
-                            .world
-                            .entities
-                            .expect_enemy_ai(owner, format_args!("combat quit left"))
+                            .enemy_ai(owner, "combat quit left")
                             .left_combat_neighbour;
                         self.apply_update_left_combat_neighbour(owner.index(), left, None);
                         let right = self
-                            .world
-                            .entities
-                            .expect_enemy_ai(owner, format_args!("combat quit right"))
+                            .enemy_ai(owner, "combat quit right")
                             .right_combat_neighbour;
                         self.apply_update_right_combat_neighbour(owner.index(), right, None);
                         self.combat_impact_timer(owner, 3);
@@ -53,10 +45,7 @@ impl EngineInner {
                     panic!("swordfight entry requires human target");
                 };
                 let frame = self.control.frame_counter;
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("combat entry"));
+                let ai = self.enemy_ai_mut(owner, "combat entry");
                 ai.base.primary_target = Some(target);
                 ai.enemy_seen_below = false;
                 ai.base
@@ -80,10 +69,7 @@ impl EngineInner {
                 let StimulusInfo::DoorCombat(ref combat) = stimulus.info else {
                     panic!("door combat requires door-combat info");
                 };
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("door combat"));
+                let ai = self.enemy_ai_mut(owner, "door combat");
                 ai.base.primary_target = combat.adversary;
                 ai.base.seek_position = combat.goal;
                 ai.gather_direction = combat.direction;
@@ -104,9 +90,7 @@ impl EngineInner {
 
     fn combat_impact_timer(&mut self, owner: EntityId, frames: u32) {
         let frame = self.control.frame_counter;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat impact timer"))
+        self.ai_mut(owner, "combat impact timer")
             .launch_timer(frames, frame);
     }
 
@@ -126,11 +110,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) {
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("incoming arrow state"))
-            .current_substate;
+        let substate = self.ai(owner, "incoming arrow state").current_substate;
         let protect = match substate {
             Substate::AttackingProtectingWithShield => {
                 // The installed order can change before its sprite executes.
@@ -146,15 +126,10 @@ impl EngineInner {
         let StimulusInfo::Human(shooter) = stimulus.info else {
             panic!("incoming arrow requires shooter");
         };
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("incoming arrow target"))
-            .primary_target = Some(shooter);
+        self.ai_mut(owner, "incoming arrow target").primary_target = Some(shooter);
         self.combat_impact_stop(sim, assets, owner);
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("incoming arrow target after stop"))
+            .ai(owner, "incoming arrow target after stop")
             .primary_target
             .expect("incoming arrow requires primary target");
         let target =
@@ -185,10 +160,7 @@ impl EngineInner {
             .expect("shield owner is actor")
             .action_state = crate::element::ActionState::HoldingShield;
         self.refresh_retained_shield_obstacle(assets, owner);
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("incoming arrow focus"));
+        let ai = self.ai_mut(owner, "incoming arrow focus");
         let target = ai.primary_target;
         self.execute_ai_focus(owner, target);
 
@@ -222,13 +194,7 @@ impl EngineInner {
             {
                 self.direct_enter_swordfight(sim, assets, owner, attacker);
             }
-        } else if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("hit substate"))
-            .current_substate
-            == Substate::MenacingPcInComa
-        {
+        } else if self.ai(owner, "hit substate").current_substate == Substate::MenacingPcInComa {
             let StimulusInfo::Human(attacker) = stimulus.info else {
                 panic!("menacing hit requires human attacker");
             };
@@ -239,10 +205,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingReturnToOtherPcAfterMenacing,
             );
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("menacing hit target"))
-                .primary_target = Some(attacker);
+            self.ai_mut(owner, "menacing hit target").primary_target = Some(attacker);
             use crate::sequence::{Field, FieldValue, SequenceElement};
             let mut element = SequenceElement::new_generic(
                 1,
@@ -254,9 +217,7 @@ impl EngineInner {
             element.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
             self.launch_element(sim, assets, element);
             let target = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("menacing hit direction target"))
+                .ai(owner, "menacing hit direction target")
                 .primary_target
                 .expect("menacing hit direction requires target");
             let target = self.expect_human_id_for_ai_handle(target.get(), "menacing hit direction");
@@ -274,25 +235,17 @@ impl EngineInner {
         } else {
             self.combat_impact_stop(sim, assets, owner);
             let StimulusInfo::Human(attacker) = stimulus.info else {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("nonhuman hit target"))
-                    .primary_target = None;
+                self.ai_mut(owner, "nonhuman hit target").primary_target = None;
                 return;
             };
             let target = self.expect_human_id_for_ai_handle(attacker.get(), "hit attacker");
             if matches!(target, EntityId::Soldier(_)) {
                 let brawl = self
-                    .world
-                    .entities
-                    .expect_ai_controller(target, format_args!("hit soldier substate"))
+                    .ai(target, "hit soldier substate")
                     .current_substate
                     .is_fight_for_money();
                 if brawl {
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("brawl hit friend"))
-                        .friend_in_trouble = Some(attacker);
+                    self.ai_mut(owner, "brawl hit friend").friend_in_trouble = Some(attacker);
                     self.duty_set_state(
                         sim,
                         assets,
@@ -300,23 +253,15 @@ impl EngineInner {
                         AiState::Wondering,
                         Substate::WonderingBrawlGotHit,
                     );
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("brawl hit emoticon"))
+                    self.ai_mut(owner, "brawl hit emoticon")
                         .set_emoticon(EmoticonType::None);
                 }
             } else {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("hit primary target"))
-                    .primary_target = Some(attacker);
+                self.ai_mut(owner, "hit primary target").primary_target = Some(attacker);
                 self.execute_ai_attack_enemy(sim, assets, owner, attacker.get());
             }
 
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("hit eye status"));
+            let npc = self.ai_actor_mut(owner, "hit eye status");
             crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::DieOrGetUnconscious);
         }
     }

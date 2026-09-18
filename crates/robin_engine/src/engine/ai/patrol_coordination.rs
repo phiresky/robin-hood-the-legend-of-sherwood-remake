@@ -24,11 +24,7 @@ mod tests {
             .collect();
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        engine
-            .world
-            .entities
-            .expect_ai_controller_mut(ids[0], format_args!("patrol chief"))
-            .theoretical_patrol = ids[1..].to_vec();
+        engine.ai_mut(ids[0], "patrol chief").theoretical_patrol = ids[1..].to_vec();
         (engine, assets, ids)
     }
 
@@ -271,10 +267,7 @@ mod tests {
             let (owner, chief) = (*owner, *chief);
             let mut assets = LevelAssets::new();
             crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("coordinate test"));
+            let ai = engine.enemy_ai_mut(owner, "coordinate test");
             ai.base.patrol_chief = Some(chief);
             ai.base.current_state = AiState::Default;
             ai.base.current_substate = if attentive {
@@ -303,10 +296,7 @@ mod tests {
                 }),
             );
 
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("coordinate test"));
+            let ai = engine.enemy_ai(owner, "coordinate test");
             assert_eq!(ai.base.current_state, AiState::Default);
             assert_eq!(ai.base.current_substate, expected_substate);
             assert_eq!(ai.base.current_music_alert_status, AlertLevel::Green);
@@ -330,10 +320,7 @@ impl EngineInner {
     ) {
         use crate::ai::{AiState, GotoFlags, StimulusInfo, Substate};
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol coordinate owner"));
+        let ai = self.ai(owner, "patrol coordinate owner");
         if ai.patrol_chief.is_none() {
             return;
         }
@@ -358,9 +345,7 @@ impl EngineInner {
 
         let position = self.live_ai_position(owner);
         let chief = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol coordinate owner"))
+            .ai(owner, "patrol coordinate owner")
             .patrol_chief
             .expect("patrol chief disappeared during stop");
         let chief_position = self.live_ai_position(chief);
@@ -391,9 +376,7 @@ impl EngineInner {
         self.duty_set_state(sim, assets, owner, AiState::Default, substate);
         let (flags, speed) = if walking {
             let flags = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol walking flags"))
+                .ai(owner, "patrol walking flags")
                 .default_path_walking_flags;
             (GotoFlags::NO_HALT | GotoFlags::DONT_STOP | flags, speed)
         } else {
@@ -423,10 +406,7 @@ impl EngineInner {
             .actor_data()
             .expect("patrol member has no actor data")
             .action_state;
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(member, format_args!("patrol direction member"));
+        let ai = self.ai_mut(member, "patrol direction member");
         ai.patrol_direction = direction;
         if ai.current_substate == crate::ai::Substate::DefaultPatrolEnrouteWaiting {
             if direction == current_direction
@@ -449,17 +429,10 @@ impl EngineInner {
         assets: &LevelAssets,
         direction: u16,
     ) {
-        let member_count = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol direction chief"))
-            .patrol
-            .len();
+        let member_count = self.ai(owner, "patrol direction chief").patrol.len();
         for index in 0..member_count {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol direction chief"))
+                .ai(owner, "patrol direction chief")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during direction callback");
@@ -498,10 +471,7 @@ impl EngineInner {
             self.initialize_patrol_for_npc(assets, owner);
         }
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol chief"));
+        let ai = self.ai(owner, "patrol chief");
         if (ai.patrol.is_empty() && ai.missed_patrol_members.is_empty())
             || ai.patrol_stopped
             || ai.current_state != AiState::Default
@@ -545,9 +515,7 @@ impl EngineInner {
             path.compute_patrol_positions(ai.patrol.len(), Some(&self.world.fast_grid), &bounds);
         for (index, (target, direction)) in positions.into_iter().enumerate() {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol chief"))
+                .ai(owner, "patrol chief")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
@@ -566,9 +534,7 @@ impl EngineInner {
             // InstructOwner for the normal sequence-manager phase.
             self.debug_patrol_turn_lifecycle("after_coordinate_think", member);
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("patrol chief after coordinate"))
+                .ai(owner, "patrol chief after coordinate")
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
@@ -583,9 +549,7 @@ impl EngineInner {
     fn reacquire_patrol_members(&mut self, assets: &LevelAssets, owner: EntityId) {
         let mut index = 0;
         while let Some(&member) = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("patrol chief"))
+            .ai(owner, "patrol chief")
             .missed_patrol_members
             .get(index)
         {
@@ -607,16 +571,10 @@ impl EngineInner {
                 able_to_help,
                 npc.ai_state(),
             ) {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("patrol chief"));
+                let ai = self.ai_mut(owner, "patrol chief");
                 ai.missed_patrol_members.remove(index);
                 ai.patrol.push(member);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(member, format_args!("reacquired patrol member"))
-                    .patrol_chief = Some(owner);
+                self.ai_mut(member, "reacquired patrol member").patrol_chief = Some(owner);
             } else {
                 index += 1;
             }

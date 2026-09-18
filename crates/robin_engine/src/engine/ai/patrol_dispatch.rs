@@ -13,10 +13,7 @@ impl EngineInner {
         if stimulus.to_whole_patrol {
             return false;
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("patrol dispatch owner"));
+        let ai = self.enemy_ai(owner, "patrol dispatch owner");
         if matches!(
             stimulus.stimulus_type,
             StimulusType::EventSeesObject | StimulusType::EventHear | StimulusType::EventSeesBody
@@ -45,10 +42,7 @@ impl EngineInner {
             }
         }
 
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("patrol dispatch owner"));
+        let ai = self.enemy_ai_mut(owner, "patrol dispatch owner");
         ai.last_stimulus_dispatched_to_patrol = Some(*stimulus);
         if ai.base.patrol.is_empty() {
             return false;

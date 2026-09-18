@@ -39,11 +39,7 @@ impl EngineInner {
         event: crate::ai::StimulusType,
     ) -> bool {
         use crate::ai::StimulusType;
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("shield event"))
-            .current_substate;
+        let substate = self.ai(owner, "shield event").current_substate;
         match (substate, event) {
             (Substate::AttackingProtectingWithShield, StimulusType::EventTimer) => {
                 self.execute_ai_protecting_shield_timer(sim, assets, owner);
@@ -63,9 +59,7 @@ impl EngineInner {
             }
             (Substate::AttackingRunningToPhalanx, StimulusType::EventReachPoint) => {
                 let direction = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("phalanx arrival direction"))
+                    .enemy_ai(owner, "phalanx arrival direction")
                     .shield_bearer_direction;
                 self.duty_face_direction(sim, assets, owner, direction);
             }
@@ -86,9 +80,7 @@ impl EngineInner {
 
     fn shield_primary(&self, owner: EntityId) -> EntityId {
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("shield primary target"))
+            .ai(owner, "shield primary target")
             .primary_target
             .expect("shield action requires a primary target");
         self.expect_human_id_for_ai_handle(target.get(), "shield primary target")
@@ -109,10 +101,7 @@ impl EngineInner {
     }
 
     fn shield_focus_primary(&mut self, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("shield focus"));
+        let ai = self.ai_mut(owner, "shield focus");
         let target = ai.primary_target;
         self.execute_ai_focus(owner, target);
     }
@@ -137,10 +126,7 @@ impl EngineInner {
             self.shield_timer(owner, 20);
             return;
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("shield links"));
+        let ai = self.enemy_ai(owner, "shield links");
         if ai.left_combat_neighbour.is_some() || ai.right_combat_neighbour.is_some() {
             self.duty_set_state(
                 sim,
@@ -157,15 +143,11 @@ impl EngineInner {
         if ai.base.primary_target.is_none() {
             let target =
                 self.select_live_ai_primary_target(owner, PrimaryTargetFlags::VIPS_ALLOWED);
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("replacement shield target"))
+            self.ai_mut(owner, "replacement shield target")
                 .primary_target = target;
         }
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("shield target after selection"))
+            .ai(owner, "shield target after selection")
             .primary_target;
         let Some(target) = target else {
             if archer_behind {
@@ -223,10 +205,7 @@ impl EngineInner {
     }
 
     fn live_phalanx_neighbour_target(&self, owner: EntityId) -> Option<Option<AiEntityHandle>> {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx neighbour target"));
+        let ai = self.enemy_ai(owner, "phalanx neighbour target");
         for neighbour in [ai.left_combat_neighbour, ai.right_combat_neighbour]
             .into_iter()
             .flatten()
@@ -236,12 +215,7 @@ impl EngineInner {
                 self.expect_entity(id, "phalanx neighbour kind"),
                 Entity::Soldier(_)
             ) {
-                return Some(
-                    self.world
-                        .entities
-                        .expect_ai_controller(id, format_args!("phalanx neighbour primary"))
-                        .primary_target,
-                );
+                return Some(self.ai(id, "phalanx neighbour primary").primary_target);
             }
         }
         None
@@ -259,10 +233,7 @@ impl EngineInner {
                 tracing::error!(?owner, "phalanx arrival has no soldier neighbour");
                 self.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty())
             });
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("phalanx arrival primary"))
-            .primary_target = target;
+        self.ai_mut(owner, "phalanx arrival primary").primary_target = target;
         if target.is_none() {
             tracing::error!(?owner, "phalanx arrival has no primary target");
             self.execute_battle_decisions(sim, assets, owner);
@@ -356,10 +327,7 @@ impl EngineInner {
             if !self.live_ai_is_shield_bearer(assets, candidate) {
                 continue;
             }
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(candidate, format_args!("free shield bearer"));
+            let ai = self.enemy_ai(candidate, "free shield bearer");
             if (!owner_shield && ai.archer_behind_me.is_some())
                 || !matches!(
                     ai.base.current_substate,
@@ -393,10 +361,7 @@ impl EngineInner {
         &self,
         bearer: EntityId,
     ) -> (Position, u16) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(bearer, format_args!("shield position bearer"));
+        let ai = self.enemy_ai(bearer, "shield position bearer");
         if ai.base.current_substate == Substate::AttackingRunningToPhalanx {
             (ai.base.seek_position, ai.shield_bearer_direction)
         } else {
@@ -412,10 +377,7 @@ impl EngineInner {
     fn live_phalanx_end(&self, start: EntityId, left: bool) -> EntityId {
         let mut current = start;
         loop {
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(current, format_args!("phalanx end member"));
+            let ai = self.enemy_ai(current, "phalanx end member");
             let next = if left {
                 ai.left_combat_neighbour
             } else {
@@ -441,9 +403,7 @@ impl EngineInner {
         owner: EntityId,
     ) -> Option<(Position, u16, Option<EntityId>, Option<EntityId>)> {
         if self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx placement owner"))
+            .enemy_ai(owner, "phalanx placement owner")
             .phalanx_aborted
         {
             return None;
@@ -569,9 +529,7 @@ impl EngineInner {
         called_from_hourglass: bool,
     ) -> bool {
         let substate = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("arrow protection owner"))
+            .enemy_ai(owner, "arrow protection owner")
             .base
             .current_substate;
         match substate {
@@ -635,10 +593,7 @@ impl EngineInner {
         }
         let target = dangerous.unwrap_or(nearest_id);
         let handle = AiEntityHandle::new(target.index());
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("protection target"));
+        let ai = self.enemy_ai_mut(owner, "protection target");
         ai.base.primary_target = Some(handle);
         self.execute_ai_focus(owner, Some(handle));
 
@@ -652,10 +607,7 @@ impl EngineInner {
                     flags: 0,
                 },
             );
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("formation position"));
+            let ai = self.enemy_ai_mut(owner, "formation position");
             ai.base.seek_position = position;
             ai.shield_bearer_direction = direction;
             let old_left = ai.left_combat_neighbour;
@@ -665,9 +617,7 @@ impl EngineInner {
                 left.map(|id| AiEntityHandle::new(id.index())),
             );
             let old_right = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("formation right link"))
+                .enemy_ai(owner, "formation right link")
                 .right_combat_neighbour;
             self.apply_update_right_combat_neighbour(
                 owner.index(),
@@ -685,9 +635,7 @@ impl EngineInner {
         } else {
             self.stop_ai_owner(sim, assets, owner);
             let target = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("shield target"))
+                .ai(owner, "shield target")
                 .primary_target
                 .expect("shield raise requires primary target");
             let target = self.expect_entity_id_for_index(target.get(), "shield danger target");

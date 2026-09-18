@@ -16,9 +16,7 @@ impl EngineInner {
         target: EntityId,
     ) {
         if self.direct_enter_swordfight(sim, assets, owner, target) {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("combat rebalance"))
+            self.enemy_ai_mut(owner, "combat rebalance")
                 .base
                 .primary_target = Some(AiEntityHandle::new(target.index()));
         }
@@ -77,11 +75,7 @@ impl EngineInner {
         owner: EntityId,
         new_pc: Option<crate::entity_id::PcId>,
     ) {
-        let old_pc = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("guard owner"))
-            .guarded_pc;
+        let old_pc = self.enemy_ai(owner, "guard owner").guarded_pc;
         if let Some(old_pc) = old_pc {
             self.world
                 .entities
@@ -91,10 +85,7 @@ impl EngineInner {
                 .expect("guarded actor is a PC")
                 .guard = None;
         }
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("guard owner"))
-            .guarded_pc = new_pc;
+        self.enemy_ai_mut(owner, "guard owner").guarded_pc = new_pc;
         if let Some(new_pc) = new_pc {
             self.world
                 .entities
@@ -108,24 +99,18 @@ impl EngineInner {
 
     pub(in crate::engine) fn clear_live_combat_neighbours(&mut self, owner: EntityId) {
         let left = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("clear left combat neighbour"))
+            .enemy_ai(owner, "clear left combat neighbour")
             .left_combat_neighbour;
         self.apply_update_left_combat_neighbour(owner.index(), left, None);
         let right = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("clear right combat neighbour"))
+            .enemy_ai(owner, "clear right combat neighbour")
             .right_combat_neighbour;
         self.apply_update_right_combat_neighbour(owner.index(), right, None);
     }
 
     fn approach_primary(&self, owner: EntityId) -> EntityId {
         let handle = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("approach primary"))
+            .ai(owner, "approach primary")
             .primary_target
             .expect("enemy approach requires a primary target");
         self.expect_human_id_for_ai_handle(handle.get(), "approach primary")
@@ -184,10 +169,7 @@ impl EngineInner {
                 crate::sequence::SequencePriority::Normal,
             );
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("swordfight entry"));
+        let ai = self.enemy_ai(owner, "swordfight entry");
         let target = self.expect_human_id_for_ai_handle(
             ai.base.primary_target.expect("swordfight primary").get(),
             "swordfight entry target",
@@ -232,10 +214,7 @@ impl EngineInner {
                 flags: 0,
             },
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight emoticon"))
-            .clear_emoticon();
+        self.ai_mut(owner, "swordfight emoticon").clear_emoticon();
         self.duty_set_state(
             sim,
             assets,
@@ -281,17 +260,13 @@ impl EngineInner {
                 .expect("carried target is human")
                 .carrier
                 .expect("shoulder target requires carrier");
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("approach carrier substitution"))
+            self.ai_mut(owner, "approach carrier substitution")
                 .primary_target = Some(AiEntityHandle::new(target.index()));
         }
         let standard_range = self.approach_sword_range(assets, owner);
         let sword_range = standard_range.wrapping_add(10);
         let courage = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach courage"))
+            .enemy_ai(owner, "approach courage")
             .get_courage(&assets.profile_manager);
         let mut run_distance = (2 * (100 - courage)).max(sword_range);
         let my_position = self.live_ai_position(owner);
@@ -318,10 +293,7 @@ impl EngineInner {
             target_element.position_map(),
             f32::from(maximal_range),
         );
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("approach jump line"))
-            .my_line_jump = line;
+        self.enemy_ai_mut(owner, "approach jump line").my_line_jump = line;
         let camp = self.expect_entity(owner, "approach friend camp").camp();
         // Every successful exchange changes the next comparison's primary target.
         let fighter_count = self.world.fighter_registry_ids.len();
@@ -336,10 +308,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(friend, format_args!("approach friend"));
+            let ai = self.enemy_ai(friend, "approach friend");
             if ai.base.primary_target == Some(AiEntityHandle::new(target.index()))
                 || !matches!(
                     ai.base.current_substate,
@@ -365,15 +334,11 @@ impl EngineInner {
                         .square_norm()
                         .sqrt()
             {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(friend, format_args!("approach exchange friend"))
+                self.ai_mut(friend, "approach exchange friend")
                     .primary_target = Some(AiEntityHandle::new(target.index()));
                 target = friend_target;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("approach exchange owner"))
-                    .primary_target = Some(AiEntityHandle::new(target.index()));
+                self.ai_mut(owner, "approach exchange owner").primary_target =
+                    Some(AiEntityHandle::new(target.index()));
                 distance = to_friend_target as u16;
                 target_position = friend_target_position;
             }
@@ -406,10 +371,7 @@ impl EngineInner {
                 .sector_type_for_handle(sector)
                 .is_lift()
         });
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach charge state"));
+        let ai = self.enemy_ai(owner, "approach charge state");
         let mut reconsider = false;
         let (mut charge, first) = match ai.base.current_substate {
             Substate::AttackingRunningToEnemy | Substate::AttackingWalkingToEnemy => (false, false),
@@ -460,10 +422,7 @@ impl EngineInner {
         }
         reconsider |= reachpoint || first;
         let position = self.live_ai_position(self.approach_primary(owner));
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach reconsider gates"));
+        let ai = self.enemy_ai(owner, "approach reconsider gates");
         reconsider |= (position.map_point() - ai.base.seek_position.map_point()).square_norm()
             > if charge { 10.0 } else { 100.0 }
             && !ai.pc_missed;
@@ -488,19 +447,13 @@ impl EngineInner {
             return;
         }
         target = self.approach_primary(owner);
-        let line = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("approach goal line"))
-            .my_line_jump;
+        let line = self.enemy_ai(owner, "approach goal line").my_line_jump;
         let goal = if let Some(line) = line {
             let raw = self
                 .expect_entity(target, "approach jump target")
                 .element_data()
                 .position_map();
-            self.world
-                .entities
-                .expect_enemy_ai(owner, format_args!("approach jump goal"))
+            self.enemy_ai(owner, "approach jump goal")
                 .compute_jump_line_target(
                     &self.world.fast_grid,
                     line,
@@ -514,10 +467,7 @@ impl EngineInner {
         } else {
             self.live_ai_position(target)
         };
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("approach seek goal"))
-            .seek_position = goal;
+        self.ai_mut(owner, "approach seek goal").seek_position = goal;
         self.approach_focus(owner, Some(self.approach_primary(owner)));
         let (state, flags, tolerance) = if !below {
             if charge {
@@ -553,10 +503,7 @@ impl EngineInner {
         } else {
             self.duty_go_near(sim, assets, owner, goal, i32::from(tolerance), flags);
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("approach completion"));
+        let ai = self.ai_mut(owner, "approach completion");
         if ai.already_on_point {
             ai.already_on_point = false;
             self.execute_ai_begin_swordfight(sim, assets, owner);
@@ -564,12 +511,7 @@ impl EngineInner {
         }
         self.duty_set_state(sim, assets, owner, AiState::Attacking, state);
         self.approach_timer(owner, 10);
-        if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("approach route result"))
-            .couldnt_reachpoint
-        {
+        if self.ai(owner, "approach route result").couldnt_reachpoint {
             let target = self.approach_primary(owner);
             let wait = precompute_avenger_on_roof_wait_position(
                 &self.world.entities,
@@ -582,10 +524,7 @@ impl EngineInner {
                 &|sector| self.get_sector_lift_type(sector),
             );
             if let Some(wait) = wait {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("roof route result"))
-                    .couldnt_reachpoint = false;
+                self.ai_mut(owner, "roof route result").couldnt_reachpoint = false;
                 self.duty_set_state(
                     sim,
                     assets,
@@ -595,10 +534,7 @@ impl EngineInner {
                 );
                 self.duty_go_near(sim, assets, owner, wait, 50, GotoFlags::RUN);
                 let position = self.live_ai_position(self.approach_primary(owner));
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("roof target"))
-                    .seek_position = position;
+                self.ai_mut(owner, "roof target").seek_position = position;
             }
         }
     }
@@ -629,11 +565,7 @@ impl EngineInner {
             .expect_entity(owner, "rider direction")
             .element_data()
             .direction() as u16;
-        let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("rider primary"))
-            .primary_target;
+        let primary = self.ai(owner, "rider primary").primary_target;
         let mut goal = primary.and_then(|handle| {
             let target = self.expect_human_id_for_ai_handle(handle.get(), "rider primary");
             let entity = self.expect_entity(target, "rider primary gates");
@@ -644,18 +576,9 @@ impl EngineInner {
                 .flatten()
         });
         if goal.is_none() {
-            let count = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("rider enemy count"))
-                .list_them
-                .len();
+            let count = self.enemy_ai(owner, "rider enemy count").list_them.len();
             for index in 0..count {
-                let handle = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("rider enemy"))
-                    .list_them[index];
+                let handle = self.enemy_ai(owner, "rider enemy").list_them[index];
                 if primary == Some(AiEntityHandle::new(handle)) {
                     continue;
                 }
@@ -663,10 +586,8 @@ impl EngineInner {
                 if let Some(found) =
                     self.live_rider_attack_destination(owner, target, position, direction)
                 {
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("rider chosen target"))
-                        .primary_target = Some(AiEntityHandle::new(handle));
+                    self.ai_mut(owner, "rider chosen target").primary_target =
+                        Some(AiEntityHandle::new(handle));
                     goal = Some(found);
                     break;
                 }
@@ -677,10 +598,7 @@ impl EngineInner {
         };
         let target = self.approach_primary(owner);
         let position = self.live_ai_position(target);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("rider seek target"))
-            .seek_position = position;
+        self.ai_mut(owner, "rider seek target").seek_position = position;
         self.approach_focus(owner, Some(target));
         let mut flags = GotoFlags::RUN | GotoFlags::RIDER_CHARGE;
         let state = if hit {
@@ -1209,10 +1127,7 @@ mod tests {
         engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
             "approach_test.scs",
         ));
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("approach weapon"));
+        let ai = engine.enemy_ai_mut(owner, "approach weapon");
         ai.hth_weapon_id = 1;
         ai.sword_range = 1;
         std::sync::Arc::make_mut(&mut assets.profile_manager).hth_weapons[0].distance
@@ -1338,10 +1253,7 @@ mod tests {
         ] {
             move_actor(&mut engine, id, x, 500.0);
         }
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(friend, format_args!("exchange partner"));
+        let ai = engine.enemy_ai_mut(friend, "exchange partner");
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingRunningToEnemy;
         ai.base.primary_target = Some(AiEntityHandle::new(replacement.index()));
@@ -1492,10 +1404,7 @@ mod tests {
         }
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("approach fixture"));
+        let ai = engine.enemy_ai_mut(owner, "approach fixture");
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingReactiontime;
         ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -1571,10 +1480,7 @@ mod tests {
                 &assets,
                 owner
             ));
-            let ai = engine
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("rider result"));
+            let ai = engine.ai(owner, "rider result");
             assert_eq!(ai.seek_position, position);
             assert_eq!(ai.primary_target, Some(AiEntityHandle::new(target.index())));
             assert_eq!(
@@ -1653,11 +1559,8 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_position(WorldPoint3D::new(500.0, 450.0, 0.0));
-        engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("rider target"))
-            .primary_target = Some(AiEntityHandle::new(target.index()));
+        engine.ai_mut(owner, "rider target").primary_target =
+            Some(AiEntityHandle::new(target.index()));
         assert!(engine.execute_ai_maybe_make_rider_attack(
             &crate::sim_rng::test_context(),
             &assets,
@@ -1709,10 +1612,7 @@ mod tests {
             .unwrap()
             .opponents
             .push(target);
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat fixture"));
+        let ai = engine.ai_mut(owner, "combat fixture");
         ai.primary_target = None;
         ai.current_substate = Substate::AttackingSwordfight;
         engine.execute_ai_reconsider_enemy_approach(
@@ -1721,10 +1621,7 @@ mod tests {
             owner,
             false,
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("combat result"));
+        let ai = engine.ai(owner, "combat result");
         assert_eq!(ai.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.when_does_timer_ring, engine.control.frame_counter + 30);
     }

@@ -98,10 +98,7 @@ mod tests {
     #[test]
     fn observation_multiplicity_requires_attacking_state_and_reads_live_target() {
         let (mut engine, assets, owner, friend, enemy) = combatants();
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(friend, format_args!("test ally"));
+        let ai = engine.enemy_ai_mut(friend, "test ally");
         ai.base.current_state = AiState::Default;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(enemy.index()));
@@ -114,12 +111,7 @@ mod tests {
                 .get(&enemy.index()),
             Some(&0)
         );
-        engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(friend, format_args!("test ally"))
-            .base
-            .current_state = AiState::Attacking;
+        engine.enemy_ai_mut(friend, "test ally").base.current_state = AiState::Attacking;
         engine.rebuild_live_observation_lists(&assets, owner);
         assert_eq!(
             engine
@@ -161,10 +153,7 @@ mod tests {
             .unwrap()
             .opponents
             .add_principal(enemy, None);
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test owner"));
+        let ai = engine.enemy_ai_mut(owner, "test owner");
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(previous.index()));
@@ -268,10 +257,7 @@ mod tests {
             .unwrap()
             .opponents
             .add_principal(owner, None);
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test swordfight"));
+        let ai = engine.enemy_ai_mut(owner, "test swordfight");
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         ai.base.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -308,10 +294,7 @@ mod tests {
             entity.element_data_mut().active = false;
             crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
             engage(&mut engine, owner, target);
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("test lost target"));
+            let ai = engine.enemy_ai_mut(owner, "test lost target");
             ai.company_number = company;
             ai.base.primary_target = Some(AiEntityHandle::new(previous.index()));
             let expected_center = engine.live_ai_position(target);
@@ -322,10 +305,7 @@ mod tests {
                 owner,
                 false,
             );
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("test lost outcome"));
+            let ai = engine.enemy_ai(owner, "test lost outcome");
             assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(target.index())));
             assert!(ai.pc_missed);
             assert_eq!(ai.base.seek_position, expected_center);
@@ -405,10 +385,7 @@ impl EngineInner {
         enemy_weak: bool,
     ) {
         let frame = self.control.frame_counter;
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("swordfight heartbeat"));
+        let ai = self.enemy_ai_mut(owner, "swordfight heartbeat");
         if ai.base.current_substate == Substate::AttackingSwordfight {
             ai.base.launch_timer(20, frame);
         }
@@ -441,9 +418,7 @@ impl EngineInner {
 
         // The existing AI target is checked before refreshing the principal.
         let old_primary = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("swordfight target"))
+            .enemy_ai(owner, "swordfight target")
             .base
             .primary_target
             .expect("swordfight requires an AI target");
@@ -464,9 +439,7 @@ impl EngineInner {
                 Substate::AttackingQuittingSwordfight,
             );
             let frame = self.control.frame_counter;
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("quit swordfight timer"))
+            self.ai_mut(owner, "quit swordfight timer")
                 .launch_timer(3, frame);
             return;
         }
@@ -477,10 +450,8 @@ impl EngineInner {
             .opponents
             .first()
             .expect("swordfight requires a principal opponent");
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight principal"))
-            .primary_target = Some(AiEntityHandle::new(primary.index()));
+        self.ai_mut(owner, "swordfight principal").primary_target =
+            Some(AiEntityHandle::new(primary.index()));
         if !self.patrol_member_visible(assets, owner, primary) {
             self.finish_live_swordfight_target_loss(sim, assets, owner, primary);
             return;
@@ -536,15 +507,10 @@ impl EngineInner {
         )
         .resolve_retaining_direction(
             sim,
-            self.world
-                .entities
-                .expect_enemy_ai(owner, format_args!("lost direction"))
+            self.enemy_ai(owner, "lost direction")
                 .pc_gone_away_in_this_direction,
         );
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("lost swordfight target"));
+        let ai = self.enemy_ai_mut(owner, "lost swordfight target");
         ai.base.seek_position = forecast.position;
         ai.pc_gone_away_in_this_direction = forecast.direction;
         ai.missed_pc = ai.base.primary_target;
@@ -589,11 +555,7 @@ impl EngineInner {
                 .expect_entity(owner, "combat forest rider")
                 .soldier_data()
                 .is_some_and(|soldier| soldier.rider)
-            && self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("combat forest archer"))
-                .is_archer();
+            && self.enemy_ai(owner, "combat forest archer").is_archer();
         if forest_archer && self.execute_ai_merry_man_forest_cassos(sim, assets, owner) {
             return;
         }
@@ -632,18 +594,12 @@ impl EngineInner {
         }
         .principal(owner.index())
         .expect("combat principal refresh");
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat refreshed principal"))
+        self.ai_mut(owner, "combat refreshed principal")
             .primary_target = Some(primary);
         if self.ai.global.stupid_soldiers_cheat {
             return;
         }
-        let alcohol = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("combat intoxication"))
-            .blood_alcohol;
+        let alcohol = self.ai(owner, "combat intoxication").blood_alcohol;
         if crate::ai_enemy::drunk_combat_freezes(sim, alcohol) {
             return;
         }
@@ -704,21 +660,14 @@ impl EngineInner {
             );
             return;
         }
-        let trainer = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat trainer"))
-            .combat_trainer;
+        let trainer = self.enemy_ai(owner, "combat trainer").combat_trainer;
         if !trainer
             && (lists.number_of_friends != 1 || lists.number_of_swordfighting_enemies != 1)
             && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CombatReposition, 0..3) == 0
         {
             let candidate = self.propose_live_combat_position(assets, owner);
 
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("combat selected position"));
+            let ai = self.enemy_ai_mut(owner, "combat selected position");
             ai.base.seek_position = candidate.attacker_position;
             ai.my_line_jump = candidate.line_jump;
             if candidate.change_adversary {
@@ -764,9 +713,7 @@ impl EngineInner {
                     }
 
                     let frame = self.control.frame_counter;
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("combat new principal timer"))
+                    self.ai_mut(owner, "combat new principal timer")
                         .launch_timer(20, frame);
                 }
                 return;
@@ -796,19 +743,14 @@ impl EngineInner {
             owner,
         };
         let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("combat strike target"))
+            .ai(owner, "combat strike target")
             .primary_target
             .expect("combat strike target");
         let primary_id = fighters.id(primary.get());
         let me = fighters.position(owner.index());
         let target = fighters.position(primary.get());
         let distance = (target.map_point() - me.map_point()).square_norm().sqrt() as u16;
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat step-in"));
+        let ai = self.enemy_ai(owner, "combat step-in");
         if distance > fighters.sword_range_maximal(owner.index())
             && distance > fighters.sword_range_maximal(primary.get())
             && ai.my_line_jump.is_none()
@@ -898,10 +840,7 @@ impl EngineInner {
         owner: EntityId,
     ) -> SwordfightLists {
         let camp = self.expect_entity(owner, "swordfight list owner").camp();
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("swordfight allies"));
+        let ai = self.ai_mut(owner, "swordfight allies");
         ai.list_us.clear();
         ai.list_us.push(owner.index());
         let mut nearest_friend_solo = None;
@@ -925,9 +864,7 @@ impl EngineInner {
             if distance >= crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as u16 {
                 continue;
             }
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("swordfight ally insertion"))
+            self.ai_mut(owner, "swordfight ally insertion")
                 .list_us
                 .push(friend.index());
             if opponents > 1 && distance < nearest_distance {
@@ -935,9 +872,7 @@ impl EngineInner {
                 nearest_distance = distance;
             }
         }
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("swordfight enemy reset"))
+        self.enemy_ai_mut(owner, "swordfight enemy reset")
             .list_them
             .clear();
         let mut number_of_swordfighting_enemies = 0u16;
@@ -956,9 +891,7 @@ impl EngineInner {
                 .expect("fighter must be human")
                 .opponents
                 .is_empty();
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("swordfight enemy insertion"))
+            self.enemy_ai_mut(owner, "swordfight enemy insertion")
                 .list_them
                 .push(target.index());
             if swordfighting {
@@ -968,12 +901,7 @@ impl EngineInner {
         SwordfightLists {
             nearest_friend_solo,
             number_of_swordfighting_enemies,
-            number_of_friends: self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("swordfight ally count"))
-                .list_us
-                .len() as u16,
+            number_of_friends: self.ai(owner, "swordfight ally count").list_us.len() as u16,
         }
     }
 
@@ -993,21 +921,13 @@ impl EngineInner {
             owner,
             crate::ai_enemy::PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED,
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observation primary"))
-            .primary_target = primary;
+        self.ai_mut(owner, "observation primary").primary_target = primary;
         self.focus_live_combat_target(owner);
         let Some(primary) = primary else {
             self.execute_ai_get_battle_overview(sim, assets, owner, 0);
             return;
         };
-        if self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("observation trainer"))
-            .combat_trainer
-        {
+        if self.enemy_ai(owner, "observation trainer").combat_trainer {
             self.stand_observing_combat(sim, assets, owner);
             return;
         }
@@ -1017,9 +937,7 @@ impl EngineInner {
             let target =
                 self.expect_human_id_for_ai_handle(primary.get(), "defensive observation target");
             let enemy_position = self.live_ai_position(target);
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("defensive observation position"))
+            self.ai_mut(owner, "defensive observation position")
                 .seek_position = enemy_position;
             let goal = crate::ai_enemy::propose_good_step_back_goal(
                 self.live_ai_position(owner),
@@ -1056,10 +974,7 @@ impl EngineInner {
     }
 
     fn focus_live_combat_target(&mut self, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("combat focus"));
+        let ai = self.ai_mut(owner, "combat focus");
         if ai.primary_target.is_some() {
             let target = ai.primary_target;
             self.execute_ai_focus(owner, target);
@@ -1075,9 +990,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("stationary observer target"))
+            .ai(owner, "stationary observer target")
             .primary_target
             .expect("stationary observer requires a target");
         let target = self.expect_human_id_for_ai_handle(target.get(), "stationary observer target");
@@ -1096,10 +1009,7 @@ impl EngineInner {
             Substate::AttackingObserve,
         );
         let frame = self.control.frame_counter;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observer timer"))
-            .launch_timer(20, frame);
+        self.ai_mut(owner, "observer timer").launch_timer(20, frame);
     }
 
     pub(in crate::engine) fn execute_observation_attack_or_step(
@@ -1109,9 +1019,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("observation attack target"))
+            .ai(owner, "observation attack target")
             .primary_target
             .expect("observation attack requires a target");
         let fighters = LiveCombatFighters {
@@ -1142,9 +1050,7 @@ impl EngineInner {
             || distance < 30;
         if opportunity {
             let occupied = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("observation competitors"))
+                .ai(owner, "observation competitors")
                 .list_us
                 .iter()
                 .copied()
@@ -1178,12 +1084,7 @@ impl EngineInner {
         let right = crate::coordinates::MapVec::from_sector_iso(direction).normal_iso(false);
         let me = self.live_ai_position(owner);
         let mut score = 0i16;
-        for &handle in &self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("observation side allies"))
-            .list_us
-        {
+        for &handle in &self.ai(owner, "observation side allies").list_us {
             if handle == owner.index() {
                 continue;
             }
@@ -1232,10 +1133,7 @@ impl EngineInner {
         me: crate::ai::Position,
         mut reference: crate::ai::Position,
     ) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("observation spacing"));
+        let ai = self.enemy_ai(owner, "observation spacing");
         let ideal = crate::ai::AiController::value_between(
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MAX_DISTANCE,
             crate::parameters_ai::OBSERVE_SWORDFIGHT_MIN_DISTANCE,
@@ -1333,9 +1231,7 @@ impl EngineInner {
     fn rebuild_live_observation_lists(&mut self, assets: &LevelAssets, owner: EntityId) {
         let camp = self.expect_entity(owner, "observation list owner").camp();
         let radius = crate::parameters_ai::MAX_SWORDFIGHT_CONSIDERATION_RADIUS as f32;
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("observation enemies"))
+        self.enemy_ai_mut(owner, "observation enemies")
             .list_them
             .clear();
         let target_count = self.world.fighter_registry_ids.len();
@@ -1350,9 +1246,7 @@ impl EngineInner {
             {
                 continue;
             }
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("observation enemy insertion"))
+            self.enemy_ai_mut(owner, "observation enemy insertion")
                 .list_them
                 .push(target.index());
             self.ai
@@ -1360,10 +1254,7 @@ impl EngineInner {
                 .primary_target_multiplicity_scratch
                 .insert(target.index(), 0);
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observation allies"));
+        let ai = self.ai_mut(owner, "observation allies");
         ai.list_us.clear();
         ai.list_us.push(owner.index());
         let friend_count = self.world.fighter_registry_ids.len();
@@ -1383,9 +1274,7 @@ impl EngineInner {
                 .then_some(ai.base.primary_target)
                 .flatten()
             });
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("observation ally insertion"))
+            self.ai_mut(owner, "observation ally insertion")
                 .list_us
                 .push(friend.index());
             if let Some(target) = target {

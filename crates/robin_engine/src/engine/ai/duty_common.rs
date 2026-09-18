@@ -1010,10 +1010,7 @@ impl EngineInner {
             None
         };
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("state-change owner"));
+        let ai = self.ai(owner, "state-change owner");
         let notify = forced_attentive.is_none() || ai.current_substate != substate;
         let source = match state {
             AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
@@ -1158,9 +1155,7 @@ impl EngineInner {
         flags: GotoFlags,
         speed: f32,
     ) {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("movement request owner"))
+        self.ai_mut(owner, "movement request owner")
             .begin_move_request(destination, flags);
         let mut destination = destination;
         if flags.contains(GotoFlags::FIND_ACCESSIBLE)
@@ -1279,9 +1274,7 @@ impl EngineInner {
         flags: GotoFlags,
     ) {
         let depth = self.ai_think_depth();
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("duty approach owner"))
+        self.ai_mut(owner, "duty approach owner")
             .prepare_approach(distance, flags, depth);
         self.duty_go_to(sim, assets, owner, destination, flags | GotoFlags::NEAR);
     }
@@ -1321,11 +1314,7 @@ impl EngineInner {
             }
         }
 
-        let chief = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("duty chief query"))
-            .patrol_chief;
+        let chief = self.ai(owner, "duty chief query").patrol_chief;
         if let Some(chief) = chief {
             let able = match self.expect_entity(chief, "duty patrol chief") {
                 Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
@@ -1342,9 +1331,7 @@ impl EngineInner {
                 );
                 // State notifications may replace the chief before the approach.
                 let chief = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("duty chief after state"))
+                    .ai(owner, "duty chief after state")
                     .patrol_chief
                     .expect("duty state callback cleared required patrol chief");
                 let destination = self.live_ai_position(chief);
@@ -1356,10 +1343,7 @@ impl EngineInner {
                     crate::parameters_ai::AI_TALK_DISTANCE,
                     GotoFlags::empty(),
                 );
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("duty approach result"));
+                let ai = self.ai_mut(owner, "duty approach result");
                 if !ai.couldnt_reachpoint {
                     return;
                 }
@@ -1367,19 +1351,11 @@ impl EngineInner {
             }
         }
 
-        if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("duty path query"))
-            .has_patrol_path
-        {
+        if self.ai(owner, "duty path query").has_patrol_path {
             let here = self.live_ai_position(owner);
             let paths = &assets.navigation.hiking_paths;
             let nearest_distance = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("duty path selection"));
+                let ai = self.ai_mut(owner, "duty path selection");
                 let path = ai
                     .patrol_path
                     .as_mut()
@@ -1430,10 +1406,7 @@ impl EngineInner {
             let frame = self.control.frame_counter;
             let creation_order = self.world.original_creation_order(owner);
             {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("duty route history"));
+                let ai = self.ai_mut(owner, "duty route history");
                 if ai.has_patrol() && frame == 0 && nearest_distance < 50.0 {
                     ai.patrol_path
                         .as_mut()
@@ -1444,10 +1417,7 @@ impl EngineInner {
                 }
             }
             let walk_flags = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("duty route forecast"));
+                let ai = self.ai_mut(owner, "duty route forecast");
                 let stop = ai.will_stop_at_next_waypoint_at(
                     sim,
                     paths,
@@ -1464,9 +1434,7 @@ impl EngineInner {
             };
             let destination = {
                 let path = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("duty route destination"))
+                    .ai(owner, "duty route destination")
                     .patrol_path
                     .as_ref()
                     .expect("duty route requires path");
@@ -1517,10 +1485,7 @@ impl EngineInner {
             );
             let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("duty post timer"));
+            let ai = self.ai_mut(owner, "duty post timer");
             ai.launch_timer(bored as u32, frame);
         } else {
             self.duty_set_state(
@@ -1530,11 +1495,7 @@ impl EngineInner {
                 AiState::Default,
                 Substate::DefaultGotoPost,
             );
-            let initial = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("duty post after state"))
-                .initial_position;
+            let initial = self.ai(owner, "duty post after state").initial_position;
             self.duty_go_to(
                 sim,
                 assets,

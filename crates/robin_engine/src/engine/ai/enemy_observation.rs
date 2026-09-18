@@ -11,14 +11,10 @@ mod tests;
 
 impl EngineInner {
     pub(super) fn observation_ai(&self, owner: EntityId) -> &EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai(owner, format_args!("observation owner"))
+        self.enemy_ai(owner, "observation owner")
     }
     pub(super) fn observation_ai_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("observation owner"))
+        self.enemy_ai_mut(owner, "observation owner")
     }
     pub(super) fn execute_ai_seen_enemy_as_archer(
         &mut self,
@@ -174,10 +170,7 @@ impl EngineInner {
         let ai = self.observation_ai_mut(owner);
         ai.base.frame_when_enemy_detected = frame;
         ai.enemy_seen_below = below;
-        self.world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("accepted enemy sighting"))
-            .alerted = true;
+        self.ai_actor_mut(owner, "accepted enemy sighting").alerted = true;
 
         self.observation_forget_object(owner);
         let position = self.live_ai_position(enemy);

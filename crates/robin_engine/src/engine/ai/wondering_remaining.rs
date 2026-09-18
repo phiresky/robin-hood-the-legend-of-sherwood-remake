@@ -17,11 +17,7 @@ impl EngineInner {
     ) -> Option<bool> {
         use StimulusType::*;
         use Substate::*;
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("wondering callback"))
-            .current_substate;
+        let substate = self.ai(owner, "wondering callback").current_substate;
         let event = stimulus.stimulus_type;
         match (substate, event) {
             (WonderingWatching | WonderingWatchingTowerGuard, EventTimer)
@@ -77,14 +73,10 @@ impl EngineInner {
                     AiState::Wondering,
                     WonderingOfficerApproachingBrawl,
                 );
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("brawl officer emoticon"))
+                self.ai_mut(owner, "brawl officer emoticon")
                     .set_emoticon(EmoticonType::None);
                 let target = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl officer friend"))
+                    .ai(owner, "brawl officer friend")
                     .friend_in_trouble
                     .expect("brawl officer requires friend");
                 let target =
@@ -100,11 +92,7 @@ impl EngineInner {
             }
             (WonderingOfficerApproachingBrawl, EventReachPoint | EventTimer) => {
                 if event == EventReachPoint
-                    && self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("brawl officer speaking"))
-                        .current_remark
+                    && self.ai(owner, "brawl officer speaking").current_remark
                         != Remark::TheSoundOfSilence
                 {
                     self.remaining_wondering_timer(owner, 50);
@@ -118,11 +106,7 @@ impl EngineInner {
                     CallYourTalk1 => (1, CallYourTalk2),
                     _ => (2, CallYourTalk3),
                 };
-                let list = &self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl conversation participants"))
-                    .list_us;
+                let list = &self.ai(owner, "brawl conversation participants").list_us;
                 let target = list.get(index).copied();
                 let first_npc = list.first().is_some_and(|handle| {
                     matches!(
@@ -149,18 +133,10 @@ impl EngineInner {
                 },
             ),
             (WonderingOfficerFinishingBrawl, EventMyTalk2 | EventTimer) => {
-                let count = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl dismissal count"))
-                    .list_us
-                    .len();
+                let count = self.ai(owner, "brawl dismissal count").list_us.len();
                 self.remaining_wondering_forget_coins(owner);
                 for index in 0..count {
-                    let ai = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("brawl dismissal participant"));
+                    let ai = self.ai(owner, "brawl dismissal participant");
                     let target = ai.list_us[index];
                     if ai.antagonist.map(|handle| handle.get()) != Some(target) {
                         let target = self
@@ -175,16 +151,8 @@ impl EngineInner {
                         }
                     }
                 }
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("brawl dismissed list"))
-                    .list_us
-                    .clear();
-                let antagonist = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl cleanup antagonist"))
-                    .antagonist;
+                self.ai_mut(owner, "brawl dismissed list").list_us.clear();
+                let antagonist = self.ai(owner, "brawl cleanup antagonist").antagonist;
                 if let Some(target) = antagonist {
                     let target = self
                         .expect_human_id_for_ai_handle(target.get(), "brawl cleanup antagonist");
@@ -208,18 +176,12 @@ impl EngineInner {
             }
             (WonderingOfficerFinishingBrawlWaiting, EventTimer) => {
                 let target = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl cleanup waiter"))
+                    .ai(owner, "brawl cleanup waiter")
                     .antagonist
                     .expect("brawl cleanup requires antagonist");
                 let target =
                     self.expect_human_id_for_ai_handle(target.get(), "brawl cleanup waiter");
-                let state = self
-                    .world
-                    .entities
-                    .expect_ai_controller(target, format_args!("brawl cleanup state"))
-                    .current_substate;
+                let state = self.ai(target, "brawl cleanup state").current_substate;
                 if matches!(
                     state,
                     WonderingApproachingBrawlVictim | WonderingAwakenBrawlVictim
@@ -238,9 +200,7 @@ impl EngineInner {
                         crate::sim_rng::u32(sim, crate::sim_rng::RngSite::EnemyBrawlExcuse, 0..3)
                             as u16;
                 }
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("brawl excuse emoticon"))
+                self.ai_mut(owner, "brawl excuse emoticon")
                     .set_emoticon(EmoticonType::XMark);
                 let flags = SpeechFlags::CYCLE_3_VARIANTS
                     | match event {
@@ -263,17 +223,10 @@ impl EngineInner {
                 WonderingSoldierLookingOfficerWhoFinishedBrawl,
                 EventMyTalk1 | EventMyTalk2 | EventMyTalk3,
             ) => {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("brawl excuse completion"))
+                self.ai_mut(owner, "brawl excuse completion")
                     .set_emoticon(EmoticonType::None);
 
-                if let Some(target) = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl excuse officer"))
-                    .antagonist
-                {
+                if let Some(target) = self.ai(owner, "brawl excuse officer").antagonist {
                     let target =
                         self.expect_human_id_for_ai_handle(target.get(), "brawl excuse officer");
                     let call = match event {
@@ -298,9 +251,7 @@ impl EngineInner {
                 );
                 self.stop_ai_owner(sim, assets, owner);
                 let body = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("brawl victim wake target"))
+                    .ai(owner, "brawl victim wake target")
                     .detected_body
                     .expect("brawl victim required");
                 let body =
@@ -326,9 +277,7 @@ impl EngineInner {
 
     fn remaining_wondering_timer(&mut self, owner: EntityId, frames: u32) {
         let frame = self.control.frame_counter;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("wondering timer"))
+        self.ai_mut(owner, "wondering timer")
             .launch_timer(frames, frame);
     }
 
@@ -364,18 +313,14 @@ impl EngineInner {
                 .max(((there.y - here.y) * crate::position_interface::INVERSE_ASPECT_RATIO).abs())
                 .max((there.z - here.z).abs());
             if distance < 500.0 && object.object_type == crate::element_kinds::ObjectType::Coin {
-                self.world
-                    .entities
-                    .expect_ai_actor_data_mut(owner, format_args!("forget nearby coin"))
+                self.ai_actor_mut(owner, "forget nearby coin")
                     .detectable_lists[list]
                     .remove(index);
             } else {
                 index += 1;
             }
         }
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("brawl forget seen money"))
+        self.enemy_ai_mut(owner, "brawl forget seen money")
             .other_seen_money
             .clear();
     }

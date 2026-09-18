@@ -48,38 +48,20 @@ impl EngineInner {
         let forest = self.world.weather.is_forest_level
             && self.is_player_aligned_camp(entity.camp())
             && !entity.soldier_data().is_some_and(|soldier| soldier.rider);
-        let enemy_count = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("shot enemies"))
-            .list_them
-            .len();
+        let enemy_count = self.enemy_ai(owner, "shot enemies").list_them.len();
         for index in 0..enemy_count {
-            let enemy = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("shot multiplicity reset"))
-                .list_them[index];
+            let enemy = self.enemy_ai(owner, "shot multiplicity reset").list_them[index];
             self.ai
                 .global
                 .primary_target_multiplicity_scratch
                 .insert(enemy, 0);
         }
-        let friend_count = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("shot friends"))
-            .list_us
-            .len();
+        let friend_count = self.ai(owner, "shot friends").list_us.len();
         // Angles are private to this selection; distance keys are shared with
         // nested alert, patrol, and money-victim operations.
         let mut angles = Vec::with_capacity(friend_count);
         for index in 0..friend_count {
-            let friend = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("shot friend angle"))
-                .list_us[index];
+            let friend = self.ai(owner, "shot friend angle").list_us[index];
             if friend == owner.index() {
                 angles.push(0.0);
                 continue;
@@ -113,12 +95,7 @@ impl EngineInner {
                 }
             }
         }
-        let enemy_count = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("shot candidate count"))
-            .list_them
-            .len();
+        let enemy_count = self.enemy_ai(owner, "shot candidate count").list_them.len();
         let (bow, _) = self
             .bow_profile_and_ability(assets, owner)
             .expect("shot selection requires a bow");
@@ -134,11 +111,7 @@ impl EngineInner {
         let mut best = None;
         let mut minimum = u32::MAX as f32;
         for index in 0..enemy_count {
-            let enemy = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("shot candidate"))
-                .list_them[index];
+            let enemy = self.enemy_ai(owner, "shot candidate").list_them[index];
             let id = self.expect_human_id_for_ai_handle(enemy, "shot enemy");
             let point = self.live_ai_position(id);
             let dx = point.x - position.x;
@@ -165,11 +138,7 @@ impl EngineInner {
                 continue;
             }
             let blocked = (0..friend_count).any(|index| {
-                let friend = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("shot blocking friend index"))
-                    .list_us[index];
+                let friend = self.ai(owner, "shot blocking friend index").list_us[index];
                 if friend == owner.index() {
                     return false;
                 }
@@ -222,10 +191,7 @@ impl EngineInner {
         let Some(target) = self.propose_live_shot_target(sim, assets, owner) else {
             return ControlFlow::Continue(Decision::ArcherObserve);
         };
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("shot selected target"));
+        let ai = self.ai_mut(owner, "shot selected target");
         ai.primary_target = Some(target);
         self.execute_ai_focus(owner, Some(target));
 
@@ -236,13 +202,7 @@ impl EngineInner {
             .action_state
             .is_bow();
         if bow_state {
-            if self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("shot substate"))
-                .current_substate
-                == Substate::AttackingBowAiming
-            {
+            if self.ai(owner, "shot substate").current_substate == Substate::AttackingBowAiming {
                 self.duty_set_state(
                     sim,
                     assets,
@@ -251,9 +211,7 @@ impl EngineInner {
                     Substate::AttackingBowShooting,
                 );
                 let target = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("shot target after state callback"))
+                    .ai(owner, "shot target after state callback")
                     .primary_target
                     .expect("shooting requires target");
                 self.stop_ai_owner(sim, assets, owner);
@@ -272,10 +230,7 @@ impl EngineInner {
                     .expect("aiming bow");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.control.frame_counter;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("aim timer"))
-                    .launch_timer(time, frame);
+                self.ai_mut(owner, "aim timer").launch_timer(time, frame);
             }
         } else {
             self.stop_ai_owner(sim, assets, owner);
@@ -286,10 +241,7 @@ impl EngineInner {
                 AiState::Attacking,
                 Substate::AttackingBowLoading,
             );
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("equip bow"));
+            let ai = self.enemy_ai_mut(owner, "equip bow");
             let command = if ai.enemy_seen_below {
                 crate::element::Command::EquipBowDown
             } else {

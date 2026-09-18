@@ -38,10 +38,7 @@ impl EngineInner {
             }
             EventFitAgain => {
                 self.broadcast_resurrection(owner);
-                let actor = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(owner, format_args!("civilian recovery eyes"));
+                let actor = self.ai_actor_mut(owner, "civilian recovery eyes");
                 crate::ai_vision::set_view_status(actor, crate::element::EyeStatus::LookForward);
                 self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
             }
@@ -104,10 +101,7 @@ impl EngineInner {
             _ => return true,
         };
         self.duty_set_state(sim, assets, owner, state, substate);
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("civilian admission eye status"));
+        let actor = self.ai_actor_mut(owner, "civilian admission eye status");
         crate::ai_vision::set_view_status(actor, eye_status);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(

@@ -14,9 +14,7 @@ mod tests;
 impl EngineInner {
     fn cover_primary(&self, owner: EntityId) -> EntityId {
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("cover primary"))
+            .ai(owner, "cover primary")
             .primary_target
             .expect("cover decision requires primary target");
         self.expect_human_id_for_ai_handle(target.get(), "cover primary entity")
@@ -39,10 +37,7 @@ impl EngineInner {
     }
 
     fn cover_focus_primary(&mut self, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("cover focus"));
+        let ai = self.ai_mut(owner, "cover focus");
         let target = ai.primary_target;
         self.execute_ai_focus(owner, target);
     }
@@ -96,10 +91,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("proud soldier"));
+        let ai = self.enemy_ai(owner, "proud soldier");
         if ai.profile(&assets.profile_manager).pride == 0 || ai.base.blood_alcohol > 0 {
             return false;
         }
@@ -107,10 +99,7 @@ impl EngineInner {
             owner,
             PrimaryTargetFlags::UNOCCUPIED_STRONGLY_PREFERRED,
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("proud target selection"))
-            .primary_target = target;
+        self.ai_mut(owner, "proud target selection").primary_target = target;
         let Some(target) = target else {
             return false;
         };
@@ -133,10 +122,7 @@ impl EngineInner {
                     .abs(),
             )
             .max((target_world.z - me_world.z).abs());
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("proud owner range"));
+        let ai = self.enemy_ai(owner, "proud owner range");
         let range = assets
             .profile_manager
             .get_hth_weapon(ai.hth_weapon_id)
@@ -155,11 +141,7 @@ impl EngineInner {
         let pride = ai.profile(&assets.profile_manager).pride;
         let count = ai.base.list_us.len();
         for index in 0..count {
-            let handle = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("proud ally list"))
-                .list_us[index];
+            let handle = self.ai(owner, "proud ally list").list_us[index];
             let friend = self.expect_human_id_for_ai_handle(handle, "proud ally");
             if friend == owner {
                 continue;
@@ -205,10 +187,7 @@ impl EngineInner {
         old_substate: Substate,
     ) -> ControlFlow<bool, Decision> {
         let target = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::VIPS_ALLOWED);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("proud execution target"))
-            .primary_target = target;
+        self.ai_mut(owner, "proud execution target").primary_target = target;
         let Some(_) = target else {
             tracing::warn!(?owner, "proud observer lost its primary target; reserving");
             return ControlFlow::Continue(Decision::Reserve);
@@ -252,10 +231,7 @@ impl EngineInner {
                 crate::parameters_ai::PROUD_OBSERVER_GOOD_DISTANCE as i32,
                 GotoFlags::empty(),
             );
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("proud approach completion"));
+            let ai = self.ai_mut(owner, "proud approach completion");
             if ai.already_on_point {
                 ai.already_on_point = false;
                 self.cover_face_primary(sim, assets, owner);
@@ -290,10 +266,7 @@ impl EngineInner {
             old_substate,
             Substate::AttackingReactiontime | Substate::AttackingReactiontimeRunning
         ) {
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("proud remark"));
+            let ai = self.enemy_ai_mut(owner, "proud remark");
             let remark = if ai.is_vip {
                 Remark::VipProudDontFight
             } else {
@@ -317,10 +290,7 @@ impl EngineInner {
         _old_substate: Substate,
     ) -> ControlFlow<bool, Decision> {
         let target = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::VIPS_ALLOWED);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("archer retreat target"))
-            .primary_target = target;
+        self.ai_mut(owner, "archer retreat target").primary_target = target;
         let Some(_) = target else {
             tracing::warn!(
                 ?owner,
@@ -329,10 +299,7 @@ impl EngineInner {
             return ControlFlow::Continue(Decision::Shoot);
         };
         let position = self.live_ai_position(self.cover_primary(owner));
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("archer retreat position"))
-            .seek_position = position;
+        self.ai_mut(owner, "archer retreat position").seek_position = position;
         let Some(goal) = self.cover_step_back_goal(
             owner,
             position,
@@ -362,10 +329,7 @@ impl EngineInner {
             owner,
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("archer observer target"))
-            .primary_target = target;
+        self.ai_mut(owner, "archer observer target").primary_target = target;
         self.cover_focus_primary(owner);
         if self
             .expect_entity(owner, "archer observer action")
@@ -387,10 +351,7 @@ impl EngineInner {
                 .launch_timer(50, self.control.frame_counter);
         } else {
             self.stop_ai_owner(sim, assets, owner);
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("archer observer equip"));
+            let ai = self.enemy_ai_mut(owner, "archer observer equip");
             let command = if ai.enemy_seen_below {
                 crate::element::Command::EquipBowDown
             } else {
@@ -414,10 +375,7 @@ impl EngineInner {
     }
 
     fn update_live_shield_before_archer(&mut self, owner: EntityId, bearer: Option<EntityId>) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("archer protection link"));
+        let ai = self.enemy_ai(owner, "archer protection link");
         if !ai.is_archer() {
             return;
         }
@@ -428,19 +386,12 @@ impl EngineInner {
         }
         if let Some(old) = old {
             let old = self.expect_human_id_for_ai_handle(old.get(), "old shield bearer");
-            self.world
-                .entities
-                .expect_enemy_ai_mut(old, format_args!("old shield unlink"))
-                .archer_behind_me = None;
+            self.enemy_ai_mut(old, "old shield unlink").archer_behind_me = None;
         }
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("archer shield assignment"))
+        self.enemy_ai_mut(owner, "archer shield assignment")
             .shield_bearer_before_me = new;
         if let Some(new) = bearer {
-            self.world
-                .entities
-                .expect_enemy_ai_mut(new, format_args!("new shield reciprocal"))
+            self.enemy_ai_mut(new, "new shield reciprocal")
                 .archer_behind_me = Some(AiEntityHandle::new(owner.index()));
         }
     }
@@ -454,15 +405,8 @@ impl EngineInner {
     ) -> ControlFlow<bool, Decision> {
         let bearer = self.expect_human_id_for_ai_handle(bearer, "battle shield bearer");
         self.update_live_shield_before_archer(owner, Some(bearer));
-        let target = self
-            .world
-            .entities
-            .expect_ai_controller(bearer, format_args!("shield bearer target"))
-            .primary_target;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("covered archer target"))
-            .primary_target = target;
+        let target = self.ai(bearer, "shield bearer target").primary_target;
+        self.ai_mut(owner, "covered archer target").primary_target = target;
         if target.is_none() {
             self.update_live_shield_before_archer(owner, None);
             return ControlFlow::Continue(Decision::Shoot);
@@ -475,10 +419,7 @@ impl EngineInner {
             y: anchor.y - (y * crate::position_interface::ASPECT_RATIO) * distance,
             ..anchor
         };
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("cover candidate output"))
-            .seek_position = position;
+        self.ai_mut(owner, "cover candidate output").seek_position = position;
         let reachable = self.world.fast_grid.is_straight_movement_authorized(
             anchor.map_point(),
             position.map_point(),
@@ -506,18 +447,9 @@ impl EngineInner {
             AiState::Attacking,
             Substate::AttackingBowRunningBehindShieldBearer,
         );
-        let position = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("cover movement position"))
-            .seek_position;
+        let position = self.ai(owner, "cover movement position").seek_position;
         self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
-        if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("cover completion"))
-            .already_on_point
-        {
+        if self.ai(owner, "cover completion").already_on_point {
             let target = self.live_ai_position(self.cover_primary(owner));
             let position = self.live_ai_position(owner);
             let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -530,9 +462,7 @@ impl EngineInner {
                 .direction()
                 == direction
             {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("cover shoot completion"))
+                self.ai_mut(owner, "cover shoot completion")
                     .already_on_point = false;
                 return ControlFlow::Continue(Decision::Shoot);
             }

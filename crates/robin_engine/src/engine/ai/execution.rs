@@ -16,10 +16,7 @@ mod after_script_tests {
         let (mut engine, assets, owner, _) =
             super::super::battle_decision_observation_tests::fixture(false);
         let outer_frames = engine.ai.think_call_stack.clone();
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("retained events fixture"));
+        let ai = engine.ai_mut(owner, "retained events fixture");
         ai.current_state = AiState::Wondering;
         ai.current_substate = Substate::WonderingOfficerSeeingBrawl;
         ai.stimulus_queue = vec![
@@ -33,10 +30,7 @@ mod after_script_tests {
             owner,
             &Stimulus::new(StimulusType::EventAfterScriptGoOn)
         ));
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("retained events result"));
+        let ai = engine.ai(owner, "retained events result");
         assert!(ai.stimulus_queue.is_empty());
         assert_eq!(ai.current_substate, Substate::WonderingOfficerSeeingBrawl);
         assert_eq!(engine.ai.think_call_stack, outer_frames);
@@ -52,10 +46,7 @@ impl EngineInner {
     ) {
         loop {
             let stimulus = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("AfterScript retained event"));
+                let ai = self.ai_mut(owner, "AfterScript retained event");
                 if ai.stimulus_queue.is_empty() {
                     break;
                 }
@@ -83,10 +74,7 @@ impl EngineInner {
                 self.execute_ai_callback(sim, assets, owner, &stimulus);
             }
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("AfterScript route"));
+        let ai = self.ai(owner, "AfterScript route");
         if ai.current_state != AiState::Default {
             return;
         }
@@ -99,9 +87,7 @@ impl EngineInner {
             self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
             return;
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("AfterScript route advance"))
+        self.ai_mut(owner, "AfterScript route advance")
             .patrol_path
             .as_mut()
             .expect("AfterScript path")
@@ -113,10 +99,7 @@ impl EngineInner {
             AiState::Default,
             Substate::DefaultEnroute,
         );
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("AfterScript route callback"));
+        let ai = self.ai(owner, "AfterScript route callback");
         let path = ai
             .patrol_path
             .as_ref()
@@ -155,10 +138,7 @@ impl EngineInner {
             return false;
         }
         let frame = self.control.frame_counter;
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("decision event log"));
+        let ai = self.ai_mut(owner, "decision event log");
         ai.cached_frame = frame;
         ai.register_log_line(crate::ai::LogLineType::Event, stimulus.stimulus_type as u16);
         self.enter_ai_think_frame(owner);
@@ -216,10 +196,7 @@ impl EngineInner {
             StimulusType::EventDone,
         ] {
             let (pending, depth) = {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("decision completion phase"));
+                let ai = self.ai_mut(owner, "decision completion phase");
                 let pending = match event {
                     StimulusType::EventCouldntReachPoint => {
                         std::mem::take(&mut ai.couldnt_reachpoint)
@@ -287,11 +264,7 @@ impl EngineInner {
             .is_some();
         let body_reaction = if enemy_owner {
             use crate::ai::{BodyReaction, Substate};
-            let substate = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("body decision"))
-                .current_substate;
+            let substate = self.ai(owner, "body decision").current_substate;
             match (substate, stimulus.stimulus_type) {
                 (Substate::SeekingBodyReactiontime, StimulusType::EventTimer) => {
                     Some(BodyReaction::ReactionTimer)
@@ -320,11 +293,7 @@ impl EngineInner {
         let panic_segment = matches!(
             stimulus.stimulus_type,
             StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
-        ) && self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("panic dispatch"))
-            .current_substate
+        ) && self.ai(owner, "panic dispatch").current_substate
             == crate::ai::Substate::FleeingPanic;
         let handled = if panic_segment {
             self.execute_ai_common_fleeing_event(sim, assets, owner, stimulus)
@@ -333,11 +302,7 @@ impl EngineInner {
             self.execute_ai_body_reaction(sim, assets, owner, operation);
             false
         } else if enemy_owner && stimulus.stimulus_type == StimulusType::EventSeesBody {
-            let state = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("body sighting"))
-                .current_state;
+            let state = self.ai(owner, "body sighting").current_state;
             if matches!(
                 state,
                 crate::ai::AiState::Sleeping
@@ -363,11 +328,7 @@ impl EngineInner {
                 stimulus.stimulus_type,
                 StimulusType::EventTimer | StimulusType::CallInstruction
             )
-            && self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("phalanx timer"))
-                .current_substate
+            && self.ai(owner, "phalanx timer").current_substate
                 == crate::ai::Substate::AttackingPhalanx
         {
             if stimulus.stimulus_type == StimulusType::EventTimer {
@@ -378,11 +339,7 @@ impl EngineInner {
             false
         } else if enemy_owner
             && stimulus.stimulus_type == StimulusType::EventTimer
-            && self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("shield timer"))
-                .current_substate
+            && self.ai(owner, "shield timer").current_substate
                 == crate::ai::Substate::AttackingAdvancingWithShield
         {
             self.execute_ai_advancing_shield_timer(sim, assets, owner);
@@ -502,9 +459,7 @@ mod tests {
     fn enter(engine: &mut EngineInner, owner: EntityId) {
         engine.enter_ai_think_frame(owner);
         engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test decision owner"))
+            .enemy_ai_mut(owner, "test decision owner")
             .start_think_pre_filter(&crate::ai::Stimulus::new(StimulusType::EventTimer));
     }
 
@@ -530,10 +485,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
         enter(&mut engine, owner);
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("completion fixture"));
+        let ai = engine.ai_mut(owner, "completion fixture");
         ai.current_state = crate::ai::AiState::Sleeping;
         ai.current_substate = crate::ai::Substate::SleepingUnconscious;
         ai.couldnt_reachpoint = true;
@@ -544,10 +496,7 @@ mod tests {
             &LevelAssets::default(),
             owner,
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("completed fixture"));
+        let ai = engine.ai(owner, "completed fixture");
         let events: Vec<_> = ai
             .ai_log
             .iter()
@@ -568,10 +517,7 @@ mod tests {
             enter(&mut engine, caller);
         }
         enter(&mut engine, owner);
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("deep completion"));
+        let ai = engine.ai_mut(owner, "deep completion");
         ai.couldnt_reachpoint = true;
         ai.already_on_point = true;
         ai.already_turned = true;
@@ -580,10 +526,7 @@ mod tests {
             &LevelAssets::default(),
             owner,
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("deep completion result"));
+        let ai = engine.ai(owner, "deep completion result");
         assert!(
             ai.ai_log.is_empty(),
             "depth-limited completion must not call Think"

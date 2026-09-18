@@ -186,11 +186,7 @@ impl EngineInner {
                     .base
                     .patrol_chief
                     .expect("waiting patrol follower requires chief");
-                let state = self
-                    .world
-                    .entities
-                    .expect_ai_controller(chief, format_args!("patrol chief state"))
-                    .current_state;
+                let state = self.ai(chief, "patrol chief state").current_state;
                 if matches!(state, AiState::Default | AiState::Wondering) {
                     self.seek_event_timer(owner, 200);
                 } else {

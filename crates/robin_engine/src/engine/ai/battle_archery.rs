@@ -15,9 +15,7 @@ impl EngineInner {
         owner: EntityId,
     ) -> bool {
         let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("shooting point target"))
+            .ai(owner, "shooting point target")
             .primary_target
             .expect("shooting point selection requires a target");
         let target = self.expect_human_id_for_ai_handle(target.get(), "shooting point target");
@@ -94,10 +92,7 @@ impl EngineInner {
         target: EntityId,
     ) -> bool {
         let entity = self.expect_entity(owner, "archer proximity owner");
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("archer proximity"));
+        let ai = self.enemy_ai(owner, "archer proximity");
         if ai.shield_bearer_before_me.is_some()
             || (entity.camp() == Camp::Royalists
                 && self.world.weather.is_forest_level
@@ -212,11 +207,7 @@ impl EngineInner {
         let Some(index) = nearest else {
             return ControlFlow::Continue(Decision::Cassos);
         };
-        let target = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("arrow return target"))
-            .primary_target;
+        let target = self.ai(owner, "arrow return target").primary_target;
         let position = self.live_ai_position(
             target
                 .map(|target| {
@@ -224,10 +215,7 @@ impl EngineInner {
                 })
                 .unwrap_or(owner),
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("arrow return position"))
-            .seek_position = position;
+        self.ai_mut(owner, "arrow return position").seek_position = position;
         self.duty_set_state(
             sim,
             assets,
@@ -235,9 +223,7 @@ impl EngineInner {
             AiState::Fleeing,
             Substate::FleeingRunForArrowReserves,
         );
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("arrow reserve emoticon"))
+        self.ai_mut(owner, "arrow reserve emoticon")
             .set_transient_emoticon(EmoticonType::XMark, 100, 0);
         let door = &self.script_domains.interactables.doors[index];
         let mut sector = crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
@@ -261,10 +247,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> ControlFlow<bool, Decision> {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("archery waypoint"));
+        let ai = self.enemy_ai(owner, "archery waypoint");
         let sector = usize::from(ai.my_archery_sector_index);
         let index = usize::from(ai.my_archery_point_index);
         let Some(point) = self
@@ -291,9 +274,7 @@ impl EngineInner {
                 .get_elevation() as u16
             })
             .unwrap_or(0);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("archery elevation"))
+        self.enemy_ai_mut(owner, "archery elevation")
             .enemy_had_this_elevation = elevation;
         self.duty_set_state(
             sim,
@@ -348,11 +329,8 @@ mod tests {
                 .element_data_mut()
                 .set_sector(crate::position_interface::SectorHandle::new(1));
         }
-        engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("archery test target"))
-            .primary_target = Some(AiEntityHandle::new(target.index()));
+        engine.ai_mut(owner, "archery test target").primary_target =
+            Some(AiEntityHandle::new(target.index()));
         let position = engine.live_ai_position(owner);
         let point = |x, shooting| PointArchery {
             position: Position { x, ..position },
@@ -376,10 +354,7 @@ mod tests {
     #[test]
     fn shooting_path_rejects_a_point_claimed_after_selection() {
         let (mut engine, assets, owner, target) = archery_fixture();
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("archery cursor"));
+        let ai = engine.enemy_ai_mut(owner, "archery cursor");
         ai.my_archery_sector_index = 0;
         ai.my_archery_point_index = crate::sector::ArcheryPointIdx(1);
         engine.ai.global.archery_sectors[0].points[1].owner = Some(target);

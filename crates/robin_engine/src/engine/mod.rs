@@ -9,6 +9,7 @@
 //! flow, and state transitions.
 
 mod ability_execution;
+mod accessors_short;
 mod ai;
 pub(crate) use ai::debug_detectable_mutation_load_snapshot;
 mod achievements;

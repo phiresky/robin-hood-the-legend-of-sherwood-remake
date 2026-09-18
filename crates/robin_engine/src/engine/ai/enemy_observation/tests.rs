@@ -350,10 +350,7 @@ fn enemy_sighting_uses_live_geometry_without_detection_capture() {
         owner,
         target.index(),
     );
-    let ai = engine
-        .world
-        .entities
-        .expect_enemy_ai(owner, format_args!("sighting result"));
+    let ai = engine.enemy_ai(owner, "sighting result");
     assert_eq!(ai.base.current_state, AiState::Attacking);
     assert_eq!(
         ai.base.current_substate,
@@ -400,10 +397,7 @@ fn moving_sighting_approach_radius_uses_raw_stretched_world_distance() {
             owner,
             target.index(),
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("moving sighting"));
+        let ai = engine.enemy_ai(owner, "moving sighting");
         assert_eq!(
             ai.base.current_substate,
             Substate::AttackingReactiontimeRunning
@@ -426,11 +420,7 @@ fn near_sighting_gate_uses_world_y_and_elevation() {
         target,
         WorldPoint3D::new(609.0, 2449.001, 150.001),
     );
-    engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(owner, format_args!("near sighting"))
-        .combat_trainer = true;
+    engine.enemy_ai_mut(owner, "near sighting").combat_trainer = true;
     engine.execute_ai_seen_enemy(
         &crate::sim_rng::test_context(),
         &assets,
@@ -488,10 +478,7 @@ fn shadow_changes_music_alert_without_accelerating_view_refresh() {
         ..engine.live_ai_position(owner)
     };
     engine.execute_ai_seen_shadow(&crate::sim_rng::test_context(), &assets, owner, position);
-    let ai = engine
-        .world
-        .entities
-        .expect_enemy_ai(owner, format_args!("shadow sighting"));
+    let ai = engine.enemy_ai(owner, "shadow sighting");
     assert_eq!(ai.base.current_music_alert_status, AlertLevel::Yellow);
     assert_eq!(ai.base.view_alert_status, AlertLevel::Green);
     assert_eq!(ai.base.current_substate, Substate::DefaultLookingShadow);
@@ -530,10 +517,7 @@ fn runtime_objects_trigger_reactions_but_bonus_variants_are_ignored() {
             owner,
             object.index(),
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("object sighting"));
+        let ai = engine.enemy_ai(owner, "object sighting");
         assert_eq!(
             ai.base.current_substate,
             expected.unwrap_or(Substate::DefaultOnPost)
@@ -628,10 +612,7 @@ fn moving_sighting_rereads_target_after_state_callback() {
         owner,
         target.index(),
     );
-    let ai = engine
-        .world
-        .entities
-        .expect_enemy_ai(owner, format_args!("post-callback sighting"));
+    let ai = engine.enemy_ai(owner, "post-callback sighting");
     assert_eq!(
         ai.base.last_goto_destination.map_point(),
         MapPoint::new(600.0, 700.0)

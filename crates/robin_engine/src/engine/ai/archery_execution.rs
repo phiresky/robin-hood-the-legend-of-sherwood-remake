@@ -54,10 +54,7 @@ mod tests {
         engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
             "beggar_test.scs",
         ));
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("beggar fixture"));
+        let ai = engine.enemy_ai_mut(owner, "beggar fixture");
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingSeekpointIdentifyingBeggar1;
         ai.beggar_to_examine = Some(AiEntityHandle::new(beggar.index()));
@@ -72,10 +69,7 @@ mod tests {
             (true, crate::element::Command::EquipBow, 100),
         ] {
             let (mut engine, assets, owner, _) = beggar_fixture(false);
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("beggar arrival setup"));
+            let ai = engine.enemy_ai_mut(owner, "beggar arrival setup");
             ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
             ai.is_archer_unit = archer;
             assert!(engine.execute_ai_archery_expected_event(
@@ -127,10 +121,7 @@ mod tests {
                     .any(|element| element.owner == Some(beggar)
                         && element.command == crate::element::Command::BeggarShowFace))
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("identified beggar result"));
+        let ai = engine.ai(owner, "identified beggar result");
         assert_eq!(
             ai.current_substate,
             Substate::SeekingSeekpointIdentifyingBeggar2
@@ -150,14 +141,10 @@ mod tests {
             profile.shooting_weapon_id = 1;
         }
         engine
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("false beggar arrows"))
+            .ai_actor_mut(owner, "false beggar arrows")
             .number_of_arrows = 10;
         engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("false beggar archer"))
+            .enemy_ai_mut(owner, "false beggar archer")
             .is_archer_unit = true;
         assert!(engine.execute_ai_archery_expected_event(
             &crate::sim_rng::test_context(),
@@ -165,10 +152,7 @@ mod tests {
             owner,
             StimulusType::EventTimer
         ));
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("false beggar result"));
+        let ai = engine.enemy_ai(owner, "false beggar result");
         assert_eq!(
             ai.base.primary_target,
             Some(AiEntityHandle::new(beggar.index()))
@@ -221,9 +205,7 @@ mod tests {
             .set_position(crate::coordinates::WorldPoint3D::new(125.0, 100.0, 0.0));
         assert!(engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
         engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("proximity shield link"))
+            .enemy_ai_mut(owner, "proximity shield link")
             .shield_bearer_before_me = Some(AiEntityHandle::new(target.index()));
         assert!(!engine.ai_archer_is_too_near_to_enemy(&assets, owner, position, target));
     }
@@ -234,10 +216,7 @@ mod tests {
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
         engine.control.frame_counter = 123;
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("cover test setup"));
+        let ai = engine.ai_mut(owner, "cover test setup");
         ai.current_state = AiState::Attacking;
         ai.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
         ai.primary_target = Some(AiEntityHandle::new(target.index()));
@@ -247,10 +226,7 @@ mod tests {
             owner,
             StimulusType::EventDone
         ));
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("cover test timer"));
+        let ai = engine.ai(owner, "cover test timer");
         assert_eq!(ai.when_does_timer_ring, 128);
         assert!(ai.timer_is_running);
         assert_eq!(
@@ -268,11 +244,7 @@ impl EngineInner {
         owner: EntityId,
         event: StimulusType,
     ) -> bool {
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("bow callback"))
-            .current_substate;
+        let substate = self.ai(owner, "bow callback").current_substate;
         match (substate, event) {
             (Substate::SeekingSeekpointApproachingBeggar, StimulusType::EventReachPoint) => {
                 let beggar = self.live_beggar_to_examine(owner);
@@ -333,11 +305,7 @@ impl EngineInner {
                     );
                     turn.set_property(Field::Direction, FieldValue::Integer(direction as u32));
                     sequence.append_element(turn);
-                    let archer = self
-                        .world
-                        .entities
-                        .expect_enemy_ai(owner, format_args!("beggar inspector weapon"))
-                        .is_archer();
+                    let archer = self.enemy_ai(owner, "beggar inspector weapon").is_archer();
                     sequence.append_element(SequenceElement::new(
                         2,
                         if archer {
@@ -357,9 +325,7 @@ impl EngineInner {
                         30
                     };
                     let frame = self.control.frame_counter;
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("beggar inspection timer"))
+                    self.ai_mut(owner, "beggar inspection timer")
                         .launch_timer(time, frame);
                     self.launch_sequence(sim, assets, sequence);
                 }
@@ -394,15 +360,10 @@ impl EngineInner {
                         Substate::SeekingSeekpointIdentifyingBeggar2,
                     );
                     let frame = self.control.frame_counter;
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("identified beggar timer"))
+                    self.ai_mut(owner, "identified beggar timer")
                         .launch_timer(50, frame);
                 } else {
-                    let ai = self
-                        .world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("false beggar target"));
+                    let ai = self.enemy_ai_mut(owner, "false beggar target");
                     ai.base.primary_target = ai.beggar_to_examine;
                     ai.list_them.clear();
                     ai.list_them.push(beggar.index());
@@ -424,9 +385,7 @@ impl EngineInner {
                             Substate::AttackingBowShooting,
                         );
                         let target = self
-                            .world
-                            .entities
-                            .expect_ai_controller(owner, format_args!("false beggar shot target"))
+                            .ai(owner, "false beggar shot target")
                             .primary_target
                             .expect("false beggar shot requires target");
                         let target = self.expect_human_id_for_ai_handle(
@@ -452,9 +411,7 @@ impl EngineInner {
                     Substate::AttackingBowObserving,
                 );
                 let frame = self.control.frame_counter;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow observation timer"))
+                self.ai_mut(owner, "bow observation timer")
                     .launch_timer(50, frame);
             }
             (Substate::AttackingBowLoading, StimulusType::EventDone) => {
@@ -470,27 +427,17 @@ impl EngineInner {
                     .expect("loaded bow ability");
                 let time = ((110 - i32::from(ability as u16)) / 2) as u32;
                 let frame = self.control.frame_counter;
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow aiming timer"))
+                self.ai_mut(owner, "bow aiming timer")
                     .launch_timer(time, frame);
             }
             (Substate::AttackingBowAiming, StimulusType::EventTimer) => {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow emoticon"))
+                self.ai_mut(owner, "bow emoticon")
                     .set_emoticon(EmoticonType::None);
 
-                let tower = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("bow tower guard"))
-                    .tower_guard;
+                let tower = self.enemy_ai(owner, "bow tower guard").tower_guard;
                 let safe = tower || {
                     let target = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("bow proximity target"))
+                        .ai(owner, "bow proximity target")
                         .primary_target
                         .expect("aiming requires target");
                     let target =
@@ -511,9 +458,7 @@ impl EngineInner {
                         Substate::AttackingBowShooting,
                     );
                     let target = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("aimed shot target"))
+                        .ai(owner, "aimed shot target")
                         .primary_target
                         .expect("shooting requires target");
                     let target =
@@ -521,9 +466,7 @@ impl EngineInner {
                     self.stop_ai_owner(sim, assets, owner);
                     self.shoot_bow_at(sim, assets, owner, target);
                 } else {
-                    self.world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("unsafe aimed shot"))
+                    self.enemy_ai_mut(owner, "unsafe aimed shot")
                         .enemy_seen_below = false;
                     self.execute_battle_decisions(sim, assets, owner);
                 }
@@ -549,12 +492,7 @@ impl EngineInner {
                 self.execute_battle_decisions(sim, assets, owner);
             }
             (Substate::AttackingBowRunningBehindShieldBearer, StimulusType::EventReachPoint) => {
-                if let Some(target) = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("bow cover facing"))
-                    .primary_target
-                {
+                if let Some(target) = self.ai(owner, "bow cover facing").primary_target {
                     let target =
                         self.expect_human_id_for_ai_handle(target.get(), "bow cover facing");
                     let position = self.live_ai_position(target);
@@ -573,19 +511,13 @@ impl EngineInner {
             }
             (Substate::AttackingBowRunningBehindShieldBearer, StimulusType::EventDone) => {
                 let frame = self.control.frame_counter;
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("bow cover focus"));
+                let ai = self.ai_mut(owner, "bow cover focus");
                 ai.launch_timer(5, frame);
                 let target = ai.primary_target;
                 self.execute_ai_focus(owner, target);
             }
             (Substate::AttackingArcherRunOnShootingPath, StimulusType::EventReachPoint) => loop {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("archery path cursor"));
+                let ai = self.enemy_ai_mut(owner, "archery path cursor");
                 ai.my_archery_point_index = crate::sector::ArcheryPointIdx(
                     u16::from(ai.my_archery_point_index)
                         .wrapping_add_signed(i16::from(ai.my_archery_point_increment)),
@@ -638,9 +570,7 @@ impl EngineInner {
                     Substate::AttackingArcherRunOnShootingPathTurn,
                 );
                 let (sector, index) = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("archery path facing"))
+                    .enemy_ai(owner, "archery path facing")
                     .my_shooting_point
                     .expect("archery path reserved point");
                 let direction = self.ai.global.archery_sectors[usize::from(sector)].points
@@ -654,14 +584,10 @@ impl EngineInner {
                     .position_iface()
                     .get_elevation();
                 let target_elevation = self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("archery path target elevation"))
+                    .enemy_ai(owner, "archery path target elevation")
                     .enemy_had_this_elevation;
                 if elevation >= f32::from(target_elevation) + 50.0 {
-                    self.world
-                        .entities
-                        .expect_enemy_ai_mut(owner, format_args!("archery path target below"))
+                    self.enemy_ai_mut(owner, "archery path target below")
                         .enemy_seen_below = true;
                     self.execute_battle_decisions(sim, assets, owner);
                 } else {
@@ -675,9 +601,7 @@ impl EngineInner {
 
     fn live_beggar_to_examine(&self, owner: EntityId) -> EntityId {
         let handle = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("beggar inspection target"))
+            .enemy_ai(owner, "beggar inspection target")
             .beggar_to_examine
             .expect("beggar inspection requires a target");
         self.expect_human_id_for_ai_handle(handle.get(), "beggar inspection target")

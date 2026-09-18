@@ -56,6 +56,7 @@ mod money_execution;
 mod officer_rendezvous_execution;
 mod officer_rpc;
 mod out_of_view_execution;
+mod owner_ctx;
 mod owner_scheduling;
 mod panic_execution;
 mod patrol_coordination;
@@ -76,6 +77,7 @@ mod wondering_remaining;
 pub(crate) use detection::capture_heard_callbacks;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 mod actor_queries;
+pub(in crate::engine) use owner_ctx::AiOwnerCtx;
 mod owner_debug;
 mod post_detection;
 mod tick_scheduling;
@@ -763,10 +765,7 @@ mod panic_boundary_tests {
                 });
                 let mut assets = LevelAssets::new();
                 crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-                let ai = engine
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("repeated panic fixture"));
+                let ai = engine.ai_mut(owner, "repeated panic fixture");
                 ai.current_state = crate::ai::AiState::Fleeing;
                 ai.current_substate = crate::ai::Substate::FleeingPanic;
                 ai.lasting_panic_runs = 11;
@@ -790,10 +789,7 @@ mod panic_boundary_tests {
                         crate::ai::AlertLevel::Yellow,
                     )
                 });
-                let ai = engine
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("repeated panic result"));
+                let ai = engine.ai(owner, "repeated panic result");
                 assert_eq!(ai.current_substate, crate::ai::Substate::FleeingPanic);
                 assert_eq!(ai.lasting_panic_runs, 11);
                 assert_eq!(ai.view_alert_status, crate::ai::AlertLevel::Red);
@@ -2770,11 +2766,7 @@ impl EngineInner {
             LookDirection::RightLeft => &[Command::LookRight, Command::LookLeft],
             LookDirection::Down => &[Command::LeanOut],
         };
-        crate::ai_vision::unfocus(
-            self.world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("sideways look owner")),
-        );
+        crate::ai_vision::unfocus(self.ai_actor_mut(owner, "sideways look owner"));
         let mut sequence = crate::sequence::Sequence::new();
         for (index, command) in commands.iter().enumerate() {
             sequence.append_element(crate::sequence::SequenceElement::new(
@@ -2892,10 +2884,7 @@ impl EngineInner {
     ) {
         let frame = self.control.frame_counter;
         let creation_order = self.world.original_creation_order(npc_id);
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("patrol speed owner"));
+        let ai = self.ai_mut(npc_id, "patrol speed owner");
         if !ai.has_patrol_path
             || !matches!(
                 ai.current_substate,
@@ -2955,10 +2944,7 @@ impl EngineInner {
         );
         let directed = center.is_some();
         {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("panic direction"));
+            let ai = self.ai_mut(npc_id, "panic direction");
             ai.directed_panic = directed;
             if let Some(center) = center {
                 ai.panic_center_x = center.x;
@@ -2968,19 +2954,14 @@ impl EngineInner {
         let mut door = self.nearest_panic_door(npc_id, center);
         if directed && door.is_none() {
             door = self.nearest_panic_door(npc_id, None);
-            self.world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("panic direction fallback"))
+            self.ai_mut(npc_id, "panic direction fallback")
                 .directed_panic = false;
         }
         let frame = self.control.frame_counter;
         let is_civilian = self.expect_entity(npc_id, "panic speaker").is_civilian();
         self.execute_ai_break_macro(npc_id);
         {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("panic macro"));
+            let ai = self.ai_mut(npc_id, "panic macro");
             ai.set_transient_emoticon(crate::ai::EmoticonType::XMark, 0, frame);
         }
         if let Some(door) = door {
@@ -3004,18 +2985,12 @@ impl EngineInner {
             );
             self.execute_ai_set_alert_status(assets, npc_id, alert, crate::ai::AlertFlags::empty());
             {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("panic door"));
+                let ai = self.ai_mut(npc_id, "panic door");
                 ai.lasting_panic_runs = 0;
             }
             let position = self.panic_door_position(door);
             self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("panic route result"));
+            let ai = self.ai_mut(npc_id, "panic route result");
             if !ai.couldnt_reachpoint {
                 return;
             }
@@ -3024,16 +2999,10 @@ impl EngineInner {
                 let retry = self
                     .nearest_panic_door(npc_id, None)
                     .expect("directed panic retry has an accessible building door");
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("panic retry direction"))
-                    .directed_panic = false;
+                self.ai_mut(npc_id, "panic retry direction").directed_panic = false;
                 let position = self.panic_door_position(retry);
                 self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("panic retry result"));
+                let ai = self.ai_mut(npc_id, "panic retry result");
                 if !ai.couldnt_reachpoint {
                     return;
                 }
@@ -3235,10 +3204,7 @@ impl EngineInner {
                 .expect_entity(npc_id, "panic facing")
                 .element_data()
                 .direction();
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("panic owner"));
+            let ai = self.ai(npc_id, "panic owner");
             if directed_panic_center_is_in_front(
                 direction as i16,
                 position.x,
@@ -3274,10 +3240,7 @@ impl EngineInner {
             );
             self.execute_ai_set_alert_status(assets, npc_id, alert, crate::ai::AlertFlags::empty());
             {
-                let ai = self
-                    .world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("panic owner after speech"));
+                let ai = self.ai_mut(npc_id, "panic owner after speech");
                 ai.lasting_panic_runs = runs.wrapping_add(1);
             }
 

@@ -71,10 +71,7 @@ impl EngineInner {
                 self.feedback.pending_side_effects.sounds.push(command);
             }
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("alert assignment"));
+        let ai = self.ai_mut(owner, "alert assignment");
         ai.current_music_alert_status = level;
         if !flags.contains(AlertFlags::ONLY_MUSIC) {
             ai.view_alert_status = if forced_attentive && level == AlertLevel::Green {
@@ -454,10 +451,7 @@ impl EngineInner {
         self.with_simulation_context(|engine, sim| {
             for &(owner, raw_flags) in completions {
                 let (current_remark, current_flags) = {
-                    let ai = engine.world.entities.expect_ai_controller(
-                        owner,
-                        format_args!("preflighted loaded-remark owner"),
-                    );
+                    let ai = engine.ai(owner, "preflighted loaded-remark owner");
                     (ai.current_remark, ai.current_remark_flags)
                 };
                 assert_eq!(
@@ -929,10 +923,7 @@ impl EngineInner {
         }
 
         let entity = self.expect_entity(owner, "speech gate diagnostic owner");
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("speech gate diagnostic owner"));
+        let ai = self.ai(owner, "speech gate diagnostic owner");
         let (is_soldier, speech_id) = match entity {
             Entity::Pc(pc) => {
                 let profile = assets
@@ -1118,10 +1109,7 @@ impl EngineInner {
                     other.element_data().kind
                 ),
             };
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("queued speech owner"));
+            let ai = self.ai(owner, "queued speech owner");
             (
                 owner_profile,
                 entity.element_data().blipped,
@@ -1295,10 +1283,7 @@ impl EngineInner {
         }
 
         {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("speech owner before latch"));
+            let ai = self.ai_mut(owner, "speech owner before latch");
             ai.current_remark = attempt.remark;
             ai.current_remark_flags = attempt.flags;
         }
@@ -1399,10 +1384,7 @@ impl EngineInner {
                     10
                 };
                 let log_before_callback = !matches!(reason, 8 | 9);
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    owner,
-                    format_args!("speech owner after category rejection"),
-                );
+                let ai = self.ai_mut(owner, "speech owner after category rejection");
                 if log_before_callback {
                     ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
                 }
@@ -1421,10 +1403,7 @@ impl EngineInner {
                     self.execute_ai_callback(sim, assets, owner, &Stimulus::new(event));
                 }
                 // The outer rejection clears even a line started by its callback.
-                let ai = self.world.entities.expect_ai_controller_mut(
-                    owner,
-                    format_args!("speech category rejection return"),
-                );
+                let ai = self.ai_mut(owner, "speech category rejection return");
                 if !log_before_callback {
                     ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
                 }
@@ -1593,10 +1572,7 @@ impl EngineInner {
                 continue;
             }
 
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(actor_id, format_args!("speech completion owner"));
+            let ai = self.ai_mut(actor_id, "speech completion owner");
             ai.current_remark = Remark::TheSoundOfSilence;
             ai.current_remark_flags = 0;
             ai.register_log_line(crate::ai::LogLineType::SpeakFinished, 0);

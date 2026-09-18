@@ -4,7 +4,7 @@ use super::*;
 use crate::ai::{
     AiEntityHandle, AiState, EmoticonType, Position, Stimulus, StimulusInfo, Substate,
 };
-use crate::ai_enemy::{EnemyAi, task_priority};
+use crate::ai_enemy::task_priority;
 use crate::element::{Element as _, Human as _};
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
@@ -28,13 +28,6 @@ fn officer_report_in_progress(substate: Substate) -> bool {
     )
 }
 
-struct AlertExecution<'a> {
-    engine: &'a mut EngineInner,
-    sim: &'a SimulationContext,
-    assets: &'a LevelAssets,
-    owner: EntityId,
-}
-
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_instruct_group(
         &mut self,
@@ -44,10 +37,7 @@ impl EngineInner {
     ) {
         use crate::ai::{Hint, ReportType};
         use crate::ai_enemy::SeekFlags;
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("officer group instruction"));
+        let enemy = self.enemy_ai(owner, "officer group instruction");
         let mut instruction = Hint {
             seek_point: enemy.base.seek_position,
             who_tells_me: AiEntityHandle::new(owner.index()),
@@ -72,10 +62,7 @@ impl EngineInner {
                 .charly
                 .expect("group checkpoint report requires a checkpoint");
             let charly = self.expect_human_id_for_ai_handle(charly.get(), "group checkpoint path");
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(charly, format_args!("group checkpoint path"));
+            let ai = self.ai(charly, "group checkpoint path");
             if ai.has_patrol_path && count > 0 {
                 instruction.seek_flags |= SeekFlags::LOCATION_FIRST.bits();
                 Some(charly)
@@ -86,10 +73,7 @@ impl EngineInner {
             None
         };
         let path_index = |engine: &EngineInner, charly| {
-            let ai = engine
-                .world
-                .entities
-                .expect_ai_controller(charly, format_args!("group checkpoint path"));
+            let ai = engine.ai(charly, "group checkpoint path");
             ai.patrol_path
                 .as_ref()
                 .map(|path| path.hiking_path_index)
@@ -134,9 +118,7 @@ impl EngineInner {
                 instruction.seek_flags &= !SeekFlags::LOCATION_FIRST.bits();
             }
             let target = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("group instruction recipient"))
+                .enemy_ai(owner, "group instruction recipient")
                 .alerted_us[index];
             let target = self.expect_human_id_for_ai_handle(target, "group instruction recipient");
             let mut stimulus = Stimulus::new(StimulusType::CallInstruction);
@@ -144,9 +126,7 @@ impl EngineInner {
             if self.execute_ai_callback(sim, assets, target, &stimulus) {
                 index += 1;
             } else {
-                self.world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("refused group instruction"))
+                self.enemy_ai_mut(owner, "refused group instruction")
                     .alerted_us
                     .remove(index);
                 count -= 1;
@@ -176,13 +156,7 @@ impl EngineInner {
         owner: EntityId,
         center: Position,
     ) -> bool {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .run_and_alert_soldiers(center)
+        AiOwnerCtx::new(self, sim, assets, owner).run_and_alert_soldiers(center)
     }
     pub(in crate::engine) fn execute_ai_officer_look_for_soldier(
         &mut self,
@@ -191,13 +165,7 @@ impl EngineInner {
         owner: EntityId,
         reason: crate::ai::ReportType,
     ) {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .officer_look_for_soldier(reason);
+        AiOwnerCtx::new(self, sim, assets, owner).officer_look_for_soldier(reason);
     }
     pub(in crate::engine) fn execute_ai_tower_guard_alert(
         &mut self,
@@ -206,13 +174,7 @@ impl EngineInner {
         owner: EntityId,
         center: Position,
     ) {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .tower_guard_alert(center);
+        AiOwnerCtx::new(self, sim, assets, owner).tower_guard_alert(center);
         self.execute_battle_decisions(sim, assets, owner);
     }
     pub(in crate::engine) fn execute_ai_alert_officer_for_caller(
@@ -227,9 +189,7 @@ impl EngineInner {
         match caller {
             OfficerAlertCaller::Ignore => return,
             OfficerAlertCaller::TowerGuardCalled => {
-                self.world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("tower guard alert priority"))
+                self.enemy_ai_mut(owner, "tower guard alert priority")
                     .current_task_priority = task_priority::ALERT_IGNORE_ENEMY;
                 return;
             }
@@ -271,13 +231,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .alert_officer()
+        AiOwnerCtx::new(self, sim, assets, owner).alert_officer()
     }
     fn execute_failed_ai_alert(
         &mut self,
@@ -301,17 +255,13 @@ impl EngineInner {
             ),
             Failure::SeekMissedCharly { .. } => {
                 let checkpoint = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("missing checkpoint seek"))
+                    .ai(owner, "missing checkpoint seek")
                     .checkpoint_charly
                     .expect("missing checkpoint seek requires a checkpoint");
                 let checkpoint =
                     self.expect_human_id_for_ai_handle(checkpoint.get(), "missing checkpoint seek");
                 let has_path = self
-                    .world
-                    .entities
-                    .expect_ai_controller(checkpoint, format_args!("missing checkpoint path"))
+                    .ai(checkpoint, "missing checkpoint path")
                     .has_patrol_path;
                 (
                     self.live_ai_position(owner),
@@ -343,13 +293,7 @@ impl EngineInner {
         center: Position,
         flags: u16,
     ) -> bool {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .alert_soldiers(center, flags)
+        AiOwnerCtx::new(self, sim, assets, owner).alert_soldiers(center, flags)
     }
     pub(in crate::engine) fn execute_maybe_officer_sees_me_fighting(
         &mut self,
@@ -358,9 +302,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         if self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("brawl owner"))
+            .enemy_ai(owner, "brawl owner")
             .profile(&assets.profile_manager)
             .rank
             != ProfileRank::Soldier
@@ -421,20 +363,14 @@ impl EngineInner {
         owner: EntityId,
         center: Position,
     ) -> bool {
-        AlertExecution {
-            engine: self,
-            sim,
-            assets,
-            owner,
-        }
-        .command_soldiers_to_attack(center)
+        AiOwnerCtx::new(self, sim, assets, owner).command_soldiers_to_attack(center)
     }
 }
 
 #[cfg(test)]
 mod tests;
 
-impl AlertExecution<'_> {
+impl AiOwnerCtx<'_> {
     fn run_and_alert_soldiers(&mut self, center: Position) -> bool {
         self.engine.execute_ai_unfocus(self.owner);
 
@@ -618,9 +554,7 @@ impl AlertExecution<'_> {
             }
             if self
                 .engine
-                .world
-                .entities
-                .expect_enemy_ai(id, format_args!("alert-list soldier rank"))
+                .enemy_ai(id, "alert-list soldier rank")
                 .profile(&self.assets.profile_manager)
                 .rank
                 != ProfileRank::Soldier
@@ -735,9 +669,7 @@ impl AlertExecution<'_> {
                     .execute_ai_callback(self.sim, self.assets, id, &stimulus);
                 match self
                     .engine
-                    .world
-                    .entities
-                    .expect_enemy_ai(id, format_args!("alerted recipient rank"))
+                    .enemy_ai(id, "alerted recipient rank")
                     .profile(&self.assets.profile_manager)
                     .rank
                 {
@@ -750,9 +682,7 @@ impl AlertExecution<'_> {
                 }
             } else if self
                 .engine
-                .world
-                .entities
-                .expect_enemy_ai(id, format_args!("far officer rank"))
+                .enemy_ai(id, "far officer rank")
                 .profile(&self.assets.profile_manager)
                 .rank
                 == ProfileRank::Officer
@@ -832,9 +762,7 @@ impl AlertExecution<'_> {
                 .expect("officer search antagonist is missing");
             match self
                 .engine
-                .world
-                .entities
-                .expect_ai_controller(target, format_args!("officer search antagonist"))
+                .ai(target, "officer search antagonist")
                 .current_substate
             {
                 Substate::SeekingOfficerWaitForInstructedSoldier => nearest = Some(target),
@@ -1028,11 +956,8 @@ impl AlertExecution<'_> {
             {
                 continue;
             }
-            self.engine
-                .world
-                .entities
-                .expect_ai_controller_mut(target, format_args!("alert master"))
-                .master = Some(AiEntityHandle::new(self.owner.index()));
+            self.engine.ai_mut(target, "alert master").master =
+                Some(AiEntityHandle::new(self.owner.index()));
             let mut stimulus = Stimulus::new(StimulusType::CallAlert);
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
             if !self
@@ -1222,11 +1147,7 @@ impl AlertExecution<'_> {
                     best
                 };
                 let position = slots.remove(best);
-                let enemy = self
-                    .engine
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(target, format_args!("alert gather instruction"));
+                let enemy = self.engine.enemy_ai_mut(target, "alert gather instruction");
                 enemy.gather_position = position;
                 enemy.gather_direction = direction ^ 8;
                 enemy.gather_position_instructed = true;
@@ -1340,30 +1261,6 @@ impl AlertExecution<'_> {
             });
         }
         Some(slots)
-    }
-
-    fn enemy(&self) -> &EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai(self.owner, format_args!("officer coordination"))
-    }
-
-    fn enemy_mut(&mut self) -> &mut EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(self.owner, format_args!("officer coordination"))
-    }
-
-    fn state(&mut self, state: AiState, substate: Substate) {
-        self.engine
-            .duty_set_state(self.sim, self.assets, self.owner, state, substate);
-    }
-
-    fn timer(&mut self, frames: u32) {
-        let frame = self.engine.control.frame_counter;
-        self.enemy_mut().base.launch_timer(frames, frame);
     }
 
     fn command_soldiers_to_attack(&mut self, center: Position) -> bool {

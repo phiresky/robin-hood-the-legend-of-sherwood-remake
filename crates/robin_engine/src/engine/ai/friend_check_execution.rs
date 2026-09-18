@@ -73,10 +73,7 @@ impl EngineInner {
             "friend-check partner cannot be the checking actor"
         );
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("friend-check owner"));
+        let ai = self.ai(owner, "friend-check owner");
         if ai.missed_in_action.contains(&target_handle)
             || (ai.frame_when_enemy_detected > 0
                 && self
@@ -91,12 +88,7 @@ impl EngineInner {
         }
 
         if frames == 0 && index != u16::MAX {
-            let current = path_status(
-                self.world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("synchronizing owner")),
-            )
-            .0;
+            let current = path_status(self.ai(owner, "synchronizing owner")).0;
             let destination = synchronize_index(current, index);
             let ai = self.friend_check_owner_mut(owner);
             ai.synchronize_index = destination;
@@ -119,11 +111,7 @@ impl EngineInner {
                 return;
             }
             let (current, last, partner_forward, _) = path_status(partner);
-            let (_, _, forward, _) = path_status(
-                self.world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("synchronizing owner")),
-            );
+            let (_, _, forward, _) = path_status(self.ai(owner, "synchronizing owner"));
             let waypoint = if partner.macro_in_progress {
                 Some(current)
             } else if partner.current_substate == Substate::DefaultEnroute {
@@ -145,9 +133,7 @@ impl EngineInner {
             if already_there {
                 self.resume_after_friend_check(sim, assets, owner);
             } else {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(target, format_args!("synchronizing partner"))
+                self.ai_mut(target, "synchronizing partner")
                     .synchronizing_actors
                     .push(owner.index());
                 self.friend_check_state(sim, assets, owner, Substate::DefaultSynchronizing);
@@ -155,10 +141,7 @@ impl EngineInner {
             return;
         }
 
-        let partner = self
-            .world
-            .entities
-            .expect_ai_controller(target, format_args!("friend-check partner"));
+        let partner = self.ai(target, "friend-check partner");
         if !partner.has_patrol_path {
             let post = partner.initial_position;
             let mut point = self.friend_check_world_point(assets, post);
@@ -244,9 +227,7 @@ impl EngineInner {
     }
 
     fn friend_check_owner_mut(&mut self, owner: EntityId) -> &mut AiController {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("friend-check owner"))
+        self.ai_mut(owner, "friend-check owner")
     }
 
     fn friend_check_state(

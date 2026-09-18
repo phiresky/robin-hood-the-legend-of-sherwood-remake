@@ -35,14 +35,10 @@ impl EngineInner {
     }
 
     fn combat_event_ai(&self, owner: EntityId) -> &EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai(owner, format_args!("combat event owner"))
+        self.enemy_ai(owner, "combat event owner")
     }
     fn combat_event_ai_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("combat event owner"))
+        self.enemy_ai_mut(owner, "combat event owner")
     }
     fn combat_event_primary(&self, owner: EntityId) -> EntityId {
         let target = self
@@ -899,11 +895,7 @@ impl EngineInner {
                         self.expect_entity(friend, "reserve friend kind"),
                         Entity::Soldier(_)
                     )
-                    && self
-                        .world
-                        .entities
-                        .expect_ai_controller(friend, format_args!("reserve friend state"))
-                        .current_substate
+                    && self.ai(friend, "reserve friend state").current_substate
                         == Substate::AttackingReserve
                 {
                     self.dispatch_think_with_drain(

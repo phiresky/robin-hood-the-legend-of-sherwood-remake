@@ -14,10 +14,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("completed search"));
+        let enemy = self.enemy_ai(owner, "completed search");
         if enemy.base.my_reconnaissance_report.report_type <= ReportType::Noise
             && !enemy
                 .seek_flags
@@ -45,9 +42,7 @@ impl EngineInner {
         self.execute_ai_unfocus(owner);
 
         let trainer = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy search duty gate"))
+            .enemy_ai(owner, "sleeping enemy search duty gate")
             .combat_trainer;
         let entity = self.expect_entity(owner, "sleeping enemy search forest gate");
         let forest_foot_soldier = self.is_player_aligned_camp(entity.camp())
@@ -57,9 +52,7 @@ impl EngineInner {
             self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
         }
 
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list reset"))
+        self.enemy_ai_mut(owner, "sleeping enemy list reset")
             .list_them
             .clear();
         // Registry membership is selected after duty callbacks. No callback occurs
@@ -80,9 +73,7 @@ impl EngineInner {
             {
                 continue;
             }
-            self.world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("sleeping enemy list insertion"))
+            self.enemy_ai_mut(owner, "sleeping enemy list insertion")
                 .list_them
                 .push(target.index());
         }
@@ -97,10 +88,7 @@ impl EngineInner {
         owner: EntityId,
         targets: Vec<crate::ai::HumanHandle>,
     ) {
-        let enemy = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("retained sleeping enemies"));
+        let enemy = self.enemy_ai_mut(owner, "retained sleeping enemies");
         assert!(
             enemy.list_them.is_empty(),
             "retained sleeping enemies require an empty hostile list"
@@ -124,9 +112,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let nearest = self.select_nearest_battle_target(owner);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("sleeping enemy primary target"))
+        self.ai_mut(owner, "sleeping enemy primary target")
             .primary_target = nearest.map(|id| AiEntityHandle::new(id.index()));
         if nearest.is_some() {
             self.duty_set_state(
@@ -137,12 +123,7 @@ impl EngineInner {
                 Substate::AttackingApproachingSleepingEnemy,
             );
             let target = self
-                .world
-                .entities
-                .expect_ai_controller(
-                    owner,
-                    format_args!("sleeping enemy primary after state change"),
-                )
+                .ai(owner, "sleeping enemy primary after state change")
                 .primary_target
                 .expect("sleeping enemy approach requires primary target");
             let target =
@@ -160,9 +141,7 @@ impl EngineInner {
         target: EntityId,
     ) -> bool {
         let vip = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("sleeping enemy attack authorization"))
+            .enemy_ai(owner, "sleeping enemy attack authorization")
             .is_vip;
         let target = self.expect_entity(target, "sleeping enemy authorization target");
         (!vip || matches!(target, Entity::Pc(pc) if pc.pc.robin))
@@ -220,10 +199,7 @@ mod tests {
             .view_radius = 500;
         let mut assets = LevelAssets::new();
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let enemy = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test sleeper observer"));
+        let enemy = engine.enemy_ai_mut(owner, "test sleeper observer");
         enemy.base.initial_position = crate::ai::Position {
             x: 1377.2015,
             y: 252.88869,
@@ -257,10 +233,7 @@ mod tests {
     fn trainer_sleeping_enemy_scan_runs_after_completed_duty() {
         let (mut engine, assets, owner, targets) =
             sleeping_pair(MapPoint::new(1380.0, 252.0), MapPoint::new(1400.0, 252.0));
-        let enemy = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test trainer"));
+        let enemy = engine.enemy_ai_mut(owner, "test trainer");
         enemy.combat_trainer = true;
         enemy.base.current_state = AiState::Attacking;
         enemy.base.current_substate = Substate::AttackingBowObserving;
@@ -271,10 +244,7 @@ mod tests {
             owner,
             Camp::Lacklandists,
         );
-        let enemy = engine
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("test trainer after scan"));
+        let enemy = engine.enemy_ai(owner, "test trainer after scan");
         assert_eq!(
             enemy.base.current_substate,
             Substate::AttackingApproachingSleepingEnemy
@@ -298,10 +268,7 @@ mod tests {
             owner,
             targets.map(|id| id.index()).to_vec(),
         );
-        let enemy = engine
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("test selected sleeper"));
+        let enemy = engine.enemy_ai(owner, "test selected sleeper");
         assert_eq!(
             enemy.base.primary_target,
             Some(AiEntityHandle::new(targets[1].index()))
@@ -322,11 +289,8 @@ mod tests {
     fn sleeping_enemy_selection_keeps_nearest_and_registration_ties() {
         let (mut engine, _, owner, targets) =
             sleeping_pair(MapPoint::new(1417.0, 250.0), MapPoint::new(1500.0, 400.0));
-        engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("test sleeper order"))
-            .list_them = targets.map(|id| id.index()).to_vec();
+        engine.enemy_ai_mut(owner, "test sleeper order").list_them =
+            targets.map(|id| id.index()).to_vec();
         assert_eq!(engine.select_nearest_battle_target(owner), Some(targets[0]));
         let first_position = engine
             .get_entity(targets[0])

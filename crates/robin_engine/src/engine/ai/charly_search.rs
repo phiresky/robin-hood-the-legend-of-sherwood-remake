@@ -33,10 +33,7 @@ impl EngineInner {
             return;
         };
         let charly = self.expect_human_id_for_ai_handle(charly.get(), "missing checkpoint");
-        let checkpoint = self
-            .world
-            .entities
-            .expect_ai_controller(charly, format_args!("checkpoint search path"));
+        let checkpoint = self.ai(charly, "checkpoint search path");
         if checkpoint.has_patrol_path {
             let path = checkpoint
                 .patrol_path
@@ -59,10 +56,7 @@ impl EngineInner {
                 }
             }
             let best = best.expect("checkpoint route requires a waypoint within search range");
-            let checkpoint = self
-                .world
-                .entities
-                .expect_ai_controller_mut(charly, format_args!("checkpoint nearest waypoint"));
+            let checkpoint = self.ai_mut(charly, "checkpoint nearest waypoint");
             if let Some(path) = checkpoint.patrol_path.as_mut() {
                 path.last_waypoint_index = path.current_waypoint_index;
                 path.current_waypoint_index = best as u8;
@@ -146,9 +140,7 @@ impl EngineInner {
             .checkpoint_charly
             .expect("missed checkpoint alert requires checkpoint");
         let charly = self.expect_human_id_for_ai_handle(charly.get(), "missed checkpoint alert");
-        self.world
-            .entities
-            .expect_enemy_ai_mut(charly, format_args!("checkpoint reporting status"))
+        self.enemy_ai_mut(charly, "checkpoint reporting status")
             .reported_to_officer = false;
         match self.observation_ai(owner).get_rank(&assets.profile_manager) {
             ProfileRank::Soldier => {
@@ -178,9 +170,7 @@ impl EngineInner {
         let checkpoint =
             self.expect_human_id_for_ai_handle(checkpoint.get(), "failed checkpoint alert");
         let radius = if self
-            .world
-            .entities
-            .expect_ai_controller(checkpoint, format_args!("failed checkpoint path"))
+            .ai(checkpoint, "failed checkpoint path")
             .has_patrol_path
         {
             crate::parameters_ai::AI_PATROL_CHARLY_SEEK_RADIUS

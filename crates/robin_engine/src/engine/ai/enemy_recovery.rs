@@ -7,10 +7,7 @@ use crate::sim_rng::SimulationContext;
 impl EngineInner {
     fn recovery_open_eyes(&mut self, owner: EntityId) {
         let radius = self.ai.standard_view_polygon_radius;
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery eyes"));
+        let actor = self.ai_actor_mut(owner, "recovery eyes");
         actor.view_transition = true;
         actor.view_radius = 5;
         actor.view_radius_base = 5;
@@ -19,10 +16,7 @@ impl EngineInner {
     }
 
     fn recovery_blink_enemies(&mut self, owner: EntityId) {
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery enemy blinks"));
+        let actor = self.ai_actor_mut(owner, "recovery enemy blinks");
         let enemies = actor
             .detectable_lists
             .get_mut(DetectableType::Enemy as usize)
@@ -34,10 +28,7 @@ impl EngineInner {
     }
 
     fn recovery_view_forward(&mut self, owner: EntityId) {
-        let actor = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("recovery view status"));
+        let actor = self.ai_actor_mut(owner, "recovery view status");
         crate::ai_vision::set_view_status(actor, EyeStatus::LookForward);
     }
 

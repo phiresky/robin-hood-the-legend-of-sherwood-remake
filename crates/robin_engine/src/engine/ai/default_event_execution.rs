@@ -28,15 +28,11 @@ impl EngineInner {
     }
 
     fn default_ai(&self, owner: EntityId) -> &AiController {
-        self.world
-            .entities
-            .expect_ai_controller(owner, format_args!("default event owner"))
+        self.ai(owner, "default event owner")
     }
 
     fn default_ai_mut(&mut self, owner: EntityId) -> &mut AiController {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("default event owner"))
+        self.ai_mut(owner, "default event owner")
     }
 
     fn default_timer(&mut self, owner: EntityId, frames: u32) {
@@ -570,9 +566,7 @@ mod tests {
             ai.directed_panic = true;
             ai.lasting_panic_runs = 0;
             engine
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("visible enemy fixture"))
+                .ai_actor_mut(owner, "visible enemy fixture")
                 .detectable_lists[crate::element::DetectableType::Enemy as usize]
                 .push(crate::element::Detectable {
                     element: Some(owner),

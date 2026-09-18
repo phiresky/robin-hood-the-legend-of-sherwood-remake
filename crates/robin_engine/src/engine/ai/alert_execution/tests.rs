@@ -88,10 +88,7 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.control.frame_counter = 733;
     let [owner, refused, second, third] = ids;
-    let officer = engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(owner, format_args!("test officer"));
+    let officer = engine.enemy_ai_mut(owner, "test officer");
     officer.base.current_state = AiState::Seeking;
     officer.base.current_substate = Substate::SeekingOfficerInstructGroupPointing;
     officer.base.seek_position = Position {
@@ -102,19 +99,12 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
     };
     officer.alerted_us = vec![refused.index(), second.index(), third.index()];
     for member in [refused, second, third] {
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(member, format_args!("test member"));
+        let ai = engine.enemy_ai_mut(member, "test member");
         ai.base.current_state = AiState::Seeking;
         ai.base.current_substate = Substate::SeekingGroupGetInstructedByOfficer;
         ai.base.antagonist = Some(AiEntityHandle::new(owner.index()));
     }
-    engine
-        .world
-        .entities
-        .expect_ai_controller_mut(refused, format_args!("refusing member"))
-        .current_substate = Substate::SeekingJustWatching;
+    engine.ai_mut(refused, "refusing member").current_substate = Substate::SeekingJustWatching;
     (engine, assets, ids)
 }
 
@@ -122,35 +112,23 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
 fn officer_group_instruction_retries_location_first_after_refusal() {
     let (mut engine, assets, [owner, refused, second, third]) = group_fixture();
     engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
-    let officer = engine
-        .world
-        .entities
-        .expect_enemy_ai(owner, format_args!("test officer"));
+    let officer = engine.enemy_ai(owner, "test officer");
     assert_eq!(officer.alerted_us, vec![second.index(), third.index()]);
     assert_eq!(
         officer.base.current_substate,
         Substate::SeekingOfficerWaitForInstructedGroup
     );
     assert_eq!(officer.base.when_does_timer_ring, 763);
-    let refused = engine
-        .world
-        .entities
-        .expect_enemy_ai(refused, format_args!("refused member"));
+    let refused = engine.enemy_ai(refused, "refused member");
     assert_eq!(refused.base.current_substate, Substate::SeekingJustWatching);
     assert_eq!(refused.base.alert_soldiers_point, Position::default());
-    let second = engine
-        .world
-        .entities
-        .expect_enemy_ai(second, format_args!("first accepted member"));
+    let second = engine.enemy_ai(second, "first accepted member");
     assert!(
         second.seek_flags.contains(SeekFlags::LOCATION_FIRST),
         "refusal must leave the first-location instruction for the next member"
     );
     assert_eq!(second.base.alert_soldiers_point, officer.base.seek_position);
-    let third = engine
-        .world
-        .entities
-        .expect_enemy_ai(third, format_args!("next accepted member"));
+    let third = engine.enemy_ai(third, "next accepted member");
     assert!(!third.seek_flags.contains(SeekFlags::LOCATION_FIRST));
     assert_eq!(third.base.alert_soldiers_point, officer.base.seek_position);
 }
@@ -171,31 +149,19 @@ fn officer_group_path_advances_waypoint_on_refusal() {
             .collect(),
     }]);
     assets.navigation.hiking_waypoint_sectors = Some(std::sync::Arc::new(vec![vec![sector; 5]]));
-    let checkpoint = engine
-        .world
-        .entities
-        .expect_ai_controller_mut(refused, format_args!("checkpoint path"));
+    let checkpoint = engine.ai_mut(refused, "checkpoint path");
     checkpoint.has_patrol_path = true;
     checkpoint.patrol_path =
         PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
-    let officer = engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(owner, format_args!("checkpoint report"));
+    let officer = engine.enemy_ai_mut(owner, "checkpoint report");
     officer.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
     officer.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(refused.index()));
     engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
-    let officer = engine
-        .world
-        .entities
-        .expect_enemy_ai(owner, format_args!("test officer"));
+    let officer = engine.enemy_ai(owner, "test officer");
     assert_eq!(officer.alerted_us, vec![second.index(), third.index()]);
     assert_eq!(officer.base.when_does_timer_ring, 763);
     for (member, x) in [(second, 700.0), (third, 900.0)] {
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(member, format_args!("path instruction member"));
+        let ai = engine.enemy_ai(member, "path instruction member");
         assert_eq!(
             ai.base.alert_soldiers_point.x, x,
             "refused member consumes waypoint zero before the next instruction"
@@ -235,17 +201,11 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
     );
     assets.navigation.hiking_waypoint_sectors =
         Some(std::sync::Arc::new(vec![vec![sector; 5], vec![sector; 7]]));
-    let checkpoint = engine
-        .world
-        .entities
-        .expect_ai_controller_mut(refused, format_args!("checkpoint"));
+    let checkpoint = engine.ai_mut(refused, "checkpoint");
     checkpoint.has_patrol_path = true;
     checkpoint.patrol_path =
         PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
-    let officer = engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(owner, format_args!("checkpoint report"));
+    let officer = engine.enemy_ai_mut(owner, "checkpoint report");
     officer.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
     officer.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(refused.index()));
     let handle = ScriptHandleCodec::actor_handle(refused);
@@ -326,10 +286,7 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
         vec![second.index(), third.index()]
     );
     for (member, expected_x) in [(second, 1400.0), (third, 1800.0)] {
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(member, format_args!("path recipient"));
+        let ai = engine.enemy_ai(member, "path recipient");
         assert_eq!(
             ai.base.alert_soldiers_point.x, expected_x,
             "later instructions read reassigned path at the stride captured before callbacks"

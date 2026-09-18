@@ -46,10 +46,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("phalanx gather instruction"));
+        let ai = self.enemy_ai_mut(owner, "phalanx gather instruction");
         ai.shield_bearer_direction = ai.gather_direction;
         ai.base.seek_position = ai.gather_position;
         self.duty_set_state(
@@ -60,15 +57,11 @@ impl EngineInner {
             Substate::AttackingRunningToPhalanx,
         );
         let position = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("phalanx instructed destination"))
+            .ai(owner, "phalanx instructed destination")
             .seek_position;
         self.duty_go_to(sim, assets, owner, position, crate::ai::GotoFlags::RUN);
         if let Some(archer) = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx instructed archer"))
+            .enemy_ai(owner, "phalanx instructed archer")
             .archer_behind_me
         {
             let archer = self.expect_human_id_for_ai_handle(archer.get(), "protected archer");
@@ -92,10 +85,7 @@ impl EngineInner {
     }
 
     fn phalanx_neighbour(&self, owner: EntityId, right: bool) -> Option<EntityId> {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx neighbour owner"));
+        let ai = self.enemy_ai(owner, "phalanx neighbour owner");
         let handle = if right {
             ai.right_combat_neighbour
         } else {
@@ -113,9 +103,7 @@ impl EngineInner {
         let mut member = owner;
         loop {
             if self
-                .world
-                .entities
-                .expect_enemy_ai(member, format_args!("phalanx protected archer"))
+                .enemy_ai(member, "phalanx protected archer")
                 .archer_behind_me
                 .is_some()
             {
@@ -129,9 +117,7 @@ impl EngineInner {
     }
 
     fn live_phalanx_encircled(&self, owner: EntityId, center: Position, intended: u16) -> bool {
-        self.world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx enemy directions"))
+        self.enemy_ai(owner, "phalanx enemy directions")
             .list_them
             .iter()
             .any(|&handle| {
@@ -165,9 +151,7 @@ impl EngineInner {
         let mut index = 0;
         loop {
             let Some(&handle) = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("phalanx retained enemy"))
+                .enemy_ai(owner, "phalanx retained enemy")
                 .list_them
                 .get(index)
             else {
@@ -193,9 +177,7 @@ impl EngineInner {
                 }
                 index += 1;
             } else {
-                self.world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("phalanx remove enemy"))
+                self.enemy_ai_mut(owner, "phalanx remove enemy")
                     .list_them
                     .remove(index);
             }
@@ -251,10 +233,7 @@ impl EngineInner {
             }
             merged.swap(0, nearest.expect("phalanx enemy exceeds maximum distance"));
         }
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("phalanx shared enemy assignment"));
+        let ai = self.enemy_ai_mut(owner, "phalanx shared enemy assignment");
         ai.list_them.clone_from(merged);
         ai.base.primary_target = merged.first().copied().map(AiEntityHandle::new);
     }
@@ -278,21 +257,14 @@ impl EngineInner {
             self.execute_ai_break_phalanx(sim, assets, right, true, false);
         }
         let right = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("break right link"))
+            .enemy_ai(owner, "break right link")
             .right_combat_neighbour;
         self.apply_update_right_combat_neighbour(owner.index(), right, None);
         let left = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("break left link"))
+            .enemy_ai(owner, "break left link")
             .left_combat_neighbour;
         self.apply_update_left_combat_neighbour(owner.index(), left, None);
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("abandon phalanx"))
-            .phalanx_aborted = true;
+        self.enemy_ai_mut(owner, "abandon phalanx").phalanx_aborted = true;
         self.execute_battle_decisions(sim, assets, owner);
     }
 
@@ -323,10 +295,7 @@ impl EngineInner {
         direction: u16,
     ) {
         for (index, &member) in members.iter().enumerate() {
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(member, format_args!("phalanx instruction recipient"));
+            let ai = self.enemy_ai_mut(member, "phalanx instruction recipient");
             if ai.base.current_substate != Substate::AttackingPhalanx {
                 continue;
             }
@@ -348,10 +317,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) -> bool {
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("phalanx emoticon"))
-            .clear_emoticon();
+        self.ai_mut(owner, "phalanx emoticon").clear_emoticon();
 
         if let Some(target) = self.select_live_ai_primary_target(owner, PrimaryTargetFlags::empty())
         {
@@ -367,13 +333,7 @@ impl EngineInner {
             return false;
         }
         self.reinitialize_live_phalanx_enemies(assets, owner);
-        if self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("phalanx enemies"))
-            .list_them
-            .is_empty()
-        {
+        if self.enemy_ai(owner, "phalanx enemies").list_them.is_empty() {
             self.execute_ai_get_battle_overview(sim, assets, owner, 0);
             return true;
         }
@@ -384,15 +344,8 @@ impl EngineInner {
         let mut current = owner;
         loop {
             members.push(current);
-            let primary = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("phalanx leader target"))
-                .primary_target;
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai_mut(current, format_args!("phalanx member readiness"));
+            let primary = self.ai(owner, "phalanx leader target").primary_target;
+            let ai = self.enemy_ai_mut(current, "phalanx member readiness");
             ai.base.primary_target = primary;
             if ai.base.current_substate != Substate::AttackingPhalanx {
                 return false;
@@ -408,9 +361,7 @@ impl EngineInner {
         }
         let center = self.live_ai_position(members[size / 2]);
         let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("phalanx geometry target"))
+            .ai(owner, "phalanx geometry target")
             .primary_target
             .expect("phalanx geometry requires target");
         let target = self.live_ai_position(
@@ -482,11 +433,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let primary = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("phalanx timer target"))
-            .primary_target;
+        let primary = self.ai(owner, "phalanx timer target").primary_target;
         let action = self
             .expect_entity(owner, "phalanx timer action")
             .actor_data()
@@ -510,12 +457,7 @@ impl EngineInner {
                 .expect_ai_controller_mut(owner, format_args!("phalanx shield timer"))
                 .launch_timer(20, self.control.frame_counter);
         } else if !self.reconsider_live_phalanx(sim, assets, owner) {
-            if let Some(primary) = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("phalanx direction target"))
-                .primary_target
-            {
+            if let Some(primary) = self.ai(owner, "phalanx direction target").primary_target {
                 let owner_position = self.live_ai_position(owner);
                 let target = self.live_ai_position(
                     self.expect_human_id_for_ai_handle(primary.get(), "phalanx facing enemy"),

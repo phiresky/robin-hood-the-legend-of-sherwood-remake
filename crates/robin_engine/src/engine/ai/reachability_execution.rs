@@ -12,12 +12,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        match self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("route failure substate"))
-            .current_substate
-        {
+        match self.ai(owner, "route failure substate").current_substate {
             Substate::SeekingSeekpoint => self.execute_ai_seek_next_point(sim, assets, owner),
             Substate::SeekingBody => {
                 self.execute_ai_body_reaction(sim, assets, owner, BodyReaction::Unreachable);
@@ -42,10 +37,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         if self.is_very_very_busy(owner) {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("busy route failure"));
+            let ai = self.ai_mut(owner, "busy route failure");
             ai.non_script_lock(AiLockFlags::BUSY);
             ai.was_busy = true;
             self.execute_ai_callback(
@@ -56,12 +48,7 @@ impl EngineInner {
             );
             return;
         }
-        match self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("route failure state"))
-            .current_state
-        {
+        match self.ai(owner, "route failure state").current_state {
             AiState::Sleeping
             | AiState::Default
             | AiState::Wondering

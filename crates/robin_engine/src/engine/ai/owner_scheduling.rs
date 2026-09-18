@@ -94,19 +94,14 @@ impl EngineInner {
             crate::ai::AiState::Default.state_change_event_code(),
         );
         {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("patrol state after callback"));
+            let ai = self.ai_mut(owner, "patrol state after callback");
             ai.set_ai_state(crate::ai::AiState::Default);
             ai.current_substate = crate::ai::Substate::DefaultGotoRouteTurn;
         }
         self.initialize_patrol_for_npc(assets, owner);
         let position = self.live_ai_position(owner);
         let direction = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("patrol path"))
+            .ai_mut(owner, "patrol path")
             .route_arrival_turn_direction(position, &assets.navigation.hiking_paths);
         if let Some(direction) = direction {
             let mut turn = crate::sequence::SequenceElement::new_generic(
@@ -138,12 +133,7 @@ impl EngineInner {
         chief_id: EntityId,
     ) {
         let member_count = self
-            .world
-            .entities
-            .expect_ai_controller(
-                chief_id,
-                format_args!("synchronous patrol initialization owner"),
-            )
+            .ai(chief_id, "synchronous patrol initialization owner")
             .theoretical_patrol
             .len();
         self.initialize_patrol_for_npc_prefix(assets, chief_id, member_count);
@@ -166,9 +156,7 @@ impl EngineInner {
         let mut missed = Vec::new();
         for index in 0..member_count {
             let id = *self
-                .world
-                .entities
-                .expect_ai_controller(chief_id, format_args!("patrol assembly chief"))
+                .ai(chief_id, "patrol assembly chief")
                 .theoretical_patrol
                 .get(index)
                 .expect("patrol assembly lost a member from its captured prefix");
@@ -189,11 +177,7 @@ impl EngineInner {
                 .sorting_distance = distance;
             let visible = self.patrol_member_visible(assets, chief_id, id);
             let entity = self.expect_entity(id, "patrol member admission");
-            let state = self
-                .world
-                .entities
-                .expect_ai_controller(id, format_args!("patrol member admission"))
-                .current_state;
+            let state = self.ai(id, "patrol member admission").current_state;
             let able = match entity {
                 Entity::Soldier(soldier) => crate::element::Human::is_able_to_fight(soldier),
                 Entity::Pc(pc) => crate::element::Human::is_able_to_fight(pc),
@@ -212,10 +196,7 @@ impl EngineInner {
                     })
                     .unwrap_or(patrol.len());
                 patrol.insert(index, id);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(id, format_args!("admitted patrol member"))
-                    .patrol_chief = Some(chief_id);
+                self.ai_mut(id, "admitted patrol member").patrol_chief = Some(chief_id);
             } else if !entity.is_dead() {
                 missed.push(id);
             }
@@ -231,10 +212,7 @@ impl EngineInner {
                 patrol.swap(pair_end - 1, pair_end);
             }
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(chief_id, format_args!("patrol assembly chief"));
+        let ai = self.ai_mut(chief_id, "patrol assembly chief");
         ai.needs_patrol_reinit = false;
         ai.patrol = patrol;
         ai.missed_patrol_members = missed;
@@ -322,11 +300,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
     ) {
-        if self
-            .world
-            .entities
-            .expect_ai_controller(npc_id, format_args!("periodic wasp owner"))
-            .current_substate
+        if self.ai(npc_id, "periodic wasp owner").current_substate
             == crate::ai::Substate::WonderingWaspInArmour
             && self.actor_command(npc_id) != crate::element::Command::ReceiveWaspSting
         {
@@ -337,11 +311,7 @@ impl EngineInner {
                 assets,
             );
         }
-        if self
-            .world
-            .entities
-            .expect_ai_controller(npc_id, format_args!("periodic retreat owner"))
-            .current_substate
+        if self.ai(npc_id, "periodic retreat owner").current_substate
             == crate::ai::Substate::FleeingMerryManRunToLeaveMap
             && self.actor_command(npc_id) == crate::element::Command::Wait
         {
@@ -362,18 +332,10 @@ impl EngineInner {
             ai.launch_timer(10, frame);
         }
         if self.live_actor_animation(npc_id) == Some(crate::order::OrderType::WaitingUprightBored)
-            && self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("periodic remark owner"))
-                .current_state
-                == crate::ai::AiState::Default
+            && self.ai(npc_id, "periodic remark owner").current_state == crate::ai::AiState::Default
             && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
         {
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(npc_id, format_args!("periodic remark owner"));
+            let ai = self.enemy_ai(npc_id, "periodic remark owner");
             let remark =
                 if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer {
                     Some(crate::ai::Remark::OfficerComplains)
@@ -405,11 +367,7 @@ impl EngineInner {
         let civilian = self
             .expect_entity(npc_id, "periodic watchdog owner")
             .is_civilian();
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(npc_id, format_args!("periodic watchdog owner"))
-            .current_substate;
+        let substate = self.ai(npc_id, "periodic watchdog owner").current_substate;
         let enemy_reachpoint = matches!(
             substate,
             Substate::DefaultGotoPost
@@ -506,19 +464,13 @@ impl EngineInner {
                         | crate::element::Command::ParrySmalltalkRight
                 );
         if !in_reachpoint_arm {
-            self.world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("periodic watchdog reset"))
-                .stuck_counter = 0;
+            self.ai_mut(npc_id, "periodic watchdog reset").stuck_counter = 0;
         } else if stuck_command {
             let pending = self
                 .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("periodic watchdog counter"));
+            let ai = self.ai_mut(npc_id, "periodic watchdog counter");
             if pending {
                 ai.stuck_counter = 0;
             } else if ai.stuck_counter < 3 {
@@ -536,20 +488,12 @@ impl EngineInner {
                         assets,
                     );
                 }
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(
-                        npc_id,
-                        format_args!("periodic watchdog callback return"),
-                    )
+                self.ai_mut(npc_id, "periodic watchdog callback return")
                     .stuck_counter = 0;
             }
         }
         if !civilian && frame_phase == 0 {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("periodic alcohol owner"));
+            let ai = self.ai_mut(npc_id, "periodic alcohol owner");
             if ai.blood_alcohol > 0 {
                 if ai.current_music_alert_status == AlertLevel::Green
                     && ai.current_state != AiState::Sleeping
@@ -565,10 +509,7 @@ impl EngineInner {
                         },
                     );
                 }
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(npc_id, format_args!("periodic alcohol decay"))
-                    .blood_alcohol -= 1;
+                self.ai_mut(npc_id, "periodic alcohol decay").blood_alcohol -= 1;
             }
         }
     }
@@ -964,10 +905,7 @@ impl EngineInner {
         // an elapsed macro timer even outside DefaultInMacro; only execution
         // is substate-gated.
         let (fire, execute) = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("macro-timer NPC"));
+            let ai = self.ai(npc_id, "macro-timer NPC");
             let fire = ai.macro_timer_is_running && ai.when_does_macro_timer_ring <= current_frame;
             (
                 fire,
@@ -978,9 +916,7 @@ impl EngineInner {
             return;
         }
 
-        self.world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("macro-timer NPC"))
+        self.ai_mut(npc_id, "macro-timer NPC")
             .macro_timer_is_running = false;
         if execute {
             self.run_ai_macro(sim, assets, npc_id);
@@ -1028,18 +964,13 @@ impl EngineInner {
             .sources
             .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
         let current_frame = self.control.frame_counter;
-        self.world
-            .entities
-            .expect_ai_actor_data_mut(npc_id, format_args!("deafness-refresh NPC before apply"))
+        self.ai_actor_mut(npc_id, "deafness-refresh NPC before apply")
             .get_deafness(current_frame, cover_volume);
     }
 
     pub(in crate::engine) fn tick_npc_lock_gate_for_npc(&mut self, npc_id: EntityId) -> bool {
         let frozen = self.actors_frozen();
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("lock-gate NPC"));
+        let ai = self.ai_mut(npc_id, "lock-gate NPC");
         let locked = frozen || !ai.locks_flag_field.is_empty() || ai.script_locked;
         if locked {
             // The original game's unsigned increment wraps. Saturation would pin a deadline forever
@@ -1053,10 +984,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn tick_npc_emoticon_expiration_for_npc(&mut self, npc_id: EntityId) {
         let current_frame = self.control.frame_counter;
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(npc_id, format_args!("emoticon-expiry NPC"));
+        let ai = self.ai_mut(npc_id, "emoticon-expiry NPC");
         if ai.emoticon_has_expiration_date && ai.emoticon_expiration_date <= current_frame {
             ai.set_emoticon(crate::ai::EmoticonType::None);
             assert!(!ai.emoticon_has_expiration_date);
@@ -1099,10 +1027,7 @@ impl EngineInner {
 
         // Bump or reset the counter; remember whether to fire.
         let trigger = {
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("ladder-tail NPC before counter"));
+            let npc = self.ai_actor_mut(npc_id, "ladder-tail NPC before counter");
             if qualifies {
                 npc.stuck_on_ladder_emergency_counter =
                     npc.stuck_on_ladder_emergency_counter.saturating_add(1);

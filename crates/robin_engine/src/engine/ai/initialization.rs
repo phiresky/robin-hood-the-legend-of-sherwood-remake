@@ -426,10 +426,7 @@ impl EngineInner {
             npc.view_radius_goal = standard_view_radius;
         }
         if is_enemy {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("patrol initialization owner"));
+            let ai = self.ai_mut(npc_id, "patrol initialization owner");
             // Resolve patrol member IDs
             // Runs exactly once at AI init from the enemy AI's
             // `init_ai` before the first `initialize_patrol()`.
@@ -516,10 +513,7 @@ impl EngineInner {
         }
         let state_allows_duty = self.initialize_ai_state(sim, assets, npc_id);
         let go_to_duty = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(npc_id, format_args!("AI initialization duty gate"));
+            let ai = self.ai(npc_id, "AI initialization duty gate");
             state_allows_duty && !ai.ai_is_script_locked() && !ai.ai_is_locked()
         };
 
@@ -699,10 +693,7 @@ impl EngineInner {
             }
         }
         let has_path = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("AI bootstrap path owner"));
+            let ai = self.ai_mut(npc_id, "AI bootstrap path owner");
             let has_path = ai.has_patrol_path && (!is_friendly || !ai.ai_is_locked());
             ai.has_patrol_path = has_path;
             if has_path {
@@ -729,9 +720,7 @@ impl EngineInner {
                     0..crate::parameters_ai::AB_DELTA_DEFAULT_LOOK_TIME,
                 );
             let frame = self.control.frame_counter;
-            self.world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer"))
+            self.ai_mut(npc_id, "civilian bootstrap timer")
                 .launch_timer(duration as u32, frame);
             self.duty_set_state(
                 sim,
@@ -740,10 +729,7 @@ impl EngineInner {
                 crate::ai::AiState::Default,
                 crate::ai::Substate::DefaultOnPost,
             );
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(npc_id, format_args!("civilian bootstrap timer state"));
+            let ai = self.ai_mut(npc_id, "civilian bootstrap timer state");
             ai.substate_at_last_timer_launch = ai.current_substate;
         }
         let frame = self.control.frame_counter;
@@ -784,10 +770,7 @@ impl EngineInner {
             )
             .is_some();
         let initial_action = {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("initial AI state"));
+            let ai = self.ai_mut(owner, "initial AI state");
             ai.likes_to_sit_around = false;
             ai.special_action = false;
             ai.is_stay_at_home = in_building;
@@ -825,10 +808,7 @@ impl EngineInner {
         if posture.is_none() || action == Some(OrderType::Sitting) {
             let bored = self.ai_bored_time(sim, assets, owner);
             let frame = self.control.frame_counter;
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("initial AI bored timer"));
+            let ai = self.ai_mut(owner, "initial AI bored timer");
             ai.launch_timer(bored as u32, frame);
         }
         let Some(posture) = posture else {

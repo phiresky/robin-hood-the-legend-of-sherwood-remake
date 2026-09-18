@@ -1667,19 +1667,8 @@ impl EngineInner {
         // Cleanup removes dead enemies only. Admission policy does not
         // retroactively remove an existing entry after a camp change.
         let mut index = 0;
-        while index
-            < self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
-                .detectable_lists[bucket]
-                .len()
-        {
-            let target = self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy cleanup"))
-                .detectable_lists[bucket][index]
+        while index < self.ai_actor(npc_id, "Enemy cleanup").detectable_lists[bucket].len() {
+            let target = self.ai_actor(npc_id, "Enemy cleanup").detectable_lists[bucket][index]
                 .element
                 .expect("Enemy detectable has no target");
             let entity = self.world.entities.expect_entity(
@@ -1691,19 +1680,12 @@ impl EngineInner {
                 "Enemy detectable requires a PC or soldier"
             );
             if entity.is_dead() {
-                self.world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy cleanup"))
-                    .detectable_lists[bucket]
-                    .remove(index);
+                self.ai_actor_mut(npc_id, "Enemy cleanup").detectable_lists[bucket].remove(index);
             } else {
                 index += 1;
             }
         }
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data(npc_id, format_args!("Enemy scan"));
+        let npc = self.ai_actor(npc_id, "Enemy scan");
         debug_detectable_list_entries(
             "post_cleanup",
             bucket,
@@ -1716,11 +1698,7 @@ impl EngineInner {
         let mut sum = 0u16;
         let mut observed_pcs = Vec::new();
         for index in 0..count {
-            let entry = &self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy scan"))
-                .detectable_lists[bucket][index];
+            let entry = &self.ai_actor(npc_id, "Enemy scan").detectable_lists[bucket][index];
             let target = entry.element.expect("Enemy scan target");
             let owner = self
                 .world
@@ -1740,9 +1718,7 @@ impl EngineInner {
                 target_ground,
             ) {
                 let entry = &mut self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("Enemy outer gate"))
+                    .ai_actor_mut(npc_id, "Enemy outer gate")
                     .detectable_lists[bucket][index];
                 entry.seen_now = false;
                 entry.last_visibility = 0.0;
@@ -1775,10 +1751,7 @@ impl EngineInner {
                     .expect_entity(npc_id, format_args!("Enemy observer camp"))
                     .camp(),
             );
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy sharpness"));
+            let npc = self.ai_actor_mut(npc_id, "Enemy sharpness");
             let speed = if npc.view_lean_out {
                 ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
             } else {
@@ -1833,10 +1806,7 @@ impl EngineInner {
                     | crate::ai::AiState::Default
                     | crate::ai::AiState::Wondering
             );
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(npc_id, format_args!("Enemy suspect"));
+        let npc = self.ai_actor_mut(npc_id, "Enemy suspect");
         npc.detection_suspects[bucket] = npc.detection_suspects[bucket].wrapping_add(sum);
         if sum > 0 && (npc.worst_detected_type as usize) > bucket {
             npc.worst_detected_type = DetectableType::Enemy;
@@ -1852,11 +1822,7 @@ impl EngineInner {
         npc.maximal_detection_suspect = npc.detection_suspects[bucket];
 
         for index in 0..count {
-            let entry = &self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("Enemy detection"))
-                .detectable_lists[bucket][index];
+            let entry = &self.ai_actor(npc_id, "Enemy detection").detectable_lists[bucket][index];
             let target = entry.element.expect("Enemy detection target");
             let rising = committed && entry.seen_now && !entry.seen_last_frame;
             let falling = !entry.seen_now && entry.seen_last_frame;
@@ -1884,9 +1850,7 @@ impl EngineInner {
                 ));
             }
             let entry = &mut self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("Enemy detection latch"))
+                .ai_actor_mut(npc_id, "Enemy detection latch")
                 .detectable_lists[bucket][index];
             if committed {
                 entry.seen_last_frame = entry.seen_now;
@@ -2007,10 +1971,7 @@ impl EngineInner {
                 })
                 .and_then(|element| element.current_order())
                 .map_or(crate::order::OrderType::Invalid, |order| order.order_type);
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("Enemy disguise learning"));
+            let ai = self.ai_mut(owner, "Enemy disguise learning");
             visibility = apply_enemy_beggar_disguise_with_relationship(
                 hostile,
                 true,
@@ -2158,10 +2119,7 @@ impl EngineInner {
                 );
             }
             let bucket = kind as usize;
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data(npc_id, format_args!("optical bucket"));
+            let npc = self.ai_actor(npc_id, "optical bucket");
             debug_detectable_list_bucket(
                 "post_cleanup",
                 bucket,
@@ -2177,10 +2135,7 @@ impl EngineInner {
             let mut maximum = 0u32;
             let mut shadows = Vec::new();
             for index in 0..count {
-                let npc = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data(npc_id, format_args!("optical entry"));
+                let npc = self.ai_actor(npc_id, "optical entry");
                 let det = &npc.detectable_lists[bucket][index];
                 let target_id = det.element.expect("optical detectable requires a target");
                 let previous = det.last_visibility;
@@ -2284,10 +2239,7 @@ impl EngineInner {
                     sector: raw.sector(),
                     level: raw.layer(),
                 };
-                let npc = self
-                    .world
-                    .entities
-                    .expect_ai_actor_data_mut(npc_id, format_args!("optical latches"));
+                let npc = self.ai_actor_mut(npc_id, "optical latches");
                 let det = &mut npc.detectable_lists[bucket][index];
                 if scan
                     && kind == DetectableType::Body
@@ -2304,10 +2256,7 @@ impl EngineInner {
                 det.seen_now = sharpness > 0;
                 det.last_visibility = visibility;
             }
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("optical commit"));
+            let npc = self.ai_actor_mut(npc_id, "optical commit");
             let state = npc
                 .ai_brain
                 .base()
@@ -2361,11 +2310,7 @@ impl EngineInner {
                 stimuli.extend(queued_human_detection_stimuli(event, shadows, rising));
             }
         }
-        finalize_detection_summary(
-            self.world
-                .entities
-                .expect_ai_actor_data_mut(npc_id, format_args!("optical summary")),
-        );
+        finalize_detection_summary(self.ai_actor_mut(npc_id, "optical summary"));
     }
 
     fn cleanup_live_detectables(

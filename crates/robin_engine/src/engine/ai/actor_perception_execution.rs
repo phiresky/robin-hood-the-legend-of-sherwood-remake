@@ -8,10 +8,7 @@ impl EngineInner {
     ) {
         if let Some(target) = target {
             let target = self.expect_entity_id_for_index(target.get(), "AI focus target");
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("focus owner"));
+            let npc = self.ai_actor_mut(owner, "focus owner");
             crate::ai_vision::focus_entity(npc, target);
         } else {
             self.execute_ai_unfocus(owner);
@@ -19,10 +16,7 @@ impl EngineInner {
     }
 
     pub(in crate::engine) fn execute_ai_unfocus(&mut self, owner: EntityId) {
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("unfocus owner"));
+        let npc = self.ai_actor_mut(owner, "unfocus owner");
         crate::ai_vision::unfocus(npc);
     }
 
@@ -33,10 +27,7 @@ impl EngineInner {
         point: crate::ai::Position,
     ) {
         let point = self.position_to_point_3d(assets, point.sector, point.level, point.x, point.y);
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("focus-point owner"));
+        let npc = self.ai_actor_mut(owner, "focus-point owner");
         crate::ai_vision::focus_point(npc, crate::coordinates::GroundPoint::new(point.x, point.y));
     }
 
@@ -82,10 +73,7 @@ impl EngineInner {
                 return;
             }
         }
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("detectable owner"));
+        let npc = self.ai_actor_mut(owner, "detectable owner");
         let list = &mut npc.detectable_lists[kind as usize];
         let present = list.iter().any(|entry| entry.element == Some(target));
         if already_body && present {
@@ -101,10 +89,7 @@ impl EngineInner {
         target: EntityId,
         kind: DetectableType,
     ) {
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("detectable owner"));
+        let npc = self.ai_actor_mut(owner, "detectable owner");
         append_detectable(&mut npc.detectable_lists[kind as usize], target, kind, true);
     }
 
@@ -113,10 +98,7 @@ impl EngineInner {
         owner: EntityId,
         kind: DetectableType,
     ) {
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("detectable owner"));
+        let npc = self.ai_actor_mut(owner, "detectable owner");
         npc.detectable_lists[kind as usize].clear();
     }
 
@@ -126,17 +108,12 @@ impl EngineInner {
         target: EntityId,
         kind: DetectableType,
     ) {
-        self.world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("detectable owner"))
+        self.ai_actor_mut(owner, "detectable owner")
             .delete_detectable(target, kind);
     }
 
     pub(in crate::engine) fn execute_ai_blink_all_enemies(&mut self, owner: EntityId) {
-        let npc = self
-            .world
-            .entities
-            .expect_ai_actor_data_mut(owner, format_args!("blink owner"));
+        let npc = self.ai_actor_mut(owner, "blink owner");
         for detectable in &mut npc.detectable_lists[DetectableType::Enemy as usize] {
             detectable.seen_now = false;
             detectable.seen_last_frame = false;
@@ -149,27 +126,18 @@ impl EngineInner {
         target: Option<crate::ai::AiEntityHandle>,
     ) {
         self.execute_ai_delete_detectable_type(owner, DetectableType::MissedFriend);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("checkpoint owner"))
-            .checkpoint_charly = target;
+        self.ai_mut(owner, "checkpoint owner").checkpoint_charly = target;
         if let Some(target) = target {
             let target = self.expect_entity_id_for_index(target.get(), "checkpoint Charly");
             self.execute_ai_add_detectable(owner, target, DetectableType::MissedFriend);
         } else {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("checkpoint owner"))
-                .sorrow_level = 0;
+            self.ai_mut(owner, "checkpoint owner").sorrow_level = 0;
             self.execute_ai_delete_detectable_type(owner, DetectableType::MissedFriend);
         }
     }
 
     pub(in crate::engine) fn execute_ai_break_macro(&mut self, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("macro owner"));
+        let ai = self.ai_mut(owner, "macro owner");
         ai.macro_in_progress = false;
         ai.macro_timer_is_running = false;
         self.execute_ai_set_checkpoint_charly(owner, None);
@@ -189,25 +157,16 @@ mod tests {
         let first = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let second = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(first.index())));
-        let list = &engine
-            .world
-            .entities
-            .expect_ai_actor_data(owner, format_args!("checkpoint test"))
-            .detectable_lists[DetectableType::MissedFriend as usize];
+        let list = &engine.ai_actor(owner, "checkpoint test").detectable_lists
+            [DetectableType::MissedFriend as usize];
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].element, Some(first));
         engine.execute_ai_set_checkpoint_charly(owner, Some(AiEntityHandle::new(second.index())));
-        let list = &engine
-            .world
-            .entities
-            .expect_ai_actor_data(owner, format_args!("checkpoint test"))
-            .detectable_lists[DetectableType::MissedFriend as usize];
+        let list = &engine.ai_actor(owner, "checkpoint test").detectable_lists
+            [DetectableType::MissedFriend as usize];
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].element, Some(second));
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("checkpoint test"));
+        let ai = engine.ai_mut(owner, "checkpoint test");
         ai.sorrow_level = 15;
         ai.macro_command = vec![10, 20, 30, 40, 50];
         ai.macro_command_offset = 3;
@@ -215,10 +174,7 @@ mod tests {
         ai.macro_in_progress = true;
         ai.macro_timer_is_running = true;
         engine.execute_ai_break_macro(owner);
-        let ai = engine
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("checkpoint test"));
+        let ai = engine.ai(owner, "checkpoint test");
         assert_eq!(ai.sorrow_level, 0);
         assert_eq!(ai.checkpoint_charly, None);
         assert!(!ai.macro_in_progress);
@@ -243,10 +199,7 @@ mod tests {
         let target = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         engine.execute_ai_focus(owner, Some(AiEntityHandle::new(target.index())));
         engine.execute_ai_unfocus(owner);
-        let npc = engine
-            .world
-            .entities
-            .expect_ai_actor_data(owner, format_args!("focus test"));
+        let npc = engine.ai_actor(owner, "focus test");
         assert_eq!(npc.follow_target, Some(target));
         assert_eq!(npc.eye_status, crate::element::EyeStatus::LookForward);
     }

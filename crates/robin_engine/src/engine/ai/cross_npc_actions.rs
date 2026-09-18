@@ -33,17 +33,13 @@ impl EngineInner {
         chief: EntityId,
     ) {
         let member_count = self
-            .world
-            .entities
-            .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
+            .ai(chief, "RemoveAllSubordinates chief")
             .theoretical_patrol
             .len();
 
         for index in 0..member_count {
             let member = *self
-                .world
-                .entities
-                .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
+                .ai(chief, "RemoveAllSubordinates chief")
                 .theoretical_patrol
                 .get(index)
                 .expect("RemoveAllSubordinates callback shortened the captured patrol prefix");

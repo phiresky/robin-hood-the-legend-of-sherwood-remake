@@ -187,15 +187,11 @@ mod tests {
 
 impl EngineInner {
     fn money_ai(&self, owner: EntityId) -> &EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai(owner, format_args!("money-fight owner"))
+        self.enemy_ai(owner, "money-fight owner")
     }
 
     fn money_ai_mut(&mut self, owner: EntityId) -> &mut EnemyAi {
-        self.world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("money-fight owner"))
+        self.enemy_ai_mut(owner, "money-fight owner")
     }
 
     fn money_camp_soldier(&self, camp: Camp, index: usize) -> EntityId {

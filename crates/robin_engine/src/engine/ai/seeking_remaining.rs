@@ -15,22 +15,12 @@ impl EngineInner {
     ) -> Option<bool> {
         use StimulusType::*;
         use Substate::*;
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("search callback substate"))
-            .current_substate;
+        let substate = self.ai(owner, "search callback substate").current_substate;
         match (substate, stimulus.stimulus_type) {
             (FleeingRunForArrowReserves, EventReachPoint) => {
-                self.world
-                    .entities
-                    .expect_ai_actor_data_mut(owner, format_args!("arrow reserve refill"))
+                self.ai_actor_mut(owner, "arrow reserve refill")
                     .number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("arrow reserve search"))
-                    .seek_position;
+                let position = self.ai(owner, "arrow reserve search").seek_position;
                 self.execute_ai_seek_area(
                     sim,
                     assets,
@@ -52,26 +42,16 @@ impl EngineInner {
                     },
                 );
                 self.duty_set_state(sim, assets, owner, AiState::Seeking, SeekingArrow);
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("arrow reaction destination"))
-                    .seek_position;
+                let position = self.ai(owner, "arrow reaction destination").seek_position;
                 self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("arrow reaction broadcast"))
-                    .seek_position;
+                let position = self.ai(owner, "arrow reaction broadcast").seek_position;
                 self.execute_ai_look_there(sim, assets, owner, position, 100);
                 self.remaining_search_timer(owner, 200);
             }
             (SeekingArrow, EventTimer | EventReachPoint) => {
                 let mut flags = SeekFlags::LOCATION_FIRST | SeekFlags::WALKING;
                 if self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("arrow search rank"))
+                    .enemy_ai(owner, "arrow search rank")
                     .get_rank(&assets.profile_manager)
                     == ProfileRank::Soldier
                 {
@@ -98,11 +78,7 @@ impl EngineInner {
                 },
             ),
             (SeekingArrowJustWatching, EventMyTalk1) => {
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("arrow report position"))
-                    .seek_position;
+                let position = self.ai(owner, "arrow report position").seek_position;
                 if !self.execute_ai_alert_soldiers(
                     sim,
                     assets,
@@ -115,19 +91,11 @@ impl EngineInner {
             }
             (SeekingCombatAlertReactiontime, EventTimer) => {
                 self.duty_set_state(sim, assets, owner, AiState::Seeking, SeekingCombatAlert);
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("combat alert position"))
-                    .seek_position;
+                let position = self.ai(owner, "combat alert position").seek_position;
                 self.duty_go_near(sim, assets, owner, position, 50, GotoFlags::RUN);
             }
             (SeekingCombatAlert, EventReachPoint) => {
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("combat alert search"))
-                    .seek_position;
+                let position = self.ai(owner, "combat alert search").seek_position;
                 self.execute_ai_seek_area(
                     sim,
                     assets,
@@ -139,11 +107,7 @@ impl EngineInner {
                 );
             }
             (SeekingKnightWatchingTowerGuard, EventTimer) => {
-                let position = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("tower guard search"))
-                    .seek_position;
+                let position = self.ai(owner, "tower guard search").seek_position;
                 self.execute_ai_seek_area(
                     sim,
                     assets,
@@ -201,9 +165,7 @@ impl EngineInner {
             }
             (MenacingPcInComa, EventTimer) => {
                 let target = self
-                    .world
-                    .entities
-                    .expect_ai_controller(owner, format_args!("menacing target"))
+                    .ai(owner, "menacing target")
                     .primary_target
                     .expect("menacing requires target");
                 let target = self.expect_human_id_for_ai_handle(target.get(), "menacing target");
@@ -245,9 +207,7 @@ impl EngineInner {
 
     fn remaining_search_timer(&mut self, owner: EntityId, frames: u32) {
         let frame = self.control.frame_counter;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("search timer"))
+        self.ai_mut(owner, "search timer")
             .launch_timer(frames, frame);
     }
 }

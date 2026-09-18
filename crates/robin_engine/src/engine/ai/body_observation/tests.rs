@@ -73,11 +73,7 @@ fn informed_officer_scan_checks_visibility_before_lock_and_body_list() {
         (540.0, 500.0),
     ]);
     let (owner, body) = (ids[0], ids[1]);
-    engine
-        .world
-        .entities
-        .expect_ai_actor_data_mut(owner, format_args!("advice viewer"))
-        .view_radius = 400;
+    engine.ai_actor_mut(owner, "advice viewer").view_radius = 400;
     for &officer in &ids[2..] {
         crate::engine::test_support::actors::edit_enemy_profile(
             &mut assets,
@@ -87,9 +83,7 @@ fn informed_officer_scan_checks_visibility_before_lock_and_body_list() {
     }
     engine.seek_enemy_mut(ids[2]).base.script_locked = true;
     engine
-        .world
-        .entities
-        .expect_ai_actor_data_mut(ids[3], format_args!("uninformed officer"))
+        .ai_actor_mut(ids[3], "uninformed officer")
         .detectable_lists[crate::element::DetectableType::Body as usize]
         .push(crate::element::Detectable {
             element: Some(body),

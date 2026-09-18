@@ -11,11 +11,7 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        let substate = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("stop owner checkpoint"))
-            .current_substate;
+        let substate = self.ai(owner, "stop owner checkpoint").current_substate;
         if matches!(
             substate,
             Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
@@ -25,10 +21,7 @@ impl EngineInner {
 
         self.halt_actor(sim, assets, owner);
 
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("stop owner after halt"));
+        let ai = self.ai_mut(owner, "stop owner after halt");
         if !matches!(
             ai.current_substate,
             Substate::DefaultLookingForCharly

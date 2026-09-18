@@ -2,16 +2,9 @@
 
 use super::*;
 use crate::ai::{AiEntityHandle, AiLockFlags, AiState, DutyFlags, GotoFlags, Stimulus, Substate};
-use crate::ai_enemy::{EnemyAi, SeekFlags, task_priority};
+use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::element::Human as _;
 use crate::profiles::ProfileRank;
-
-struct DutyExecution<'a> {
-    engine: &'a mut EngineInner,
-    sim: &'a crate::sim_rng::SimulationContext,
-    assets: &'a LevelAssets,
-    owner: EntityId,
-}
 
 impl EngineInner {
     pub(in crate::engine) fn execute_specialized_ai_duty(
@@ -28,13 +21,7 @@ impl EngineInner {
             .enemy_ai()
             .is_some()
         {
-            DutyExecution {
-                engine: self,
-                sim,
-                assets,
-                owner,
-            }
-            .enemy_duty(flags);
+            AiOwnerCtx::new(self, sim, assets, owner).enemy_duty(flags);
             return;
         }
         self.world
@@ -44,10 +31,7 @@ impl EngineInner {
             .expect("duty owner has neither enemy nor friendly AI")
             .fleeing_seen_enemy_counter = 0;
         if self.is_very_very_busy(owner) {
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("busy duty owner"));
+            let ai = self.ai_mut(owner, "busy duty owner");
             ai.non_script_lock(AiLockFlags::BUSY);
             ai.was_busy = true;
             self.execute_ai_callback(
@@ -62,34 +46,10 @@ impl EngineInner {
     }
 }
 
-impl DutyExecution<'_> {
-    fn enemy(&self) -> &EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai(self.owner, format_args!("duty owner"))
-    }
-
-    fn enemy_mut(&mut self) -> &mut EnemyAi {
-        self.engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(self.owner, format_args!("duty owner"))
-    }
-
-    fn state(&mut self, state: AiState, substate: Substate) {
-        self.engine
-            .duty_set_state(self.sim, self.assets, self.owner, state, substate);
-    }
-
+impl AiOwnerCtx<'_> {
     fn go_near(&mut self, position: crate::ai::Position, distance: i32, flags: GotoFlags) {
         self.engine
             .duty_go_near(self.sim, self.assets, self.owner, position, distance, flags);
-    }
-
-    fn timer(&mut self, frames: u32) {
-        let frame = self.engine.control.frame_counter;
-        self.enemy_mut().base.launch_timer(frames, frame);
     }
 
     fn object_id(&self, handle: u32) -> EntityId {
@@ -297,11 +257,7 @@ impl DutyExecution<'_> {
 
     fn angry_officer_near(&self, position: crate::ai::Position) -> bool {
         self.camp_soldiers().any(|id| {
-            let other = self
-                .engine
-                .world
-                .entities
-                .expect_ai_controller(id, format_args!("money officer"));
+            let other = self.engine.ai(id, "money officer");
             if matches!(
                 other.current_substate,
                 Substate::WonderingOfficerSeeingBrawl

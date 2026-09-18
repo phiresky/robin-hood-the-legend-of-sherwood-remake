@@ -276,10 +276,7 @@ impl EngineInner {
         stimulus: &Stimulus,
     ) -> Option<bool> {
         let event = stimulus.stimulus_type;
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("common fleeing owner"));
+        let ai = self.ai(owner, "common fleeing owner");
         match ai.current_substate {
             Substate::FleeingPanic => {
                 let no_runs = ai.lasting_panic_runs == 0;
@@ -322,10 +319,7 @@ impl EngineInner {
                         AlertLevel::Yellow,
                         crate::ai::AlertFlags::empty(),
                     );
-                    let ai = self
-                        .world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("hide alert"));
+                    let ai = self.ai_mut(owner, "hide alert");
                     ai.clear_emoticon();
                     let center = (ai.panic_center_x, ai.panic_center_y);
                     let position = self.live_ai_position(owner);
@@ -334,10 +328,7 @@ impl EngineInner {
                         center.1 - position.y,
                     ) as u16;
                     self.duty_face_direction(sim, assets, owner, direction);
-                    let actor = self
-                        .world
-                        .entities
-                        .expect_ai_actor_data_mut(owner, format_args!("hide blinks"));
+                    let actor = self.ai_actor_mut(owner, "hide blinks");
                     for enemy in
                         &mut actor.detectable_lists[crate::element::DetectableType::Enemy as usize]
                     {
@@ -382,11 +373,7 @@ impl EngineInner {
             stimulus,
             StimulusType::EventReachPoint | StimulusType::EventCouldntReachPoint
         ));
-        let runs = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("panic runs"))
-            .lasting_panic_runs;
+        let runs = self.ai(owner, "panic runs").lasting_panic_runs;
         if runs == 0 {
             self.duty_set_state(
                 sim,
@@ -395,10 +382,7 @@ impl EngineInner {
                 AiState::Fleeing,
                 Substate::FleeingHiding,
             );
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("panic facing"));
+            let ai = self.ai(owner, "panic facing");
             let direction = if ai.directed_panic {
                 let position = self.live_ai_position(owner);
                 crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -409,10 +393,7 @@ impl EngineInner {
                 crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u16
             };
             self.duty_face_direction(sim, assets, owner, direction);
-            let ai = self
-                .world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("panic hiding"));
+            let ai = self.ai_mut(owner, "panic hiding");
             ai.clear_emoticon();
             self.execute_ai_set_alert_status(
                 assets,
@@ -420,10 +401,7 @@ impl EngineInner {
                 AlertLevel::Yellow,
                 crate::ai::AlertFlags::empty(),
             );
-            let npc = self
-                .world
-                .entities
-                .expect_ai_actor_data_mut(owner, format_args!("panic blink"));
+            let npc = self.ai_actor_mut(owner, "panic blink");
             for detectable in
                 &mut npc.detectable_lists[crate::element::DetectableType::Enemy as usize]
             {
@@ -437,28 +415,17 @@ impl EngineInner {
                     0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                 );
             let frame = self.control.frame_counter;
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("panic hiding timer"))
+            self.ai_mut(owner, "panic hiding timer")
                 .launch_timer(frames, frame);
             return;
         }
         if stimulus == StimulusType::EventCouldntReachPoint {
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("panic retry"))
-                .first_try = false;
+            self.ai_mut(owner, "panic retry").first_try = false;
             self.execute_ai_panic_fallback(sim, assets, owner);
             return;
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("panic segment count"))
-            .lasting_panic_runs = runs.wrapping_sub(1);
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("panic direction"));
+        self.ai_mut(owner, "panic segment count").lasting_panic_runs = runs.wrapping_sub(1);
+        let ai = self.ai(owner, "panic direction");
         let sector = if !ai.directed_panic {
             crate::sim_rng::u32(sim, crate::sim_rng::RngSite::AiPanic, 0..16) as u8
         } else {
@@ -489,10 +456,7 @@ impl EngineInner {
                 crate::sim_rng::RngSite::AiPanic,
                 0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
             )) as f32;
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("panic first try"))
-            .first_try = true;
+        self.ai_mut(owner, "panic first try").first_try = true;
         let position = self.live_ai_position(owner);
         let destination = Position {
             x: position.x + vx * distance,
@@ -500,13 +464,7 @@ impl EngineInner {
             ..position
         };
         let mut flags = GotoFlags::RUN | GotoFlags::STRAIGHT | GotoFlags::ASK_OBSTACLE;
-        if self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("panic movement flags"))
-            .lasting_panic_runs
-            > 0
-        {
+        if self.ai(owner, "panic movement flags").lasting_panic_runs > 0 {
             flags |= GotoFlags::DONT_STOP;
         }
         self.duty_go_to(sim, assets, owner, destination, flags);
@@ -525,20 +483,12 @@ impl EngineInner {
                 .element_data(),
         );
         let anchor = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("panic fallback owner"))
+            .ai(owner, "panic fallback owner")
             .nearest_seek_point_to_flee(&self.ai.global.seek_points, position, sector);
         if let Some(index) = anchor {
             let destination = self.ai.global.seek_points[index].position;
             let mut flags = GotoFlags::RUN;
-            if self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("panic fallback runs"))
-                .lasting_panic_runs
-                > 0
-            {
+            if self.ai(owner, "panic fallback runs").lasting_panic_runs > 0 {
                 flags |= GotoFlags::DONT_STOP;
             }
             self.duty_go_to(sim, assets, owner, destination, flags);
@@ -550,10 +500,7 @@ impl EngineInner {
                 &Stimulus::new(StimulusType::EventReachPoint),
             );
         }
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("panic fallback result"));
+        let ai = self.ai_mut(owner, "panic fallback result");
         if ai.couldnt_reachpoint {
             ai.couldnt_reachpoint = false;
             ai.lasting_panic_runs = ai.lasting_panic_runs.wrapping_sub(1);

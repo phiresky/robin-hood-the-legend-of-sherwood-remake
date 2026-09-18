@@ -26,12 +26,7 @@ mod tests {
             Decision::TowerGuardObserve,
         ] {
             let (mut engine, assets, owner, _) = fixture(false);
-            engine
-                .world
-                .entities
-                .expect_enemy_ai_mut(owner, format_args!("empty battle"))
-                .list_them
-                .clear();
+            engine.enemy_ai_mut(owner, "empty battle").list_them.clear();
             let result = engine.execute_live_battle_decision(
                 &crate::sim_rng::test_context(),
                 &assets,
@@ -42,10 +37,7 @@ mod tests {
                 false,
             );
             assert_eq!(result, Some(Decision::Reserve));
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("reserve fallback"));
+            let ai = engine.enemy_ai(owner, "reserve fallback");
             assert_eq!(ai.base.primary_target, None);
             assert!(!ai.base.friends_are_alerted);
             assert_eq!(ai.base.current_substate, Substate::AttackingReserve);
@@ -57,10 +49,7 @@ mod tests {
     #[test]
     fn forced_tower_decision_retains_force_and_reads_current_exact_target_position() {
         let (mut engine, assets, owner, target) = fixture(false);
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("forced tower"));
+        let ai = engine.enemy_ai_mut(owner, "forced tower");
         ai.base.owner_entity_id = Some(owner);
         ai.tower_guard = true;
         ai.forced_next_battle_decision = Decision::TowerGuardAlert;
@@ -74,10 +63,7 @@ mod tests {
                 .set_position_map(MapPoint::new(x, y));
             let expected = engine.live_ai_position(target);
             engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
-            let ai = engine
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("tower outcome"));
+            let ai = engine.enemy_ai(owner, "tower outcome");
             assert_eq!(ai.base.seek_position, expected);
             assert_eq!(
                 ai.base.primary_target,
@@ -95,9 +81,7 @@ mod tests {
 
 impl EngineInner {
     pub(super) fn battle_primary(&self, owner: EntityId) -> Option<EntityId> {
-        self.world
-            .entities
-            .expect_ai_controller(owner, format_args!("battle primary"))
+        self.ai(owner, "battle primary")
             .primary_target
             .map(|target| self.expect_human_id_for_ai_handle(target.get(), "battle primary"))
     }
@@ -108,20 +92,14 @@ impl EngineInner {
         flags: PrimaryTargetFlags,
     ) -> Option<EntityId> {
         let target = self.select_live_ai_primary_target(owner, flags);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("battle target selection"))
-            .primary_target = target;
+        self.ai_mut(owner, "battle target selection").primary_target = target;
         target.map(|target| {
             self.expect_human_id_for_ai_handle(target.get(), "selected battle target")
         })
     }
 
     fn focus_battle_primary(&mut self, owner: EntityId) {
-        let ai = self
-            .world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("battle focus"));
+        let ai = self.ai_mut(owner, "battle focus");
         let target = ai.primary_target;
         self.execute_ai_focus(owner, target);
     }
@@ -199,10 +177,7 @@ impl EngineInner {
     }
 
     fn battle_should_follow_lost_enemy(&self, owner: EntityId) -> bool {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("battle pursuit policy"));
+        let ai = self.enemy_ai(owner, "battle pursuit policy");
         let entity = self.expect_entity(owner, "battle pursuit owner");
         ai.base.blood_alcohol as i32 <= crate::parameters_ai::AI_DEBILITY_ALCOHOL_LIMIT
             && (!(entity.is_active()
@@ -217,10 +192,7 @@ impl EngineInner {
         owner: EntityId,
         unconscious: Vec<HumanHandle>,
     ) {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("battle without enemies"));
+        let ai = self.enemy_ai(owner, "battle without enemies");
         if ai.combat_trainer {
             self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
         } else if ai.my_shooting_point.is_some() {
@@ -262,10 +234,7 @@ impl EngineInner {
         } else if let Some(&target) = ai.list_them.first() {
             let target = self.expect_human_id_for_ai_handle(target, "ally's visible enemy");
             let center = self.live_ai_position(target);
-            self.world
-                .entities
-                .expect_ai_controller_mut(owner, format_args!("ally's enemy search"))
-                .seek_position = center;
+            self.ai_mut(owner, "ally's enemy search").seek_position = center;
             self.execute_ai_seek_area(
                 sim,
                 assets,
@@ -294,10 +263,7 @@ impl EngineInner {
                     flags: 0,
                 },
             );
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("missed battle forecast"));
+            let ai = self.enemy_ai(owner, "missed battle forecast");
             if let Some(target) = ai.missed_pc {
                 let target = self
                     .expect_human_id_for_ai_handle(target.get(), "missed battle forecast target");
@@ -318,17 +284,11 @@ impl EngineInner {
                     &self.world.fast_grid.level.sector_number_map,
                 )
                 .resolve_retaining_direction(sim, ai.pc_gone_away_in_this_direction);
-                let ai = self
-                    .world
-                    .entities
-                    .expect_enemy_ai_mut(owner, format_args!("missed battle forecast result"));
+                let ai = self.enemy_ai_mut(owner, "missed battle forecast result");
                 ai.base.seek_position = forecast.position;
                 ai.pc_gone_away_in_this_direction = forecast.direction;
             }
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("missed battle search"));
+            let ai = self.enemy_ai(owner, "missed battle search");
             let (center, direction) = (ai.base.seek_position, ai.pc_gone_away_in_this_direction);
             self.execute_ai_seek_area(
                 sim,
@@ -357,9 +317,7 @@ impl EngineInner {
         inputs: BattleDecisionInputs,
     ) -> (Decision, HumanHandle) {
         let forced = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("forced battle decision"))
+            .enemy_ai(owner, "forced battle decision")
             .forced_next_battle_decision;
         if forced != Decision::None {
             assert!(
@@ -383,10 +341,7 @@ impl EngineInner {
             return (forced, 0);
         }
         let predecision = self.execute_ai_make_battle_predecisions(sim, assets, owner);
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("battle decision tree"));
+        let ai = self.enemy_ai(owner, "battle decision tree");
         if ai.combat_trainer {
             return (Decision::Observe, 0);
         }
@@ -432,10 +387,7 @@ impl EngineInner {
             if self.live_archer_is_too_near(assets, owner, ai.base.primary_target) {
                 return (Decision::ArcherStepBack, 0);
             }
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("archer cover decision"));
+            let ai = self.enemy_ai(owner, "archer cover decision");
             if let Some(bearer) = ai.shield_bearer_before_me {
                 let bearer_id =
                     self.expect_human_id_for_ai_handle(bearer.get(), "archer shield bearer");
@@ -503,9 +455,7 @@ impl EngineInner {
             && !inputs.soldiers_lower_pride
         {
             let courage = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("observe courage"))
+                .enemy_ai(owner, "observe courage")
                 .get_courage(&assets.profile_manager);
             let enemies = inputs.num_enemies_i_can_see as f32;
             if f32::from(inputs.friends_nearer_to_enemy)
@@ -534,10 +484,7 @@ impl EngineInner {
                         self.select_battle_primary(owner, PrimaryTargetFlags::UNOCCUPIED_PREFERRED)
                     {
                         self.execute_ai_attack_enemy(sim, assets, owner, target.index());
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("battle attack result"));
+                        let ai = self.ai_mut(owner, "battle attack result");
                         if ai.couldnt_reachpoint {
                             ai.couldnt_reachpoint = false;
                             ControlFlow::Continue(Decision::Observe)
@@ -630,10 +577,7 @@ impl EngineInner {
                     if let Some(target) =
                         self.select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED)
                     {
-                        self.world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("battle alert latch"))
-                            .friends_are_alerted = true;
+                        self.ai_mut(owner, "battle alert latch").friends_are_alerted = true;
                         let center = self.live_ai_position(target);
                         if self.execute_ai_command_soldiers_to_attack(sim, assets, owner, center) {
                             self.execute_ai_speech(
@@ -657,9 +601,7 @@ impl EngineInner {
                     let target = self
                         .select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED)
                         .expect("run-and-alert requires target");
-                    self.world
-                        .entities
-                        .expect_ai_controller_mut(owner, format_args!("battle run alert latch"))
+                    self.ai_mut(owner, "battle run alert latch")
                         .friends_are_alerted = true;
                     let center = self.live_ai_position(target);
                     if self.execute_ai_run_and_alert_soldiers(sim, assets, owner, center) {
@@ -674,10 +616,7 @@ impl EngineInner {
                         self.select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED)
                     {
                         let position = self.live_ai_position(target);
-                        let ai = self
-                            .world
-                            .entities
-                            .expect_ai_controller_mut(owner, format_args!("tower target"));
+                        let ai = self.ai_mut(owner, "tower target");
                         ai.friends_are_alerted = true;
                         ai.seek_position = position;
                         if decision == Decision::TowerGuardAlert {
@@ -688,11 +627,7 @@ impl EngineInner {
                                 AiState::Attacking,
                                 Substate::AttackingTowerGuardAlert,
                             );
-                            let position = self
-                                .world
-                                .entities
-                                .expect_ai_controller(owner, format_args!("tower point"))
-                                .seek_position;
+                            let position = self.ai(owner, "tower point").seek_position;
                             self.duty_point_to(sim, assets, owner, position);
                         } else {
                             self.duty_set_state(
@@ -773,9 +708,7 @@ impl EngineInner {
         alerting_near: bool,
     ) -> ControlFlow<bool, Decision> {
         self.select_battle_primary(owner, PrimaryTargetFlags::VIPS_ALLOWED);
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("look for help latch"))
+        self.ai_mut(owner, "look for help latch")
             .friends_are_alerted = true;
         if alerting_near || !self.execute_ai_alert_officer(sim, assets, owner) {
             ControlFlow::Continue(Decision::Cassos)
@@ -796,10 +729,7 @@ impl EngineInner {
             PrimaryTargetFlags::UNOCCUPIED_PREFERRED | PrimaryTargetFlags::VIPS_ALLOWED,
         );
         self.focus_battle_primary(owner);
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("battle observe"));
+        let ai = self.enemy_ai(owner, "battle observe");
         let trainer = ai.combat_trainer;
         if !trainer {
             let target = self.battle_primary(owner).expect("observe requires target");
@@ -818,9 +748,7 @@ impl EngineInner {
                 GotoFlags::empty(),
             );
         }
-        self.world
-            .entities
-            .expect_ai_controller_mut(owner, format_args!("observe emoticon"))
+        self.ai_mut(owner, "observe emoticon")
             .set_emoticon(EmoticonType::XMark);
         self.battle_state_timer(
             sim,
@@ -830,13 +758,7 @@ impl EngineInner {
             Substate::AttackingApproachToObserve,
             if trainer { 1 } else { 50 },
         );
-        if !trainer
-            && self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("observe route result"))
-                .couldnt_reachpoint
-        {
+        if !trainer && self.ai(owner, "observe route result").couldnt_reachpoint {
             let target = self.battle_primary(owner).expect("observe roof target");
             let wait = precompute_avenger_on_roof_wait_position(
                 &self.world.entities,
@@ -849,9 +771,7 @@ impl EngineInner {
                 &|sector| self.get_sector_lift_type(sector),
             );
             if let Some(wait) = wait {
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("observe roof route reset"))
+                self.ai_mut(owner, "observe roof route reset")
                     .couldnt_reachpoint = false;
                 self.duty_set_state(
                     sim,
@@ -865,9 +785,7 @@ impl EngineInner {
                     .battle_primary(owner)
                     .expect("observe roof current target");
                 let position = self.live_ai_position(target);
-                self.world
-                    .entities
-                    .expect_ai_controller_mut(owner, format_args!("observe roof seek position"))
+                self.ai_mut(owner, "observe roof seek position")
                     .seek_position = position;
                 return false;
             }

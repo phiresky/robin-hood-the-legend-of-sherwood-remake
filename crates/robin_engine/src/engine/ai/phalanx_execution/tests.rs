@@ -70,10 +70,7 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
             engine.live_ai_position(target).map_point(),
             MapPoint::new(1158.0, 1627.0)
         );
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("phalanx shield fixture"));
+        let ai = engine.enemy_ai_mut(owner, "phalanx shield fixture");
         ai.base.current_state = crate::ai::AiState::Attacking;
         ai.base.current_substate = if protecting {
             Substate::AttackingProtectingWithShield
@@ -151,23 +148,17 @@ fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
     let mut assets = LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(left, format_args!("test left link"))
+        .enemy_ai_mut(left, "test left link")
         .right_combat_neighbour = Some(AiEntityHandle::new(right.index()));
     engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(right, format_args!("test right link"))
+        .enemy_ai_mut(right, "test right link")
         .left_combat_neighbour = Some(AiEntityHandle::new(left.index()));
     (engine, assets, left, right, target)
 }
 
 fn retain(engine: &mut EngineInner, member: EntityId, target: EntityId) {
     engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(member, format_args!("test retained target"))
+        .enemy_ai_mut(member, "test retained target")
         .list_them
         .push(target.index());
 }
@@ -189,11 +180,7 @@ fn detect(engine: &mut EngineInner, member: EntityId, target: EntityId) {
 }
 
 fn targets(engine: &EngineInner, member: EntityId) -> &[u32] {
-    &engine
-        .world
-        .entities
-        .expect_enemy_ai(member, format_args!("test formation targets"))
-        .list_them
+    &engine.enemy_ai(member, "test formation targets").list_them
 }
 
 #[test]
@@ -207,19 +194,13 @@ fn attack_gate_uses_literal_body_distance_including_elevation() {
         .element_data_mut()
         .set_position(crate::coordinates::WorldPoint3D::new(90.0, 80.0, 80.0));
     retain(&mut engine, right, target);
-    let ai = engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(right, format_args!("test formation state"));
+    let ai = engine.enemy_ai_mut(right, "test formation state");
     ai.base.current_state = crate::ai::AiState::Attacking;
     ai.base.current_substate = Substate::AttackingPhalanx;
     assert!(engine.live_ai_position(target).x < archer::PHALANX_ATTACK_DISTANCE as f32);
     engine.enter_ai_think_frame(right);
     assert!(!engine.reconsider_live_phalanx(&crate::sim_rng::test_context(), &assets, right));
-    let ai = engine
-        .world
-        .entities
-        .expect_enemy_ai(right, format_args!("test formation retained"));
+    let ai = engine.enemy_ai(right, "test formation retained");
     assert_eq!(ai.base.current_substate, Substate::AttackingPhalanx);
     assert_eq!(
         ai.left_combat_neighbour,
@@ -427,17 +408,12 @@ fn rebuilding_live_lists_overwrites_prior_member_target_assignment() {
         .set_position_map(MapPoint::new(200.0, 0.0));
     retain(&mut engine, left, target);
     engine
-        .world
-        .entities
-        .expect_enemy_ai_mut(right, format_args!("test old member target"))
+        .enemy_ai_mut(right, "test old member target")
         .base
         .primary_target = Some(AiEntityHandle::new(left.index()));
     engine.reinitialize_live_phalanx_enemies(&assets, left);
     for member in [left, right] {
-        let ai = engine
-            .world
-            .entities
-            .expect_enemy_ai(member, format_args!("test assigned formation list"));
+        let ai = engine.enemy_ai(member, "test assigned formation list");
         assert_eq!(ai.list_them, vec![target.index()]);
         assert_eq!(
             ai.base.primary_target,

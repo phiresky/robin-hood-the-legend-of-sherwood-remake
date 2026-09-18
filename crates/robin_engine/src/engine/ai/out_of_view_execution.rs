@@ -17,10 +17,7 @@ impl EngineInner {
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("visibility loss"));
+        let ai = self.enemy_ai(owner, "visibility loss");
         if ai.base.current_state != AiState::Attacking {
             return false;
         }
@@ -90,9 +87,7 @@ impl EngineInner {
             self.reinitialize_live_ai_enemies(owner);
             if substate == Substate::AttackingWaitForAvengerOnRoof {
                 if self
-                    .world
-                    .entities
-                    .expect_enemy_ai(owner, format_args!("roof visibility loss"))
+                    .enemy_ai(owner, "roof visibility loss")
                     .list_them
                     .is_empty()
                 {
@@ -145,9 +140,7 @@ impl EngineInner {
         )
         .expect("visibility loss forecast requires an actor");
         let direction = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("lost direction"))
+            .enemy_ai(owner, "lost direction")
             .pc_gone_away_in_this_direction;
         let forecast = crate::ai::prepare_forecast_destination_for_ia(
             &input,
@@ -156,19 +149,14 @@ impl EngineInner {
             &self.world.fast_grid.level.sector_number_map,
         )
         .resolve_retaining_direction(sim, direction);
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai_mut(owner, format_args!("visibility loss forecast"));
+        let ai = self.enemy_ai_mut(owner, "visibility loss forecast");
         ai.base.seek_position = forecast.position;
         ai.pc_gone_away_in_this_direction = forecast.direction;
         ai.missed_pc = Some(AiEntityHandle::new(target.index()));
         ai.pc_missed = true;
         self.reinitialize_live_ai_enemies(owner);
         if !self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("visibility loss enemies"))
+            .enemy_ai(owner, "visibility loss enemies")
             .list_them
             .is_empty()
         {
@@ -194,10 +182,7 @@ impl EngineInner {
     ) {
         self.execute_ai_unfocus(owner);
 
-        let ai = self
-            .world
-            .entities
-            .expect_enemy_ai(owner, format_args!("lost pursuit policy"));
+        let ai = self.enemy_ai(owner, "lost pursuit policy");
         let missed = self.expect_human_id_for_ai_handle(
             ai.missed_pc.expect("lost opponent").get(),
             "lost opponent",
@@ -218,10 +203,7 @@ impl EngineInner {
                     flags: 0,
                 },
             );
-            let ai = self
-                .world
-                .entities
-                .expect_enemy_ai(owner, format_args!("lost target search"));
+            let ai = self.enemy_ai(owner, "lost target search");
             let center = ai.base.seek_position;
             let direction = ai.pc_gone_away_in_this_direction;
             self.execute_ai_seek_area(

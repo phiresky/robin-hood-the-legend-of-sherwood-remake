@@ -509,13 +509,7 @@ impl EngineInner {
             return;
         }
         let friend = self.money_friend(owner);
-        if self
-            .world
-            .entities
-            .expect_ai_controller(friend, format_args!("brawl partner state"))
-            .current_state
-            == AiState::Sleeping
-        {
+        if self.ai(friend, "brawl partner state").current_state == AiState::Sleeping {
             self.seek_enemy_mut(owner)
                 .money_fight_enemies
                 .retain(|&handle| handle != friend.index());

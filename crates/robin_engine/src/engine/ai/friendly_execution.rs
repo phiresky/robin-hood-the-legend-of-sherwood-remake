@@ -27,11 +27,7 @@ impl EngineInner {
             return Some(false);
         }
         if event == StimulusType::EventHear {
-            let state = self
-                .world
-                .entities
-                .expect_ai_controller(owner, format_args!("civilian hearing"))
-                .current_state;
+            let state = self.ai(owner, "civilian hearing").current_state;
             if matches!(
                 state,
                 AiState::Sleeping | AiState::Default | AiState::Wondering | AiState::Seeking
@@ -74,16 +70,10 @@ impl EngineInner {
             Substate::DefaultPatrolEnrouteWaiting => {
                 if event == StimulusType::EventTimer {
                     let chief = self
-                        .world
-                        .entities
-                        .expect_ai_controller(owner, format_args!("waiting civilian"))
+                        .ai(owner, "waiting civilian")
                         .patrol_chief
                         .expect("waiting civilian requires a patrol chief");
-                    let state = self
-                        .world
-                        .entities
-                        .expect_ai_controller(chief, format_args!("civilian patrol chief"))
-                        .current_state;
+                    let state = self.ai(chief, "civilian patrol chief").current_state;
                     if matches!(state, AiState::Default | AiState::Wondering) {
                         let frame = self.control.frame_counter;
                         self.reporting_civilian_mut(owner)
@@ -128,11 +118,7 @@ impl EngineInner {
             Substate::SeekingCivilianRunningToSoldier => {
                 if event == StimulusType::EventReachPoint {
                     let target = self.reporting_target(owner);
-                    let state = self
-                        .world
-                        .entities
-                        .expect_ai_controller(target, format_args!("civilian alert target"))
-                        .current_state;
+                    let state = self.ai(target, "civilian alert target").current_state;
                     if state == AiState::Default {
                         let position = self.live_ai_position(target);
                         let own_position = self.live_ai_position(owner);
@@ -161,11 +147,7 @@ impl EngineInner {
                     StimulusType::EventReachPoint | StimulusType::EventTimer
                 ) {
                     let target = self.reporting_target(owner);
-                    let waiting = self
-                        .world
-                        .entities
-                        .expect_ai_controller(target, format_args!("civilian waiting target"))
-                        .current_substate
+                    let waiting = self.ai(target, "civilian waiting target").current_substate
                         == Substate::SeekingWaitForAlertingCivilian;
                     if !waiting {
                         self.execute_ai_return_to_duty(
@@ -419,12 +401,7 @@ impl EngineInner {
                     true,
                 );
             }
-            match self
-                .world
-                .entities
-                .expect_ai_controller(target, format_args!("alert candidate"))
-                .current_state
-            {
+            match self.ai(target, "alert candidate").current_state {
                 AiState::Default => {
                     let source = self
                         .expect_entity(owner, "alert distance owner")
@@ -537,9 +514,7 @@ impl EngineInner {
 
     fn reporting_target(&self, owner: EntityId) -> EntityId {
         let handle = self
-            .world
-            .entities
-            .expect_ai_controller(owner, format_args!("reporting civilian"))
+            .ai(owner, "reporting civilian")
             .antagonist
             .expect("reporting civilian requires an antagonist")
             .get();
@@ -766,9 +741,7 @@ mod tests {
         let (mut engine, assets, owner, soldiers) = alert_fixture();
         for soldier in soldiers {
             engine
-                .world
-                .entities
-                .expect_ai_controller_mut(soldier, format_args!("locked route candidate"))
+                .ai_mut(soldier, "locked route candidate")
                 .script_locked = true;
         }
         let position = engine.live_ai_position(owner);
@@ -899,9 +872,7 @@ mod tests {
             Some(second)
         );
         engine
-            .world
-            .entities
-            .expect_ai_controller_mut(second, format_args!("locked alert candidate"))
+            .ai_mut(second, "locked alert candidate")
             .script_locked = true;
         assert_eq!(
             engine.select_civilian_alert_soldier(&assets, owner, false),
@@ -923,11 +894,7 @@ mod tests {
     #[test]
     fn alerted_friend_uses_current_activity_and_real_view_radius() {
         let (mut engine, assets, owner, [first, second]) = alert_fixture();
-        engine
-            .world
-            .entities
-            .expect_ai_controller_mut(second, format_args!("alerted friend"))
-            .current_state = AiState::Attacking;
+        engine.ai_mut(second, "alerted friend").current_state = AiState::Attacking;
         engine
             .world
             .entities
@@ -1118,9 +1085,7 @@ mod tests {
         let (mut engine, owner, soldier) =
             reporting_pair(Substate::SeekingCivilianRunningToSoldierSeen);
         engine
-            .world
-            .entities
-            .expect_ai_controller_mut(soldier, format_args!("test report listener"))
+            .ai_mut(soldier, "test report listener")
             .current_substate = Substate::SeekingWaitForAlertingCivilian;
         assert_eq!(
             engine.execute_friendly_callback(
