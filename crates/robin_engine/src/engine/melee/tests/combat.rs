@@ -3880,16 +3880,8 @@ fn enter_swordfight_los_uses_retained_raw_eye_points() {
     // retained world's exact position bytes for the LOS endpoint.
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let raw_initiator = WorldPoint3D {
-        x: 1108.7906,
-        y: 1767.0588,
-        z: 34.86987,
-    };
-    let raw_opponent = WorldPoint3D {
-        x: 1171.0991,
-        y: 1_784.021,
-        z: 18.865936,
-    };
+    let raw_initiator = WorldPoint3D::new(1108.7906, 1767.0588, 34.86987);
+    let raw_opponent = WorldPoint3D::new(1171.0991, 1_784.021, 18.865936);
     let initiator = engine.add_test_entity(make_pc(raw_initiator, None));
     let opponent = engine.add_test_entity(make_pc(raw_opponent, None));
     for (id, raw) in [(initiator, raw_initiator), (opponent, raw_opponent)] {

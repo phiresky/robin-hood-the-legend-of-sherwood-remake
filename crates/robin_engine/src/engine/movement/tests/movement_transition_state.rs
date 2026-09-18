@@ -270,12 +270,10 @@ mod suite {
         let lift_sector = SectorNumber::new(7);
 
         let mut opponent = Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
+            element: crate::engine::test_support::extra_engine_combat::test_element(
+                ElementKind::ActorPc,
+                true,
+            ),
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData::default(),
@@ -486,12 +484,10 @@ mod suite {
         // The actor's upright-walking arm before motion processing replaces
         // the trajectory cache for the new destination.
         let mut opponent = Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element.active = true;
-                initial_element
-            },
+            element: crate::engine::test_support::extra_engine_combat::test_element(
+                ElementKind::ActorPc,
+                true,
+            ),
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData::default(),

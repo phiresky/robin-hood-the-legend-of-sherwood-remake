@@ -945,22 +945,8 @@ fn lateral_seed_uses_ground_direction_instead_of_map_direction() {
     // space, which moves the same vector into sector 11.
     let attacker = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
     let victim = engine.add_test_entity(make_soldier(WorldPoint3D::default(), None));
-    engine.place(
-        attacker,
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 100.0,
-        },
-    );
-    engine.place(
-        victim,
-        WorldPoint3D {
-            x: -15.0,
-            y: 100.0,
-            z: 94.0,
-        },
-    );
+    engine.place(attacker, WorldPoint3D::new(0.0, 100.0, 100.0));
+    engine.place(victim, WorldPoint3D::new(-15.0, 100.0, 94.0));
     engine.face(attacker, 9);
 
     let mut assets =
@@ -2804,53 +2790,21 @@ fn elevated_domino_uses_world_ground_xy_not_projected_map_y() {
     let sim = &sim_context;
     let mut engine = make_engine();
     let hitter = engine.add_test_entity(make_pc(wp(0.0, 110.0), None));
-    let flyer = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 10.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 90.0,
-            z: 18.0,
-        },
-        None,
-    ));
+    let flyer = engine.add_test_entity(make_soldier(WorldPoint3D::new(0.0, 100.0, 10.0), None));
+    let victim = engine.add_test_entity(make_soldier(WorldPoint3D::new(0.0, 90.0, 18.0), None));
 
     // The generic actor fixture finishes by authoring a map point, which
     // intentionally flattens actors without a level plane. Restore the
     // literal 3D positions needed by this elevated-flight boundary.
-    engine.place(
-        flyer,
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 10.0,
-        },
-    );
-    engine.place(
-        victim,
-        WorldPoint3D {
-            x: 0.0,
-            y: 90.0,
-            z: 18.0,
-        },
-    );
+    engine.place(flyer, WorldPoint3D::new(0.0, 100.0, 10.0));
+    engine.place(victim, WorldPoint3D::new(0.0, 90.0, 18.0));
 
     give_flight(&mut engine, flyer, hitter, 0.0, -1.0, 5);
     engine
         .ent_mut(flyer)
         .position_iface_mut()
         .set_flight_goal_and_increment(
-            WorldPoint3D {
-                x: 0.0,
-                y: 95.0,
-                z: 15.0,
-            },
+            WorldPoint3D::new(0.0, 95.0, 15.0),
             crate::coordinates::WorldVec3D {
                 x: 0.0,
                 y: -1.0,

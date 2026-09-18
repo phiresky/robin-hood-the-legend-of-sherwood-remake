@@ -126,11 +126,11 @@ fn give_flight(
     if let Some(entity) = engine.world.entities.get_mut(flyer) {
         entity.set_posture(Posture::Flying);
         entity.position_iface_mut().set_flight_goal_and_increment(
-            WorldPoint3D {
-                x: flyer_pos.x + inc_x * frames as f32,
-                y: flyer_pos.y + inc_y * frames as f32,
-                z: flyer_pos.z,
-            },
+            WorldPoint3D::new(
+                flyer_pos.x + inc_x * frames as f32,
+                flyer_pos.y + inc_y * frames as f32,
+                flyer_pos.z,
+            ),
             crate::coordinates::WorldVec3D {
                 x: inc_x,
                 y: inc_y,

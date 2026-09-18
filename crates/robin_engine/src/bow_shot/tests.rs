@@ -182,12 +182,8 @@ fn projectile_engine(
 }
 
 fn make_arrow_target(x: f32, y: f32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
+    let mut element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
     element.set_position_map(MapPoint { x, y });
     element.set_position(WorldPoint3D { x, y, z: 0.0 });
     Entity::Target(ElementTarget {
@@ -293,12 +289,10 @@ fn existing_arrow_collision_uses_new_move_old_position() {
         .set_position(WorldPoint3D::new(1_040.648_1, 1_915.162_7, 0.0));
     let shooter = make_soldier_with_camp(772.0, 1796.0, crate::element::Camp::Lacklandists);
 
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
+    let mut element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
     let saved_old = WorldPoint3D::new(987.105_4, 1_922.524_8, 68.750_26);
     element.set_position(saved_old);
     element.set_position_map_preserving_3d(MapPoint::new(987.105_4, 1_853.774_5));
@@ -1198,11 +1192,9 @@ fn begin_bow_shot_uses_anonymous_shoot_orders() {
 #[test]
 fn begin_bow_shot_preserves_facing_until_shoot_order_initialization() {
     let mut target = make_arrow_target(50.0, 120.0);
-    target.element_data_mut().set_position(WorldPoint3D {
-        x: 50.0,
-        y: 120.0,
-        z: 100.0,
-    });
+    target
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(50.0, 120.0, 100.0));
     let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
     entities
         .get_mut_at_index(0)
@@ -1246,11 +1238,9 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut target = make_arrow_target(50.0, 120.0);
-    target.element_data_mut().set_position(WorldPoint3D {
-        x: 50.0,
-        y: 120.0,
-        z: 100.0,
-    });
+    target
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(50.0, 120.0, 100.0));
     let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
     entities
         .get_mut(EntityId::Pc(crate::entity_id::PcId(0)))
@@ -1328,11 +1318,7 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
         .get_mut(target_id)
         .unwrap()
         .element_data_mut()
-        .set_position(WorldPoint3D {
-            x: -100.0,
-            y: -100.0,
-            z: 0.0,
-        });
+        .set_position(WorldPoint3D::new(-100.0, -100.0, 0.0));
     run_test_bow_owner(
         sim,
         &mut entities,
@@ -1358,11 +1344,9 @@ fn shoot_initialization_samples_fx_target_gameplay_ground_y_once() {
 fn leaning_out_shot_initializes_from_live_map_positions_and_holds_while_turning() {
     let sim = crate::sim_rng::test_context();
     let mut target = make_pc(50.0, 20.0);
-    target.element_data_mut().set_position(WorldPoint3D {
-        x: 50.0,
-        y: 120.0,
-        z: 100.0,
-    });
+    target
+        .element_data_mut()
+        .set_position(WorldPoint3D::new(50.0, 120.0, 100.0));
     let mut shooter = make_soldier(0.0, 0.0);
     shooter
         .element_data_mut()
@@ -1496,11 +1480,7 @@ fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
 
 #[test]
 fn compute_initial_throw_velocity_flat_shot() {
-    let to_target = WorldVec3D {
-        x: 100.0,
-        y: 0.0,
-        z: 0.0,
-    };
+    let to_target = WorldVec3D::new(100.0, 0.0, 0.0);
     // Flat shot: flight_time = (0.003 * 100) + 1 = 1
     let vel = compute_initial_throw_velocity(to_target, 0.001, MASS_ARROW_FLAT, 1, None);
     // With flight_time == 1: velocity = 0.5 * to_target
@@ -1509,11 +1489,7 @@ fn compute_initial_throw_velocity_flat_shot() {
 
 #[test]
 fn compute_initial_throw_velocity_high_shot() {
-    let to_target = WorldVec3D {
-        x: 100.0,
-        y: 0.0,
-        z: 0.0,
-    };
+    let to_target = WorldVec3D::new(100.0, 0.0, 0.0);
     let apex = 10.0; // distance / 10
     let vel = compute_initial_throw_velocity(to_target, apex, MASS_ARROW_HIGH, 0, None);
     // Should have a positive Z component (upward arc).
@@ -1524,17 +1500,9 @@ fn compute_initial_throw_velocity_high_shot() {
 
 #[test]
 fn compute_trajectory_produces_arc() {
-    let start = WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 40.0,
-    };
+    let start = WorldPoint3D::new(0.0, 0.0, 40.0);
     let vel = compute_initial_throw_velocity(
-        WorldVec3D {
-            x: 100.0,
-            y: 0.0,
-            z: -10.0,
-        },
+        WorldVec3D::new(100.0, 0.0, -10.0),
         10.0,
         MASS_ARROW_HIGH,
         0,
@@ -1642,15 +1610,7 @@ fn spawn_arrow_creates_flying_projectile_with_trajectory() {
 #[test]
 fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 100.0,
-            y: 40.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
+        trajectory_origin: MapPoint::new(100.0, 0.0),
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 50.0,
@@ -1659,14 +1619,12 @@ fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
             },
             time: 2,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(100.0, 40.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
 
     let Entity::Projectile(p) = arrow else {
@@ -1717,24 +1675,17 @@ fn tick_arrows_follows_trajectory_and_hits() {
             crate::element::Camp::Lacklandists,
         )),
         Some(spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: WorldPoint3D {
-                x: 0.0,
-                y: 0.0,
-                z: 40.0,
-            },
-            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId::Pc(crate::entity_id::PcId(1)),
-            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: traj,
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D {
-                x: 1.0,
-                y: 0.0,
-                z: 0.0,
-            },
+            ..SpawnArrowParams::test_flat(
+                EntityId::Pc(crate::entity_id::PcId(0)),
+                EntityId::Pc(crate::entity_id::PcId(1)),
+                WorldPoint3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 40.0,
+                },
+                MapPoint { x: 50.0, y: 0.0 },
+            )
         })),
     ]);
 
@@ -1792,24 +1743,13 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
         },
     ];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
@@ -1864,15 +1804,6 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
 #[test]
 fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Target(crate::entity_id::TargetId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 50.0,
@@ -1881,25 +1812,16 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: -0.25,
-        },
+        initial_velocity: WorldVec3D::new(1.0, 0.0, -0.25),
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Target(crate::entity_id::TargetId(1)),
+            WorldPoint3D::new(0.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     let mut other_arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 1000.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Target(crate::entity_id::TargetId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
+        trajectory_origin: MapPoint::new(0.0, 0.0),
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 1010.0,
@@ -1908,23 +1830,17 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Target(crate::entity_id::TargetId(1)),
+            WorldPoint3D::new(1000.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     let Entity::Projectile(p) = &mut other_arrow else {
         panic!("spawn_arrow should create projectile");
     };
-    p.projectile.launch_segment_start = Some(WorldPoint3D {
-        x: 1000.0,
-        y: 0.0,
-        z: 40.0,
-    });
+    p.projectile.launch_segment_start = Some(WorldPoint3D::new(1000.0, 0.0, 40.0));
 
     let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
@@ -1961,15 +1877,6 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
 #[test]
 fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Soldier(crate::entity_id::SoldierId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(2)),
-        target_pos: MapPoint { x: 100.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 100.0,
@@ -1978,14 +1885,12 @@ fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Soldier(crate::entity_id::SoldierId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(2)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(100.0, 0.0),
+        )
     });
     let mut entities = entity_table(vec![
         Some(make_soldier_with_camp(
@@ -2039,15 +1944,6 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
     let victim_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: victim_id,
-        target_pos: MapPoint { x: 100.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 100.0,
@@ -2056,14 +1952,12 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            victim_id,
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(100.0, 0.0),
+        )
     });
     let entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
@@ -2108,15 +2002,6 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
 #[test]
 fn tick_arrows_selects_last_eligible_human_in_actor_order() {
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 100.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 100.0,
@@ -2125,14 +2010,12 @@ fn tick_arrows_selects_last_eligible_human_in_actor_order() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(100.0, 0.0),
+        )
     });
     let mut entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
@@ -2175,15 +2058,6 @@ fn tick_arrows_selects_last_eligible_human_in_actor_order() {
 fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 100.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 100.0,
@@ -2192,14 +2066,12 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(100.0, 0.0),
+        )
     });
     let mut world = crate::engine::state::WorldState::new();
     world.entities = entity_table(vec![
@@ -2255,7 +2127,7 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
         let actor = holder.actor_data_mut().unwrap();
         actor.action_state = ActionState::HoldingShield;
         actor.shield_obstacle = Some(Box::new(compute_shield_obstacle(
-            MapPoint { x: 50.0, y: 0.0 },
+            MapPoint::new(50.0, 0.0),
             0.0,
             4,
             &shield_params_for_soldier(20, 40),
@@ -2265,19 +2137,17 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
     };
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D::new(100.0, 0.0, 40.0),
-        trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D::new(50.0, 0.0, 40.0),
             time: 2,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
         initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(100.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     let entities = entity_table(vec![
         Some(make_pc(100.0, 0.0)),
@@ -2310,22 +2180,14 @@ fn ordered_projectile_scan_uses_first_shield_in_actor_registry_order() {
 fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
     let [lean_x, lean_y] = crate::position_interface::sector_to_vector_iso(0);
     let arrow_y = lean_y * 40.0;
-    let arrow_old = WorldPoint3D {
-        x: lean_x * 40.0,
-        y: arrow_y,
-        z: 45.0,
-    };
-    let arrow_new = WorldPoint3D {
-        x: 120.0 + lean_x * 40.0,
-        y: arrow_y,
-        z: 45.0,
-    };
+    let arrow_old = WorldPoint3D::new(lean_x * 40.0, arrow_y, 45.0);
+    let arrow_new = WorldPoint3D::new(120.0 + lean_x * 40.0, arrow_y, 45.0);
     let arrow = spawn_arrow(SpawnArrowParams {
         shooter: EntityId::Pc(crate::entity_id::PcId(0)),
         bow_point: arrow_old,
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+        trajectory_origin: MapPoint::new(0.0, 0.0),
         target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 120.0, y: 0.0 },
+        target_pos: MapPoint::new(120.0, 0.0),
         trajectory: vec![TrajectoryPoint {
             position: arrow_new,
             time: 1,
@@ -2333,11 +2195,7 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
         damage: 30,
         layer: 0,
         lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
     });
     let mut earlier = make_soldier(80.0, 0.0);
     earlier
@@ -2384,18 +2242,12 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
 
 #[test]
 fn tick_arrows_stationary_projectile_does_not_hit_human() {
-    let mut arrow_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
-    arrow_element.set_position_map(MapPoint { x: 50.0, y: -25.0 });
-    arrow_element.set_position(WorldPoint3D {
-        x: 50.0,
-        y: 0.0,
-        z: 25.0,
-    });
+    let mut arrow_element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
+    arrow_element.set_position_map(MapPoint::new(50.0, -25.0));
+    arrow_element.set_position(WorldPoint3D::new(50.0, 0.0, 25.0));
     let arrow = Entity::Projectile(ElementProjectile {
         element: arrow_element,
         object: ObjectData {
@@ -2461,15 +2313,6 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
 #[test]
 fn tick_arrows_without_shooter_does_not_hit_human() {
     let mut arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 50.0,
@@ -2478,14 +2321,12 @@ fn tick_arrows_without_shooter_does_not_hit_human() {
             },
             time: 1,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(0.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     if let Entity::Projectile(proj) = &mut arrow {
         proj.projectile.shooter = None;
@@ -2533,15 +2374,6 @@ fn tick_arrows_dead_shooter_still_hits_human() {
     shooter.set_posture(Posture::Dead);
 
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: vec![TrajectoryPoint {
             position: WorldPoint3D {
                 x: 50.0,
@@ -2550,14 +2382,12 @@ fn tick_arrows_dead_shooter_still_hits_human() {
             },
             time: 2,
         }],
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
 
     let mut entities = entity_table(vec![
@@ -2604,22 +2434,14 @@ fn tick_arrows_dead_shooter_still_hits_human() {
 fn tick_arrows_apple_projectile_activates_apple_target() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let target_pos = MapPoint { x: 50.0, y: 0.0 };
-    let mut target_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
+    let target_pos = MapPoint::new(50.0, 0.0);
+    let mut target_element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
     target_element.set_position_map(target_pos);
     // `compute_target_center` reads the 3D position; real loaded
     // targets set both, but `ElementData::default()` leaves position
     // at origin so we mirror position_map.
-    target_element.set_position(WorldPoint3D {
-        x: target_pos.x,
-        y: target_pos.y,
-        z: 0.0,
-    });
+    target_element.set_position(WorldPoint3D::new(target_pos.x, target_pos.y, 0.0));
     let target = Entity::Target(ElementTarget {
         element: target_element,
         fx: FxData::default(),
@@ -2647,18 +2469,12 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
             time: 2,
         },
     ];
-    let mut apple_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
-    apple_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-    apple_element.set_position(WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 20.0,
-    });
+    let mut apple_element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
+    apple_element.set_position_map(MapPoint::new(0.0, 0.0));
+    apple_element.set_position(WorldPoint3D::new(0.0, 0.0, 20.0));
     let apple = Entity::Projectile(ElementProjectile {
         element: apple_element,
         object: ObjectData {
@@ -2723,18 +2539,10 @@ fn projectile_activation_seen(
 fn tick_arrows_arrow_target_uses_current_position_range_gate() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
-    target_element.set_position_map(MapPoint { x: 40.0, y: 0.0 });
-    target_element.set_position(WorldPoint3D {
-        x: 40.0,
-        y: 0.0,
-        z: 0.0,
-    });
+    let mut target_element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
+    target_element.set_position_map(MapPoint::new(40.0, 0.0));
+    target_element.set_position(WorldPoint3D::new(40.0, 0.0, 0.0));
     let target = Entity::Target(ElementTarget {
         element: target_element,
         fx: FxData::default(),
@@ -2744,18 +2552,12 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
         },
     });
 
-    let mut arrow_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
-    arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-    arrow_element.set_position(WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    });
+    let mut arrow_element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
+    arrow_element.set_position_map(MapPoint::new(0.0, 0.0));
+    arrow_element.set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
     let arrow = Entity::Projectile(ElementProjectile {
         element: arrow_element,
         object: ObjectData {
@@ -2808,18 +2610,10 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
 fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
-    target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
-    target_element.set_position(WorldPoint3D {
-        x: 10.0,
-        y: 0.0,
-        z: 0.0,
-    });
+    let mut target_element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
+    target_element.set_position_map(MapPoint::new(10.0, 0.0));
+    target_element.set_position(WorldPoint3D::new(10.0, 0.0, 0.0));
     let target = Entity::Target(ElementTarget {
         element: target_element,
         fx: FxData::default(),
@@ -2829,18 +2623,12 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
         },
     });
 
-    let mut arrow_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
-    arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-    arrow_element.set_position(WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    });
+    let mut arrow_element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
+    arrow_element.set_position_map(MapPoint::new(0.0, 0.0));
+    arrow_element.set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
     let arrow = Entity::Projectile(ElementProjectile {
         element: arrow_element,
         object: ObjectData {
@@ -2969,33 +2757,18 @@ fn projectile_target_collision_keeps_first_eligible_sparse_slot() {
 fn tick_arrows_has_no_artificial_lifetime_timeout() {
     let trajectory = (1..=320)
         .map(|i| TrajectoryPoint {
-            position: WorldPoint3D {
-                x: i as f32 * 10.0,
-                y: 0.0,
-                z: 40.0,
-            },
+            position: WorldPoint3D::new(i as f32 * 10.0, 0.0, 40.0),
             time: 1,
         })
         .collect();
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 3200.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 40.0),
+            MapPoint::new(3200.0, 0.0),
+        )
     });
     let entities = entity_table(vec![Some(make_pc(0.0, -100.0)), Some(arrow)]);
 
@@ -3027,18 +2800,10 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
 fn tick_arrows_apple_projectile_ignores_non_apple_target() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
-    target_element.set_position_map(MapPoint { x: 50.0, y: 0.0 });
-    target_element.set_position(WorldPoint3D {
-        x: 50.0,
-        y: 0.0,
-        z: 0.0,
-    });
+    let mut target_element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
+    target_element.set_position_map(MapPoint::new(50.0, 0.0));
+    target_element.set_position(WorldPoint3D::new(50.0, 0.0, 0.0));
     let target = Entity::Target(ElementTarget {
         element: target_element,
         fx: FxData::default(),
@@ -3057,12 +2822,10 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
         time: 2,
     }];
     let apple = Entity::Projectile(ElementProjectile {
-        element: {
-            let mut initial_element = ElementData::default();
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element.active = true;
-            initial_element
-        },
+        element: crate::engine::test_support::extra_engine_combat::test_element(
+            ElementKind::ObjectProjectile,
+            true,
+        ),
         object: ObjectData {
             associated_action: Action::Apple,
             object_type: ObjectType::Apple,
@@ -3097,13 +2860,9 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
 fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::Target;
-        initial_element.active = true;
-        initial_element
-    };
-    target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
+    let mut target_element =
+        crate::engine::test_support::extra_engine_combat::test_element(ElementKind::Target, true);
+    target_element.set_position_map(MapPoint::new(10.0, 0.0));
     let target = Entity::Target(ElementTarget {
         element: target_element,
         fx: FxData::default(),
@@ -3113,12 +2872,10 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         },
     });
     let apple = Entity::Projectile(ElementProjectile {
-        element: {
-            let mut initial_element = ElementData::default();
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element.active = true;
-            initial_element
-        },
+        element: crate::engine::test_support::extra_engine_combat::test_element(
+            ElementKind::ObjectProjectile,
+            true,
+        ),
         object: ObjectData {
             object_type: ObjectType::Apple,
             animation: Animation::ObjectFlying,
@@ -3175,18 +2932,12 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
 #[test]
 fn tick_arrows_impact_fx_per_projectile_type() {
     fn spawn_projectile_at_impact(obj: ObjectType) -> Entity {
-        let mut element = {
-            let mut initial_element = ElementData::default();
-            initial_element.kind = ElementKind::ObjectProjectile;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-        element.set_position(WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        });
+        let mut element = crate::engine::test_support::extra_engine_combat::test_element(
+            ElementKind::ObjectProjectile,
+            true,
+        );
+        element.set_position_map(MapPoint::new(0.0, 0.0));
+        element.set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
         Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
@@ -3231,16 +2982,8 @@ fn tick_arrows_impact_fx_per_projectile_type() {
 /// object_type and a ballistic trajectory.
 #[test]
 fn spawn_apple_creates_flying_apple_projectile() {
-    let start = WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 40.0,
-    };
-    let end = WorldPoint3D {
-        x: 100.0,
-        y: 0.0,
-        z: 20.0,
-    };
+    let start = WorldPoint3D::new(0.0, 0.0, 40.0);
+    let end = WorldPoint3D::new(100.0, 0.0, 20.0);
     let apple = spawn_apple(
         EntityId::Pc(crate::entity_id::PcId(0)),
         start,
@@ -3624,11 +3367,7 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
 #[test]
 fn compute_bow_point_offsets() {
     // 3D position: x=10, y=20 (map_y + elevation), z=0 (ground level)
-    let pos = WorldPoint3D {
-        x: 10.0,
-        y: 20.0,
-        z: 0.0,
-    };
+    let pos = WorldPoint3D::new(10.0, 20.0, 0.0);
     let hand = MapPoint::new(pos.x, pos.y);
     let pt = compute_bow_point(pos, ShootMode::Normal, 0, hand);
     assert_eq!(pt.z, BOW_Z_OFFSET_NORMAL);
@@ -3653,11 +3392,7 @@ fn compute_bow_point_offsets() {
     // With non-zero elevation, Z should be elevation + offset,
     // and Y should have elevation added (isometric projection
     // adds elevation into the hand Y).
-    let elevated_pos = WorldPoint3D {
-        x: 10.0,
-        y: 50.0,
-        z: 30.0,
-    };
+    let elevated_pos = WorldPoint3D::new(10.0, 50.0, 30.0);
     let elevated_hand = MapPoint::new(elevated_pos.x, elevated_pos.y);
     let pt_elev = compute_bow_point(elevated_pos, ShootMode::Normal, 0, elevated_hand);
     assert_eq!(pt_elev.z, 30.0 + BOW_Z_OFFSET_NORMAL);
@@ -3870,16 +3605,8 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     };
 
     let (trajectory, terminal_obstacle) = compute_trajectory_ballistic_with_terminal_obstacle(
-        WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        WorldVec3D {
-            x: 10.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        WorldPoint3D::new(0.0, 0.0, 25.0),
+        WorldVec3D::new(10.0, 0.0, 0.0),
         MASS_ARROW_FLAT,
         false,
         Some(&check),
@@ -3912,11 +3639,7 @@ fn arrow_trajectory_reports_exact_ground_impact_without_an_obstacle() {
         terminal_lands_in_water,
     ) = compute_trajectory_ballistic_with_terminal_impact(
         WorldPoint3D::new(0.0, 0.0, 25.0),
-        WorldVec3D {
-            x: 10.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        WorldVec3D::new(10.0, 0.0, 0.0),
         MASS_ARROW_HIGH,
         false,
         Some(&check),
@@ -4109,24 +3832,13 @@ fn tick_arrows_skips_lying_victim() {
         time: 2,
     }];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
 
     let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)]);
@@ -4198,24 +3910,13 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
         },
     ];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 82.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
-        target_pos: MapPoint { x: 90.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(0.0, 0.0, 82.0),
+            MapPoint::new(90.0, 0.0),
+        )
     });
 
     let mut entities = entity_table(vec![
@@ -4280,24 +3981,13 @@ fn tick_arrows_hits_through_belt_column() {
         },
     ];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 30.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(1)),
-        target_pos: MapPoint { x: 80.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(0.0, 0.0, 30.0),
+            MapPoint::new(80.0, 0.0),
+        )
     });
     let mut entities = entity_table(vec![
         Some(make_pc(0.0, 0.0)),
@@ -4353,7 +4043,7 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
         let actor = shield_holder.actor_data_mut().unwrap();
         actor.action_state = ActionState::HoldingShield;
         let params = shield_params_for_soldier(20, 40);
-        let obs = compute_shield_obstacle(MapPoint { x: 50.0, y: 0.0 }, 0.0, 4, &params);
+        let obs = compute_shield_obstacle(MapPoint::new(50.0, 0.0), 0.0, 4, &params);
         actor.shield_obstacle = Some(obs.into());
     }
     shield_holder.element_data_mut().set_direction_instantly(4);
@@ -4376,24 +4066,13 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
         time: 2,
     }];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 100.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(100.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
 
     let entities = entity_table(vec![
@@ -4513,7 +4192,7 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
         // position. A projectile tick must not silently move it to the
         // actor's current position/facing.
         let stale = compute_shield_obstacle(
-            MapPoint { x: -50.0, y: 100.0 },
+            MapPoint::new(-50.0, 100.0),
             0.0,
             4,
             &shield_params_for_pc(false),
@@ -4535,15 +4214,6 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
             .unwrap();
         let before = (before_obstacle.box_3d_min, before_obstacle.box_3d_max);
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 40.0,
-            },
-            trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-            target: EntityId::Pc(crate::entity_id::PcId(1)),
-            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
                     x: 50.0,
@@ -4552,14 +4222,13 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
                 },
                 time: 2,
             }],
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D {
-                x: -1.0,
-                y: 0.0,
-                z: 0.0,
-            },
+            initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
+            ..SpawnArrowParams::test_flat(
+                EntityId::Pc(crate::entity_id::PcId(0)),
+                EntityId::Pc(crate::entity_id::PcId(1)),
+                WorldPoint3D::new(100.0, 0.0, 40.0),
+                MapPoint::new(50.0, 0.0),
+            )
         });
         let entities = entity_table(vec![Some(make_pc(100.0, 0.0)), Some(holder), Some(arrow)]);
         let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
@@ -4649,24 +4318,13 @@ fn non_shield_arrow_ricochet_advances_immediately() {
             },
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-            bow_point: WorldPoint3D {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId::Pc(crate::entity_id::PcId(1)),
-            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory,
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: WorldVec3D {
-                x: 1.0,
-                y: 0.0,
-                z: 0.0,
-            },
+            ..SpawnArrowParams::test_flat(
+                EntityId::Pc(crate::entity_id::PcId(0)),
+                EntityId::Pc(crate::entity_id::PcId(1)),
+                WorldPoint3D::new(0.0, 0.0, 0.0),
+                MapPoint::new(50.0, 0.0),
+            )
         });
         let mut projectile = match arrow {
             Entity::Projectile(p) => p,
@@ -4831,24 +4489,13 @@ fn tick_arrows_miss_and_land_despawns() {
         time: 1,
     }];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 5.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Pc(crate::entity_id::PcId(0)),
-        target_pos: MapPoint { x: 10.0, y: 0.0 },
         trajectory,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            WorldPoint3D::new(0.0, 0.0, 5.0),
+            MapPoint::new(10.0, 0.0),
+        )
     });
     // No other humans in range — arrow will fly out and land.
     let entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(arrow)]);
@@ -5010,16 +4657,8 @@ fn falling_arrow_into_water_retires_without_ground_snap() {
 /// spawn — here we just assert it stops flying.
 #[test]
 fn spawn_wasp_nest_lands_and_stops_flying() {
-    let throw_pos = WorldPoint3D {
-        x: 0.0,
-        y: 0.0,
-        z: 50.0,
-    };
-    let target_pos = WorldPoint3D {
-        x: 80.0,
-        y: 0.0,
-        z: 0.0,
-    };
+    let throw_pos = WorldPoint3D::new(0.0, 0.0, 50.0);
+    let target_pos = WorldPoint3D::new(80.0, 0.0, 0.0);
     let nest = spawn_wasp_nest(
         EntityId::Pc(crate::entity_id::PcId(0)),
         throw_pos,
@@ -5151,12 +4790,10 @@ fn projectile_landing_retains_exact_sector_identity() {
 }
 
 fn refresh_test_arrow() -> ElementProjectile {
-    let mut element = {
-        let mut initial_element = ElementData::default();
-        initial_element.kind = ElementKind::ObjectProjectile;
-        initial_element.active = true;
-        initial_element
-    };
+    let mut element = crate::engine::test_support::extra_engine_combat::test_element(
+        ElementKind::ObjectProjectile,
+        true,
+    );
     element.sprite.current_row = 9;
     element.sprite.current_frame = 2;
     ElementProjectile {
