@@ -431,7 +431,7 @@ impl WidgetInputField {
     }
 
     /// `true` iff the widget is currently in `SelectedEditable`.
-    /// Callers holding a `FocusManager` use this to gate the re-enable
+    /// Callers managing keyboard focus use this to gate the re-enable
     /// of shortcuts/navigation while editing.
     pub fn is_editing(&self) -> bool {
         self.base.state == UiState::SelectedEditable

@@ -177,46 +177,12 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
                 source: wgpu::ShaderSource::Wgsl(full.into()),
             });
 
-        let bgl_tex = self
-            .gpu
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("upscale tex bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-        let bgl_uniform =
-            self.gpu
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("upscale uniform bgl"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
+        let bgl_tex = crate::renderer::tex_sampler_bgl(&self.gpu.device, "upscale tex bgl");
+        let bgl_uniform = crate::renderer::uniform_bgl(
+            &self.gpu.device,
+            "upscale uniform bgl",
+            wgpu::ShaderStages::FRAGMENT,
+        );
 
         let layout = self
             .gpu
@@ -233,34 +199,20 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
                 immediate_size: 0,
             });
 
-        let pipeline = self
-            .gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&format!("{label} pipeline")),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: output_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+        let pipeline = crate::renderer::build_render_pipeline(
+            &self.gpu.device,
+            &format!("{label} pipeline"),
+            &layout,
+            &module,
+            "fs_main",
+            &[],
+            wgpu::ColorTargetState {
+                format: output_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            },
+            None,
+        );
 
         let uniform_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("upscale uniforms"),
@@ -589,43 +541,12 @@ impl BuiltinRunner {
                 source: wgpu::ShaderSource::Wgsl(BUILTIN_MULTIPASS_WGSL.into()),
             });
         let texture_layout =
-            gpu.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("built-in pass texture layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-        let uniform_layout =
-            gpu.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("built-in pass uniform layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
+            crate::renderer::tex_sampler_bgl(&gpu.device, "built-in pass texture layout");
+        let uniform_layout = crate::renderer::uniform_bgl(
+            &gpu.device,
+            "built-in pass uniform layout",
+            wgpu::ShaderStages::FRAGMENT,
+        );
         let layout = gpu
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -643,37 +564,24 @@ impl BuiltinRunner {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let ui_pipeline = gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("sharp UI overlay pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_sharp_bilinear"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: output_format,
-                        // UI draws were already blended over transparent
-                        // black, so the intermediate contains premultiplied
-                        // RGB. Multiplying by alpha again here would darken
-                        // antialiased text and translucent menu artwork.
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+        let ui_pipeline = crate::renderer::build_render_pipeline(
+            &gpu.device,
+            "sharp UI overlay pipeline",
+            &layout,
+            &module,
+            "fs_sharp_bilinear",
+            &[],
+            wgpu::ColorTargetState {
+                format: output_format,
+                // UI draws were already blended over transparent
+                // black, so the intermediate contains premultiplied
+                // RGB. Multiplying by alpha again here would darken
+                // antialiased text and translucent menu artwork.
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            },
+            None,
+        );
         let ui_uniform_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sharp UI overlay uniforms"),
             size: std::mem::size_of::<BuiltinUniforms>() as u64,
@@ -853,34 +761,20 @@ impl BuiltinRunner {
             PipelineTarget::Intermediate => wgpu::TextureFormat::Rgba8UnormSrgb,
             PipelineTarget::Surface => self.output_format,
         };
-        let pipeline = self
-            .gpu
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&format!("built-in {:?} {:?} pipeline", pass, target)),
-                layout: Some(&self.layout),
-                vertex: wgpu::VertexState {
-                    module: &self.module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.module,
-                    entry_point: Some(pass.entry_point()),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+        let pipeline = crate::renderer::build_render_pipeline(
+            &self.gpu.device,
+            &format!("built-in {:?} {:?} pipeline", pass, target),
+            &self.layout,
+            &self.module,
+            pass.entry_point(),
+            &[],
+            wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            },
+            None,
+        );
         entry.insert(pipeline);
     }
 
