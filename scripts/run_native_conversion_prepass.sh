@@ -210,7 +210,7 @@ processes_matching() {
         [[ "$pid" != "$$" ]] || continue
         command=$(tr '\0' ' ' 2>/dev/null <"$process") || continue
         case "$command" in
-            *original_parity_replay*' --convert '*|*' -PARITYTRACE '*|*run_schema16_distributed_capture.sh*|*rsync*) ;;
+            *original_parity_replay*' --convert '*|*' -PARITYTRACE '*|*rsync*) ;;
             *) continue ;;
         esac
         if [[ "$scope" == global || "$command" == *"$corpus"* ]]; then

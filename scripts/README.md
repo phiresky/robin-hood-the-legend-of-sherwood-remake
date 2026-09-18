@@ -23,23 +23,20 @@ live corpus or deployment. See `docs/TESTING.md` for package and fixture gates.
 ## Replay evidence and campaigns
 
 These scripts may launch long-running processes or write evidence. Read their
-usage and select explicit inputs/output roots before running them. Capture
-drivers default to the `reference-saves/` tree, which now tracks only the Rust
-test fixture; restore the retired capture saves from Git history (see
-`reference-saves/README.md`) or pass an explicit save directory.
+usage and select explicit inputs/output roots before running them.
+`capture_parity_subset.sh` defaults to the complete tracked `reference-saves/`
+tree (see `reference-saves/README.md`); pass an explicit save directory to
+capture from elsewhere.
 The separate ignored `binaries/` artifact checkout supplies pinned recorders;
 it is not a source submodule. Never silently rebuild a recorder whose hash is
 part of campaign provenance.
 
-- `parity_campaign.py`, `parity-campaigns/*.json`: campaign manifests and campaign execution.
 - `parity_result.py`: typed runner result parsing/classification.
 - `replay_schema.py`: shared recording schema checks.
 - `replay_evidence.py`: bounded, verified evidence inputs shared by importers.
 - `replay_state_db.py`: replay inventory/evidence database commands.
 - `audit_replay_payload.py`: inspect replay payload coverage.
-- `run_parity_fixture_gate.py`: explicit parity fixture acceptance gate.
 - `capture_parity_subset.sh`: manually selected Original save capture.
-- `run_parity_release_sweep.sh`: release-runner trace sweep.
 - `run_incremental_eof_checks.sh`: incremental exact-EOF validation with runner identity.
 - `run_native_conversion_prepass.sh`: convert corpus recordings to native artifacts.
 - `run_native_reblock_snapshot.sh`: reblock snapshot artifacts with evidence.
@@ -47,16 +44,18 @@ part of campaign provenance.
 - `run_distributed_replay_worker.sh`: execute a worker's assigned replay cases.
 - `run_replay_refill_controller.sh`: refill available replay worker capacity.
 - `test_parity_orchestration.sh`: aggregate orchestration regression suite.
-- `test_parity_result.py`, `test_replay_state_db.py`, `test_run_*.py`, `test_run_*.sh`: isolated module/driver regressions.
+- `test_parity_result.py`, `test_replay_state_db.py`, `test_run_*.sh`: isolated module/driver regressions.
 
-The completed schema16 campaign's orchestrators, controllers and capture
-supervisors were removed; recover them from Git history if their provenance is
-needed. `parity-campaigns/schema16-20260824.json` stays as the frozen manifest
-fixture for `parity_campaign.py`, whose script identities name those removed
-drivers, so `--freeze-workspace` needs a checkout that still contains them.
+The retained drivers are the layer built on the SQLite replay-state database
+(`replay_state_db.py`, its imports, the drivers that call it, and the scripts
+its tests exercise). The completed schema16 campaign's orchestrators,
+controllers and capture supervisors, the frozen campaign manifests with
+`parity_campaign.py`, the fixed-manifest fixture gate and the release-runner
+sweep were removed; recover them from Git history if their provenance is
+needed.
 
 The completed motion-state worktree driver and fixed 98-case schema15 replacement
-validator were removed. Use the current manifest/evidence-based drivers above;
+validator were removed. Use the current evidence-based drivers above;
 old verdict text alone is not current acceptance evidence.
 
 ## Asset authoring and standalone diagnostics
@@ -73,7 +72,6 @@ proof of dead code. Most require external game data or Python imaging packages.
 - `optimize_mod_pngs.py`: optimize authored mod PNGs.
 - `profile_patch_tools.py`, `test_profile_patch_tools.py`: profile patch authoring and regressions.
 - `validate_sprite_mods.py`: sprite-mod consistency checks.
-- `sprite_compress_atlas.sh`, `sprite_compress_streams.sh`: sprite compression experiments.
 - `render_all_mission_maps.sh`: batch map rendering with external game data.
 - `extract_dump_entity.py`: inspect one entity from a diagnostic dump.
 - `find_unreferenced_rust_items.py`: advisory source scan, run by `check-quality.sh unreferenced-items`; references through macros/features need manual confirmation.

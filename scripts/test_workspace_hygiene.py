@@ -96,7 +96,7 @@ class WorkspaceHygieneTests(unittest.TestCase):
             self.assertFalse((ROOT / "scripts" / name).exists())
 
     def test_finished_schema16_campaign_drivers_are_absent(self):
-        self.assertFalse((ROOT / "scripts/parity-campaigns/schema16-20260824").exists())
+        self.assertFalse((ROOT / "scripts/parity-campaigns").exists())
         self.assertEqual(list((ROOT / "scripts").glob("*run_schema16_*")), [])
 
 
