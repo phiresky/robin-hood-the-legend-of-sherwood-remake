@@ -6,16 +6,6 @@ use crate::ai::{
 use crate::parameters_ai;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_money_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_money_event(stimulus)
-    }
-
     fn money_event_timer(&mut self, owner: EntityId, duration: u32) {
         let frame = self.control.frame_counter;
         self.seek_enemy_mut(owner)
@@ -658,11 +648,9 @@ mod tests {
         stimulus: StimulusType,
     ) {
         assert_eq!(
-            engine.execute_ai_money_event(
-                TickCtx::new(&crate::sim_rng::test_context(), assets),
-                owner,
-                &Stimulus::new(stimulus)
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), assets, owner)
+                .execute_ai_money_event(&Stimulus::new(stimulus)),
             Some(false)
         );
     }

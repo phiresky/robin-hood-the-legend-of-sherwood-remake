@@ -1,6 +1,7 @@
 //! Shared fixtures and unwind-safe, observational test instrumentation.
 pub(crate) mod actors;
 pub(crate) mod asm;
+pub(crate) mod extra_ai_ctx;
 pub(crate) mod extra_engine_combat;
 pub(crate) mod extra_engine_core;
 pub(crate) mod pair_fixture;

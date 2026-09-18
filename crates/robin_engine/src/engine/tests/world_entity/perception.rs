@@ -528,11 +528,9 @@ fn send_charly_tail_runs_after_both_rejected_and_accepted_speech() {
             engine.enemy_mut(charly),
             |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
         );
-        engine.execute_ai_seen_charly(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            charly_handle,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_seen_charly(charly_handle);
 
         let enemy = engine.enemy(owner);
         assert_eq!(
@@ -742,11 +740,9 @@ fn live_this_type_forbid_candidate_requires_contextual_speech_profile() {
 #[test]
 fn tower_guard_officer_call_consumes_ignored_route_failure_before_priority_tail() {
     let (mut engine, assets, owner, _officer, _center) = corpse_officer_fixture(true);
-    engine.execute_ai_alert_officer_for_caller(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-        crate::ai::OfficerAlertCaller::TowerGuardCalled,
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_alert_officer_for_caller(crate::ai::OfficerAlertCaller::TowerGuardCalled);
     let ai = engine.enemy(owner);
     assert!(!ai.base.couldnt_reachpoint);
     assert_eq!(
@@ -824,14 +820,12 @@ fn corpse_officer_fixture(
 #[test]
 fn corpse_officer_alert_success_keeps_search_fallback_unstarted() {
     let (mut engine, assets, owner, officer, center) = corpse_officer_fixture(false);
-    engine.execute_ai_alert_officer_for_caller(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-        crate::ai::OfficerAlertCaller::SeekBody {
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_alert_officer_for_caller(crate::ai::OfficerAlertCaller::SeekBody {
             center,
             radius: 300,
-        },
-    );
+        });
     let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.antagonist,
@@ -857,14 +851,12 @@ fn corpse_officer_alert_missing_or_unreachable_officer_starts_body_search() {
                 |profile| profile.rank = crate::profiles::ProfileRank::Soldier,
             );
         }
-        engine.execute_ai_alert_officer_for_caller(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            crate::ai::OfficerAlertCaller::SeekBody {
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_alert_officer_for_caller(crate::ai::OfficerAlertCaller::SeekBody {
                 center,
                 radius: 300,
-            },
-        );
+            });
         let ai = engine.enemy(owner);
         assert_eq!(
             ai.seek_flags,
@@ -890,14 +882,12 @@ fn corpse_officer_instructed_group_return_ignores_route_failure_without_search_f
     let ai = engine.enemy_mut(owner);
     ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(officer.index()));
     ai.seek_flags = crate::ai_enemy::SeekFlags::REPORT_OFFICER_AFTER;
-    engine.execute_ai_alert_officer_for_caller(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-        crate::ai::OfficerAlertCaller::SeekBody {
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_alert_officer_for_caller(crate::ai::OfficerAlertCaller::SeekBody {
             center,
             radius: 300,
-        },
-    );
+        });
     let ai = engine.enemy(owner);
     assert_eq!(
         ai.base.current_substate,
@@ -931,14 +921,12 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
         AiBrain::Friendly(Box::new(crate::ai_friendly::FriendlyAi::new(owner.index())));
     let assets = engine.test_runtime_assets();
 
-    engine.execute_ai_alert_officer_for_caller(
-        TickCtx::new(&sim, &assets),
-        owner,
-        OfficerAlertCaller::SeekBody {
+    engine
+        .ai_ctx(&sim, &assets, owner)
+        .execute_ai_alert_officer_for_caller(OfficerAlertCaller::SeekBody {
             center: Position::default(),
             radius: 300,
-        },
-    );
+        });
 }
 
 #[test]
@@ -1567,15 +1555,17 @@ fn review2_alert_soldiers_uses_state_refusal_and_does_not_consider_report() {
         ai.set_ai_state(AiState::Attacking);
         ai.current_substate = Substate::AttackingSwordfight;
     }
-    assert!(!engine.execute_ai_alert_soldiers(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Position {
-            x: 100.0,
-            ..Default::default()
-        },
-        0
-    ));
+    assert!(
+        !engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(
+                Position {
+                    x: 100.0,
+                    ..Default::default()
+                },
+                0
+            )
+    );
 
     let officer = engine.enemy(officer_id);
     assert!(officer.alerted_us.is_empty());
@@ -1751,7 +1741,9 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     );
 
     crate::sight_obstacle::begin_parity_visibility_capture();
-    engine.unalert_live_charly_seekers(TickCtx::new(&sim, &assets), owner, charly);
+    engine
+        .ai_ctx(&sim, &assets, owner)
+        .unalert_live_charly_seekers(charly);
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
     // Later speech may end the conversation only after the synchronous sweep.
     engine.enemy_mut(owner).base.antagonist = None;
@@ -1852,11 +1844,9 @@ fn final_review_alert_all_refused_resumes_caller_failure() {
             ..Default::default()
         };
     }
-    engine.execute_ai_handler_body(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        &Stimulus::new(StimulusType::EventMyTalk1),
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_ai_handler_body(&Stimulus::new(StimulusType::EventMyTalk1));
 
     let officer = engine.enemy(officer_id);
     assert!(officer.alerted_us.is_empty());
@@ -1938,11 +1928,9 @@ fn final_review_alert_partial_refusal_forms_group_from_acceptors_only() {
             ..Default::default()
         };
     }
-    engine.execute_ai_handler_body(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        &Stimulus::new(StimulusType::EventMyTalk1),
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_ai_handler_body(&Stimulus::new(StimulusType::EventMyTalk1));
 
     let officer = engine.enemy(officer_id);
     assert_eq!(officer.alerted_us, vec![accepted_id.index()]);
@@ -2019,12 +2007,11 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
             soldier.element.publish_order_posture(Posture::Tied);
         }
 
-        assert!(engine.execute_ai_alert_soldiers(
-            TickCtx::new(&sim, &assets),
-            officer_id,
-            Position::default(),
-            0
-        ));
+        assert!(
+            engine
+                .ai_ctx(&sim, &assets, officer_id)
+                .execute_ai_alert_soldiers(Position::default(), 0)
+        );
         assert_eq!(
             engine
                 .world
@@ -2072,12 +2059,11 @@ fn closure_review_final_alert_report_boundary_precedes_formation() {
             .push(body_id.index());
     }
 
-    assert!(engine.execute_ai_alert_soldiers(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        crate::ai::Position::default(),
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(crate::ai::Position::default(), 0)
+    );
 
     let recipient = engine.ent(soldier_id);
     assert!(
@@ -2139,12 +2125,11 @@ fn review2_alerted_soldier_accepts_a_later_live_reconnaissance_report() {
     officer.alerted_us.clear();
     officer.base.my_reconnaissance_report.report_type = ReportType::Enemy;
     officer.base.my_reconnaissance_report.seek_position = first_position;
-    assert!(engine.execute_ai_alert_soldiers(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Position::default(),
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(Position::default(), 0)
+    );
     assert_eq!(
         engine
             .ai_ctrl(soldier_id)

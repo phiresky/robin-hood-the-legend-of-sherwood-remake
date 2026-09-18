@@ -6,16 +6,7 @@ use crate::ai::{
 use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::profiles::ProfileRank;
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_search_charly(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_search_charly()
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_search_charly(&mut self) {

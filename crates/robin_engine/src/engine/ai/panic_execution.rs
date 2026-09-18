@@ -46,11 +46,8 @@ mod tests {
                     });
                 let (_, draws) = crate::sim_rng::with_draw_trace(|| {
                     engine
-                        .execute_ai_common_fleeing_event(
-                            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                            owner,
-                            &Stimulus::new(stimulus),
-                        )
+                        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                        .execute_ai_common_fleeing_event(&Stimulus::new(stimulus))
                         .expect("spent panic event must be handled");
                 });
                 let ai = engine.ai_ctrl(owner);
@@ -93,17 +90,7 @@ mod tests {
     }
 }
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_common_fleeing_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_common_fleeing_event(stimulus)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_enemy_fleeing_event(

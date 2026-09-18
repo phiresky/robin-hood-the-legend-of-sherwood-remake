@@ -64,11 +64,11 @@ fn phalanx_arrival_reads_target_position_after_state_callback() {
         .entities
         .expect_ai_controller_mut(neighbour, format_args!("arrival neighbour"))
         .primary_target = Some(AiEntityHandle::new(target.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let raw = engine
         .expect_entity(target, "moved target")
         .element_data()
@@ -194,11 +194,11 @@ fn advancing_shield_uses_live_target_sector_for_indexed_route() {
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = Substate::AttackingAdvancingWithShield;
     ai.base.primary_target = Some(AiEntityHandle::new(target_id.index()));
-    assert!(engine.execute_ai_shield_expected_event(
-        TickCtx::new(&sim, &assets),
-        owner,
-        crate::ai::StimulusType::EventDone
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_shield_expected_event(crate::ai::StimulusType::EventDone)
+    );
     let ai = engine
         .world
         .entities
@@ -354,11 +354,11 @@ fn live_shield_replacement_is_assigned_before_bow_rng() {
         if !protected_archer {
             let _ = crate::sim_rng::u32(&expected, crate::sim_rng::RngSite::ShieldAdvance, 0..4);
         }
-        assert!(engine.execute_ai_shield_expected_event(
-            TickCtx::new(&sim, &assets),
-            owner,
-            StimulusType::EventTimer
-        ));
+        assert!(
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_shield_expected_event(StimulusType::EventTimer)
+        );
         let ai = engine
             .world
             .entities

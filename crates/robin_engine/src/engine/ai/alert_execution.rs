@@ -146,33 +146,12 @@ impl EngineInner {
             self.execute_ai_return_to_duty(tcx, owner, crate::ai::DutyFlags::empty());
         }
     }
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_alert_officer_for_caller(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        caller: crate::ai::OfficerAlertCaller,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_officer_for_caller(caller)
-    }
-
     pub(in crate::engine) fn execute_ai_alert_officer(
         &mut self,
         tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
         AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_officer()
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_alert_soldiers(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        center: Position,
-        flags: u16,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_soldiers(center, flags)
     }
 
     pub(in crate::engine) fn execute_ai_command_soldiers_to_attack(

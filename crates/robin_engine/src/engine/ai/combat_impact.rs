@@ -4,16 +4,6 @@ use super::*;
 use crate::ai::{AiState, EmoticonType, Stimulus, StimulusInfo, StimulusType, Substate};
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_combat_impact_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_combat_impact_event(stimulus)
-    }
-
     fn combat_impact_timer(&mut self, owner: EntityId, frames: u32) {
         let frame = self.control.frame_counter;
         self.ai_mut(owner, "combat impact timer")
@@ -310,11 +300,9 @@ mod tests {
             let mut stimulus = Stimulus::new(StimulusType::EventArrowLaunched);
             stimulus.info = StimulusInfo::Human(crate::ai::AiEntityHandle::new(target.index()));
 
-            engine.execute_ai_combat_impact_event(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &stimulus,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_combat_impact_event(&stimulus);
 
             let queued_raise = engine
                 .orders

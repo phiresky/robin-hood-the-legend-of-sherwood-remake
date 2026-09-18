@@ -57,29 +57,6 @@ impl EngineInner {
         let target = self.combat_event_ai(owner).base.primary_target;
         self.execute_ai_focus(owner, target);
     }
-    #[cfg(test)]
-    pub(super) fn duty_face_position_ground(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).duty_face_position_ground(position)
-    }
-
-    #[cfg(test)]
-    pub(super) fn duty_face_position_signed_elevation(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        position: Position,
-        elevation: i16,
-        fast: bool,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner)
-            .duty_face_position_signed_elevation(position, elevation, fast)
-    }
-
     fn combat_event_visible_primary(&mut self, assets: &LevelAssets, owner: EntityId) -> bool {
         self.combat_event_ai(owner)
             .base
@@ -89,16 +66,6 @@ impl EngineInner {
                     self.expect_human_id_for_ai_handle(target.get(), "combat visibility target");
                 self.live_ai_detects_180(assets, owner, id)
             })
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_combat_expected_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        event: StimulusType,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_combat_expected_event(event)
     }
 
     fn combat_event_rider_retreat_goal(&self, owner: EntityId) -> Option<Position> {

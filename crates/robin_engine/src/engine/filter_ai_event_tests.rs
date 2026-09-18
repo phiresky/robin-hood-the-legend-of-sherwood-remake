@@ -815,15 +815,17 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         );
     }
 
-    assert!(engine.execute_ai_alert_soldiers(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Position {
-            x: 300.0,
-            ..Default::default()
-        },
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(
+                Position {
+                    x: 300.0,
+                    ..Default::default()
+                },
+                0
+            )
+    );
 
     let officer = engine.enemy(officer_id);
     // Acceptances happen in roster order, but each accepted soldier is

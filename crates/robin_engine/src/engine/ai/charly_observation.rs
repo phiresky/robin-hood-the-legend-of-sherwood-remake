@@ -37,11 +37,9 @@ mod tests {
         ai.macro_in_progress = false;
         ai.detached_patrol_path_status.current_waypoint_index = 3;
         ai.detached_patrol_path_status.last_waypoint_index = 2;
-        engine.execute_ai_seen_charly(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            partner.index(),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_seen_charly(partner.index());
         let ai = &engine.observation_ai(owner).base;
         assert_eq!(ai.current_substate, Substate::DefaultSynchronizing);
         assert_eq!(ai.macro_command_offset, 0);
@@ -55,27 +53,7 @@ mod tests {
     }
 }
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_seen_charly(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        target: u32,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_charly(target)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn unalert_live_charly_seekers(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        charly: EntityId,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).unalert_live_charly_seekers(charly)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_seen_charly(&mut self, target: u32) {

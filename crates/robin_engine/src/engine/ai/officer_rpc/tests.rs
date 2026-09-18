@@ -190,10 +190,9 @@ fn checkpoint_search_preserves_exact_sector_and_cursor_before_pivot_skip() {
         });
         ai.base.checkpoint_charly = Some(AiEntityHandle::new(charly.index()));
         ai.base.macro_in_progress = true;
-        engine.execute_ai_search_charly(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_search_charly();
         let ai = engine.observation_ai(owner);
         assert!(!ai.base.macro_in_progress);
         assert_eq!(
@@ -231,10 +230,9 @@ fn officer_missing_checkpoint_reports_and_alerts_without_building_search_route()
     ai.base.macro_in_progress = true;
     ai.base.macro_command_offset = 23;
     engine.observation_ai_mut(charly).reported_to_officer = true;
-    engine.execute_ai_search_charly(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-    );
+    engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_search_charly();
     let ai = engine.observation_ai(owner);
     assert!(ai.search_charly_way.is_empty());
     assert_eq!(

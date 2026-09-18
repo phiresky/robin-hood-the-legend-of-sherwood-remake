@@ -35,21 +35,6 @@ impl EngineInner {
             .base
             .set_emoticon(EmoticonType::QuestionMark);
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_react_live(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        maximum: u16,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_react_live(maximum)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_enemy(&mut self, tcx: TickCtx<'_>, owner: EntityId, target: u32) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_enemy(target)
-    }
-
     fn observation_enemy_below(&self, owner: EntityId, target: EntityId) -> bool {
         let me = self.expect_entity(owner, "below observer");
         if me.element_data().posture() == crate::element::Posture::LeaningOut {
@@ -71,36 +56,6 @@ impl EngineInner {
         let dy = (b.y - a.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         dx * dx + dy * dy <= height * height
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_shadow(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_shadow(position)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_received_arrow(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        origin: Position,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_received_arrow(origin)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_object(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        object: u32,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_object(object)
-    }
-
     fn unavailable_ale_position(
         &mut self,
         assets: &LevelAssets,
@@ -159,21 +114,6 @@ impl EngineInner {
         }
         None
     }
-    #[cfg(test)]
-    pub(super) fn execute_ai_ale_approach(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        arrived: bool,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_ale_approach(arrived)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_ale_reaction(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_ale_reaction()
-    }
-
     pub(in crate::engine) fn reliable_ale_for_actor(
         &self,
         assets: &LevelAssets,

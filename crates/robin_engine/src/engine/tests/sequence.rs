@@ -3539,11 +3539,9 @@ fn quitting_swordfight_timer_does_not_accumulate_a_second_quit() {
         engine.t_element_in_progress(&assets, selected, 0);
         engine.select_sequence_element(owner, Some((selected, 0)));
 
-        let handled = engine.execute_ai_combat_expected_event(
-            TickCtx::new(&sim, &assets),
-            owner,
-            crate::ai::StimulusType::EventTimer,
-        );
+        let handled = engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_combat_expected_event(crate::ai::StimulusType::EventTimer);
         assert!(handled);
 
         let quit_count = engine

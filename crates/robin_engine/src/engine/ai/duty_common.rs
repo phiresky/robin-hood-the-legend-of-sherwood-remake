@@ -68,13 +68,9 @@ mod tests {
             .clear();
         let destination = engine.live_ai_position(owner);
 
-        engine.duty_go_to_speed(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            destination,
-            GotoFlags::empty(),
-            1.0,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .duty_go_to_speed(destination, GotoFlags::empty(), 1.0);
 
         assert!(enemy(&engine, owner).base.already_on_point);
         assert_eq!(
@@ -114,18 +110,18 @@ mod tests {
         orders.release_slot(installed.slot);
         orders.clear();
 
-        engine.duty_go_to_speed(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            Position {
-                x: 500.0,
-                y: 100.0,
-                sector: None,
-                level: 0,
-            },
-            GotoFlags::empty(),
-            1.0,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .duty_go_to_speed(
+                Position {
+                    x: 500.0,
+                    y: 100.0,
+                    sector: None,
+                    level: 0,
+                },
+                GotoFlags::empty(),
+                1.0,
+            );
 
         assert!(enemy(&engine, owner).base.couldnt_reachpoint);
         assert_eq!(engine.actor(owner).installed_order, Some(installed));
@@ -348,11 +344,9 @@ mod tests {
             engine.select_sequence_element(chief, Some((sequence, 0)));
             engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
             enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
-            engine.execute_common_ai_duty(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                DutyFlags::empty(),
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_common_ai_duty(DutyFlags::empty());
             let ai = enemy(&engine, owner);
             if visible_body {
                 assert_eq!(ai.base.current_substate, Substate::DefaultGotoChief);
@@ -978,18 +972,6 @@ impl EngineInner {
         AiOwnerCtx::new(self, tcx, owner).duty_go_to(destination, flags)
     }
 
-    #[cfg(test)]
-    pub(in crate::engine) fn duty_go_to_speed(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        destination: Position,
-        flags: GotoFlags,
-        speed: f32,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).duty_go_to_speed(destination, flags, speed)
-    }
-
     pub(in crate::engine) fn duty_go_near(
         &mut self,
         tcx: TickCtx<'_>,
@@ -999,16 +981,6 @@ impl EngineInner {
         flags: GotoFlags,
     ) {
         AiOwnerCtx::new(self, tcx, owner).duty_go_near(destination, distance, flags)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_common_ai_duty(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        flags: DutyFlags,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_common_ai_duty(flags)
     }
 }
 

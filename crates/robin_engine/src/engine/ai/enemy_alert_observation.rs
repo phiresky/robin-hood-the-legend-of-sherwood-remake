@@ -26,16 +26,6 @@ impl EngineInner {
     fn alert_focus_point(&mut self, assets: &LevelAssets, owner: EntityId, position: Position) {
         self.execute_ai_focus_point(assets, owner, position);
     }
-    #[cfg(test)]
-    pub(super) fn alert_face_noise_position(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        noise: &Noise,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).alert_face_noise_position(noise)
-    }
-
     fn alert_noise_is_already_investigated(&self, owner: EntityId) -> bool {
         let state = self.observation_ai(owner).base.current_substate;
         matches!(
@@ -43,45 +33,6 @@ impl EngineInner {
             Substate::SeekingHeardstepsPreReactiontime | Substate::SeekingHeardstepsReactiontime
         ) || state.is_take_money()
             || state.is_fight_for_money()
-    }
-    #[cfg(test)]
-    pub(super) fn execute_ai_heard_noise(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        noise: &Noise,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_heard_noise(noise)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_look_there_reaction(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_look_there_reaction(position)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_tower_alert_reaction(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        hint: &Hint,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_tower_alert_reaction(hint)
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_combat_alert_reaction(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        position: Position,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_combat_alert_reaction(position)
     }
 }
 

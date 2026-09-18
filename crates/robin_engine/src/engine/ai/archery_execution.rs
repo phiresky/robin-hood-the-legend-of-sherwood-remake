@@ -60,11 +60,11 @@ mod tests {
                 .expect_enemy_ai_mut(owner, format_args!("beggar arrival setup"));
             ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
             ai.is_archer_unit = archer;
-            assert!(engine.execute_ai_archery_expected_event(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                StimulusType::EventReachPoint
-            ));
+            assert!(
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_archery_expected_event(StimulusType::EventReachPoint)
+            );
             let sequence = engine
                 .orders
                 .sequence_manager
@@ -91,11 +91,11 @@ mod tests {
     #[test]
     fn live_npc_beggar_identification_launches_show_face_and_waits() {
         let (mut engine, assets, owner, beggar) = beggar_fixture(true);
-        assert!(engine.execute_ai_archery_expected_event(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            StimulusType::EventTimer
-        ));
+        assert!(
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_archery_expected_event(StimulusType::EventTimer)
+        );
         assert!(
             engine
                 .orders
@@ -139,11 +139,11 @@ mod tests {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("false beggar archer"))
             .is_archer_unit = true;
-        assert!(engine.execute_ai_archery_expected_event(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            StimulusType::EventTimer
-        ));
+        assert!(
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_archery_expected_event(StimulusType::EventTimer)
+        );
         let ai = engine
             .world
             .entities
@@ -215,11 +215,11 @@ mod tests {
         ai.current_state = AiState::Attacking;
         ai.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
         ai.primary_target = Some(AiEntityHandle::new(target.index()));
-        assert!(engine.execute_ai_archery_expected_event(
-            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-            owner,
-            StimulusType::EventDone
-        ));
+        assert!(
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &LevelAssets::new(), owner)
+                .execute_ai_archery_expected_event(StimulusType::EventDone)
+        );
         let ai = engine
             .world
             .entities
@@ -234,16 +234,6 @@ mod tests {
 }
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_archery_expected_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        event: StimulusType,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_archery_expected_event(event)
-    }
-
     fn live_beggar_to_examine(&self, owner: EntityId) -> EntityId {
         let handle = self
             .enemy_ai(owner, "beggar inspection target")

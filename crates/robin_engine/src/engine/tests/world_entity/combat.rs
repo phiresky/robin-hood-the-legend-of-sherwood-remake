@@ -607,14 +607,14 @@ fn final_review_combat_alert_all_refused_enters_reserve_without_success_remark()
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
     let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);
@@ -693,14 +693,14 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     let enemy_id = engine.add_test_entity(enemy);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.enemy_mut(officer_id).list_them = vec![enemy_id.index()];
-    engine.execute_live_battle_decision(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Decision::AlertSoldiers,
-        Substate::AttackingReactiontime,
-        0,
-        false,
-    );
+    engine
+        .ai_ctx(&sim, &assets, officer_id)
+        .execute_live_battle_decision(
+            Decision::AlertSoldiers,
+            Substate::AttackingReactiontime,
+            0,
+            false,
+        );
 
     let officer = engine.enemy(officer_id);
     assert!(officer.base.friends_are_alerted);

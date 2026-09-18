@@ -71,16 +71,6 @@ impl EngineInner {
         false
     }
 
-    #[cfg(test)]
-    pub(super) fn execute_friendly_behavior(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, tcx, owner).execute_friendly_behavior(stimulus)
-    }
-
     fn friendly_brain(&self, owner: EntityId) -> &crate::ai_friendly::FriendlyAi {
         self.expect_entity(owner, "civilian behavior owner")
             .friendly_ai()
@@ -882,11 +872,9 @@ mod tests {
                 ai.base.current_substate = Substate::SleepingForever;
             }
             assert_eq!(
-                engine.execute_friendly_behavior(
-                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                    owner,
-                    &Stimulus::new(StimulusType::EventStop)
-                ),
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_friendly_behavior(&Stimulus::new(StimulusType::EventStop)),
                 Some(false)
             );
             let ai = engine.friendly_brain(owner);
@@ -909,11 +897,12 @@ mod tests {
         let (mut engine, assets, owner, body) = fixture();
         let position = engine.live_ai_position(body);
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &Stimulus::with_human(StimulusType::EventSeesBody, body.index())
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_friendly_behavior(&Stimulus::with_human(
+                    StimulusType::EventSeesBody,
+                    body.index()
+                )),
             Some(false)
         );
         let ai = engine.friendly_brain(owner);
@@ -940,11 +929,9 @@ mod tests {
         ai.base.seek_position = position;
         let sim = crate::sim_rng::test_context();
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_friendly_behavior(&Stimulus::new(StimulusType::EventTimer)),
             Some(false)
         );
         assert_eq!(
@@ -956,11 +943,9 @@ mod tests {
             position
         );
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_friendly_behavior(&Stimulus::new(StimulusType::EventReachPoint)),
             Some(false)
         );
         assert_eq!(
@@ -977,11 +962,9 @@ mod tests {
         let mut stimulus = Stimulus::new(StimulusType::EventSeesObject);
         stimulus.info = StimulusInfo::Object(AiEntityHandle::new(target.index()));
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &stimulus
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_friendly_behavior(&stimulus),
             Some(false)
         );
         assert_eq!(bitcode::encode(engine.friendly_brain(owner)), before);
@@ -1010,11 +993,12 @@ mod tests {
     fn apple_chase_rejects_missing_chaser() {
         let (mut engine, assets, owner, _) = fixture();
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &Stimulus::with_human(StimulusType::CallYouJustWait, u32::MAX),
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_friendly_behavior(&Stimulus::with_human(
+                    StimulusType::CallYouJustWait,
+                    u32::MAX
+                ),),
             Some(false)
         );
     }
@@ -1027,11 +1011,9 @@ mod tests {
             engine.reporting_civilian_mut(owner).base.seek_position = position;
             let stimulus = Stimulus::with_position(event, position);
             assert_eq!(
-                engine.execute_friendly_behavior(
-                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                    owner,
-                    &stimulus
-                ),
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_friendly_behavior(&stimulus),
                 Some(false)
             );
             let ai = engine.friendly_brain(owner);
@@ -1054,11 +1036,12 @@ mod tests {
             ai.base.current_substate = substate;
             ai.fleeing_seen_enemy_counter = count;
             assert_eq!(
-                engine.execute_friendly_behavior(
-                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                    owner,
-                    &Stimulus::with_human(StimulusType::EventView, target.index())
-                ),
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_friendly_behavior(&Stimulus::with_human(
+                        StimulusType::EventView,
+                        target.index()
+                    )),
                 Some(false)
             );
             assert_eq!(
@@ -1098,11 +1081,12 @@ mod tests {
         ai.base.current_state = AiState::Fleeing;
         ai.base.current_substate = Substate::FleeingRunToDoor;
         assert_eq!(
-            engine.execute_friendly_behavior(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::with_human(StimulusType::EventView, target.index())
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_friendly_behavior(&Stimulus::with_human(
+                    StimulusType::EventView,
+                    target.index()
+                )),
             Some(false)
         );
         assert_eq!(engine.friendly_brain(owner).fleeing_seen_enemy_counter, 1);

@@ -242,11 +242,9 @@ fn lost_execution_target_falls_back_to_the_source_decision() {
     let (mut engine, assets, ids) = fixture(&[(100.0, 100.0)]);
     let sim = crate::sim_rng::test_context();
     assert_eq!(
-        engine.execute_ai_battle_too_proud(
-            TickCtx::new(&sim, &assets),
-            ids[0],
-            Substate::AttackingReactiontime
-        ),
+        engine
+            .ai_ctx(&sim, &assets, ids[0])
+            .execute_ai_battle_too_proud(Substate::AttackingReactiontime),
         ControlFlow::Continue(Decision::Reserve)
     );
     assert_eq!(

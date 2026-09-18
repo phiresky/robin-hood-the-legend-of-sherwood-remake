@@ -214,15 +214,6 @@ impl EngineInner {
         selected
     }
 
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_battle_decisions(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_battle_decisions()
-    }
-
     fn prepare_live_battle_decisions(
         &mut self,
         assets: &LevelAssets,
@@ -716,14 +707,9 @@ mod tests {
             ai.base.current_substate = entry;
             ai.previous_substate = StoredEnumWord::new(previous);
             ai.is_vip = false;
-            let result = engine.execute_live_battle_decision(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                Decision::TooProudToAttack,
-                entry,
-                0,
-                false,
-            );
+            let result = engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_live_battle_decision(Decision::TooProudToAttack, entry, 0, false);
             assert_eq!(result, Some(Decision::TooProudToAttack));
             let ai = engine
                 .world
@@ -1130,10 +1116,9 @@ mod tests {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("stale friend"))
             .list_them = vec![ally.index()];
-        engine.execute_battle_decisions(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_battle_decisions();
         let ai = engine
             .world
             .entities

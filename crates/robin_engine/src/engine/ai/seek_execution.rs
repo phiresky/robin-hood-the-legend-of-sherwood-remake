@@ -137,15 +137,6 @@ impl EngineInner {
         }
         nearest
     }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_seek_next_point(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seek_next_point()
-    }
 }
 
 impl AiOwnerCtx<'_> {
@@ -1033,7 +1024,9 @@ mod tests {
         });
 
         let (mut engine, assets, owner) = search_fixture(ai, Default::default(), false);
-        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_seek_next_point();
 
         assert_eq!(
             engine.seek_enemy(owner).base.last_goto_destination,
@@ -1085,7 +1078,9 @@ mod tests {
         let (mut engine, assets, owner) = search_fixture(ai, global, false);
 
         let (_, draws) = with_draw_trace(|| {
-            engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_seek_next_point();
         });
 
         assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -1128,7 +1123,9 @@ mod tests {
         let (mut engine, assets, owner) = search_fixture(ai, global, false);
 
         let (_, draws) = with_draw_trace(|| {
-            engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_seek_next_point();
         });
 
         assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -1203,7 +1200,9 @@ mod tests {
             .seek_enemy_mut(owner)
             .beggars_to_control
             .push(beggar.index());
-        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_seek_next_point();
 
         assert_eq!(engine.seek_enemy(owner).actual_seek_point, Some(0));
         assert!(!engine.ai.global.seek_points[0].locked);
@@ -1219,7 +1218,9 @@ mod tests {
         engine.seek_enemy_mut(owner).beggar_to_examine = None;
         engine.seek_enemy_mut(owner).my_seek_points.push(1);
 
-        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
+        engine
+            .ai_ctx(&sim, &assets, owner)
+            .execute_ai_seek_next_point();
 
         assert!(!engine.ai.global.seek_points[0].locked);
         assert_eq!(engine.seek_enemy(owner).actual_seek_point, Some(1));

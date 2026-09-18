@@ -79,7 +79,9 @@ fn rejected_swordfight_reconsideration_does_not_retry_during_lifecycle_tick() {
     engine.set_action_state_of(target, ActionState::Waiting);
 
     engine.with_simulation_context(|engine, sim| {
-        engine.execute_reconsider_swordfight(TickCtx::new(sim, &assets), attacker, false);
+        engine
+            .ai_ctx(sim, &assets, attacker)
+            .execute_reconsider_swordfight(false);
     });
     let cursor_after_first = engine.control.rng.original_replay_cursor().unwrap();
     assert_eq!(cursor_after_first, 0, "honour rejection precedes proposal");

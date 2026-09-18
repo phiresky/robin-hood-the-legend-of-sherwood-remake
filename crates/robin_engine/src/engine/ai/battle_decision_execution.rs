@@ -32,14 +32,9 @@ mod tests {
                 .expect_enemy_ai_mut(owner, format_args!("empty battle"))
                 .list_them
                 .clear();
-            let result = engine.execute_live_battle_decision(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                decision,
-                Substate::AttackingReactiontime,
-                0,
-                false,
-            );
+            let result = engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_live_battle_decision(decision, Substate::AttackingReactiontime, 0, false);
             assert_eq!(result, Some(Decision::Reserve));
             let ai = engine
                 .world
@@ -72,10 +67,9 @@ mod tests {
                 .element_data_mut()
                 .set_position_map(MapPoint::new(x, y));
             let expected = engine.live_ai_position(target);
-            engine.execute_battle_decisions(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-            );
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_battle_decisions();
             let ai = engine
                 .world
                 .entities
@@ -134,16 +128,6 @@ impl EngineInner {
             && (!(entity.is_active()
                 && !self.entity_data_in_building_sector(entity.element_data()))
                 || (!ai.combat_trainer && ai.company_number != 100))
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_live_battle_without_visible_enemies(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        unconscious: Vec<HumanHandle>,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_live_battle_without_visible_enemies(unconscious)
     }
 
     pub(super) fn choose_live_battle_decision(
@@ -301,24 +285,6 @@ impl EngineInner {
             }
         }
         (Decision::Fight, 0)
-    }
-
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_live_battle_decision(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        decision: Decision,
-        old_substate: Substate,
-        cover: HumanHandle,
-        alerting_near: bool,
-    ) -> Option<Decision> {
-        AiOwnerCtx::new(self, tcx, owner).execute_live_battle_decision(
-            decision,
-            old_substate,
-            cover,
-            alerting_near,
-        )
     }
 }
 

@@ -6,17 +6,7 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 
-impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_enemy_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_enemy_event(stimulus)
-    }
-}
+impl EngineInner {}
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_enemy_event(&mut self, stimulus: &Stimulus) -> bool {
@@ -479,7 +469,11 @@ mod tests {
         );
         let stimulus = Stimulus::with_human(StimulusType::EventView, target.index());
         assert!(engine.admit_ai_think_live(owner, &stimulus));
-        assert!(!engine.execute_ai_enemy_event(TickCtx::new(&sim, &assets), owner, &stimulus));
+        assert!(
+            !engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_enemy_event(&stimulus)
+        );
         let after = engine.observation_ai(owner);
         assert_eq!(after.base.current_state, AiState::Sleeping);
         assert_eq!(after.base.current_substate, Substate::SleepingAwakening);

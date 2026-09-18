@@ -8,16 +8,6 @@ use crate::element::Element as _;
 use crate::profiles::{CivilianType, ProfileRank};
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_wondering_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_wondering_event(stimulus)
-    }
-
     fn wondering_timer(&mut self, owner: EntityId, duration: u32) {
         let frame = self.control.frame_counter;
         self.seek_enemy_mut(owner)
@@ -32,11 +22,6 @@ impl EngineInner {
             .antagonist
             .expect("child chase requires antagonist");
         self.expect_human_id_for_ai_handle(handle.get(), "child chase antagonist")
-    }
-
-    #[cfg(test)]
-    fn chase_live_children(&mut self, tcx: TickCtx<'_>, owner: EntityId) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).chase_live_children()
     }
 
     fn live_whistle_officer(&self, assets: &LevelAssets, owner: EntityId) -> Option<EntityId> {
@@ -578,11 +563,9 @@ mod tests {
                 ai.base.patrol.push(target);
             }
             assert_eq!(
-                engine.execute_ai_wondering_event(
-                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                    owner,
-                    &Stimulus::new(StimulusType::EventTimer)
-                ),
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer)),
                 Some(false)
             );
             assert_eq!(engine.seek_enemy(owner).base.current_substate, expected);
@@ -611,11 +594,9 @@ mod tests {
             Substate::SeekingHeardsteps,
         ] {
             assert_eq!(
-                engine.execute_ai_wondering_event(
-                    TickCtx::new(&sim, &assets),
-                    owner,
-                    &Stimulus::new(StimulusType::EventTimer)
-                ),
+                engine
+                    .ai_ctx(&sim, &assets, owner)
+                    .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer)),
                 Some(false)
             );
             assert_eq!(engine.seek_enemy(owner).base.current_substate, expected);
@@ -643,11 +624,9 @@ mod tests {
         ai.base.current_substate = Substate::SeekingHeardsteps;
         ai.base.seek_position = remembered;
         assert_eq!(
-            engine.execute_ai_wondering_event(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint)
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventReachPoint)),
             Some(false)
         );
         let ai = engine.seek_enemy(owner);
@@ -673,11 +652,9 @@ mod tests {
         ai.base.launch_timer(60, 40);
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             assert_eq!(
-                engine.execute_ai_wondering_event(
-                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                    owner,
-                    &Stimulus::new(StimulusType::EventTimer)
-                ),
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer)),
                 Some(false)
             );
         });
@@ -701,11 +678,9 @@ mod tests {
         let target_position = engine.live_ai_position(target);
         let sim = crate::sim_rng::test_context();
         assert_eq!(
-            engine.execute_ai_wondering_event(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer)
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer)),
             Some(false)
         );
         let ai = engine.seek_enemy(owner);
@@ -717,11 +692,9 @@ mod tests {
         assert_eq!(ai.base.last_goto_destination, target_position);
         assert_eq!(ai.base.when_does_timer_ring, 110);
         assert_eq!(
-            engine.execute_ai_wondering_event(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventReachPoint),
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventReachPoint),),
             Some(false)
         );
         assert_eq!(
@@ -729,11 +702,9 @@ mod tests {
             Substate::WonderingAppleChasingChildWaiting
         );
         assert_eq!(
-            engine.execute_ai_wondering_event(
-                TickCtx::new(&sim, &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer),
-            ),
+            engine
+                .ai_ctx(&sim, &assets, owner)
+                .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer),),
             Some(false)
         );
         assert_eq!(
@@ -763,11 +734,9 @@ mod tests {
                 StimulusType::EventOutOfView,
             ] {
                 assert_eq!(
-                    engine.execute_ai_wondering_event(
-                        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                        owner,
-                        &Stimulus::new(event)
-                    ),
+                    engine
+                        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                        .execute_ai_wondering_event(&Stimulus::new(event)),
                     None
                 );
                 assert_eq!(engine.seek_enemy(owner).base.current_substate, substate);
@@ -779,10 +748,11 @@ mod tests {
     fn apple_chase_without_visible_children_clears_previous_antagonist() {
         let (mut engine, assets, owner, target) = fixture(false);
         engine.seek_enemy_mut(owner).base.antagonist = Some(AiEntityHandle::new(target.index()));
-        assert!(!engine.chase_live_children(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner
-        ));
+        assert!(
+            !engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .chase_live_children()
+        );
         assert_eq!(engine.seek_enemy(owner).base.antagonist, None);
     }
 
@@ -795,11 +765,9 @@ mod tests {
         ai.base.antagonist = Some(AiEntityHandle::new(target.index()));
         ai.base.lasting_panic_runs = 0;
         assert_eq!(
-            engine.execute_ai_wondering_event(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer),
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_wondering_event(&Stimulus::new(StimulusType::EventTimer),),
             Some(false)
         );
         assert_eq!(

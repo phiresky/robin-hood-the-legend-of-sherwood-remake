@@ -753,12 +753,11 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
     };
     soldier.element.active = false;
 
-    assert!(engine.execute_ai_alert_soldiers(
-        TickCtx::new(&sim, &assets),
-        officer_id,
-        Position::default(),
-        0
-    ));
+    assert!(
+        engine
+            .ai_ctx(&sim, &assets, officer_id)
+            .execute_ai_alert_soldiers(Position::default(), 0)
+    );
     assert_eq!(
         engine
             .world

@@ -8,16 +8,6 @@ use crate::ai::{
 use crate::ai_enemy::SeekFlags;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_enemy_report_callback(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> Option<bool> {
-        AiOwnerCtx::new(self, tcx, owner).execute_enemy_report_callback(stimulus)
-    }
-
     fn report_antagonist(&self, owner: EntityId) -> EntityId {
         let handle = self
             .ai(owner, "report participant")
@@ -492,11 +482,9 @@ mod tests {
             .expect_ai_controller_mut(owner, format_args!("test listener"));
         ai.current_state = AiState::Seeking;
         ai.current_substate = Substate::SeekingWaitForAlertingCivilian;
-        engine.execute_enemy_report_callback(
-            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-            owner,
-            &Stimulus::with_human(StimulusType::CallReport, 42),
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &LevelAssets::new(), owner)
+            .execute_enemy_report_callback(&Stimulus::with_human(StimulusType::CallReport, 42));
     }
 
     #[test]
@@ -561,11 +549,9 @@ mod tests {
         ai.current_state = AiState::Default;
         ai.current_substate = Substate::SeekingSoldierGiveReportToOfficer;
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
-                owner,
-                &Stimulus::new(StimulusType::EventDone),
-            ),
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(StimulusType::EventDone),),
             Some(false)
         );
     }
@@ -600,11 +586,9 @@ mod tests {
         };
         engine.ai.standard_view_polygon_radius = 300;
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                TickCtx::new(&sim, &LevelAssets::new()),
-                owner,
-                &Stimulus::new(StimulusType::EventTimer),
-            ),
+            engine
+                .ai_ctx(&sim, &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(StimulusType::EventTimer),),
             Some(false)
         );
         let ai = engine
@@ -619,11 +603,11 @@ mod tests {
         assert!(ai.base.timer_is_running);
         assert_eq!(ai.base.when_does_timer_ring, 14_768);
         assert_eq!(
-            engine.execute_enemy_report_callback(
-                TickCtx::new(&sim, &LevelAssets::new()),
-                owner,
-                &Stimulus::new(StimulusType::EventLoseConsciousness),
-            ),
+            engine
+                .ai_ctx(&sim, &LevelAssets::new(), owner)
+                .execute_enemy_report_callback(&Stimulus::new(
+                    StimulusType::EventLoseConsciousness
+                ),),
             None
         );
     }

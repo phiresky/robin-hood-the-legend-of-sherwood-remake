@@ -86,11 +86,11 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
             .action_state = crate::element::ActionState::MovingShield;
         engine.enter_ai_think_frame(owner);
         if protecting {
-            assert!(engine.execute_ai_shield_expected_event(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                crate::ai::StimulusType::EventTimer
-            ));
+            assert!(
+                engine
+                    .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                    .execute_ai_shield_expected_event(crate::ai::StimulusType::EventTimer)
+            );
         } else {
             engine.execute_ai_phalanx_timer(
                 TickCtx::new(&crate::sim_rng::test_context(), &assets),

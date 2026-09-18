@@ -163,16 +163,6 @@ impl EngineInner {
         false
     }
 
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_battle_too_proud(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        old_substate: Substate,
-    ) -> ControlFlow<bool, Decision> {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_battle_too_proud(old_substate)
-    }
-
     pub(in crate::engine) fn execute_ai_battle_archer_step_back(
         &mut self,
         tcx: TickCtx<'_>,

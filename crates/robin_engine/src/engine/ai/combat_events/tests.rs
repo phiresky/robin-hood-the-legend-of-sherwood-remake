@@ -246,11 +246,9 @@ fn place(engine: &mut EngineInner, id: EntityId, x: f32, y: f32, z: f32) {
 }
 
 fn event(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId, event: StimulusType) {
-    let handled = engine.execute_ai_combat_expected_event(
-        TickCtx::new(&crate::sim_rng::test_context(), assets),
-        owner,
-        event,
-    );
+    let handled = engine
+        .ai_ctx(&crate::sim_rng::test_context(), assets, owner)
+        .execute_ai_combat_expected_event(event);
     assert!(handled);
 }
 
@@ -476,11 +474,9 @@ fn archer_path_wait_returns_to_duty_only_on_timer() {
         Substate::AttackingArcherWaitOnArcheryPathBending,
     ] {
         let (mut engine, assets, owner, _) = fixture(state);
-        let handled = engine.execute_ai_combat_expected_event(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            StimulusType::EventDone,
-        );
+        let handled = engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_combat_expected_event(StimulusType::EventDone);
         assert!(!handled);
         assert_eq!(engine.combat_event_ai(owner).base.current_substate, state);
         event(&mut engine, &assets, owner, StimulusType::EventTimer);
@@ -505,11 +501,9 @@ fn bow_cover_arrival_faces_target_with_truncated_elevation() {
     );
     engine.face(owner, 3);
     engine.set_action_state_of(owner, crate::element::ActionState::Moving);
-    let handled = engine.execute_ai_archery_expected_event(
-        TickCtx::new(&crate::sim_rng::test_context(), &assets),
-        owner,
-        StimulusType::EventReachPoint,
-    );
+    let handled = engine
+        .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+        .execute_ai_archery_expected_event(StimulusType::EventReachPoint);
     assert!(handled);
     assert!(
         engine

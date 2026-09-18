@@ -118,16 +118,6 @@ impl EngineInner {
         AiOwnerCtx::new(self, tcx, owner).execute_ai_callback(stimulus)
     }
 
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_handler_body(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &crate::ai::Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_handler_body(stimulus)
-    }
-
     pub(in crate::engine) fn execute_ai_think(
         &mut self,
         tcx: TickCtx<'_>,

@@ -9,16 +9,6 @@ use crate::element::Human as _;
 use crate::profiles::ProfileRank;
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(super) fn execute_ai_seen_body(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        body: HumanHandle,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_body(body)
-    }
-
     fn near_officer_informed_about_body(
         &self,
         assets: &LevelAssets,
@@ -78,11 +68,6 @@ impl EngineInner {
             return Some(id);
         }
         None
-    }
-
-    #[cfg(test)]
-    pub(super) fn execute_ai_body_reaction_timer(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_body_reaction_timer()
     }
 }
 

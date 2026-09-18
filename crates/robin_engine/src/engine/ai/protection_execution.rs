@@ -31,16 +31,6 @@ impl EngineInner {
         self.launch_element(tcx, element);
     }
 
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_shield_expected_event(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        event: crate::ai::StimulusType,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_shield_expected_event(event)
-    }
-
     fn shield_timer(&mut self, owner: EntityId, delay: u32) {
         self.world
             .entities

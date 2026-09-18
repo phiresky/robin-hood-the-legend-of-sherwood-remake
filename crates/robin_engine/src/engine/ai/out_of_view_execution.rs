@@ -9,16 +9,6 @@ use crate::ai_enemy::AiMapVec;
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_out_of_view(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        stimulus: &Stimulus,
-    ) -> bool {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_out_of_view(stimulus)
-    }
-
     fn live_enemy_is_behind_me(&self, owner: EntityId) -> bool {
         let entity = self.expect_entity(owner, "visibility loss stare");
         let ground = entity.element_data().position();

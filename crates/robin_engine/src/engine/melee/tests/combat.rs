@@ -746,7 +746,9 @@ fn sword_strike_honour_reads_live_animation_not_action_change_history() {
     assert!(engine.actor_is_in_sword_recovery(target));
 
     engine.with_simulation_context(|engine, sim| {
-        engine.execute_reconsider_swordfight(TickCtx::new(sim, &assets), attacker, false);
+        engine
+            .ai_ctx(sim, &assets, attacker)
+            .execute_reconsider_swordfight(false);
     });
 
     assert_eq!(

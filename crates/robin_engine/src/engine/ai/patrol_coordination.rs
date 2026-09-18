@@ -271,16 +271,14 @@ mod tests {
                 crate::ai::AlertFlags::empty(),
             );
 
-            engine.execute_ai_coordinate_patrol(
-                TickCtx::new(&crate::sim_rng::test_context(), &assets),
-                owner,
-                &StimulusInfo::Position(Position {
+            engine
+                .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+                .execute_ai_coordinate_patrol(&StimulusInfo::Position(Position {
                     x: 100.0 + distance,
                     y: 100.0,
                     sector: Some(sector),
                     level: 0,
-                }),
-            );
+                }));
 
             let ai = engine
                 .world
@@ -300,16 +298,6 @@ mod tests {
 }
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_ai_coordinate_patrol(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        info: &crate::ai::StimulusInfo,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_ai_coordinate_patrol(info)
-    }
-
     /// Apply facing from the two actor values it actually reads. In particular,
     /// this runs after coordinate Think, so callback changes are visible.
     fn instruct_patrol_direction(&mut self, tcx: TickCtx<'_>, member: EntityId, direction: u16) {

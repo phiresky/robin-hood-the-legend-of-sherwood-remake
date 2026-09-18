@@ -179,11 +179,9 @@ mod tests {
             .unwrap()
             .element_data_mut()
             .set_direction_instantly(12);
-        engine.execute_reconsider_swordfight(
-            TickCtx::new(&crate::sim_rng::test_context(), &assets),
-            owner,
-            false,
-        );
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_reconsider_swordfight(false);
         assert_eq!(
             engine
                 .world
@@ -312,11 +310,9 @@ mod tests {
             ai.base.primary_target = Some(AiEntityHandle::new(previous.index()));
             let expected_center = engine.live_ai_position(target);
             engine.enter_ai_think_frame(owner);
-            engine.execute_reconsider_swordfight(
-                TickCtx::new(&SimulationContext::with_seed(0), &assets),
-                owner,
-                false,
-            );
+            engine
+                .ai_ctx(&SimulationContext::with_seed(0), &assets, owner)
+                .execute_reconsider_swordfight(false);
             let ai = engine
                 .world
                 .entities
@@ -368,16 +364,16 @@ mod tests {
             .set_position_map(MapPoint::new(200.0 + range as f32 + 80.0, 200.0));
         let target_position = engine.live_ai_position(target);
         engine.enter_ai_think_frame(owner);
-        engine.reconsider_live_swordfight_tactics(
-            TickCtx::new(&sober_combat_context(), &assets),
-            owner,
-            false,
-            SwordfightLists {
-                nearest_friend_solo: None,
-                number_of_friends: 1,
-                number_of_swordfighting_enemies: 1,
-            },
-        );
+        engine
+            .ai_ctx(&sober_combat_context(), &assets, owner)
+            .reconsider_live_swordfight_tactics(
+                false,
+                SwordfightLists {
+                    nearest_friend_solo: None,
+                    number_of_friends: 1,
+                    number_of_swordfighting_enemies: 1,
+                },
+            );
         assert_eq!(
             engine
                 .world
@@ -391,16 +387,6 @@ mod tests {
 }
 
 impl EngineInner {
-    #[cfg(test)]
-    pub(in crate::engine) fn execute_reconsider_swordfight(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        enemy_weak: bool,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).execute_reconsider_swordfight(enemy_weak)
-    }
-
     fn nearest_live_opponent(&self, maurice: EntityId, rene: EntityId) -> Option<EntityId> {
         let position = self.live_ai_position(rene);
         let mut nearest = None;
@@ -420,17 +406,6 @@ impl EngineInner {
             }
         }
         nearest
-    }
-
-    #[cfg(test)]
-    fn reconsider_live_swordfight_tactics(
-        &mut self,
-        tcx: TickCtx<'_>,
-        owner: EntityId,
-        enemy_weak: bool,
-        lists: SwordfightLists,
-    ) {
-        AiOwnerCtx::new(self, tcx, owner).reconsider_live_swordfight_tactics(enemy_weak, lists)
     }
 
     fn fighter_max_norm_distance(&self, owner: EntityId, target: EntityId) -> f32 {
