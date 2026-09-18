@@ -9,8 +9,7 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
     let left = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let right = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     {
         let ai = engine
             .get_entity_mut(owner)
@@ -83,8 +82,7 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
     let mut engine = EngineInner::new();
     engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.ai.global.archery_sectors.push(SectorArchery {
         points: vec![PointArchery {
             position: Default::default(),
@@ -137,11 +135,7 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
     // the target. Removal cannot edit the caller's local snapshot.
     let detached = vec![human, object];
     engine.remove_entity(target);
-    let ai = engine
-        .get_entity_mut(observer)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(observer);
     let history = ai.last_stimulus;
     engine.dispatch_optical_stimuli(
         &crate::sim_rng::test_context(),
@@ -149,11 +143,7 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
         &LevelAssets::new(),
         detached,
     );
-    let ai = engine
-        .get_entity(observer)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let ai = engine.ai_ctrl(observer);
     assert_eq!(
         ai.last_stimulus, history,
         "neither stale target is delivered to Think"
@@ -716,11 +706,7 @@ fn shared_cycle_advances_after_early_filters_but_before_busy_category_and_id_zer
         SpeechNpcKind::Soldier { vip: false },
         401,
     );
-    engine
-        .get_entity_mut(filtered)
-        .unwrap()
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(filtered).blipped = true;
     queue_and_settle_speech(
         &mut engine,
         &assets,
@@ -736,12 +722,7 @@ fn shared_cycle_advances_after_early_filters_but_before_busy_category_and_id_zer
         SpeechNpcKind::Soldier { vip: false },
         402,
     );
-    engine
-        .get_entity_mut(busy)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
-        .current_remark = Remark::Wounded;
+    engine.ai_ctrl_mut(busy).current_remark = Remark::Wounded;
     queue_and_settle_speech(
         &mut engine,
         &assets,
@@ -832,12 +813,8 @@ fn repeated_checkpoint_charly_replaces_the_live_target() {
             owner,
             (!clear).then_some(AiEntityHandle::new(second.index())),
         );
-        let actual = engine
-            .get_entity(owner)
-            .unwrap()
-            .ai_actor_data()
-            .unwrap()
-            .detectable_lists[MissedFriend as usize]
+        let actual = engine.ent(owner).ai_actor_data().unwrap().detectable_lists
+            [MissedFriend as usize]
             .iter()
             .map(|entry| entry.element)
             .collect::<Vec<_>>();
@@ -854,8 +831,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     let other_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for id in [self_id, other_id] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -871,17 +847,12 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
 
     engine.test_runtime_assets();
 
-    let Entity::Soldier(self_soldier) =
-        engine.get_entity_mut(self_id).expect("self fighter exists")
-    else {
+    let Entity::Soldier(self_soldier) = engine.ent_mut(self_id) else {
         panic!("self fighter changed kind")
     };
     self_soldier.element.active = false;
 
-    let Entity::Soldier(other_soldier) = engine
-        .get_entity_mut(other_id)
-        .expect("other fighter exists")
-    else {
+    let Entity::Soldier(other_soldier) = engine.ent_mut(other_id) else {
         panic!("other fighter changed kind")
     };
     other_soldier.element.publish_order_posture(Posture::Tied);
@@ -890,7 +861,7 @@ fn fighter_registry_keeps_inactive_and_tied_members_with_live_ineligibility() {
     assert!(registry.contains(&self_id));
     assert!(registry.contains(&other_id));
     for id in [self_id, other_id] {
-        let Entity::Soldier(soldier) = engine.get_entity(id).expect("registered fighter") else {
+        let Entity::Soldier(soldier) = engine.ent(id) else {
             panic!("fighter changed kind")
         };
         assert!(!soldier.is_able_to_fight());
@@ -905,9 +876,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     let self_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let dead_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
 
-    let Entity::Soldier(self_soldier) =
-        engine.get_entity_mut(self_id).expect("test fighter exists")
-    else {
+    let Entity::Soldier(self_soldier) = engine.ent_mut(self_id) else {
         panic!("test fighter changed kind")
     };
     self_soldier.element.active = true;
@@ -920,10 +889,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
         .base
         .me = self_id.index();
 
-    let Entity::Pc(dead_pc) = engine
-        .get_entity_mut(dead_pc_id)
-        .expect("dead test PC exists")
-    else {
+    let Entity::Pc(dead_pc) = engine.ent_mut(dead_pc_id) else {
         panic!("dead test PC changed kind")
     };
     dead_pc.element.active = true;
@@ -932,9 +898,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     engine.test_runtime_assets();
 
     assert!(engine.world.fighter_registry_ids.contains(&dead_pc_id));
-    let entity = engine
-        .get_entity(dead_pc_id)
-        .expect("held dead fighter remains live");
+    let entity = engine.ent(dead_pc_id);
     assert!(entity.is_dead());
     let Entity::Pc(pc) = entity else {
         panic!("dead fighter changed kind")
@@ -970,7 +934,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         (old_target_id, MapPoint::new(120.0, 100.0)),
         (new_target_id, MapPoint::new(130.0, 100.0)),
     ] {
-        let entity = engine.get_entity_mut(id).expect("test combatant exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity.element_data_mut().set_position_map(position);
         if let Some(npc) = entity.npc_data_mut() {
@@ -1080,9 +1044,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         1,
         0,
     ));
-    let officer = engine
-        .get_entity_mut(officer_id)
-        .expect("call-rejection officer exists");
+    let officer = engine.ent_mut(officer_id);
     officer
         .element_data_mut()
         .set_position_map(MapPoint::new(100.0, 100.0));
@@ -1127,9 +1089,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
         Some(false),
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .expect("call-rejection officer survives");
+    let officer = engine.ent(officer_id);
     let ai = officer
         .enemy_ai()
         .expect("call-rejection officer retains EnemyAi");
@@ -1210,22 +1170,10 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
     use crate::sector::{SectorNumber, SectorType};
 
     let make_sector = |sector_type| GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type,
-        layer: 0,
         sector_number: SectorNumber::new(64),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
 
     let sim = crate::sim_rng::test_context();
@@ -1283,7 +1231,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
         crate::position_interface::SectorHandle::new(64),
         "a genuinely missing retained index remains number-only"
     );
-    let entity = engine.get_entity_mut(owner).unwrap();
+    let entity = engine.ent_mut(owner);
     entity.element_data_mut().active = true;
     entity
         .element_data_mut()
@@ -1338,9 +1286,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
 
-    let officer = engine
-        .get_entity_mut(officer_id)
-        .expect("call-acceptance officer exists");
+    let officer = engine.ent_mut(officer_id);
     officer
         .npc_data_mut()
         .expect("officer remains NPC")
@@ -1369,9 +1315,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
         Some(false),
     );
 
-    let officer = engine
-        .get_entity(officer_id)
-        .expect("call-acceptance officer survives");
+    let officer = engine.ent(officer_id);
     let ai = officer
         .enemy_ai()
         .expect("call-acceptance officer retains EnemyAi");
@@ -1442,14 +1386,8 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, source_id, target_id, assets) = setup_review2_officer_and_soldier();
 
-    engine
-        .get_entity_mut(source_id)
-        .expect("nested-turn source exists")
-        .element_data_mut()
-        .set_position_map(MapPoint::new(0.0, 0.0));
-    let target = engine
-        .get_entity_mut(target_id)
-        .expect("nested-turn target exists");
+    engine.place_map(source_id, MapPoint::new(0.0, 0.0));
+    let target = engine.ent_mut(target_id);
     target
         .element_data_mut()
         .set_position_map(MapPoint::new(40.0, 0.0));
@@ -1503,10 +1441,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
     let sim = crate::sim_rng::test_context();
     let (mut engine, source_id, member_id, assets) = setup_review2_officer_and_soldier();
     engine.enter_ai_think_frame(source_id);
-    let Entity::Soldier(source_soldier) = engine
-        .get_entity_mut(source_id)
-        .expect("phalanx-break source exists")
-    else {
+    let Entity::Soldier(source_soldier) = engine.ent_mut(source_id) else {
         panic!("phalanx-break source changed kind")
     };
     // Keep battle planning on its active-enemy path; the empty synthetic

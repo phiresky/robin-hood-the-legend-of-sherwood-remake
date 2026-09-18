@@ -122,7 +122,7 @@ fn drop_ammo_and_tick(
     let mut elem = SequenceElement::new_generic(1, crate::element::Command::DropAmmo, Some(pc_id));
     elem.set_property(Field::ActionId, FieldValue::Integer(Action::Bow as u32));
     elem.set_property(Field::Amount, FieldValue::Integer(amount));
-    engine.launch_element(&crate::sim_rng::test_context(), &assets, elem);
+    engine.t_launch_element(&assets, elem);
 
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -132,16 +132,11 @@ fn drop_ammo_and_tick(
 #[test]
 fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
     let (mut engine, pc_id, assets) = build_engine_with_pc(0);
-    let expected_action_point = engine
-        .get_entity(pc_id)
-        .unwrap()
-        .current_gameplay_point_map()
-        .unwrap();
+    let expected_action_point = engine.ent(pc_id).current_gameplay_point_map().unwrap();
     engine.mission_domain.campaign.characters[0]
         .status
         .set_ammo(Action::Ale, 1);
-    engine.launch_element(
-        &crate::sim_rng::test_context(),
+    engine.t_launch_element(
         &assets,
         SequenceElement::new(1, crate::element::Command::DropAle, Some(pc_id)),
     );
@@ -201,7 +196,7 @@ fn drop_ale_spawns_object_other_and_survives_its_next_live_owner_slot() {
             .then_some(id)
         })
         .expect("completed ale dropping must append its ale element");
-    let ale = engine.get_entity(ale_id).unwrap();
+    let ale = engine.ent(ale_id);
     assert_eq!(ale.kind(), ElementKind::ObjectOther);
     assert_eq!(ale.element_data().position_map(), expected_action_point);
     assert!(!ale.element_data().blipped);
@@ -238,7 +233,7 @@ fn three_drops_at_same_position_merge_into_one_pile() {
     assert_eq!(bonuses[0].1, 3, "merged quantity");
 
     // last_dropped_ammo should point at the surviving pile.
-    let pc = engine.get_entity(pc_id).unwrap();
+    let pc = engine.ent(pc_id);
     let pc_data = match pc {
         crate::element::Entity::Pc(p) => &p.pc,
         _ => unreachable!(),
@@ -259,7 +254,7 @@ fn drop_over_pile_cap_spawns_fresh_and_bumps_facing() {
     assert_eq!(bonuses.len(), 1, "five drops merge into one pile");
     assert_eq!(bonuses[0].1, 5, "pile capped at 5");
 
-    let dir_before = engine.get_entity(pc_id).unwrap().element_data().direction();
+    let dir_before = engine.direction_of(pc_id);
 
     // Sixth drop overflows the cap → new pile, facing rotates +1.
     drop_ammo_and_tick(&mut engine, pc_id, 1, &assets);
@@ -274,7 +269,7 @@ fn drop_over_pile_cap_spawns_fresh_and_bumps_facing() {
     let fresh_qty = bonuses.iter().find(|(_, q)| *q == 1).map(|(_, q)| *q);
     assert_eq!(fresh_qty, Some(1));
 
-    let dir_after = engine.get_entity(pc_id).unwrap().element_data().direction();
+    let dir_after = engine.direction_of(pc_id);
     assert_eq!(
         dir_after,
         (dir_before + 1).rem_euclid(16),

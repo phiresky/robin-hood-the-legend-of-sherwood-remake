@@ -71,7 +71,7 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         (promoted, 18.567_36_f32),
     ];
     for (entity_id, x) in positions {
-        let entity = engine.get_entity_mut(entity_id).unwrap();
+        let entity = engine.ent_mut(entity_id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 0.0, 0.0));
@@ -79,19 +79,9 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 0.0));
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![old_principal, promoted].into();
+    engine.human_mut(owner).opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![owner].into();
+        engine.human_mut(opponent).opponents = vec![owner].into();
     }
 
     assert!(
@@ -120,7 +110,7 @@ fn terminal_sword_provoke_observes_promoted_opponent_before_post_seek_speak() {
         Command::SpeakHeroReachDestination,
         Some(owner),
     ));
-    engine.launch_sequence(&sim, &assets, post_seek);
+    engine.t_launch_sequence(&assets, post_seek);
     let owner_registrations = engine
         .orders
         .sequence_manager
@@ -168,7 +158,7 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
         (old_principal, 0.0_f32),
         (promoted, 18.567_36_f32),
     ] {
-        let entity = engine.get_entity_mut(entity_id).unwrap();
+        let entity = engine.ent_mut(entity_id);
         entity
             .element_data_mut()
             .set_position(WorldPoint3D::new(x, 0.0, 0.0));
@@ -176,28 +166,18 @@ fn sword_movement_start_gives_initiative_to_principal_promoted_by_far_pruning() 
             .element_data_mut()
             .set_position_map(MapPoint::new(x, 0.0));
     }
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .opponents = vec![old_principal, promoted].into();
+    engine.human_mut(owner).opponents = vec![old_principal, promoted].into();
     for opponent in [old_principal, promoted] {
-        engine
-            .get_entity_mut(opponent)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .opponents = vec![owner].into();
+        engine.human_mut(opponent).opponents = vec![owner].into();
     }
 
     engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
     engine.apply_sword_movement_start_initiative_transfer(owner);
 
-    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    let owner_human = engine.human(owner);
     assert_eq!(owner_human.opponents, vec![promoted]);
     assert!(!owner_human.smalltalk_initiative);
-    let promoted_human = engine.get_entity(promoted).unwrap().human_data().unwrap();
+    let promoted_human = engine.human(promoted);
     assert!(promoted_human.smalltalk_initiative);
     assert!(promoted_human.received_smalltalk_initiative);
     assert!(
@@ -756,10 +736,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     let (mut engine, officer_id, refused_id, mut assets) = setup_review2_officer_and_soldier();
     let accepted_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let Entity::Soldier(accepted) = engine
-        .get_entity_mut(accepted_id)
-        .expect("partial-refusal acceptor exists")
-    else {
+    let Entity::Soldier(accepted) = engine.ent_mut(accepted_id) else {
         panic!("partial-refusal acceptor changed kind")
     };
     accepted.element.active = true;
@@ -783,8 +760,7 @@ fn command_soldiers_to_attack_does_not_overwrite_acceptor_gather_instruction() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     install_test_open_field_bbox(&mut engine);
     engine
-        .get_entity_mut(officer_id)
-        .expect("partial-refusal officer exists")
+        .ent_mut(officer_id)
         .position_iface_mut()
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -5.0, -5.0, 5.0, 5.0,
@@ -903,10 +879,7 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
         Ineligible::Hitting,
     ] {
         let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("eligibility recipient exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("eligibility recipient changed kind")
         };
         soldier
@@ -995,10 +968,7 @@ fn closure_review_combat_alert_closed_eyes_do_not_disable_360_detection() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("closed-eye recipient exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("closed-eye recipient changed kind")
     };
     soldier.npc.eye_status = EyeStatus::Closed;

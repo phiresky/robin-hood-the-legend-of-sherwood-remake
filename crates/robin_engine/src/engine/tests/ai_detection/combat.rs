@@ -10,7 +10,7 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
     let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let member_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for id in [source_id, chief_id, member_id] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("LOOKTHERE broadcast test NPC changed kind")
         };
         soldier.element.active = true;
@@ -36,18 +36,10 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
         engine.execute_ai_look_there(sim, &assets, source_id, Position::default(), 100);
     });
 
-    let chief = engine
-        .get_entity(chief_id)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let chief = engine.ai_ctrl(chief_id);
     assert_eq!(chief.current_state, AiState::Attacking);
     assert_eq!(chief.current_substate, Substate::AttackingReactiontime);
-    let member = engine
-        .get_entity(member_id)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let member = engine.ai_ctrl(member_id);
     assert_eq!(member.current_state, AiState::Wondering);
     assert_eq!(member.current_substate, Substate::WonderingWatching);
 }
@@ -72,10 +64,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     let old_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let viewed_target_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("target-rebind soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("target-rebind observer changed kind")
     };
     soldier.element.active = true;
@@ -91,10 +80,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     soldier.npc.eye_status = crate::element::EyeStatus::Stare;
 
     for (pc_id, x) in [(old_target_id, -200.0), (viewed_target_id, 5.0)] {
-        let Entity::Pc(pc) = engine
-            .get_entity_mut(pc_id)
-            .expect("target-rebind PC exists")
-        else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             panic!("target-rebind target changed kind")
         };
         pc.element.active = true;
@@ -112,10 +98,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("target-rebind soldier exists before detection")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("target-rebind observer changed kind")
     };
     let ai = soldier

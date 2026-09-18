@@ -7,8 +7,7 @@ fn periodic_timer_restart_obeys_static_ai_freeze() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.control.frame_counter = 100;
     engine
         .world
@@ -50,8 +49,7 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
         let mut engine = EngineInner::new();
         let owner =
             engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         let ai = engine
             .world
             .entities
@@ -73,13 +71,7 @@ fn periodic_smalltalk_commands_advance_watchdog_but_unrelated_commands_preserve_
         // Install an already running command. Its initial instruction has
         // finished before the periodic watchdog inspects it.
         engine.select_sequence_element(owner, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
         engine.finish_enemy_periodic_stuck_suffix_after_refresh(&sim, owner, &assets, 64);
         assert_eq!(
             engine
@@ -131,7 +123,7 @@ fn primary_target_tracking_precedes_view_refresh() {
         target_pos.x - soldier_pos.x,
         target_pos.y - soldier_pos.y,
     );
-    let Entity::Soldier(soldier) = engine.get_entity(soldier_id).unwrap() else {
+    let Entity::Soldier(soldier) = engine.ent(soldier_id) else {
         panic!("test soldier changed entity kind");
     };
     assert_eq!(soldier.element.direction(), expected);
@@ -196,7 +188,7 @@ fn periodic_enemy_post_refresh_reads_the_materialized_manager_queue_without_surf
             ..Position::default()
         };
         engine.install_test_order(owner, OrderType::WaitingAlerted);
-        let Entity::Soldier(soldier) = engine.get_entity_mut(owner).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(owner) else {
             unreachable!()
         };
         soldier
@@ -277,14 +269,13 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
         // creations. For the following NPC (slot 1), frame 1 opens the
         // three-frame hearing cadence: (1 + 31 + 1) % 3 == 0.
         engine.control.frame_counter = 1;
-        let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).expect("noise PC exists") else {
+        let Entity::Pc(pc_entity) = engine.ent_mut(pc) else {
             panic!("noise PC changed kind")
         };
         pc_entity.element.active = true;
         pc_entity.element.set_position_map(MapPoint::new(55.0, 0.0));
         pc_entity.pc.life_points = 100;
-        let Entity::Soldier(npc_entity) = engine.get_entity_mut(npc).expect("listener exists")
-        else {
+        let Entity::Soldier(npc_entity) = engine.ent_mut(npc) else {
             panic!("listener changed kind")
         };
         npc_entity.element.active = true;
@@ -318,13 +309,7 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.select_sequence_element(pc, Some((sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence, 0);
 
         assets = engine.test_runtime_assets();
 
@@ -373,7 +358,7 @@ fn npc_post_detection_tail_is_wholly_creation_ordered_even_without_detection() {
     let second = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
     for id in [first, second] {
-        let entity = engine.get_entity_mut(id).expect("tail owner exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         let npc = entity.npc_data_mut().expect("tail owner has NPC data");
         for list in &mut npc.detectable_lists {
@@ -494,8 +479,7 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(npc_id, Some((sequence, 0)));
-    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("ladder owner exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(npc_id) else {
         panic!("ladder owner changed kind")
     };
     soldier.element.publish_order_posture(Posture::OnLadder);
@@ -539,12 +523,8 @@ fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let assets = engine.test_runtime_assets();
 
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(MapPoint::new(0.0, 100.0));
-    let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).unwrap() else {
+    engine.place_map(target, MapPoint::new(0.0, 100.0));
+    let Entity::Soldier(soldier) = engine.ent_mut(npc_id) else {
         panic!("timer owner changed kind")
     };
     soldier.element.set_position_map(MapPoint::ZERO);
@@ -559,7 +539,7 @@ fn normal_timer_does_not_turn_alerted_soldier_toward_primary_target() {
 
     engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
 
-    let element = engine.get_entity(npc_id).unwrap().element_data();
+    let element = engine.elem(npc_id);
     assert_eq!(element.direction(), 5);
     assert_eq!(
         element.sprite.position_iface.get_direction_goal().as_u8(),
@@ -580,10 +560,7 @@ fn civilian_macro_break_drains_missed_friend_detectables_immediately() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("macro civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("macro owner changed kind")
     };
     civilian.element.active = true;
@@ -662,10 +639,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
             );
 
         for (id, x) in [(observer_id, 0.0), (body_id, 40.0)] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("creation-order body test soldier exists")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("creation-order body test entity changed kind")
             };
             soldier.element.active = true;
@@ -686,10 +660,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
             ai.base.me = id.index();
         }
 
-        let Entity::Soldier(body) = engine
-            .get_entity_mut(body_id)
-            .expect("body exists before fixture completion")
-        else {
+        let Entity::Soldier(body) = engine.ent_mut(body_id) else {
             panic!("body changed kind")
         };
         body.human.unconscious = true;
@@ -701,20 +672,14 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         // Isolate BODY detection and retain its raw stimulus so handler state
         // changes do not obscure whether this creation slot actually saw it.
         for id in [body_id, observer_id] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("body boundary soldier survives fixture completion")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("body boundary soldier changed kind after fixture")
             };
             for list in &mut soldier.npc.detectable_lists {
                 list.clear();
             }
         }
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("body observer survives fixture completion")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("body observer changed kind after fixture")
         };
         let ai = observer
@@ -810,7 +775,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let assets = engine.test_runtime_assets();
 
-    let Entity::Soldier(recovering) = engine.get_entity_mut(recovering_id).unwrap() else {
+    let Entity::Soldier(recovering) = engine.ent_mut(recovering_id) else {
         panic!("recovering NPC changed kind")
     };
     recovering.element.active = true;
@@ -820,7 +785,7 @@ fn inline_npc_recovery_precedes_simultaneous_body_inform_and_view() {
     ai.current_state = crate::ai::AiState::Sleeping;
     ai.current_substate = crate::ai::Substate::SleepingUnconscious;
 
-    let Entity::Soldier(observer) = engine.get_entity_mut(observer_id).unwrap() else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("observer changed kind")
     };
     observer.element.active = true;
@@ -891,7 +856,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
     let chief_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let subordinate_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     for (id, x) in [(source_id, -20.0), (chief_id, 10.0), (subordinate_id, 0.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("patrol-dispatch test NPC changed kind")
         };
         soldier.element.active = true;
@@ -931,7 +896,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
         engine.dispatch_think_with_drain(sim, subordinate_id, &stimulus, &assets);
     });
 
-    let chief = engine.get_entity(chief_id).unwrap().enemy_ai().unwrap();
+    let chief = engine.enemy(chief_id);
     assert_eq!(chief.base.current_state, AiState::Default);
     assert_eq!(chief.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(
@@ -942,11 +907,7 @@ fn subordinate_handles_shadow_locally_when_detected_chief_has_empty_patrol() {
         Some(StimulusType::EventSeesShadow),
         "the empty chief still records the delegated stimulus before returning false"
     );
-    let subordinate = engine
-        .get_entity(subordinate_id)
-        .unwrap()
-        .enemy_ai()
-        .unwrap();
+    let subordinate = engine.enemy(subordinate_id);
     assert_eq!(subordinate.base.current_state, AiState::Default);
     assert_eq!(
         subordinate.base.current_substate,
@@ -1001,8 +962,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         (ordinary_ko, MapPoint::new(4.0, 0.0), true, 100, true, false),
     ];
     for (id, position, active, life_points, unconscious, money_fight_ko) in fixtures {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("fixture soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("fixture changed entity kind")
         };
         soldier.element.active = active;
@@ -1062,9 +1022,7 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         .with_arena_index(index);
     for (id, _, _, _, _, _) in fixtures {
         engine
-            .get_entity_mut(id)
-            .unwrap()
-            .element_data_mut()
+            .elem_mut(id)
             .set_sector_topology(Some(sector), Some(index));
     }
     engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
@@ -1205,10 +1163,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
         for (id, x) in [(officer_id, 0.0), (attacker_id, 120.0)] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("creation-order detection soldier exists")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("creation-order detection entity changed kind")
             };
             soldier.element.active = true;
@@ -1230,10 +1185,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
             ai.base.me = id.index();
         }
 
-        let Entity::Pc(pc) = engine
-            .get_entity_mut(pc_id)
-            .expect("creation-order detection PC exists")
-        else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             panic!("creation-order detection target changed kind")
         };
         pc.element.active = true;
@@ -1252,7 +1204,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         ] {
             crate::engine::test_support::actors::edit_enemy_profile(
                 &mut assets,
-                engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap(),
+                engine.enemy_mut(id),
                 |profile| profile.rank = rank,
             );
         }
@@ -1265,10 +1217,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
 
         // Isolate the exact A retained-EVENT_VIEW tail → B-FRIEND edge after
         // fixture initialization has installed profiles and AI defaults.
-        let Entity::Soldier(attacker) = engine
-            .get_entity_mut(attacker_id)
-            .expect("attacker exists before detection")
-        else {
+        let Entity::Soldier(attacker) = engine.ent_mut(attacker_id) else {
             panic!("attacker changed kind")
         };
         attacker.npc.detectable_lists[DetectableType::Enemy as usize].clear();
@@ -1281,10 +1230,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
             .stimulus_queue
             .push(Stimulus::with_human(StimulusType::EventView, pc_id.index()));
 
-        let Entity::Soldier(officer) = engine
-            .get_entity_mut(officer_id)
-            .expect("officer exists before detection")
-        else {
+        let Entity::Soldier(officer) = engine.ent_mut(officer_id) else {
             panic!("officer changed kind")
         };
         officer.npc.detectable_lists[DetectableType::Friend as usize].clear();
@@ -1364,10 +1310,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let stale_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("hearing-order soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("hearing-order entity changed kind")
     };
     soldier.element.active = true;
@@ -1392,10 +1335,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         .expect("hearing-order soldier has enemy AI");
     ai.base.me = soldier_id.index();
 
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(pc_id)
-        .expect("hearing-order PC exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("hearing-order target changed kind")
     };
     pc.element.active = true;
@@ -1407,10 +1347,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     pc.element.set_position_map(MapPoint::new(55.0, 0.0));
     pc.pc.life_points = 100;
 
-    let Entity::Pc(stale_pc) = engine
-        .get_entity_mut(stale_pc_id)
-        .expect("stale hearing-order PC exists")
-    else {
+    let Entity::Pc(stale_pc) = engine.ent_mut(stale_pc_id) else {
         panic!("stale hearing-order target changed kind")
     };
     stale_pc.element.active = false;
@@ -1436,13 +1373,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         .sequence_manager
         .start_sequence_level(movement_sequence);
     engine.select_sequence_element(pc_id, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
 
     assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
@@ -1452,10 +1383,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("soldier exists before hearing-order detection")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("hearing-order soldier changed kind")
     };
     soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
@@ -1515,16 +1443,13 @@ fn detection_tick_preserves_authoritative_enemy_membership() {
     let observer_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("membership observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("membership observer changed kind")
     };
     observer.element.active = true;
     observer.npc.life_points = 100;
 
-    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("untracked PC exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("untracked target changed kind")
     };
     pc.element.active = true;
@@ -1532,10 +1457,7 @@ fn detection_tick_preserves_authoritative_enemy_membership() {
 
     let assets = engine.test_runtime_assets();
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("membership observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("membership observer changed kind after fixture")
     };
     observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
@@ -1634,10 +1556,7 @@ fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
     }));
     let friend_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("locked detection observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("locked detection observer changed kind")
     };
     observer.element.active = true;
@@ -1658,10 +1577,7 @@ fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
         (last_visible_id, 80.0, 100),
         (body_id, 100.0, 0),
     ] {
-        let Entity::Pc(pc) = engine
-            .get_entity_mut(id)
-            .expect("locked detection PC exists")
-        else {
+        let Entity::Pc(pc) = engine.ent_mut(id) else {
             panic!("locked detection PC changed kind")
         };
         pc.element.active = true;
@@ -1671,10 +1587,7 @@ fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
         pc.pc.life_points = life_points;
     }
 
-    let Entity::Bonus(object) = engine
-        .get_entity_mut(object_id)
-        .expect("locked detection object exists")
-    else {
+    let Entity::Bonus(object) = engine.ent_mut(object_id) else {
         panic!("locked detection object changed kind")
     };
     object
@@ -1682,10 +1595,7 @@ fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
         .set_position(crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0));
     object.element.set_position_map(MapPoint::new(100.0, 0.0));
 
-    let Entity::Soldier(friend) = engine
-        .get_entity_mut(friend_id)
-        .expect("locked observer's friend exists")
-    else {
+    let Entity::Soldier(friend) = engine.ent_mut(friend_id) else {
         panic!("locked observer's friend changed kind")
     };
     friend.element.active = true;
@@ -1729,13 +1639,7 @@ fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId
         .sequence_manager
         .start_sequence_level(movement_sequence);
     engine.select_sequence_element(first_visible_id, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
 }
 
 fn freeze_observer_with_seeded_detectables(engine: &mut EngineInner, ids: LockedDetectionIds) {
@@ -1752,10 +1656,7 @@ fn freeze_observer_with_seeded_detectables(engine: &mut EngineInner, ids: Locked
         object: object_id,
         ..
     } = ids;
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("locked detection observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("locked detection observer changed kind after fixture")
     };
     let ai = observer
@@ -1938,10 +1839,7 @@ fn prepare_static_freeze_rescan(engine: &mut EngineInner, observer_id: EntityId)
     // The original game's global AI freeze is a separate mode: the
     // next detection refresh still scans and commits its latch, but AI admission
     // discards the resulting VIEW instead of retaining it.
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("static-freeze detection observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("static-freeze detection observer changed kind")
     };
     let ai = observer
@@ -1993,10 +1891,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
     let rising_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let already_seen_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("queued replay observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("queued replay observer changed kind")
     };
     observer.element.active = true;
@@ -2012,7 +1907,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
     observer.npc.eye_status = crate::element::EyeStatus::Stare;
 
     for (id, x) in [(rising_id, 80.0), (already_seen_id, 120.0)] {
-        let Entity::Pc(pc) = engine.get_entity_mut(id).expect("queued replay PC exists") else {
+        let Entity::Pc(pc) = engine.ent_mut(id) else {
             panic!("queued replay PC changed kind")
         };
         pc.element.active = true;
@@ -2030,10 +1925,7 @@ fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("queued replay observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("queued replay observer changed kind after fixture")
     };
     let ai = observer
@@ -2121,10 +2013,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     let lost_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let body_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("out-of-view soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("out-of-view observer changed kind")
     };
     soldier.element.active = true;
@@ -2154,7 +2043,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     };
     ai.current_task_priority = task_priority::ENEMY;
 
-    let Entity::Pc(lost_pc) = engine.get_entity_mut(lost_pc_id).expect("lost PC exists") else {
+    let Entity::Pc(lost_pc) = engine.ent_mut(lost_pc_id) else {
         panic!("lost target changed kind")
     };
     lost_pc.element.active = true;
@@ -2164,7 +2053,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     lost_pc.element.set_position_map(MapPoint::new(-200.0, 0.0));
     lost_pc.pc.life_points = 100;
 
-    let Entity::Pc(body) = engine.get_entity_mut(body_id).expect("body PC exists") else {
+    let Entity::Pc(body) = engine.ent_mut(body_id) else {
         panic!("body target changed kind")
     };
     body.element.active = true;
@@ -2181,10 +2070,7 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("out-of-view soldier exists before detection")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("out-of-view soldier changed kind")
     };
     soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
@@ -2255,10 +2141,7 @@ fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
             engine.add_test_entity(make_test_pc(crate::element::Posture::SimulatingBeggar));
         let near_pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("multi-view soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("multi-view observer changed kind")
         };
         soldier.element.active = true;
@@ -2274,7 +2157,7 @@ fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
         soldier.npc.eye_status = crate::element::EyeStatus::Stare;
 
         for (pc_id, x) in [(far_pc_id, 120.0), (near_pc_id, 80.0)] {
-            let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("multi-view PC exists") else {
+            let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
                 panic!("multi-view target changed kind")
             };
             pc.element.active = true;
@@ -2292,10 +2175,7 @@ fn npc_detection_delivers_each_rising_view_and_keeps_ordered_unique_enemies() {
         profile.detection_speed_in_city = 100;
         profile.detection_speed_in_forest = 100;
 
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("multi-view soldier exists before detection")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("multi-view observer changed kind")
         };
         let ai = soldier
@@ -2404,10 +2284,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         let target_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
         for (id, x) in [(source_id, 0.0), (listener_id, 20.0), (target_id, 80.0)] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("Royalist ordering soldier exists")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("Royalist ordering actor changed kind")
             };
             soldier.element.active = true;
@@ -2426,10 +2303,7 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         let assets = engine.test_runtime_assets();
 
         for id in [source_id, listener_id] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("Royalist observer exists after fixture")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("Royalist observer changed kind after fixture")
             };
             let ai = soldier
@@ -2451,20 +2325,14 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
             });
         }
 
-        let Entity::Soldier(source) = engine
-            .get_entity_mut(source_id)
-            .expect("source Royalist exists")
-        else {
+        let Entity::Soldier(source) = engine.ent_mut(source_id) else {
             panic!("source Royalist changed kind")
         };
         source.element.set_direction_instantly(4);
         source.npc.view_direction = [1.0, 0.0];
         source.npc.eye_status = crate::element::EyeStatus::Stare;
 
-        let Entity::Soldier(listener) = engine
-            .get_entity_mut(listener_id)
-            .expect("listener Royalist exists")
-        else {
+        let Entity::Soldier(listener) = engine.ent_mut(listener_id) else {
             panic!("listener Royalist changed kind")
         };
         listener.element.set_direction_instantly(4);
@@ -2571,10 +2439,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         (lost_id, 100.0),
         (last_visible_id, 120.0),
     ] {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(id)
-            .expect("Royalist multi-edge soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("Royalist multi-edge actor changed kind")
         };
         soldier.element.active = true;
@@ -2586,10 +2451,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
         soldier.element.blipped = id != observer_id;
     }
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("Royalist multi-edge observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("Royalist multi-edge observer changed kind")
     };
     observer.element.set_direction_instantly(4);
@@ -2600,10 +2462,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
 
     let assets = engine.test_runtime_assets();
 
-    let Entity::Soldier(lost) = engine
-        .get_entity_mut(lost_id)
-        .expect("lost Royalist target exists after fixture")
-    else {
+    let Entity::Soldier(lost) = engine.ent_mut(lost_id) else {
         panic!("lost Royalist target changed kind after fixture")
     };
     // The original game removes dead enemies during detectable cleanup, not inactive living
@@ -2611,10 +2470,7 @@ fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
     // falling OUTOFVIEW edge.
     lost.element.active = false;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("Royalist multi-edge observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("Royalist multi-edge observer changed kind after fixture")
     };
     let ai = observer
@@ -2731,10 +2587,7 @@ fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
         let target_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
         for (id, x) in [(observer_id, 0.0), (target_id, 80.0)] {
-            let Entity::Soldier(soldier) = engine
-                .get_entity_mut(id)
-                .expect("strict-cadence soldier exists")
-            else {
+            let Entity::Soldier(soldier) = engine.ent_mut(id) else {
                 panic!("strict-cadence actor changed kind")
             };
             soldier.element.active = true;
@@ -2747,10 +2600,7 @@ fn royalist_enemy_cadence_stays_strict_when_staring_following_or_alerted() {
 
         let assets = engine.test_runtime_assets();
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("strict-cadence observer exists after fixture")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("strict-cadence observer changed kind after fixture")
         };
         observer.element.set_direction_instantly(4);
@@ -2825,10 +2675,7 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let lacklandist_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("Royalist civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("Royalist civilian changed kind")
     };
     civilian.element.active = true;
@@ -2843,9 +2690,7 @@ fn royalist_civilian_enemy_list_accepts_pc_but_not_lacklandist_soldier() {
     civilian.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
 
     for (id, x) in [(pc_id, 80.0), (lacklandist_id, 100.0)] {
-        let entity = engine
-            .get_entity_mut(id)
-            .expect("Royalist-civilian target exists");
+        let entity = engine.ent_mut(id);
         entity.element_data_mut().active = true;
         entity
             .element_data_mut()
@@ -2933,20 +2778,14 @@ fn enemy_outer_box_rejection_preserves_shadow_latch_but_entered_invisible_clears
 
     fn shadow_latch_after_scan(target_x: f32) -> (bool, bool, f32) {
         let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
-        let Entity::Pc(pc) = engine
-            .get_entity_mut(pc_id)
-            .expect("outer-box target exists")
-        else {
+        let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
             panic!("outer-box target changed kind")
         };
         pc.element
             .set_position(crate::coordinates::WorldPoint3D::new(target_x, 0.0, 0.0));
         pc.element.set_position_map(MapPoint::new(target_x, 0.0));
 
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("outer-box observer exists")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("outer-box observer changed kind")
         };
         let enemies = &mut observer.npc.detectable_lists[DetectableType::Enemy as usize];
@@ -3092,10 +2931,7 @@ fn autonomous_pc_detection_rejects_friendly_ai_brain() {
 
     let mut engine = EngineInner::new();
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let Entity::Pc(pc) = engine
-        .get_entity_mut(pc_id)
-        .expect("wrong-AI autonomous PC exists")
-    else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("wrong-AI autonomous PC changed kind")
     };
     pc.element.active = true;
@@ -3116,10 +2952,7 @@ fn lacklandist_mixed_enemy_cadence_is_selected_per_entry() {
     fn observed_targets(frame: u32) -> Vec<crate::ai::AiEntityHandle> {
         let (mut engine, assets, observer_id, pc_id, royalist_id) = mixed_enemy_fifo_fixture(true);
         engine.control.frame_counter = frame;
-        let Entity::Soldier(observer) = engine
-            .get_entity_mut(observer_id)
-            .expect("cadence observer exists")
-        else {
+        let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
             panic!("cadence observer changed kind")
         };
         observer.npc.eye_status = crate::element::EyeStatus::LookForward;
@@ -3175,10 +3008,7 @@ fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() 
     // closes the modulo-2 PC cadence and reuses the exact cached visibility.
     engine.control.frame_counter = 2;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("lean-out observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("lean-out observer changed kind")
     };
     observer.element.publish_order_posture(Posture::Upright);
@@ -3209,10 +3039,7 @@ fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() 
 
     crate::sim_rng::with_seed(0xA013_1A11, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity(observer_id)
-        .expect("lean-out observer remains present")
-    else {
+    let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("lean-out observer changed kind")
     };
     assert_eq!(observer.element.posture(), Posture::Upright);
@@ -3240,10 +3067,7 @@ fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
     // persisted visibility sample the exact input to sharpness conversion.
     engine.control.frame_counter = 2;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("non-Enemy lean-out observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("non-Enemy lean-out observer changed kind")
     };
     observer.element.publish_order_posture(Posture::Upright);
@@ -3269,10 +3093,7 @@ fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
 
     crate::sim_rng::with_seed(0xA013_1A12, |sim| engine.tick_enemy_ai(sim, &assets));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity(observer_id)
-        .expect("non-Enemy lean-out observer remains present")
-    else {
+    let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("non-Enemy lean-out observer changed kind")
     };
     assert_eq!(observer.element.posture(), Posture::Upright);
@@ -3360,7 +3181,7 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
     use crate::element::{DetectableType, Entity, Posture};
 
     let (mut engine, assets, observer_id, pc_id, _) = mixed_enemy_fifo_fixture(true);
-    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("live-Z PC exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("live-Z target changed kind")
     };
     pc.element
@@ -3382,10 +3203,7 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
 
     crate::sim_rng::with_seed(0xA013_11E1, |sim| {
         engine.refresh_detection_after_live_mutation_for_test(sim, &assets, |engine| {
-            let Entity::Pc(pc) = engine
-                .get_entity_mut(pc_id)
-                .expect("live-Z PC survives snapshot")
-            else {
+            let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
                 panic!("live-Z target changed kind after snapshot")
             };
             pc.element.publish_order_posture(Posture::Crouched);

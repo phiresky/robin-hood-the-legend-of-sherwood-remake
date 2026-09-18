@@ -3,9 +3,7 @@ use super::*;
 fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
     use crate::ai::{AiState, Substate};
 
-    let entity = engine
-        .get_entity_mut(soldier)
-        .expect("test soldier present");
+    let entity = engine.ent_mut(soldier);
     let npc = entity.npc_data_mut().expect("test soldier is an NPC");
     npc.ai_brain =
         crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(soldier.index())));
@@ -32,7 +30,7 @@ fn completion_callback_recurses_before_returning() {
         &crate::ai::Stimulus::new(StimulusType::EventDone),
     );
 
-    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(soldier);
     assert_eq!(
         ai.current_substate,
         Substate::WonderingWatchingForMoreMoney,
@@ -246,10 +244,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
         ],
     }];
     {
-        let soldier_element = engine
-            .get_entity_mut(soldier)
-            .expect("test soldier present")
-            .element_data_mut();
+        let soldier_element = engine.elem_mut(soldier);
         soldier_element.set_position_map(crate::coordinates::MapPoint::new(0.0, 20.0));
         soldier_element.set_sector(crate::ai::SectorHandle::new(1));
     }
@@ -341,27 +336,14 @@ fn condolation_reenters_think_before_dispatch_returns() {
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
     let assets = engine.test_runtime_assets();
-    let seq_id = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let seq_id = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::LookLeft, Some(soldier)),
     );
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq_id,
-        0,
-    );
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, seq_id, 0);
+    engine.t_element_terminated(&assets, seq_id, 0);
 
-    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(soldier);
     assert_eq!(
         ai.current_substate,
         Substate::WonderingWatchingForMoreMoney,
@@ -393,16 +375,9 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_seq,
-        0,
-    );
+    let movement_seq = engine.t_launch_in_progress(&assets, movement);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
 
         entity
             .position_iface_mut()
@@ -413,31 +388,17 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     // movement remains selected (for example, postponed parallel work).
     // Base actor condolence dispatch compares selected-element identity
     // before detaching the current movement.
-    let unrelated_seq = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let unrelated_seq = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::LookLeft, Some(owner)),
     );
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        unrelated_seq,
-        0,
-    );
+    engine.t_element_in_progress(&assets, unrelated_seq, 0);
     engine.select_sequence_element(owner, Some((movement_seq, 0)));
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        unrelated_seq,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, unrelated_seq, 0, CascadeFlags::NEXT_LEVEL);
     engine.orders.sequence_manager.set_halt_pending(false);
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(
         engine.world.entities.current_element_for_actor(owner),
         Some((movement_seq, 0))
@@ -449,17 +410,10 @@ fn halt_condolation_clears_only_the_selected_movement_goal() {
     );
 
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_seq,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, movement_seq, 0, CascadeFlags::NEXT_LEVEL);
     engine.orders.sequence_manager.set_halt_pending(false);
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(
         entity.position_iface().map_goal(),
         MapPoint::ZERO,
@@ -478,8 +432,7 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_soldier(Posture::OnWall));
     engine
-        .get_entity_mut(owner)
-        .unwrap()
+        .ent_mut(owner)
         .position_iface_mut()
         .set_map_goal(MapPoint::new(70.0, 80.0));
 
@@ -489,15 +442,9 @@ fn selected_nonmovement_condolation_clears_the_sprite_goal() {
         Some(owner),
         OrderType::WalkingUpright,
     );
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, assert_position);
+    let sequence = engine.t_launch_element(&assets, assert_position);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_terminated(&assets, sequence, 0);
 
     assert_eq!(
         engine
@@ -524,31 +471,17 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
 
     let movement =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
-    let movement_sequence =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    let movement_sequence = engine.t_launch_element(&assets, movement);
     engine.select_sequence_element(owner, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
 
         entity.position_iface_mut().set_map_goal(goal);
     }
 
     // Interruption closes the selected movement before its caller selects Wait.
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, movement_sequence, 0, CascadeFlags::NEXT_LEVEL);
     assert_eq!(
         engine
             .get_entity(owner)
@@ -559,14 +492,7 @@ fn interrupted_movement_clears_goal_before_next_wait_is_selected() {
     );
     let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
     wait.priority = SequencePriority::Wait;
-    let wait_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        wait_sequence,
-        0,
-    );
+    let wait_sequence = engine.t_launch_in_progress(&assets, wait);
 
     assert_eq!(
         engine
@@ -605,18 +531,11 @@ fn attentive_postpone_current_preserves_rewritten_movement_goal() {
         goal.y,
         engine.orders.allocate_order_id(),
     ));
-    let movement_sequence =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+    let movement_sequence = engine.t_launch_element(&assets, movement);
     engine.select_sequence_element(owner, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
 
         entity.position_iface_mut().set_map_goal(goal);
     }
@@ -673,32 +592,18 @@ fn completed_immediate_sibling_does_not_clear_selected_movement_goal() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_sequence =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_launch_in_progress(&assets, movement);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
 
         entity.position_iface_mut().set_map_goal(goal);
     }
 
     let sibling = SequenceElement::new(1, Command::SpeakHeroReachDestination, Some(owner));
-    let sibling_sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, sibling);
+    let sibling_sequence = engine.t_launch_element(&assets, sibling);
     // The player speech override terminates before delegating to actor instruction handling,
     // so it never replaces the selected movement pointer.
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sibling_sequence,
-        0,
-    );
+    engine.t_element_terminated(&assets, sibling_sequence, 0);
 
     assert_eq!(
         engine
@@ -723,15 +628,9 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
 
     let mut leave_beggar = SequenceElement::new(1, Command::LeaveBeggar, Some(owner));
     leave_beggar.priority = SequencePriority::NonInterruptable;
-    let blocker = engine.launch_element(&crate::sim_rng::test_context(), &assets, leave_beggar);
+    let blocker = engine.t_launch_element(&assets, leave_beggar);
     engine.select_sequence_element(owner, Some((blocker, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        blocker,
-        0,
-    );
+    engine.t_element_in_progress(&assets, blocker, 0);
 
     let mut sequence = Sequence::new();
     sequence.append_element(SequenceElement::new_movement(
@@ -746,7 +645,7 @@ fn pc_arrival_speech_finishes_before_non_interruptable_postponement() {
         Some(owner),
     ));
     sequence.append_element(SequenceElement::new(2, Command::EnterBeggar, Some(owner)));
-    let movement = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let movement = engine.t_launch_sequence(&assets, sequence);
 
     assert!(engine.instruct_owner(
         &crate::sim_rng::test_context(),
@@ -793,36 +692,21 @@ fn interrupted_movement_preserves_goal_when_incoming_action_is_selected() {
 
     let movement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let movement_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_seq,
-        0,
-    );
+    let movement_seq = engine.t_launch_in_progress(&assets, movement);
     {
-        let entity = engine.get_entity_mut(owner).unwrap();
+        let entity = engine.ent_mut(owner);
 
         entity.position_iface_mut().set_map_goal(goal);
     }
 
-    let incoming_seq = engine.launch_element(
-        &crate::sim_rng::test_context(),
+    let incoming_seq = engine.t_launch_element(
         &assets,
         SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
     );
     engine.select_sequence_element(owner, Some((incoming_seq, 0)));
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_seq,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, movement_seq, 0, CascadeFlags::NEXT_LEVEL);
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(
         entity.position_iface().map_goal(),
         goal,
@@ -841,29 +725,14 @@ fn halt_condolation_does_not_instruct_a_registered_replacement_move() {
     let owner = engine.add_test_entity(make_test_soldier(Posture::Upright));
     let outgoing =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let outgoing_seq = engine.launch_element(&crate::sim_rng::test_context(), &assets, outgoing);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        outgoing_seq,
-        0,
-    );
+    let outgoing_seq = engine.t_launch_in_progress(&assets, outgoing);
 
     let replacement =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    let replacement_seq =
-        engine.launch_element(&crate::sim_rng::test_context(), &assets, replacement);
+    let replacement_seq = engine.t_launch_element(&assets, replacement);
 
     engine.orders.sequence_manager.set_halt_pending(true);
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        outgoing_seq,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, outgoing_seq, 0, CascadeFlags::NEXT_LEVEL);
     engine.orders.sequence_manager.set_halt_pending(false);
 
     assert!(
@@ -892,25 +761,13 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     // so the LookLeft condolence still fires before Ready queues this.
     parent.append_element(SequenceElement::new(2, Command::Wait, Some(soldier)));
     let assets = engine.test_runtime_assets();
-    let parent_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, parent);
+    let parent_id = engine.t_launch_sequence(&assets, parent);
 
     let initial = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     assert_eq!(initial.len(), 1);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        parent_id,
-        0,
-    );
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        parent_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, parent_id, 0);
+    engine.t_element_terminated(&assets, parent_id, 0);
 
     let commands: Vec<_> =
         std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
@@ -956,7 +813,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
         "completion notification's recursive AI processing must launch/arbitrate its action before queuing the parent's next level"
     );
 
-    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    let ai = engine.ai_ctrl(soldier);
     assert_eq!(ai.current_state, AiState::Wondering);
     assert_eq!(ai.current_substate, Substate::WonderingWatchingForMoreMoney);
 }
@@ -972,12 +829,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     let second = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let third = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     for owner in [second, third] {
-        engine
-            .get_entity_mut(owner)
-            .unwrap()
-            .npc_data_mut()
-            .unwrap()
-            .wasp_victim = true;
+        engine.npc_mut(owner).wasp_victim = true;
     }
 
     let mut seq = Sequence::new();
@@ -992,16 +844,9 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
         Command::ReceiveWaspSting,
         Some(third),
     ));
-    let seq_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, seq);
+    let seq_id = engine.t_launch_sequence(&assets, seq);
 
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        seq_id,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    engine.t_element_interrupted(&assets, seq_id, 0, CascadeFlags::NEXT_LEVEL);
 
     for (idx, owner) in [(1, second), (2, third)] {
         assert_eq!(
@@ -1044,7 +889,7 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(12));
     sequence.append_element(timer);
-    let sequence_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let sequence_id = engine.t_launch_sequence(&assets, sequence);
     let initial = std::iter::from_fn(|| engine.orders.sequence_manager.pop_next_hourglass_action())
         .collect::<Vec<_>>();
     assert_eq!(initial.len(), 3);
@@ -1053,20 +898,8 @@ fn condolation_ready_executes_immediate_timer_successor_inline() {
     // the continuation of state change after removal notification returns.
     engine.orders.sequence_manager.set_halt_pending(true);
     for element_index in 0..3 {
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence_id,
-            element_index,
-        );
-        engine.element_terminated(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence_id,
-            element_index,
-        );
+        engine.t_element_in_progress(&assets, sequence_id, element_index);
+        engine.t_element_terminated(&assets, sequence_id, element_index);
     }
     engine.orders.sequence_manager.set_halt_pending(false);
 

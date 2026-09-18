@@ -267,7 +267,7 @@ fn tick_admission_crosses_pending_arrow_refresh_before_hourglass() {
         .advance_frame(&assets, SimulationFrameInput::default())
         .expect("admit simulation tick");
 
-    let Entity::Projectile(arrow) = engine.inner.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(arrow) = engine.inner.ent(arrow) else {
         unreachable!()
     };
     // The admitted refresh was crossed (the sprite assertions below see
@@ -785,13 +785,9 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
     engine
         .inner
         .select_sequence_element(pc_id, Some((wait_sequence, 0)));
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        wait_sequence,
-        0,
-    );
+    engine
+        .inner
+        .t_element_in_progress(&assets, wait_sequence, 0);
     (engine, assets, pc_id, wait_sequence)
 }
 
@@ -800,16 +796,10 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
     let (mut previous, _, pc_id, _) = selection_boundary_fixture();
     previous
         .inner
-        .get_entity_mut(pc_id)
-        .expect("presentation test PC")
-        .element_data_mut()
-        .set_position(crate::coordinates::WorldPoint3D::ZERO);
+        .place(pc_id, crate::coordinates::WorldPoint3D::ZERO);
     let mut current = previous.clone();
     {
-        let entity = current
-            .inner
-            .get_entity_mut(pc_id)
-            .expect("presentation test PC");
+        let entity = current.inner.ent_mut(pc_id);
         entity
             .element_data_mut()
             .set_position(crate::coordinates::WorldPoint3D::new(40.0, 60.0, 10.0));
@@ -822,7 +812,7 @@ fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchan
 
     presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
     let first_sample_hash = crate::replay::state_hash(&presentation.presentation);
-    let sampled = presentation.view().get_entity(pc_id).expect("sampled PC");
+    let sampled = presentation.view().get_entity(pc_id).unwrap();
     assert_eq!(
         sampled.element_data().position(),
         crate::coordinates::WorldPoint3D::new(10.0, 15.0, 2.5)
@@ -847,11 +837,7 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
     let (previous, _, pc_id, _) = selection_boundary_fixture();
     let mut current = previous.clone();
     {
-        let element = current
-            .inner
-            .get_entity_mut(pc_id)
-            .expect("presentation test PC")
-            .element_data_mut();
+        let element = current.inner.elem_mut(pc_id);
         element.set_position_map(crate::coordinates::MapPoint::new(64.0, 96.0));
         element.set_layer(1);
     }
@@ -868,10 +854,7 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
             }));
     current
         .inner
-        .get_entity_mut(spawned_id)
-        .expect("spawned presentation FX")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
+        .place_map(spawned_id, crate::coordinates::MapPoint::new(12.0, 34.0));
     let previous_spatial = previous.spatial_presentation_snapshot();
     let current_spatial = current.spatial_presentation_snapshot();
     let mut presentation = PresentationEngine::new(&current);
@@ -1134,8 +1117,7 @@ fn recorded_drop_ale_facts_round_trip_and_reject_atomically() {
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
     let fallback_sector =
         crate::position_interface::SectorHandle::new(25).expect("fallback sector is valid");
-    engine.inner.launch_element(
-        &crate::sim_rng::test_context(),
+    engine.inner.t_launch_element(
         &assets,
         pending_drop_ale_seek(owner, destination, fallback_sector),
     );
@@ -1544,13 +1526,7 @@ fn rejected_external_fact_prevents_command_and_hourglass() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.inner.t_element_in_progress(&assets, sequence_id, 0);
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
     assert!(
@@ -1641,13 +1617,7 @@ fn no_hourglass_director_prefix_exposes_new_delayed_drop_ale_seek() {
         .orders
         .sequence_manager
         .start_sequence_level(sequence_id);
-    engine.inner.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.inner.t_element_in_progress(&assets, sequence_id, 0);
     engine.inner.feedback.cutscene_camera.sequence_element =
         Some(crate::sequence::SequenceElementRef::new(sequence_id, 0));
 
@@ -2452,22 +2422,11 @@ fn parity_world_interactables_preserves_lift_runtime_state() {
     let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
     level.sector_number_map.insert(sector_number, 0);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::LIFT,
-        layer: 0,
         sector_number,
-        door_index: None,
         lift_type: Some(crate::sector::LiftType::Ladder),
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     inner.world.fast_grid_mut().lift_state.insert(
         0,
@@ -2525,22 +2484,10 @@ fn parity_world_interactables_preserves_ordered_building_and_zone_state() {
         });
     let level = std::sync::Arc::make_mut(&mut inner.world.fast_grid_mut().level);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         sector_type: crate::sector::SectorType::SCRIPT,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(47),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     inner
         .world
@@ -2763,7 +2710,7 @@ fn legacy_additional_arrow_refreshes_advance_real_sprite_state() {
 
     assert_eq!(engine.original_rng_replay_cursor(), Some(3));
     assert!(engine.inner.control.arrow_refresh_pending);
-    let crate::element::Entity::Projectile(arrow) = engine.get_entity(id).unwrap() else {
+    let crate::element::Entity::Projectile(arrow) = engine.ent(id) else {
         panic!("test arrow changed entity kind");
     };
     assert_eq!(arrow.projectile.falling_direction, 2);
@@ -2862,7 +2809,7 @@ fn scripted_snapshot_fixture() -> (
         crate::element::Command::Generic,
         None,
     ));
-    let sequence_id = inner.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let sequence_id = inner.t_launch_sequence(&assets, sequence);
 
     (
         Engine {

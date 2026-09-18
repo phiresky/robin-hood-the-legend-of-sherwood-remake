@@ -304,19 +304,8 @@ fn target_interaction_door_adaptation_omits_redundant_sector_assertion() {
             ],
             bounding_box: MapBBox::from_coords(0.0, 0.0, 400.0, 400.0),
             sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
-            layer: 0,
             sector_number: SectorNumber::new(51),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
-            underlying_sector: None,
+            ..Default::default()
         },
         0,
     );
@@ -392,8 +381,7 @@ fn setup_pc_engine(actions: &[(Action, u16)]) -> (EngineInner, LevelAssets, Enti
         },
     }));
     engine
-        .get_entity_mut(pc_id)
-        .unwrap()
+        .ent_mut(pc_id)
         .position_iface_mut()
         .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
 
@@ -1163,13 +1151,7 @@ fn explicitly_queued_sword_strike_still_records_a_quick_action() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     engine.apply_command(
         &crate::sim_rng::test_context(),
@@ -1223,13 +1205,7 @@ fn auto_launch_preserves_empty_manual_recording() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
@@ -1265,13 +1241,7 @@ fn auto_launch_preserves_empty_manual_recording() {
         .expect("empty armed manual slot")
         .clone();
 
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1351,13 +1321,7 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
     engine.apply_command(
         &sim,
         &mut display,
@@ -1394,13 +1358,7 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         .expect("restore engine with automatic and manual QA state");
     assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
 
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut restored_camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut restored_camera, &assets);
 
@@ -1475,13 +1433,7 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .orders
         .sequence_manager
         .start_sequence_level(idle_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        idle_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, idle_sequence, 0);
 
     // Door/lift traversal can leave an interrupted command postponed after
     // the movement itself has settled. A postponed card is dormant, not
@@ -1492,13 +1444,7 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .orders
         .sequence_manager
         .start_sequence_level(stale_sequence);
-    engine.postpone_element(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        stale_sequence,
-        0,
-    );
+    engine.t_postpone_element(&assets, stale_sequence, 0);
 
     engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
     assert!(engine.players.auto_queue_active.contains(&pc_id));
@@ -1546,13 +1492,7 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .sequence_manager
         .live_element_for_actor_matching(pc_id, |element| element.command == Command::WhistleCmd)
         .expect("first queued action is live");
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        element_index,
-    );
+    engine.t_element_terminated(&assets, sequence_id, element_index);
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1588,13 +1528,7 @@ fn shift_queue_retains_more_than_three_pending_actions() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     let queued = PlayerCommand::QueueQuickAction {
         action: Action::Whistle,
@@ -1648,13 +1582,7 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     let stale = SequenceElement::new(1, Command::LeaveListen, Some(pc_id));
     let stale_sequence = engine.orders.sequence_manager.insert_element(stale);
@@ -1662,13 +1590,7 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
         .orders
         .sequence_manager
         .start_sequence_level(stale_sequence);
-    engine.postpone_element(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        stale_sequence,
-        0,
-    );
+    engine.t_postpone_element(&assets, stale_sequence, 0);
 
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
@@ -1691,13 +1613,7 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     assert_eq!(engine.players.auto_queues.len(pc_id), 1);
     assert!(!engine.has_quick_action(pc_id, 0));
 
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut camera = CameraDisplayState::default();
     engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
 
@@ -1726,11 +1642,7 @@ fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 2)]);
     let pickup = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
     let pickup_position = MapPoint::new(420.0, 730.0);
-    engine
-        .get_entity_mut(pickup)
-        .expect("pickup")
-        .element_data_mut()
-        .set_position_map(pickup_position);
+    engine.place_map(pickup, pickup_position);
     let bow_target = spawn_pc_at(&mut engine, 900.0, 730.0);
 
     let busy = SequenceElement::new(1, Command::EnterListen, Some(pc_id));
@@ -1739,13 +1651,7 @@ fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
@@ -1795,13 +1701,7 @@ fn shift_pickup_uses_take_quick_action_phase() {
         .orders
         .sequence_manager
         .start_sequence_level(busy_sequence);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        busy_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     engine.apply_command(
         &crate::sim_rng::test_context(),
@@ -1837,17 +1737,9 @@ fn shift_pickup_uses_take_quick_action_phase() {
 fn resolved_throw_orientation_targets_only_the_recorded_pc() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Stone, 1)]);
     let actor_position = WorldPoint3D::new(242.0, 2329.0, 90.0);
-    engine
-        .get_entity_mut(pc_id)
-        .unwrap()
-        .element_data_mut()
-        .set_position(actor_position);
+    engine.place(pc_id, actor_position);
     {
-        let sprite = &mut engine
-            .get_entity_mut(pc_id)
-            .unwrap()
-            .element_data_mut()
-            .sprite;
+        let sprite = &mut engine.elem_mut(pc_id).sprite;
         sprite.force_sprite_row_raw(78);
         sprite.current_frame = 9;
     }
@@ -1862,7 +1754,7 @@ fn resolved_throw_orientation_targets_only_the_recorded_pc() {
         target,
     );
 
-    let element = engine.get_entity(pc_id).unwrap().element_data();
+    let element = engine.elem(pc_id);
     assert_eq!(
         i16::from(element.sprite.position_iface.get_direction_goal().as_u8()),
         crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -1877,7 +1769,7 @@ fn resolved_throw_orientation_targets_only_the_recorded_pc() {
 #[test]
 fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Purse, 3)]);
-    let entity = engine.get_entity_mut(pc_id).expect("popup purse PC");
+    let entity = engine.ent_mut(pc_id);
     entity
         .position_iface_mut()
         .set_direction_instantly(crate::position_interface::Direction::from_raw(1));
@@ -1895,7 +1787,7 @@ fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
         WorldPoint3D::new(100.0, 0.0, 0.0),
     );
 
-    let entity = engine.get_entity(pc_id).expect("popup purse PC survives");
+    let entity = engine.ent(pc_id);
     assert_eq!(u8::from(entity.position_iface().get_direction()), 2);
     assert_eq!(entity.sprite().current_row, 1);
 }
@@ -1903,7 +1795,7 @@ fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
 #[test]
 fn late_popup_bow_orientation_preserves_the_old_direction_row() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 4)]);
-    let entity = engine.get_entity_mut(pc_id).expect("popup bow PC");
+    let entity = engine.ent_mut(pc_id);
     entity
         .position_iface_mut()
         .set_direction_instantly(crate::position_interface::Direction::from_raw(1));
@@ -1920,7 +1812,7 @@ fn late_popup_bow_orientation_preserves_the_old_direction_row() {
         WorldPoint3D::new(100.0, 0.0, 0.0),
     );
 
-    let entity = engine.get_entity(pc_id).expect("popup bow PC survives");
+    let entity = engine.ent(pc_id);
     assert_eq!(u8::from(entity.position_iface().get_direction()), 2);
     assert_eq!(entity.sprite().current_row, 1665);
 }
@@ -2099,7 +1991,7 @@ fn bind_single_action_point(
         std::sync::Arc::new(conversion),
     );
     sprite.center = center;
-    let element = engine.get_entity_mut(id).unwrap().element_data_mut();
+    let element = engine.elem_mut(id);
     let position = element.position_map();
     let direction = element.direction();
     let pathfinder_index = element.sprite.position_iface.get_pathfinder_index();
@@ -2118,7 +2010,7 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let sector = crate::position_interface::SectorHandle::new(1);
     {
-        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut()
             .publish_order_posture(Posture::HelpingToClimb);
         pc.element_data_mut()
@@ -2132,11 +2024,7 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
         crate::coordinates::SpriteLocalPoint::new(25.0, 0.0),
         crate::coordinates::SpriteAnchor::new(0.0, 0.0),
     );
-    engine
-        .get_entity_mut(pc_id)
-        .expect("test PC exists after sprite binding")
-        .element_data_mut()
-        .set_sector(sector);
+    engine.elem_mut(pc_id).set_sector(sector);
 
     let mut corpse = ActorPc {
         element: {
@@ -2281,7 +2169,7 @@ fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
 fn setup_drop_ale_macro_scene() -> (EngineInner, LevelAssets, EntityId) {
     let (mut engine, assets, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
     {
-        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut()
             .publish_order_posture(Posture::HelpingToClimb);
         pc.element_data_mut()
@@ -2385,21 +2273,10 @@ fn setup_drop_ale_sector_identity_scene() -> (
         ],
         bounding_box: crate::coordinates::MapBBox::from_coords(min_x, 0.0, max_x, 128.0),
         sector_type: SectorType::MOTION | SectorType::AREA | SectorType::MOUSE,
-        layer: 0,
         // Pc130's failure used two live arena objects whose public
         // sector number was the same. Exact sector identity matters here.
         sector_number: SectorNumber::new(0),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
 
     engine.world.fast_grid_mut().size_map(4, 2);
@@ -2419,7 +2296,7 @@ fn setup_drop_ale_sector_identity_scene() -> (
     )
     .expect("alias sector index");
 
-    let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+    let pc = engine.ent_mut(pc_id);
     pc.element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
     pc.position_iface_mut()
@@ -2455,11 +2332,7 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
     assert_eq!(goal.and_then(|sector| sector.arena_index()), Some(source));
     assert_eq!(layer, 0);
 
-    engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
-        &mut HostDisplayState::default(),
-        &assets,
-    );
+    engine.t_hourglass_phase_sequences(&assets);
 
     let actor = engine
         .get_entity(pc_id)
@@ -2538,19 +2411,9 @@ fn drop_ale_patch_goal_retains_exact_underlying_sector_identity() {
             ],
             bounding_box: crate::coordinates::MapBBox::from_coords(64.0, 64.0, 96.0, 112.0),
             sector_type: SectorType::PATCH | SectorType::AREA | SectorType::MOUSE,
-            layer: 0,
             sector_number: SectorNumber::new(77),
-            door_index: None,
-            lift_type: None,
-            lift_direction: 0,
-            force_crouched: false,
-            building_index: None,
-            low_exit_point: None,
-            high_exit_point: None,
-            lowest_door_index: None,
-            jump_line_indices: Vec::new(),
-            gate_indices: Vec::new(),
             underlying_sector: Some(source),
+            ..Default::default()
         },
         0,
     );
@@ -3073,7 +2936,7 @@ fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
     engine.scripts.mission = Some(minimal_script());
     let raw_goal = crate::position_interface::SectorHandle::new(22).unwrap();
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap();
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut().set_sector(Some(raw_goal));
         pc.element_data_mut().set_layer(2);
         pc.position_iface_mut().set_door(
@@ -3142,7 +3005,7 @@ fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_ret
     engine.scripts.mission = Some(minimal_script());
     let raw_goal = crate::position_interface::SectorHandle::new(22).unwrap();
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap();
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut().set_sector(Some(raw_goal));
         pc.element_data_mut().set_layer(2);
         pc.position_iface_mut().set_door(
@@ -3310,7 +3173,7 @@ fn setup_strangle_command_scene() -> (EngineInner, LevelAssets, EntityId, Entity
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Strangle, 0)]);
     let sector = crate::position_interface::SectorHandle::new(1);
     {
-        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
         pc.element_data_mut().set_sector(sector);
@@ -3528,12 +3391,7 @@ fn resolved_orientation_restores_the_implicit_messenger_action() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     assert_eq!(engine.get_selected_action(), Action::NoAction);
-    let previous_pc_action = engine
-        .get_entity(pc_id)
-        .unwrap()
-        .pc_data()
-        .unwrap()
-        .current_action;
+    let previous_pc_action = engine.pc(pc_id).current_action;
 
     engine.apply_command(
         &sim,
@@ -3577,17 +3435,8 @@ fn recorded_native_interactions_use_their_original_authored_titbit_metadata() {
     for (command, selected_action, expected_phase) in cases {
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
-        engine
-            .get_entity_mut(pc_id)
-            .expect("recording PC")
-            .pc_data_mut()
-            .expect("recording PC data")
-            .current_action = selected_action;
-        engine
-            .get_entity_mut(target_id)
-            .expect("recorded target")
-            .element_data_mut()
-            .set_layer(7);
+        engine.pc_mut(pc_id).current_action = selected_action;
+        engine.elem_mut(target_id).set_layer(7);
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
 
@@ -3666,12 +3515,7 @@ fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
     for (action, command, target_field, expected_phase, captured_layer, expected_layer) in cases {
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(action, 1)]);
-        engine
-            .get_entity_mut(pc_id)
-            .expect("recording PC")
-            .pc_data_mut()
-            .expect("recording PC data")
-            .current_action = action;
+        engine.pc_mut(pc_id).current_action = action;
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
 
@@ -3781,11 +3625,7 @@ fn recording_ground_target_allocates_one_original_faithful_titbit() {
 fn recorded_running_interaction_replays_one_running_seek_route() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id, target_id) = setup_strangle_command_scene();
-    engine
-        .get_entity_mut(target_id)
-        .expect("Strangle target exists")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(200.0, 100.0));
+    engine.place_map(target_id, crate::coordinates::MapPoint::new(200.0, 100.0));
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
 
@@ -4051,11 +3891,7 @@ fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
     }
 
     let sector = crate::position_interface::SectorHandle::new(0);
-    engine
-        .get_entity_mut(pc_id)
-        .expect("test PC exists")
-        .element_data_mut()
-        .set_sector(sector);
+    engine.elem_mut(pc_id).set_sector(sector);
     let mut target = ActorCivilian {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
@@ -4225,7 +4061,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
     let pc_sector = crate::position_interface::SectorHandle::new(7);
     let target_sector = crate::position_interface::SectorHandle::new(8);
     {
-        let pc_entity = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc_entity = engine.ent_mut(pc_id);
         pc_entity
             .position_iface_mut()
             .set_move_box(crate::coordinates::MoveBox::from_coords(
@@ -4280,7 +4116,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
         });
 
     engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
-    engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+    engine.t_hourglass_phase_sequences(&assets);
 
     let route = engine
         .orders
@@ -4346,11 +4182,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
         profiles.hth_weapons.push(weapon);
     }
     let sector = crate::position_interface::SectorHandle::new(0);
-    engine
-        .get_entity_mut(pc_id)
-        .unwrap()
-        .element_data_mut()
-        .set_sector(sector);
+    engine.elem_mut(pc_id).set_sector(sector);
     let mut target = ActorCivilian {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
@@ -4373,13 +4205,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
         .orders
         .sequence_manager
         .start_sequence_level(injury_seq);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        injury_seq,
-        0,
-    );
+    engine.t_element_in_progress(&assets, injury_seq, 0);
 
     let mut old_strike = SequenceElement::new_interaction(
         1,
@@ -4463,8 +4289,6 @@ fn minimal_script() -> crate::engine::types::MissionScript {
     let startup = ClassEntry {
         source_file: "test.scs".into(),
         class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
         functions: vec![Function {
             name: "Initialize".into(),
             address: 0,
@@ -4484,6 +4308,7 @@ fn minimal_script() -> crate::engine::types::MissionScript {
                 operands: [0; 8],
             },
         ],
+        ..Default::default()
     };
     MissionScript::from_scb(ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -4496,7 +4321,7 @@ fn setup_scroll_read_scene() -> (EngineInner, LevelAssets, EntityId, EntityId, E
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
     engine.scripts.mission = Some(minimal_script());
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
         pc.set_direction_instantly(0);
     }
@@ -4682,11 +4507,7 @@ fn scroll_read_macro_replay_rebuilds_live_sequence_shape() {
 fn recorded_running_scroll_read_replays_one_running_seek_route() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id, npc_id, scroll_id) = setup_scroll_read_scene();
-    engine
-        .get_entity_mut(npc_id)
-        .expect("scroll owner exists")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(200.0, 100.0));
+    engine.place_map(npc_id, crate::coordinates::MapPoint::new(200.0, 100.0));
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
 
@@ -4774,7 +4595,7 @@ fn recorded_running_scroll_read_replays_one_running_seek_route() {
 fn waking_up_validity_uses_sprite_action_distance() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Resuscitate, 0)]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
         pc.set_direction_instantly(0);
     }
@@ -4808,11 +4629,10 @@ fn waking_up_validity_uses_sprite_action_distance() {
 
     assert!(engine.check_sequence_element_validity(&assets, pc_id, &element, true));
 
-    engine
-        .get_entity_mut(victim_id)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint { x: 144.0, y: 100.0 });
+    engine.place_map(
+        victim_id,
+        crate::coordinates::MapPoint { x: 144.0, y: 100.0 },
+    );
     assert!(!engine.check_sequence_element_validity(&assets, pc_id, &element, true));
 }
 
@@ -4821,12 +4641,7 @@ fn custom_pc_can_wake_only_same_allegiance_pc() {
     let (mut engine, mut assets, pc_id) = setup_pc_engine(&[]);
     std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
         Action::Resuscitate;
-    engine
-        .get_entity_mut(pc_id)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .cached_camp = Camp::Custom(2);
+    engine.pc_mut(pc_id).cached_camp = Camp::Custom(2);
 
     let add_unconscious_pc = |engine: &mut EngineInner, camp| {
         engine.add_test_entity(Entity::Pc(ActorPc {
@@ -4944,10 +4759,7 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
     std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
         Action::Tie;
 
-    engine
-        .get_entity_mut(target_id)
-        .expect("test target remains present")
-        .set_posture(Posture::Lying);
+    engine.ent_mut(target_id).set_posture(Posture::Lying);
     let mut selected = untie.clone();
     let mut order = crate::order::Order::test_new(crate::order::OrderType::Tying, 0.0, 0.0);
     order.antagonist = Some(target_id);
@@ -4970,10 +4782,7 @@ fn tied_npc_use_prioritizes_loot_then_untie_and_setting_restores_original_behavi
         "a setting edit must not cancel an already accepted release"
     );
     engine.select_sequence_element(pc_id, None);
-    engine
-        .get_entity_mut(target_id)
-        .expect("test target remains present")
-        .set_posture(Posture::Tied);
+    engine.ent_mut(target_id).set_posture(Posture::Tied);
     assert_eq!(
         determine_use_command(&engine, &assets, pc_id, target_id),
         None
@@ -4998,7 +4807,7 @@ fn untie_quick_action_uses_tie_phase() {
 fn drop_ale_seek_tolerance_uses_sprite_action_distance() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 20.0, y: 30.0 });
         pc.set_direction_instantly(0);
     }
@@ -5041,7 +4850,7 @@ fn drop_ale_seek_tolerance_uses_sprite_action_distance() {
 fn mapped_interaction_seek_tolerance_uses_uword_sprite_action_distance() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         pc.set_direction_instantly(0);
     }
@@ -5071,7 +4880,7 @@ fn pc_in_coma_carry_keeps_fractional_action_distance_plus_ten() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         pc.set_direction_instantly(0);
     }
@@ -5085,7 +4894,7 @@ fn pc_in_coma_carry_keeps_fractional_action_distance_plus_ten() {
     );
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
     {
-        let target = engine.get_entity_mut(target_id).unwrap();
+        let target = engine.ent_mut(target_id);
         target
             .element_data_mut()
             .publish_order_posture(Posture::Lying);
@@ -5133,7 +4942,7 @@ fn unconscious_pc_outside_coma_uses_human_take_corpse_distance() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         pc.set_direction_instantly(0);
     }
@@ -5147,7 +4956,7 @@ fn unconscious_pc_outside_coma_uses_human_take_corpse_distance() {
     );
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
     {
-        let target = engine.get_entity_mut(target_id).unwrap();
+        let target = engine.ent_mut(target_id);
         target
             .element_data_mut()
             .publish_order_posture(Posture::Lying);
@@ -5184,7 +4993,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         engine.scripts.mission = Some(minimal_script());
         let sector = crate::position_interface::SectorHandle::new(1);
         {
-            let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+            let pc = engine.ent_mut(pc_id);
             pc.element_data_mut()
                 .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
             pc.element_data_mut().set_sector(sector);
@@ -5218,11 +5027,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
             crate::coordinates::SpriteLocalPoint::ZERO,
             crate::coordinates::SpriteAnchor::ZERO,
         );
-        engine
-            .get_entity_mut(target_id)
-            .expect("target exists after sprite binding")
-            .element_data_mut()
-            .set_sector(sector);
+        engine.elem_mut(target_id).set_sector(sector);
 
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
@@ -5260,7 +5065,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         assert_eq!(*tolerance, 0.0, "command {command:?}");
         assert!(!flags.contains(MoveFlags::SEEK), "command {command:?}");
 
-        engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+        engine.t_hourglass_phase_sequences(&assets);
         assert_eq!(
             engine
                 .get_entity(pc_id)
@@ -5279,7 +5084,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let sector = crate::position_interface::SectorHandle::new(3);
     {
-        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
         pc.element_data_mut().set_sector(sector);
@@ -5310,10 +5115,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
         crate::coordinates::SpriteAnchor::ZERO,
     );
     {
-        let target = engine
-            .get_entity_mut(target_id)
-            .expect("target exists after sprite binding")
-            .element_data_mut();
+        let target = engine.elem_mut(target_id);
         target.set_sector(sector);
         target.set_layer(4);
     }
@@ -5358,11 +5160,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
 
     // Playback clones the recorded sequence. Moving the target after
     // recording must not rewrite the coordinate seek or turn geometry.
-    engine
-        .get_entity_mut(target_id)
-        .expect("target still exists")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(700.0, 500.0));
+    engine.place_map(target_id, crate::coordinates::MapPoint::new(700.0, 500.0));
     engine.apply_command(
         &sim,
         &mut display,
@@ -5436,7 +5234,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
     let sector = crate::position_interface::SectorHandle::new(1);
     {
-        let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
+        let pc = engine.ent_mut(pc_id);
         pc.element_data_mut()
             .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
         pc.element_data_mut().set_sector(sector);
@@ -5451,26 +5249,12 @@ fn same_command_against_human_keeps_generic_entity_seek() {
         crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
         crate::coordinates::SpriteAnchor::ZERO,
     );
-    engine
-        .get_entity_mut(pc_id)
-        .expect("test PC exists after sprite binding")
-        .element_data_mut()
-        .set_sector(sector);
-    engine
-        .get_entity_mut(pc_id)
-        .expect("test PC exists after sprite binding")
-        .element_data_mut()
-        .sprite
-        .position_iface
-        .set_move_box(crate::coordinates::MoveBox::from_coords(
-            -6.0, -4.0, 6.0, 4.0,
-        ));
+    engine.elem_mut(pc_id).set_sector(sector);
+    engine.elem_mut(pc_id).sprite.position_iface.set_move_box(
+        crate::coordinates::MoveBox::from_coords(-6.0, -4.0, 6.0, 4.0),
+    );
     let target_id = spawn_pc_at(&mut engine, 300.0, 100.0);
-    engine
-        .get_entity_mut(target_id)
-        .expect("target PC exists")
-        .element_data_mut()
-        .set_sector(sector);
+    engine.elem_mut(target_id).set_sector(sector);
 
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
@@ -5504,7 +5288,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     assert_eq!(*tolerance, 13.0);
     assert!(flags.contains(MoveFlags::SEEK));
 
-    engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+    engine.t_hourglass_phase_sequences(&assets);
     assert_eq!(
         engine
             .get_entity(pc_id)
@@ -5519,7 +5303,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
 fn pay_seek_faces_the_beggar_action_point() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         pc.set_direction_instantly(0);
     }
@@ -5535,11 +5319,7 @@ fn pay_seek_faces_the_beggar_action_point() {
     // its unconditional post-click cooldown stamp therefore targets that
     // same civilian. Keep this direct helper test within that contract.
     let target_id = spawn_friendly_civilian(&mut engine);
-    engine
-        .get_entity_mut(target_id)
-        .expect("beggar exists")
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint { x: 90.0, y: 10.0 });
+    engine.place_map(target_id, crate::coordinates::MapPoint { x: 90.0, y: 10.0 });
 
     engine.apply_interaction_with_seek(
         &crate::sim_rng::test_context(),
@@ -5592,13 +5372,7 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
         .sequence_manager
         .start_sequence_level(movement_sequence);
     engine.select_sequence_element(pc_id, Some((movement_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        movement_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, movement_sequence, 0);
 
     engine.apply_interaction_with_seek(&sim, &assets, pc_id, target_id, Command::Pay, true);
 
@@ -5669,7 +5443,7 @@ fn swordstrike_down_uses_original_literal_seek_distance() {
 fn shoot_bow_interaction_launches_without_seek() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
     }
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
@@ -5726,7 +5500,7 @@ fn mapped_interaction_missing_sprite_action_distance_noops() {
 fn climb_on_shoulders_seek_tolerance_matches_original_literal() {
     let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Climb, 0)]);
     {
-        let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+        let pc = engine.elem_mut(pc_id);
         pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         pc.set_direction_instantly(0);
     }
@@ -6266,13 +6040,7 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
         .sequence_manager
         .start_sequence_level(wait_sequence);
     engine.select_sequence_element(pc_id, Some((wait_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        wait_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&assets, wait_sequence, 0);
 
     engine.apply_commands_with_mode(
         sim,
@@ -6579,7 +6347,7 @@ fn record_interaction_quick_action(
     target: EntityId,
     command: Command,
 ) -> crate::titbit::TitbitId {
-    let target_entity = engine.get_entity(target).expect("QA target exists");
+    let target_entity = engine.ent(target);
     let target_position = target_entity.element_data().position_map();
     let target_layer = target_entity.element_data().layer();
     let state = engine.players.macro_store.get_or_insert(pc);
@@ -6722,17 +6490,13 @@ fn configure_valid_bow_quick_action(
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
-    engine.get_entity_mut(pc).unwrap().element_data_mut().sprite = Sprite::new(
+    engine.elem_mut(pc).sprite = Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
 
-    let target_position = engine
-        .get_entity(target)
-        .expect("bow target exists")
-        .element_data()
-        .position_map();
-    let target = engine.get_entity_mut(target).expect("bow target exists");
+    let target_position = engine.map_pos_of(target);
+    let target = engine.ent_mut(target);
     target
         .pc_data_mut()
         .expect("bow validity fixture target is a PC")
@@ -6748,7 +6512,7 @@ fn configure_valid_bow_quick_action(
 fn quick_action_hit_and_strangle_recheck_allocated_target_state() {
     for command in [Command::HitCmd, Command::StrangleCmd] {
         let (mut engine, assets, pc, target) = setup_strangle_command_scene();
-        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+        let Entity::Soldier(soldier) = engine.ent_mut(target) else {
             unreachable!("fixture target changed kind")
         };
         soldier.npc.life_points = 100;
@@ -6756,12 +6520,7 @@ fn quick_action_hit_and_strangle_recheck_allocated_target_state() {
         let titbit = record_interaction_quick_action(&mut engine, pc, target, command);
         assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
-        engine
-            .get_entity_mut(target)
-            .unwrap()
-            .human_data_mut()
-            .unwrap()
-            .unconscious = true;
+        engine.human_mut(target).unconscious = true;
         assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
         assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
     }
@@ -6774,11 +6533,7 @@ fn quick_action_take_rechecks_allocated_object_state() {
     let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::Take);
     assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
 }
@@ -6811,11 +6566,7 @@ fn quick_action_search_rechecks_nested_post_seek_target_state() {
     let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::SearchCmd);
     assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
 }
@@ -6861,11 +6612,7 @@ fn retained_quick_action_validates_borrowed_continuations_with_human_rules() {
     };
     let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
     *element = Some(target);
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .active = false;
+    engine.set_active(target, false);
     continuation.elements.push(nested_seek);
     let SequenceElementData::Movement {
         post_seek_sequence, ..
@@ -6909,11 +6656,7 @@ fn retained_quick_action_empty_fizzle_resets_count_only_after_validation() {
                 crate::order::OrderType::WalkingUpright,
             );
             let target = spawn_pc_at(&mut engine, 1000.0, 0.0);
-            engine
-                .get_entity_mut(target)
-                .unwrap()
-                .element_data_mut()
-                .active = false;
+            engine.set_active(target, false);
             let SequenceElementData::Movement {
                 element: target_id, ..
             } = &mut element.data
@@ -6951,12 +6694,7 @@ fn retained_quick_action_without_seek_clears_previous_continuation() {
     previous
         .elements
         .push(SequenceElement::new(1, Command::Wait, Some(pc)));
-    engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .post_seek_sequence = Some(previous.into_post_seek());
+    engine.actor_mut(pc).post_seek_sequence = Some(previous.into_post_seek());
     let mut action = Sequence::default();
     action
         .elements
@@ -6995,11 +6733,7 @@ fn quick_action_bow_rechecks_allocated_target_and_owner_state() {
     let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::ShootBow);
     assert!(quick_action_slot_is_valid(&engine, &assets, pc));
 
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .blipped = true;
+    engine.elem_mut(target).blipped = true;
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
 
@@ -7010,12 +6744,7 @@ fn quick_action_bow_rechecks_allocated_target_and_owner_state() {
     configure_valid_bow_quick_action(&mut engine, &mut assets, pc, target);
     let titbit = record_interaction_quick_action(&mut engine, pc, target, Command::ShootBow);
     assert!(quick_action_slot_is_valid(&engine, &assets, pc));
-    engine
-        .get_entity_mut(pc)
-        .unwrap()
-        .human_data_mut()
-        .unwrap()
-        .unconscious = true;
+    engine.human_mut(pc).unconscious = true;
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
 }

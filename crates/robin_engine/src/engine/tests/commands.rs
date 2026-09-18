@@ -608,15 +608,9 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
     let mut timer = SequenceElement::new_generic(3, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(5));
     sequence.append_element(timer);
-    let sequence_id = engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    let sequence_id = engine.t_launch_sequence(&assets, sequence);
     engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     // Exercise the real cancellation producer, including the selected actor's
     // successor chain, then let the manager instruct the cancelled successor.
@@ -633,24 +627,9 @@ fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
             .command,
         Command::Null,
     );
-    engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap()
-        .execution_frozen = true;
-    engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
-        &mut HostDisplayState::default(),
-        &LevelAssets::new(),
-    );
+    engine.t_element_terminated(&assets, sequence_id, 0);
+    engine.actor_mut(owner).execution_frozen = true;
+    engine.t_hourglass_phase_sequences(&LevelAssets::new());
 
     assert_eq!(
         engine
@@ -704,7 +683,7 @@ fn timer_started_by_sequence_dispatch_ticks_on_its_launch_frame() {
     let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
     timer.set_property(Field::Timer, FieldValue::Integer(2));
     sequence.append_element(timer);
-    engine.launch_sequence(&crate::sim_rng::test_context(), &assets, sequence);
+    engine.t_launch_sequence(&assets, sequence);
 
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
@@ -948,7 +927,7 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
         2,
     ));
     for (fighter, other) in [(owner, opponent), (opponent, owner)] {
-        let entity = engine.get_entity_mut(fighter).expect("fighter exists");
+        let entity = engine.ent_mut(fighter);
         entity
             .actor_data_mut()
             .expect("fighter is an actor")
@@ -1034,12 +1013,7 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
     ));
 
     for fighter in [departing, survivor, principal] {
-        engine
-            .get_entity_mut(fighter)
-            .expect("fighter exists")
-            .actor_data_mut()
-            .expect("fighter is an actor")
-            .action_state = ActionState::WaitingSword;
+        engine.set_action_state_of(fighter, ActionState::WaitingSword);
     }
     {
         let human = engine
@@ -1218,19 +1192,8 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
                 ],
                 bounding_box: crate::coordinates::MapBBox::from_coords(0.0, 0.0, 256.0, 256.0),
                 sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
-                layer: 0,
                 sector_number: crate::sector::SectorNumber::new(1),
-                door_index: None,
-                lift_type: None,
-                lift_direction: 0,
-                force_crouched: false,
-                building_index: None,
-                low_exit_point: None,
-                high_exit_point: None,
-                lowest_door_index: None,
-                jump_line_indices: Vec::new(),
-                gate_indices: Vec::new(),
-                underlying_sector: None,
+                ..Default::default()
             },
             0,
         );
@@ -1260,7 +1223,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         let attacker = engine.add_test_entity(make_fighter(100.0));
         let defender = engine.add_test_entity(make_fighter(130.0));
         for (fighter, opponent) in [(attacker, defender), (defender, attacker)] {
-            let entity = engine.get_entity_mut(fighter).expect("fighter exists");
+            let entity = engine.ent_mut(fighter);
             entity
                 .actor_data_mut()
                 .expect("fighter is an actor")
@@ -1295,18 +1258,11 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
         };
         let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[waiting as usize] = 0;
-        engine
-            .get_entity_mut(attacker)
-            .expect("attacker exists")
-            .element_data_mut()
-            .sprite = crate::sprite::Sprite::new(
+        engine.elem_mut(attacker).sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        let attacker_element = engine
-            .get_entity_mut(attacker)
-            .expect("attacker exists after installing its sprite")
-            .element_data_mut();
+        let attacker_element = engine.elem_mut(attacker);
         attacker_element.set_position(WorldPoint3D::new(100.0, 100.0, 0.0));
         attacker_element.set_layer(0);
         attacker_element.set_sector(crate::position_interface::SectorHandle::new(1));
@@ -1324,13 +1280,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             .sequence_manager
             .start_sequence_level(wait_sequence);
         engine.select_sequence_element(attacker, Some((wait_sequence, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            wait_sequence,
-            0,
-        );
+        engine.t_element_in_progress(&assets, wait_sequence, 0);
         engine.publish_selected_order_as_installed(attacker);
 
         let sim = crate::sim_rng::test_context();
@@ -1361,7 +1311,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             "swordfight evaluation must register, not eagerly instruct, its smalltalk strike"
         );
 
-        engine.hourglass_phase_sequences(&sim, &mut HostDisplayState::default(), &assets);
+        engine.t_hourglass_phase_sequences(&assets);
         (engine, attacker, wait_sequence)
     }
 
@@ -1451,7 +1401,7 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
         z: 40.0,
     }));
     for (fighter, opponent) in [(attacker, defender), (defender, attacker)] {
-        let entity = engine.get_entity_mut(fighter).expect("3D fighter exists");
+        let entity = engine.ent_mut(fighter);
         entity
             .actor_data_mut()
             .expect("3D fighter is actor")
@@ -1521,9 +1471,7 @@ fn waiting_sword_requires_real_combat_profiles_contextually() {
     let owner = engine.add_test_entity(make_fighter());
     let opponent = engine.add_test_entity(make_fighter());
     for (fighter, other) in [(owner, opponent), (opponent, owner)] {
-        let entity = engine
-            .get_entity_mut(fighter)
-            .expect("profile fighter exists");
+        let entity = engine.ent_mut(fighter);
         entity
             .actor_data_mut()
             .expect("profile fighter is actor")

@@ -12,10 +12,7 @@ fn mixed_enemy_fifo_fixture(
     let pc_id = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let royalist_id = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("mixed-fifo observer exists")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("mixed-fifo observer changed kind")
     };
     observer.element.active = true;
@@ -30,7 +27,7 @@ fn mixed_enemy_fifo_fixture(
     observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
     observer.npc.eye_status = crate::element::EyeStatus::Stare;
 
-    let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("mixed-fifo PC exists") else {
+    let Entity::Pc(pc) = engine.ent_mut(pc_id) else {
         panic!("mixed-fifo PC changed kind")
     };
     pc.element.active = true;
@@ -39,10 +36,7 @@ fn mixed_enemy_fifo_fixture(
     pc.element.set_position_map(MapPoint::new(80.0, 0.0));
     pc.pc.life_points = 100;
 
-    let Entity::Soldier(royalist) = engine
-        .get_entity_mut(royalist_id)
-        .expect("mixed-fifo Royalist target exists")
-    else {
+    let Entity::Soldier(royalist) = engine.ent_mut(royalist_id) else {
         panic!("mixed-fifo Royalist target changed kind")
     };
     royalist.element.active = true;
@@ -60,10 +54,7 @@ fn mixed_enemy_fifo_fixture(
     profile.detection_speed_in_city = 100;
     profile.detection_speed_in_forest = 100;
 
-    let Entity::Soldier(observer) = engine
-        .get_entity_mut(observer_id)
-        .expect("mixed-fifo observer exists after fixture")
-    else {
+    let Entity::Soldier(observer) = engine.ent_mut(observer_id) else {
         panic!("mixed-fifo observer changed kind after fixture")
     };
     let ai = observer

@@ -57,8 +57,7 @@ fn launch_interaction_and_tick(
     let actor_id = engine.add_test_entity(actor);
     let antagonist_id = engine.add_test_entity(antagonist);
     let assets = engine.test_runtime_assets();
-    engine.launch_element(
-        &crate::sim_rng::test_context(),
+    engine.t_launch_element(
         &assets,
         SequenceElement::new_interaction(1, command, Some(actor_id), Some(antagonist_id)),
     );
@@ -90,7 +89,7 @@ fn soldier_taking_sets_goal_and_turns_toward_antagonist() {
         make_projectile_object_at(ObjectType::Purse, 10.0, 0.0),
     );
 
-    let actor = engine.get_entity(actor_id).unwrap();
+    let actor = engine.ent(actor_id);
     assert_eq!(actor.element_data().direction(), 1);
 }
 
@@ -107,7 +106,7 @@ fn soldier_drinking_ale_turns_toward_existing_goal() {
         make_bonus_object_at(ObjectType::Ale, 100.0, 0.0),
     );
 
-    let actor = engine.get_entity(actor_id).unwrap();
+    let actor = engine.ent(actor_id);
     assert_eq!(actor.element_data().direction(), 1);
 }
 
@@ -160,7 +159,7 @@ fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
     let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
-    let bonus = engine.get_entity(bonus_id).unwrap();
+    let bonus = engine.ent(bonus_id);
     assert!(bonus.element_data().active);
     assert!(!bonus.object_data().unwrap().taken);
 }

@@ -66,11 +66,7 @@ fn speech_state_roundtrip_and_hash_cover_live_identity_and_global_state() {
         702,
     );
     let first_creation_order = engine.world.original_creation_order(first);
-    let ai = engine
-        .get_entity_mut(first)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(first);
     ai.current_remark = Remark::Arrow;
     ai.current_remark_flags = SpeechFlags::MYTALK_2.bits();
     engine
@@ -454,22 +450,12 @@ fn live_combat_position_recovers_exact_duplicate_pc_sector() {
         sector_number: SectorNumber::new(88),
         layer: 2,
         sector_type: SectorType::MOTION,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     };
     engine.world.fast_grid_mut().level_mut().sectors =
         vec![square(0.0, 100.0), square(600.0, 800.0)];
 
-    let Entity::Soldier(owner_entity) = engine.get_entity_mut(owner).unwrap() else {
+    let Entity::Soldier(owner_entity) = engine.ent_mut(owner) else {
         panic!("fighter owner changed kind")
     };
     owner_entity.element.active = true;
@@ -482,7 +468,7 @@ fn live_combat_position_recovers_exact_duplicate_pc_sector() {
         .base
         .me = owner.index();
 
-    let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
+    let target_element = engine.elem_mut(target);
     target_element.active = true;
     target_element.set_position_map(MapPoint::new(684.0, 745.0));
     target_element.set_layer(2);
@@ -504,7 +490,7 @@ fn bow_interaction_accepts_a_target_that_died_while_aiming() {
     let mut engine = EngineInner::new();
     let shooter = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Dead));
-    let Entity::Pc(dead_target) = engine.get_entity_mut(target).expect("dead target exists") else {
+    let Entity::Pc(dead_target) = engine.ent_mut(target) else {
         panic!("dead target changed kind")
     };
     dead_target.element.active = true;
@@ -554,8 +540,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
     let target_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
 
     for (id, x) in [(self_id, 0.0), (target_id, 20.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -571,10 +556,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
         soldier.element.set_position_map(MapPoint::new(x, 0.0));
     }
 
-    let Entity::Soldier(target) = engine
-        .get_entity_mut(target_id)
-        .expect("door-passing target exists")
-    else {
+    let Entity::Soldier(target) = engine.ent_mut(target_id) else {
         panic!("door-passing target changed kind")
     };
     let exact_target_world = WorldPoint3D::new(20.123_457, 9.876_543, 7.654_321);
@@ -623,13 +605,7 @@ fn live_combat_position_uses_committed_gate_side_for_door_passing_actor() {
         .sequence_manager
         .start_sequence_level(sequence_id);
     engine.select_sequence_element(target_id, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let assets = engine.test_runtime_assets();
 
@@ -690,8 +666,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
 
     for (id, x) in [(owner_id, 0.0), (raw_near_id, 20.0), (raw_far_id, 600.0)] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test fighter changed kind")
         };
         soldier.element.active = true;
@@ -773,13 +748,7 @@ fn reconsider_observation_uses_raw_positions_across_committed_gate_sides() {
             .sequence_manager
             .start_sequence_level(sequence_id);
         engine.select_sequence_element(id, Some((sequence_id, 0)));
-        engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &mut Vec::new(),
-            sequence_id,
-            0,
-        );
+        engine.t_element_in_progress(&assets, sequence_id, 0);
     }
 
     let assets = engine.test_runtime_assets();
@@ -809,10 +778,7 @@ fn closure_review_alert_soldiers_keeps_inactive_soldier_in_live_camp_scan() {
 
     let sim = crate::sim_rng::test_context();
     let (mut engine, officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("inactive help recipient exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("inactive help recipient changed kind")
     };
     soldier.element.active = false;

@@ -33,11 +33,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     stale_object.info = StimulusInfo::Object(AiEntityHandle::new(removed.index()));
     let final_stimulus = Stimulus::new(StimulusType::EventReachPoint);
     let queued = vec![historical, stale, stale_object, final_stimulus];
-    let ai = engine
-        .get_entity_mut(observer)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap();
+    let ai = engine.ai_ctrl_mut(observer);
     ai.stimulus_queue = queued;
 
     let request = |owner| PendingPathRequest::test_request(owner, SequenceId(1), 0);
@@ -79,11 +75,7 @@ fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
     assert_eq!(engine.players.seats[1].follow_element, Some(last));
     assert!(engine.players.seats[1].locker_active);
     assert_eq!(engine.players.selection_before_user_lock, [last, first]);
-    let ai = engine
-        .get_entity(observer)
-        .unwrap()
-        .ai_controller()
-        .unwrap();
+    let ai = engine.ai_ctrl(observer);
     for stimuli in [&ai.stimulus_queue] {
         assert_eq!(stimuli.len(), 2);
         assert_eq!(
@@ -346,11 +338,11 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 
     engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
 
-    let owner_human = engine.get_entity(owner).unwrap().human_data().unwrap();
+    let owner_human = engine.human(owner);
     assert_eq!(owner_human.opponents, vec![near]);
     assert_eq!(owner_human.relative_fighting_ability, 17);
 
-    let far_human = engine.get_entity(far).unwrap().human_data().unwrap();
+    let far_human = engine.human(far);
     assert_eq!(far_human.opponents, vec![far_partner]);
     assert!(far_human.smalltalk_initiative);
     assert!(far_human.received_smalltalk_initiative);
@@ -368,7 +360,6 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 fn terminal_callbacks_finish_in_call_order_across_owners() {
     use crate::element::Command;
     use crate::sequence::SequenceElement;
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owners: Vec<_> = (0..3)
         .map(|_| engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists)))
@@ -384,8 +375,8 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
-            engine.element_terminated(&sim, &assets, &mut Vec::new(), sequence, 0);
+            engine.t_element_in_progress(&assets, sequence, 0);
+            engine.t_element_terminated(&assets, sequence, 0);
             assert_eq!(
                 engine
                     .orders
@@ -418,9 +409,7 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
     let assets = engine.test_runtime_assets();
 
     let sector = crate::position_interface::SectorHandle::new(1);
-    let entity = engine
-        .get_entity_mut(owner)
-        .expect("return-to-duty owner exists");
+    let entity = engine.ent_mut(owner);
     entity.element_data_mut().active = true;
     entity
         .element_data_mut()
@@ -466,7 +455,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
     let (mut engine, officer_id, soldier_id, mut assets) = setup_review2_officer_and_soldier();
     let mut add_body = || {
         let id = engine.add_test_entity(make_test_pc(Posture::Lying));
-        let Entity::Pc(body) = engine.get_entity_mut(id).expect("report body exists") else {
+        let Entity::Pc(body) = engine.ent_mut(id) else {
             panic!("report body changed kind")
         };
         body.element.active = true;
@@ -500,10 +489,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
             vec![unknown_a.index(), already_known.index(), unknown_b.index()];
     }
     {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(soldier_id)
-            .expect("reporting soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
             panic!("reporting entity changed kind")
         };
         let ai = soldier
@@ -546,9 +532,7 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
         &assets,
     );
 
-    let recipient = engine
-        .get_entity(soldier_id)
-        .expect("reporting soldier remains present");
+    let recipient = engine.ent(soldier_id);
     let body_handles: Vec<_> = recipient
         .npc_data()
         .expect("recipient remains NPC")

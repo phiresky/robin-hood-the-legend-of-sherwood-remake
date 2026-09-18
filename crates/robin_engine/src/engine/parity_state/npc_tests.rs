@@ -760,14 +760,7 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
             },
         }));
         let handle = crate::ai::AiEntityHandle::new(id.index());
-        if let Some(base) = inner
-            .get_entity_mut(id)
-            .unwrap()
-            .npc_data_mut()
-            .unwrap()
-            .ai_brain
-            .base_mut()
-        {
+        if let Some(base) = inner.npc_mut(id).ai_brain.base_mut() {
             use crate::ai::{
                 CombatInfo, DoorCombatInfo, Hint, Noise, NoiseOrigin, NoiseType, Stimulus,
                 StimulusInfo, StimulusType, StolenObject,

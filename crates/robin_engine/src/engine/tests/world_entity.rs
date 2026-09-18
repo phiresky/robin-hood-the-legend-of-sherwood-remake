@@ -276,7 +276,7 @@ fn check_detectable_snapshot_and_drain_matrix() {
                 .unwrap(),
                 _ => unreachable!("three snapshot paths"),
             };
-            let actor = engine.get_entity(owner).unwrap().ai_actor_data().unwrap();
+            let actor = engine.ent(owner).ai_actor_data().unwrap();
             let actual = actor.detectable_lists[Friend as usize]
                 .iter()
                 .map(|entry| entry.element.expect("test detectable has a target"))
@@ -306,22 +306,10 @@ pub(super) fn install_test_building_sector(engine: &mut EngineInner, raw_sector:
         .sector_number_map
         .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
     level.sectors.push(crate::fast_find_grid::GridSector {
-        points: Vec::new(),
         bounding_box: MapBBox::new(),
         sector_type: crate::sector::SectorType::BUILDING,
-        layer: 0,
         sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     engine.world.fast_grid_mut().level = std::sync::Arc::new(level);
 }
@@ -354,10 +342,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     let assets = engine.test_runtime_assets();
 
     for (id, x) in [(charly_id, 0.0), (officer_id, 200.0)] {
-        let Entity::Soldier(soldier) = engine
-            .get_entity_mut(id)
-            .expect("test report soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("test report entity changed kind")
         };
         soldier.element.active = true;
@@ -450,10 +435,7 @@ fn run_synchronous_civilian_alert(
         .push(crate::profiles::CivilianProfile::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    let Entity::Civilian(civilian) = engine
-        .get_entity_mut(civilian_id)
-        .expect("test civilian exists")
-    else {
+    let Entity::Civilian(civilian) = engine.ent_mut(civilian_id) else {
         panic!("test civilian changed kind")
     };
     civilian.element.active = true;
@@ -488,10 +470,7 @@ fn run_synchronous_civilian_alert(
         },
     );
 
-    let Entity::Soldier(soldier) = engine
-        .get_entity_mut(soldier_id)
-        .expect("test soldier exists")
-    else {
+    let Entity::Soldier(soldier) = engine.ent_mut(soldier_id) else {
         panic!("test soldier changed kind")
     };
     soldier.element.active = true;
@@ -553,8 +532,7 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
         (officer_id, ProfileRank::Officer, 0.0),
         (soldier_id, ProfileRank::Soldier, 40.0),
     ] {
-        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("review2 soldier exists")
-        else {
+        let Entity::Soldier(soldier) = engine.ent_mut(id) else {
             panic!("review2 entity changed kind")
         };
         soldier.element.active = true;

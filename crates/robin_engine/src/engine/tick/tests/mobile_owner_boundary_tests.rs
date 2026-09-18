@@ -124,8 +124,7 @@ fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
         ..Default::default()
     };
 
-    let sprite_before =
-        serde_json::to_value(&engine.get_entity(first).unwrap().element_data().sprite).unwrap();
+    let sprite_before = serde_json::to_value(&engine.elem(first).sprite).unwrap();
     let frame_before = (
         sprite_before["current_frame"].clone(),
         sprite_before["frame_count"].clone(),
@@ -156,8 +155,7 @@ fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
         engine.world.mobile_elements[0].position.x, 2.0,
         "later children must not retrigger the master"
     );
-    let sprite_after =
-        serde_json::to_value(&engine.get_entity(first).unwrap().element_data().sprite).unwrap();
+    let sprite_after = serde_json::to_value(&engine.elem(first).sprite).unwrap();
     let frame_after = (
         sprite_after["current_frame"].clone(),
         sprite_after["frame_count"].clone(),

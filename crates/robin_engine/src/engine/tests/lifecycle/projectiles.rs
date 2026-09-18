@@ -102,17 +102,9 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         .sequence_manager
         .start_sequence_level(shot_sequence);
     engine.select_sequence_element(shooter_id, Some((shot_sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        shot_sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), shot_sequence, 0);
     {
-        let shooter = engine
-            .get_entity_mut(shooter_id)
-            .expect("bow shooter present");
+        let shooter = engine.ent_mut(shooter_id);
         let actor = shooter.actor_data_mut().expect("bow shooter actor data");
         actor.action_state = ActionState::AimingWithBow;
 
@@ -148,38 +140,24 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     complete_test_runtime_fixture(&mut engine, &mut assets);
     bind_test_bow_release_action(&mut engine, shooter_id);
     let shoot_direction = crate::position_interface::vector_to_sector_0_to_15_iso(1000.0, 0.0);
-    engine
-        .get_entity_mut(shooter_id)
-        .expect("bow shooter present after fixture")
-        .element_data_mut()
-        .set_direction_instantly(shoot_direction);
-    let motion = engine
-        .get_entity_mut(shooter_id)
-        .expect("bow shooter present after fixture")
-        .element_data_mut()
-        .sprite
-        .perform_action(
-            sim,
-            Some(order_id),
-            OrderType::ShootingWithBow,
-            shoot_direction as u16,
-            crate::sprite::FrameProgression::Default,
-            false,
-        );
+    engine.face(shooter_id, shoot_direction);
+    let motion = engine.elem_mut(shooter_id).sprite.perform_action(
+        sim,
+        Some(order_id),
+        OrderType::ShootingWithBow,
+        shoot_direction as u16,
+        crate::sprite::FrameProgression::Default,
+        false,
+    );
     assert_eq!(motion, crate::sprite::MotionState::Start);
-    let motion = engine
-        .get_entity_mut(shooter_id)
-        .expect("bow shooter present after first animation pulse")
-        .element_data_mut()
-        .sprite
-        .perform_action(
-            sim,
-            Some(order_id),
-            OrderType::ShootingWithBow,
-            shoot_direction as u16,
-            crate::sprite::FrameProgression::Default,
-            false,
-        );
+    let motion = engine.elem_mut(shooter_id).sprite.perform_action(
+        sim,
+        Some(order_id),
+        OrderType::ShootingWithBow,
+        shoot_direction as u16,
+        crate::sprite::FrameProgression::Default,
+        false,
+    );
     assert_eq!(motion, crate::sprite::MotionState::InProgress);
 
     let (_, visited) = engine.with_simulation_context(|engine, sim| {
@@ -333,16 +311,16 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
         "each inactive derived sprite tail must run before its virtual bool controls tombstone retention"
     );
     for id in [grounded_purse, grounded_coin] {
-        let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+        let Entity::Projectile(projectile) = engine.ent(id) else {
             unreachable!()
         };
         assert_eq!(projectile.object.animation, Animation::ObjectBursting);
     }
-    let Entity::Net(net) = engine.get_entity(grounded_net).unwrap() else {
+    let Entity::Net(net) = engine.ent(grounded_net) else {
         unreachable!()
     };
     assert_eq!(net.object.animation, Animation::ObjectLying);
-    let Entity::Net(net) = engine.get_entity(flying_net).unwrap() else {
+    let Entity::Net(net) = engine.ent(flying_net) else {
         unreachable!()
     };
     assert_eq!(net.net.time_till_unfolding, 0);
@@ -403,7 +381,7 @@ fn water_and_hole_projectiles_retire_after_their_nonterminal_derived_tail() {
                 );
             });
             assert_eq!(tails, vec![(id, kind)]);
-            let Entity::Projectile(projectile) = engine.get_entity(id).unwrap() else {
+            let Entity::Projectile(projectile) = engine.ent(id) else {
                 unreachable!()
             };
             assert!(
@@ -475,7 +453,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
         },
     }));
     {
-        let Entity::Projectile(projectile) = engine.get_entity_mut(arrow).unwrap() else {
+        let Entity::Projectile(projectile) = engine.ent_mut(arrow) else {
             unreachable!()
         };
         projectile
@@ -495,7 +473,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     let assets = LevelAssets::new();
 
     engine.tick_projectile_or_net_hourglass(&sim, &assets, arrow);
-    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
     assert!(
@@ -508,7 +486,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     );
     engine.control.arrow_refresh_pending = true;
     engine.apply_pending_presentation_refresh(&sim);
-    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
     assert!(
@@ -620,7 +598,7 @@ fn stationary_arrow_with_future_hole_flag_stays_active_until_refresh() {
 
     // A stopped arrow does not execute landing logic for its retained trajectory flags.
     engine.tick_projectile_or_net_hourglass(&sim, &LevelAssets::new(), arrow);
-    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
     assert!(
@@ -630,7 +608,7 @@ fn stationary_arrow_with_future_hole_flag_stays_active_until_refresh() {
 
     engine.control.arrow_refresh_pending = true;
     engine.apply_pending_presentation_refresh(&sim);
-    let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
+    let Entity::Projectile(projectile) = engine.ent(arrow) else {
         unreachable!()
     };
     assert!(
@@ -732,10 +710,10 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
 
     engine.control.arrow_refresh_pending = true;
     engine.apply_pending_presentation_refresh(&SimulationContext::with_seed(seed));
-    let Entity::Projectile(deeper_arrow) = engine.get_entity(deeper).unwrap() else {
+    let Entity::Projectile(deeper_arrow) = engine.ent(deeper) else {
         unreachable!()
     };
-    let Entity::Projectile(shallower_arrow) = engine.get_entity(shallower).unwrap() else {
+    let Entity::Projectile(shallower_arrow) = engine.ent(shallower) else {
         unreachable!()
     };
     assert_eq!(deeper_arrow.element.sprite.current_frame, deeper_frame);
@@ -776,7 +754,7 @@ fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
     }));
 
     engine.rewind_projectile_to_human_hit_old_position(projectile, old);
-    let Entity::Projectile(projectile) = engine.get_entity(projectile).unwrap() else {
+    let Entity::Projectile(projectile) = engine.ent(projectile) else {
         unreachable!()
     };
     assert!(projectile.projectile.trajectory.is_empty());
@@ -813,13 +791,7 @@ fn pending_bow_element_does_not_block_selected_nonbow_execution() {
         .sequence_manager
         .start_sequence_level(selected_seq);
     engine.select_sequence_element(owner, Some((selected_seq, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        selected_seq,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), selected_seq, 0);
 
     let mut pending_shot =
         SequenceElement::new_interaction(1, Command::ShootBow, Some(owner), Some(owner));
@@ -850,8 +822,7 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
 
     let (mut engine, carrier, body, _) =
         corpse_exit_initialization_fixture(crate::element::Command::WhistleCmd);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     assert_eq!(
         crate::abilities::selected_ability(
             &engine.world.entities,
@@ -862,18 +833,14 @@ fn direct_drop_uses_the_same_one_shot_corpse_exit_initialization() {
         Some(AbilityKind::Drop)
     );
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
-    let body_entity = engine.get_entity(body).unwrap();
+    engine.t_tick_actor_owner_envelopes(&assets);
+    let body_entity = engine.ent(body);
     assert_eq!(body_entity.element_data().direction(), 9);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 9);
 
-    engine
-        .get_entity_mut(body)
-        .unwrap()
-        .element_data_mut()
-        .set_direction_instantly(2);
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);
-    let body_entity = engine.get_entity(body).unwrap();
+    engine.face(body, 2);
+    engine.t_tick_actor_owner_envelopes(&assets);
+    let body_entity = engine.ent(body);
     assert_eq!(body_entity.element_data().direction(), 2);
     assert_eq!(body_entity.position_iface().get_direction_goal().as_u8(), 2);
 }
@@ -901,11 +868,7 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::TransitionEquipBow as usize] = 0;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
@@ -918,23 +881,13 @@ fn bound_bow_transition_advances_through_production_owner_coordinator() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    let actor = engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
+    let actor = engine.actor_mut(owner);
     actor.action_state = ActionState::Waiting;
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
-    let entity = engine.get_entity(owner).unwrap();
+    let entity = engine.ent(owner);
     assert_eq!(entity.sprite().last_action, OrderType::TransitionEquipBow);
     assert_eq!(
         entity.actor_data().unwrap().action_state,
@@ -965,11 +918,7 @@ fn unbound_bow_transition_still_uses_generic_execute() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::TransitionEquipBow as usize] = 0;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
@@ -983,15 +932,9 @@ fn unbound_bow_transition_still_uses_generic_execute() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
     assert_eq!(
         engine.get_entity(owner).unwrap().sprite().last_action,
@@ -1020,18 +963,8 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
         .sequence_manager
         .start_sequence_level(sequence);
     engine.select_sequence_element(shooter, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    let actor = engine
-        .get_entity_mut(shooter)
-        .unwrap()
-        .actor_data_mut()
-        .unwrap();
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
+    let actor = engine.actor_mut(shooter);
     actor.execution_frozen = true;
 
     let before = engine
@@ -1091,16 +1024,11 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     use crate::sequence::SequenceElement;
     use crate::sprite_script::SpriteScript;
 
-    let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let target = engine.add_test_entity(make_test_pc(Posture::Upright));
     let assets = engine.test_runtime_assets();
-    engine
-        .get_entity_mut(target)
-        .unwrap()
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::new(40.0, 0.0));
+    engine.place_map(target, crate::coordinates::MapPoint::new(40.0, 0.0));
     bind_test_action_point(
         &mut engine,
         owner,
@@ -1122,11 +1050,7 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
     };
     let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::ThrowingApple as usize] = 0;
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .element_data_mut()
-        .sprite = crate::sprite::Sprite::new(
+    engine.elem_mut(owner).sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
         std::sync::Arc::new(conversion),
     );
@@ -1150,16 +1074,10 @@ fn production_throw_apple_owner_emits_terminal_projectile_effect() {
         crate::abilities::BeginResult::Started
     );
     engine.select_sequence_element(owner, Some((sequence, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
+    engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
 
     for _ in 0..10 {
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
     }
 
     assert_eq!(engine.world.entities.projectiles().count(), 1);
@@ -1181,7 +1099,7 @@ fn selected_listen_done_does_not_clear_newer_bow_action() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     {
-        let pc = engine.get_entity_mut(owner).unwrap();
+        let pc = engine.ent_mut(owner);
         pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;
         pc.pc_data_mut().unwrap().current_action = crate::profiles::Action::Bow;
     }

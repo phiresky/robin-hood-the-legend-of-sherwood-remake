@@ -105,19 +105,13 @@ fn dying_find_place_increment_after_crossing(
     let mut order = Order::test_new(OrderType::DyingSword, 0.0, 0.0);
     order.compute_direction = false;
     dying.orders.push_back(order);
-    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, dying);
+    let sequence_id = engine.t_launch_element(&assets, dying);
     engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::new());
+    engine.t_tick_actor_owner_envelopes(&LevelAssets::new());
 
-    let entity = engine.get_entity(owner).expect("dying owner remains live");
+    let entity = engine.ent(owner);
     let old_position = entity.position_iface().old_map_position();
     let new_position = entity.element_data().position_map();
     let non_elevation_crossing_count = engine
@@ -212,15 +206,9 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
     let mut order = Order::test_new(OrderType::BeingTied, 0.0, 0.0);
     order.compute_direction = false;
     wait.orders.push_back(order);
-    let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, wait);
+    let sequence_id = engine.t_launch_element(&assets, wait);
     engine.select_sequence_element(owner, Some((sequence_id, 0)));
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence_id,
-        0,
-    );
+    engine.t_element_in_progress(&assets, sequence_id, 0);
 
     let crossing_count = engine
         .world
@@ -241,10 +229,7 @@ fn delayed_position_multi_non_elevation_crossing_recomputes_invalid_increment() 
         owner,
     );
 
-    let position = engine
-        .get_entity(owner)
-        .expect("delayed-position owner remains live")
-        .position_iface();
+    let position = engine.ent(owner).position_iface();
     let recomputed = position.get_increment_map();
     let dx = -destination.x;
     let dy = -destination.y;

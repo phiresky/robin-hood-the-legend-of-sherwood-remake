@@ -54,22 +54,8 @@ fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
     strike
         .orders
         .push_back(Order::test_new(OrderType::StrikingRightSmalltalk, 0.0, 0.0));
-    let sequence = engine.launch_element(&crate::sim_rng::test_context(), &assets, strike);
-    engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-    );
-    engine.element_interrupted(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &mut Vec::new(),
-        sequence,
-        0,
-        CascadeFlags::NEXT_LEVEL,
-    );
+    let sequence = engine.t_launch_in_progress(&assets, strike);
+    engine.t_element_interrupted(&assets, sequence, 0, CascadeFlags::NEXT_LEVEL);
 
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
