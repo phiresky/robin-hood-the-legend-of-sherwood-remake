@@ -12,6 +12,7 @@ use crate::element::{
 };
 use crate::engine::MissionScript;
 use crate::engine::ScrollStatus;
+use crate::engine::TickCtx;
 use crate::engine::{HostDisplayState, InputState};
 use crate::macro_store::QaReplayCommand;
 use crate::player_command::{CompositeSwordTechnique, GestureQuality};
@@ -33,16 +34,20 @@ fn record_manual_command(
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, assets),
         &mut display,
         &mut input,
-        assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc),
             slot: 0,
         },
     );
-    engine.apply_command(&sim, &mut display, &mut input, assets, &command);
+    engine.apply_command(
+        TickCtx::new(&sim, assets),
+        &mut display,
+        &mut input,
+        &command,
+    );
 }
 
 fn assert_retained_interaction(
@@ -69,8 +74,7 @@ fn campaign_mutations_are_host_authoritative() {
     assert!(!engine.is_men_to_blazon_conversion_mode());
 
     engine.apply_frame_commands_with_mode(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[PlayerInput::new(
             crate::player_command::PlayerId(1),
             PlayerCommand::SetMenToBlazonConversionMode { on: true },
@@ -83,8 +87,7 @@ fn campaign_mutations_are_host_authoritative() {
     );
 
     engine.apply_frame_commands_with_mode(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[PlayerInput::new(
             crate::player_command::PlayerId::HOST,
             PlayerCommand::SetMenToBlazonConversionMode { on: true },
@@ -103,8 +106,7 @@ fn deterministic_settings_and_seat_lifecycle_are_host_authoritative() {
     assert!(engine.control.sim_config.noise_distraction_feedback);
 
     engine.apply_frame_commands_with_mode(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[
             PlayerInput::new(
                 crate::player_command::PlayerId(1),
@@ -131,8 +133,7 @@ fn deterministic_settings_and_seat_lifecycle_are_host_authoritative() {
     assert!(engine.players.seats.get(7).is_none());
 
     engine.apply_frame_commands_with_mode(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[
             PlayerInput::host(PlayerCommand::SetItemGameplayConfig {
                 config: rebalanced_items,
@@ -228,10 +229,9 @@ fn ale_reliability_command_applies_live_with_physical_soldier_eligibility() {
     let mut rules = crate::gameplay_config::ItemGameplayConfig::classic();
     rules.ale_reliable_distraction = true;
     engine.apply_command(
-        &sim_context,
+        TickCtx::new(&sim_context, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SetItemGameplayConfig { config: rules },
     );
 
@@ -241,10 +241,9 @@ fn ale_reliability_command_applies_live_with_physical_soldier_eligibility() {
 
     rules.ale_reliable_distraction = false;
     engine.apply_command(
-        &sim_context,
+        TickCtx::new(&sim_context, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SetItemGameplayConfig { config: rules },
     );
     assert!(!engine.reliable_ale_for_actor(&assets, soldier_id));
@@ -413,10 +412,9 @@ fn mixed_domain_dispatch_preserves_sequence_registration_order() {
         },
     ];
     engine.apply_commands(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &commands
             .into_iter()
             .map(PlayerInput::host)
@@ -461,20 +459,18 @@ fn self_ability_domain_records_once_before_stopping_without_live_launch() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(actor),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchSelfAbility {
             actor,
             command: Command::WhistleCmd,
@@ -506,20 +502,18 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(actor),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::ShieldSelectProtected {
             actor,
             protected_pc,
@@ -530,10 +524,9 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
 
     let danger_point = WorldPoint3D::new(140.0, 215.0, 35.0);
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::RaiseShieldWithDanger {
             actor,
             protected_pc,
@@ -590,10 +583,9 @@ fn manual_shield_quick_action_records_without_live_launch_and_replays_exact_rout
     assert_eq!(titbit.layer, 7);
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(actor),
             slot: 0,
@@ -651,10 +643,9 @@ fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
     let sequence_count = engine.orders.sequence_manager.sequence_count();
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SelectPlannedAction {
             pc_id,
             action: Action::Bow,
@@ -669,10 +660,9 @@ fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
     );
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SelectPlannedAction {
             pc_id,
             action: Action::Bow,
@@ -681,20 +671,18 @@ fn planned_action_selection_does_not_touch_live_pc_or_launch_work() {
     assert_eq!(engine.players.seats[0].planned_action, Action::NoAction);
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SelectPlannedAction {
             pc_id,
             action: Action::Bow,
         },
     );
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::CancelPlannedAction,
     );
     assert_eq!(engine.players.seats[0].planned_action, Action::NoAction);
@@ -710,10 +698,9 @@ fn planned_shield_first_click_is_per_seat_hashed_state_and_cancel_clears_it() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SelectPlannedAction {
             pc_id: actor,
             action: Action::Shield,
@@ -721,10 +708,9 @@ fn planned_shield_first_click_is_per_seat_hashed_state_and_cancel_clears_it() {
     );
     let before = robin_util::state_hash::compute(&engine.players.seats[0]);
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SelectPlannedShieldProtected {
             actor,
             protected_pc: protected,
@@ -739,10 +725,9 @@ fn planned_shield_first_click_is_per_seat_hashed_state_and_cancel_clears_it() {
         robin_util::state_hash::compute(&engine.players.seats[0])
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::CancelPlannedAction,
     );
     assert_eq!(
@@ -760,20 +745,18 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchSelfAbility {
             actor: pc_id,
             command: Command::WhistleCmd,
@@ -791,10 +774,9 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
     let original_icon = engine.pc(pc_id).portrait.quick_icons[0];
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -810,10 +792,9 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
         Some(original_titbit)
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StopRecordingMacro,
     );
     assert_eq!(
@@ -826,20 +807,18 @@ fn occupied_manual_recording_stays_live_until_first_capture_and_cancel_preserves
     assert_eq!(canceled_icon.running, original_icon.running);
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchSelfAbility {
             actor: pc_id,
             command: Command::EnterListen,
@@ -875,20 +854,18 @@ fn manual_sword_strike_executes_without_recording_a_quick_action() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SwordStrikeCmd {
             actor: pc_id,
             target,
@@ -945,10 +922,9 @@ fn legacy_random_sword_seek_reconstructs_original_click_and_gesture_distances() 
 
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SwordStrikeCmd {
             actor: pc_id,
             target,
@@ -977,10 +953,9 @@ fn composite_sword_command_launches_two_quantized_strikes() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SwordStrikeCmd {
             actor: pc_id,
             target,
@@ -1015,10 +990,9 @@ fn mismatched_composite_command_is_rejected() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::SwordStrikeCmd {
             actor: pc_id,
             target,
@@ -1040,20 +1014,18 @@ fn disabled_composite_cannot_enter_an_automatic_quick_action() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SetCombatGestureRules {
             more_combat_gestures: false,
             gesture_quality_damage: true,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::Hit,
             command: PlayerCommand::SwordStrikeCmd {
@@ -1081,20 +1053,18 @@ fn disabled_quality_damage_rejects_reduced_strike_before_launch() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SetCombatGestureRules {
             more_combat_gestures: true,
             gesture_quality_damage: false,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SwordStrikeCmd {
             actor: pc_id,
             target,
@@ -1122,10 +1092,9 @@ fn explicitly_queued_sword_strike_still_records_a_quick_action() {
     engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::Hit,
             command: PlayerCommand::SwordStrikeCmd {
@@ -1179,10 +1148,9 @@ fn auto_launch_preserves_empty_manual_recording() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::Whistle,
             command: PlayerCommand::LaunchSelfAbility {
@@ -1193,10 +1161,9 @@ fn auto_launch_preserves_empty_manual_recording() {
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 1,
@@ -1211,7 +1178,7 @@ fn auto_launch_preserves_empty_manual_recording() {
 
     engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut camera = CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut camera);
 
     assert_eq!(
         engine.players.macro_store.get(pc_id),
@@ -1250,20 +1217,18 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchSelfAbility {
             actor: pc_id,
             command: Command::EnterListen,
@@ -1286,10 +1251,9 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         .start_sequence_level(busy_sequence);
     engine.t_element_in_progress(&assets, busy_sequence, 0);
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::Whistle,
             command: PlayerCommand::LaunchSelfAbility {
@@ -1300,10 +1264,9 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -1323,7 +1286,7 @@ fn restored_auto_launch_preserves_occupied_manual_recording_and_titbit_inner() {
 
     engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut restored_camera = CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut restored_camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut restored_camera);
 
     assert_eq!(engine.players.macro_store.get(pc_id), Some(&armed_state));
     assert!(engine.is_qa_recording_for(pc_id));
@@ -1404,7 +1367,12 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .start_sequence_level(stale_sequence);
     engine.t_postpone_element(&assets, stale_sequence, 0);
 
-    engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+    engine.apply_command(
+        TickCtx::new(&sim, &assets),
+        &mut display,
+        &mut input,
+        &queued,
+    );
     assert!(engine.players.auto_queue_active.contains(&pc_id));
     assert!(engine.has_quick_action(pc_id, 0));
     assert!(engine.players.auto_queues.is_empty(pc_id));
@@ -1426,7 +1394,12 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
             })
     );
 
-    engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+    engine.apply_command(
+        TickCtx::new(&sim, &assets),
+        &mut display,
+        &mut input,
+        &queued,
+    );
     assert!(engine.has_quick_action(pc_id, 0));
     let queue = engine
         .players
@@ -1448,7 +1421,7 @@ fn shift_queue_starts_first_action_and_keeps_later_action_visible() {
         .expect("first queued action is live");
     engine.t_element_terminated(&assets, sequence_id, element_index);
     let mut camera = CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut camera);
 
     assert!(engine.has_quick_action(pc_id, 0));
     assert_eq!(
@@ -1496,7 +1469,12 @@ fn shift_queue_retains_more_than_three_pending_actions() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     for _ in 0..6 {
-        engine.apply_command(&sim, &mut display, &mut input, &assets, &queued);
+        engine.apply_command(
+            TickCtx::new(&sim, &assets),
+            &mut display,
+            &mut input,
+            &queued,
+        );
     }
 
     assert!(engine.players.macro_store.get(pc_id).is_none());
@@ -1549,10 +1527,9 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
     let sim = crate::sim_rng::test_context();
     let mut display = HostDisplayState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::Bow,
             command: PlayerCommand::LaunchInteraction {
@@ -1569,7 +1546,7 @@ fn queued_bow_shot_starts_once_after_real_work_ends_despite_postponed_card() {
 
     engine.t_element_terminated(&assets, busy_sequence, 0);
     let mut camera = CameraDisplayState::default();
-    engine.advance_auto_quick_action_queues(&sim, &mut camera, &assets);
+    engine.advance_auto_quick_action_queues(TickCtx::new(&sim, &assets), &mut camera);
 
     assert!(engine.players.auto_queues.is_empty(pc_id));
     assert!(!engine.has_quick_action(pc_id, 0));
@@ -1631,10 +1608,9 @@ fn queued_pickup_moves_following_bow_preview_origin_to_pickup_target() {
         ),
     ] {
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::QueueQuickAction {
                 action,
                 command: command.into(),
@@ -1658,10 +1634,9 @@ fn shift_pickup_uses_take_quick_action_phase() {
     engine.t_element_in_progress(&assets, busy_sequence, 0);
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::QueueQuickAction {
             action: Action::NoAction,
             command: PlayerCommand::LaunchInteraction {
@@ -1700,8 +1675,7 @@ fn resolved_throw_orientation_targets_only_the_recorded_pc() {
     let target = WorldPoint3D::new(435.0, 2329.0, 274.0);
 
     engine.perform_resolved_orientation(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         Action::Stone,
         MapPoint::ZERO,
@@ -1733,8 +1707,7 @@ fn late_popup_purse_orientation_preserves_the_pre_turn_sprite_row() {
     // nested Refresh then turns once toward east without selecting a new
     // animation row.
     engine.perform_resolved_orientation(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         Action::Purse,
         MapPoint::ZERO,
@@ -1758,8 +1731,7 @@ fn late_popup_bow_orientation_preserves_the_old_direction_row() {
     entity.element_data_mut().sprite.force_sprite_row_raw(1665);
 
     engine.perform_resolved_orientation(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         Action::Bow,
         MapPoint::ZERO,
@@ -2016,10 +1988,9 @@ fn setup_take_corpse_macro_scene(target_x: f32) -> (EngineInner, LevelAssets, En
 fn start_macro(engine: &mut EngineInner, assets: &LevelAssets, pc_id: EntityId) {
     let sim = crate::sim_rng::test_context();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -2097,10 +2068,9 @@ fn ordinary_take_corpse_does_not_add_macro_posture_recovery() {
     let sim = crate::sim_rng::test_context();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: corpse_id,
@@ -2272,8 +2242,7 @@ fn drop_ale_same_sector_retains_exact_identity_and_installs_move_ok() {
     let destination = crate::coordinates::MapPoint::new(80.0, 90.0);
 
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         destination,
         false,
@@ -2326,8 +2295,7 @@ fn drop_ale_duplicate_public_sector_keeps_cross_sector_identity() {
 
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         destination,
         false,
@@ -2371,8 +2339,7 @@ fn drop_ale_patch_goal_retains_exact_underlying_sector_identity() {
 
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         destination,
         false,
@@ -2413,10 +2380,9 @@ fn ordinary_drop_ale_does_not_add_macro_posture_recovery() {
     let target_pos = crate::coordinates::MapPoint::new(80.0, 90.0);
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::DropAleAt {
             actor: pc_id,
             target_pos,
@@ -2460,10 +2426,9 @@ fn resolved_replay_drop_ale_preserves_authorized_point_and_route_goal() {
     };
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::DropAleAt {
             actor: pc_id,
             target_pos: authorized,
@@ -2528,20 +2493,18 @@ fn recording_live_drop_ale_resolves_same_and_cross_sector_goals_before_storage()
         let mut input = InputState::default();
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::StartRecordingMacro {
                 pc: Some(pc_id),
                 slot: 0,
             },
         );
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::DropAleAt {
                 actor: pc_id,
                 target_pos: target,
@@ -2601,10 +2564,9 @@ fn recording_live_drop_ale_resolves_same_and_cross_sector_goals_before_storage()
         assert_eq!(seek.recorded_gate_path, None, "{label}");
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::StartMacro {
                 pc: Some(pc_id),
                 slot: 0,
@@ -2646,20 +2608,18 @@ fn recording_drop_ale_keeps_click_titbit_distinct_from_authorized_seek_center() 
     assert_ne!(expected_seek_center, click);
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::DropAleAt {
             actor: pc_id,
             target_pos: click,
@@ -2726,20 +2686,18 @@ fn recording_drop_ale_rejects_original_forbidden_target_sectors_without_stopping
         let mut input = InputState::default();
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::StartRecordingMacro {
                 pc: Some(pc_id),
                 slot: 0,
             },
         );
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::DropAleAt {
                 actor: pc_id,
                 target_pos: crate::coordinates::MapPoint::new(80.0, 90.0),
@@ -2790,20 +2748,18 @@ fn recording_resolved_drop_ale_is_not_launched_live_and_replays_exact_route() {
     };
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::DropAleAt {
             actor: pc_id,
             target_pos: authorized,
@@ -2851,10 +2807,9 @@ fn recording_resolved_drop_ale_is_not_launched_live_and_replays_exact_route() {
     assert_eq!(seek.recorded_gate_path, Some(route.clone()));
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -2925,8 +2880,7 @@ fn point_seek_expansion_compares_goal_after_dispatch_time_door_adaptation() {
         .start_sequence_level(sequence_id);
 
     assert!(engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner: pc_id,
@@ -2990,8 +2944,7 @@ fn point_seek_expansion_validates_recorded_source_before_adapted_same_sector_ret
         .start_sequence_level(sequence_id);
 
     engine.try_dispatch_cross_sector_point_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         crate::engine::refresh_seek::PointSeekRequest {
             owner: pc_id,
@@ -3020,10 +2973,9 @@ fn resolved_replay_drop_ale_without_exact_index_keeps_legacy_number_only_goal() 
     let authorized = crate::coordinates::MapPoint::new(180.0, 90.0);
 
     engine.apply_command(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::DropAleAt {
             actor: pc_id,
             target_pos: authorized,
@@ -3051,8 +3003,7 @@ fn resolved_replay_drop_ale_rejects_out_of_range_exact_index() {
     let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3072,8 +3023,7 @@ fn resolved_replay_drop_ale_rejects_disagreeing_exact_index() {
     .sector_number = crate::sector::SectorNumber::new(1);
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3090,8 +3040,7 @@ fn drop_ale_rejects_exact_index_without_goal_override() {
     let (mut engine, _, pc_id, _, goal_index) = setup_drop_ale_sector_identity_scene();
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3108,8 +3057,7 @@ fn resolved_replay_drop_ale_rejects_invalid_public_sector() {
     let (mut engine, _, pc_id, _, _) = setup_drop_ale_sector_identity_scene();
     let assets = engine.test_runtime_assets();
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         crate::coordinates::MapPoint::new(180.0, 90.0),
         false,
@@ -3233,20 +3181,18 @@ fn recording_strangle_stores_macro_without_launching_live_interaction() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -3278,10 +3224,9 @@ fn recording_strangle_stores_macro_without_launching_live_interaction() {
     // Playback happens after recording has stopped and must take the live
     // route rather than being suppressed by the recording-only guard.
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -3298,20 +3243,18 @@ fn recording_running_strangle_marks_replacement_titbit_as_running() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -3345,10 +3288,9 @@ fn resolved_orientation_restores_the_implicit_messenger_action() {
     let previous_pc_action = engine.pc(pc_id).current_action;
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::PerformResolvedOrientation {
             pc_id,
             action: Action::Net,
@@ -3387,20 +3329,18 @@ fn recorded_native_interactions_use_their_original_authored_titbit_metadata() {
         let mut input = InputState::default();
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::StartRecordingMacro {
                 pc: Some(pc_id),
                 slot: 0,
             },
         );
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::LaunchInteraction {
                 actor: pc_id,
                 target: target_id,
@@ -3466,10 +3406,9 @@ fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
         let mut input = InputState::default();
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::StartRecordingMacro {
                 pc: Some(pc_id),
                 slot: 0,
@@ -3477,10 +3416,9 @@ fn recorded_ground_throws_keep_their_original_layer_and_supplier_metadata() {
         );
         let target_pos = WorldPoint3D::new(30.0, 40.0, 5.0);
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::LaunchGroundTarget {
                 actor: pc_id,
                 target_pos,
@@ -3512,20 +3450,18 @@ fn recording_ground_target_allocates_one_original_faithful_titbit() {
     let target = crate::coordinates::WorldPoint3D::new(25.0, 40.0, 7.0);
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchGroundTarget {
             actor: pc_id,
             target_pos: target,
@@ -3572,20 +3508,18 @@ fn recorded_running_interaction_replays_one_running_seek_route() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -3596,10 +3530,9 @@ fn recorded_running_interaction_replays_one_running_seek_route() {
 
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -3646,10 +3579,9 @@ fn recording_interaction_panics_when_target_is_missing() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -3657,10 +3589,9 @@ fn recording_interaction_panics_when_target_is_missing() {
     );
     let missing_target = EntityId::Soldier(crate::entity_id::SoldierId(u32::MAX));
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: missing_target,
@@ -3678,10 +3609,9 @@ fn missing_recording_target_preflight_is_read_only() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -3725,10 +3655,9 @@ fn live_strangle_still_launches_interaction_when_not_recording() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -3850,8 +3779,7 @@ fn sword_strike_seek_uses_resolved_tolerance_and_authored_sword_movement() {
     let target_id = engine.add_test_entity(Entity::Civilian(target));
 
     engine.apply_sword_strike_with_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         target_id,
         Command::SwordstrikeThrustD,
@@ -3906,8 +3834,7 @@ fn composite_seek_retains_both_strikes_and_quality() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
     engine.apply_sword_strike_with_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         target_id,
         Command::SwordstrikeThrustD,
@@ -3965,8 +3892,7 @@ fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
     }));
 
     engine.apply_sword_strike_with_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         target_id,
         Command::SwordstrikeThrustA,
@@ -4054,8 +3980,8 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
             ..crate::gate::Door::default()
         });
 
-    engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
-    engine.t_hourglass_phase_sequences_with(&sim, &assets);
+    engine.apply_enter_swordfight(TickCtx::new(&sim, &assets), pc_id, target_id, false);
+    engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
 
     let route = engine
         .orders
@@ -4156,8 +4082,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
         .sequence_manager
         .start_sequence_level(old_strike_seq);
     engine.engine_postpone(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         injury_seq,
         0,
@@ -4166,8 +4091,7 @@ fn newer_strike_seek_replaces_old_preference_behind_injury() {
     );
 
     engine.apply_sword_strike_with_seek(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         pc_id,
         target_id,
         Command::SwordstrikeThrustE,
@@ -4352,20 +4276,18 @@ fn scroll_read_recording_retains_sequence_without_launching_it() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchScrollRead {
             actor: pc_id,
             target: npc_id,
@@ -4414,10 +4336,9 @@ fn scroll_read_macro_replay_rebuilds_live_sequence_shape() {
     );
 
     engine.apply_command(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -4443,20 +4364,18 @@ fn recorded_running_scroll_read_replays_one_running_seek_route() {
     let mut input = InputState::default();
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchScrollRead {
             actor: pc_id,
             target: npc_id,
@@ -4478,10 +4397,9 @@ fn recorded_running_scroll_read_replays_one_running_seek_route() {
             .is_running_for_qa(running_titbit)
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -4747,8 +4665,7 @@ fn drop_ale_seek_tolerance_uses_sprite_action_distance() {
     );
 
     engine.apply_drop_ale_at(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
         false,
@@ -4791,8 +4708,7 @@ fn mapped_interaction_seek_tolerance_uses_uword_sprite_action_distance() {
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
     engine.apply_interaction_with_seek(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         target_id,
         Command::SearchCmd,
@@ -4837,8 +4753,7 @@ fn pc_in_coma_carry_keeps_fractional_action_distance_plus_ten() {
         .in_coma = true;
 
     engine.apply_interaction_with_seek(
-        &sim,
-        &_assets,
+        TickCtx::new(&sim, &_assets),
         pc_id,
         target_id,
         Command::TakeCorpse,
@@ -4891,8 +4806,7 @@ fn unconscious_pc_outside_coma_uses_human_take_corpse_distance() {
     }
 
     engine.apply_interaction_with_seek(
-        &sim,
-        &_assets,
+        TickCtx::new(&sim, &_assets),
         pc_id,
         target_id,
         Command::TakeCorpse,
@@ -4959,10 +4873,9 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &PlayerCommand::LaunchInteraction {
                 actor: pc_id,
                 target: target_id,
@@ -4992,7 +4905,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         assert_eq!(*tolerance, 0.0, "command {command:?}");
         assert!(!flags.contains(MoveFlags::SEEK), "command {command:?}");
 
-        engine.t_hourglass_phase_sequences_with(&sim, &assets);
+        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
         assert_eq!(
             engine.actor(pc_id).wait_time,
             0xffff_ff3e,
@@ -5050,20 +4963,18 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
         },
     );
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -5085,10 +4996,9 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
     // recording must not rewrite the coordinate seek or turn geometry.
     engine.place_map(target_id, crate::coordinates::MapPoint::new(700.0, 500.0));
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -5182,10 +5092,9 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
             target: target_id,
@@ -5211,7 +5120,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     assert_eq!(*tolerance, 13.0);
     assert!(flags.contains(MoveFlags::SEEK));
 
-    engine.t_hourglass_phase_sequences_with(&sim, &assets);
+    engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
     assert_eq!(engine.actor(pc_id).wait_time, 25);
 }
 
@@ -5238,8 +5147,7 @@ fn pay_seek_faces_the_beggar_action_point() {
     engine.place_map(target_id, crate::coordinates::MapPoint { x: 90.0, y: 10.0 });
 
     engine.apply_interaction_with_seek(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         target_id,
         Command::Pay,
@@ -5290,7 +5198,13 @@ fn running_non_recording_pay_stamps_beggar_and_only_makes_current_order_fast() {
     engine.select_sequence_element(pc_id, Some((movement_sequence, 0)));
     engine.t_element_in_progress(&assets, movement_sequence, 0);
 
-    engine.apply_interaction_with_seek(&sim, &assets, pc_id, target_id, Command::Pay, true);
+    engine.apply_interaction_with_seek(
+        TickCtx::new(&sim, &assets),
+        pc_id,
+        target_id,
+        Command::Pay,
+        true,
+    );
 
     assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 3);
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
@@ -5321,10 +5235,9 @@ fn recorded_beggar_click_stamp_restores_discarded_double_click_side_effect() {
     let beggar_id = spawn_friendly_civilian(&mut engine);
 
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::BeggarDontTalkStamp { beggar_id },
     );
 
@@ -5344,7 +5257,13 @@ fn running_non_pay_does_not_stamp_friendly_target() {
     };
     ai.set_beggar_dont_talk_counter(2);
 
-    engine.apply_interaction_with_seek(&sim, &_assets, pc_id, target_id, Command::SearchCmd, true);
+    engine.apply_interaction_with_seek(
+        TickCtx::new(&sim, &_assets),
+        pc_id,
+        target_id,
+        Command::SearchCmd,
+        true,
+    );
 
     assert_eq!(friendly_beggar_dont_talk_counter(&engine, target_id), 2);
     assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
@@ -5365,8 +5284,7 @@ fn shoot_bow_interaction_launches_without_seek() {
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
     engine.apply_interaction_with_seek(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         target_id,
         Command::ShootBow,
@@ -5394,8 +5312,7 @@ fn mapped_interaction_missing_sprite_action_distance_noops() {
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
     engine.apply_interaction_with_seek(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         target_id,
         Command::HitCmd,
@@ -5430,8 +5347,7 @@ fn climb_on_shoulders_seek_tolerance_matches_original_literal() {
     let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
     engine.apply_climb_on_shoulders_with_seek(
-        &crate::sim_rng::test_context(),
-        &_assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &_assets),
         pc_id,
         target_id,
         false,
@@ -5762,8 +5678,7 @@ fn unauthorized_seat_lifecycle_is_rejected_before_seat_allocation() {
     let seat_count = engine.players.seats.len();
 
     engine.apply_frame_commands_with_mode(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[PlayerInput::new(
             PlayerId(12),
             PlayerCommand::ConnectSeat {
@@ -5786,10 +5701,9 @@ fn unreachable_take_preflight_preserves_recording_and_simulation_state() {
     let mut display = HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -5800,9 +5714,8 @@ fn unreachable_take_preflight_preserves_recording_and_simulation_state() {
     let before = crate::replay::state_hash(&engine);
 
     engine.apply_command_for_seat_with_replay_context(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut CameraDisplayState::default(),
-        &assets,
         0,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
@@ -5823,10 +5736,9 @@ fn invalid_recording_identity_reports_explicit_preflight_failure() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id, _) = setup_strangle_command_scene();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut HostDisplayState::default(),
         &mut InputState::default(),
-        &assets,
         &PlayerCommand::StartRecordingMacro {
             pc: Some(pc_id),
             slot: 0,
@@ -5835,9 +5747,8 @@ fn invalid_recording_identity_reports_explicit_preflight_failure() {
     // Use the test harness's panic expectation: this repository's Cranelift
     // test backend does not reliably support catching and resuming unwinds.
     engine.apply_command_for_seat_with_replay_context(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut CameraDisplayState::default(),
-        &assets,
         0,
         &PlayerCommand::LaunchInteraction {
             actor: pc_id,
@@ -5861,10 +5772,9 @@ fn connect_seat_creates_and_names_peer() {
     // Host issues a ConnectSeat for peer 2.  The dispatch `seat`
     // is HOST (0) but the command's payload targets PlayerId(2).
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::ConnectSeat {
             player_id: PlayerId(2),
             nickname: "alice".into(),
@@ -5890,10 +5800,9 @@ fn recorded_nested_cancel_is_the_only_select_pc_action_fanout() {
     engine.pc_mut(pc_id).current_action = Action::Bow;
 
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[
             PlayerInput::host(PlayerCommand::SelectPc {
                 pc_id,
@@ -5938,10 +5847,9 @@ fn independent_adjacent_cancel_does_not_suppress_select_pc_action_fanout() {
     engine.t_element_in_progress(&assets, wait_sequence, 0);
 
     engine.apply_commands_with_mode(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[
             PlayerInput::host(PlayerCommand::SelectPc {
                 pc_id,
@@ -6003,13 +5911,12 @@ fn replay_sound_boundary_consumes_prior_npc_before_current_select_bark() {
     }]);
 
     engine
-        .hourglass_phase_sound_boundary(sim, &assets, None)
+        .hourglass_phase_sound_boundary(TickCtx::new(sim, &assets), None)
         .expect("replay sound boundary");
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::SelectPc {
             pc_id,
             append: false,
@@ -6021,7 +5928,7 @@ fn replay_sound_boundary_consumes_prior_npc_before_current_select_bark() {
     // bark queued by this boundary's input; Original will first expose it
     // to the host sound manager after the engine frame is recorded.
     engine
-        .hourglass_phase_sound_boundary(sim, &assets, None)
+        .hourglass_phase_sound_boundary(TickCtx::new(sim, &assets), None)
         .expect("live sound boundary");
 
     assert_eq!(
@@ -6065,10 +5972,9 @@ fn lone_select_pc_still_restitutes_bow_action() {
     engine.pc_mut(pc_id).current_action = Action::Bow;
 
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::SelectPc {
             pc_id,
             append: false,
@@ -6099,10 +6005,9 @@ fn disconnect_then_reconnect_preserves_selection() {
 
     // Connect seat 2, give it a fake selection, disconnect, reconnect.
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::ConnectSeat {
             player_id: PlayerId(2),
             nickname: "bob".into(),
@@ -6114,10 +6019,9 @@ fn disconnect_then_reconnect_preserves_selection() {
     ];
 
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::DisconnectSeat {
             player_id: PlayerId(2),
         })],
@@ -6134,10 +6038,9 @@ fn disconnect_then_reconnect_preserves_selection() {
     );
 
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::ConnectSeat {
             player_id: PlayerId(2),
             nickname: "bob_v2".into(),
@@ -6167,10 +6070,9 @@ fn set_lock_alt_targets_issuing_seat() {
     // Bring up peer 2 then have it toggle alt-lock — host seat
     // must be unaffected.
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[
             PlayerInput::host(PlayerCommand::ConnectSeat {
                 player_id: PlayerId(2),
@@ -6184,10 +6086,9 @@ fn set_lock_alt_targets_issuing_seat() {
 
     // Host toggles its own alt-lock — peer 2 stays on.
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[PlayerInput::host(PlayerCommand::SetLockAlt(true))],
     );
     assert!(engine.players.seats[0].is_lock_alt);
@@ -6204,10 +6105,9 @@ fn active_seats_skips_disconnected_peers() {
     let mut display = HostDisplayState::default();
 
     engine.apply_commands(
-        sim,
+        TickCtx::new(sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &[
             PlayerInput::host(PlayerCommand::ConnectSeat {
                 player_id: PlayerId(1),
@@ -6565,7 +6465,11 @@ fn retained_quick_action_empty_fizzle_resets_count_only_after_validation() {
             7,
         );
         assert_eq!(
-            engine.replay_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+            engine.replay_sequence_macro(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                pc,
+                0,
+            ),
             Some(false)
         );
         let state = engine.players.macro_store.get(pc).unwrap();
@@ -6597,7 +6501,11 @@ fn retained_quick_action_without_seek_clears_previous_continuation() {
         0,
     );
     assert_eq!(
-        engine.replay_sequence_macro(&crate::sim_rng::test_context(), &assets, pc, 0,),
+        engine.replay_sequence_macro(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            pc,
+            0,
+        ),
         Some(true)
     );
     assert!(engine.actor(pc).post_seek_sequence.is_none());

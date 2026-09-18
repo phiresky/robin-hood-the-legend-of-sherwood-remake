@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 /// One actor's fully resolved movement quick action at click time.
 ///
@@ -259,8 +260,7 @@ impl EngineInner {
     /// for spread-out groups.
     pub(crate) fn perform_group_move(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_ids: &[EntityId],
         click_point: MapPoint,
         run: bool,
@@ -272,8 +272,7 @@ impl EngineInner {
         recorded_failed_gate_routes: &[EntityId],
     ) {
         self.perform_group_move_with_destinations(
-            sim,
-            assets,
+            tcx,
             pc_ids,
             click_point,
             run,
@@ -294,8 +293,7 @@ impl EngineInner {
     /// an ordinary multi-hero click.
     pub(in crate::engine) fn perform_group_move_to_slots(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_ids: &[EntityId],
         click_point: MapPoint,
         destinations: &[MapPoint],
@@ -308,8 +306,7 @@ impl EngineInner {
             "explicit group-move destination count must match actor count"
         );
         self.perform_group_move_with_destinations(
-            sim,
-            assets,
+            tcx,
             actor_ids,
             click_point,
             run,
@@ -325,8 +322,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn perform_group_move_with_destinations(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_ids: &[EntityId],
         click_point: MapPoint,
         run: bool,
@@ -342,7 +338,7 @@ impl EngineInner {
             return;
         }
         let Some(plan) = self.group_move_click_plan(
-            assets,
+            tcx.assets,
             pc_ids,
             click_point,
             goal_override,
@@ -375,7 +371,7 @@ impl EngineInner {
             for (index, &authorized) in eligible.iter().enumerate() {
                 if !authorized {
                     self.hero_speaking(
-                        assets,
+                        tcx.assets,
                         pc_ids[index],
                         crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                     );
@@ -398,13 +394,13 @@ impl EngineInner {
                         pc.pc_goal_sector = Some(sector.sector_number);
                         pc.pc_goal_sector_index = Some(index);
                     }
-                    engine.dispatch_group_move_pc(sim, assets, &ctx, pc);
+                    engine.dispatch_group_move_pc(tcx, &ctx, pc);
                 },
             );
         } else {
             for dispatch_index in 0..pc_ids.len() {
-                if let Some(pc) = self.group_move_pc_destination(assets, &ctx, dispatch_index) {
-                    self.dispatch_group_move_pc(sim, assets, &ctx, pc);
+                if let Some(pc) = self.group_move_pc_destination(tcx.assets, &ctx, dispatch_index) {
+                    self.dispatch_group_move_pc(tcx, &ctx, pc);
                 }
             }
         }
@@ -416,8 +412,7 @@ impl EngineInner {
         // with other stop points.
         if self.is_recording_macro() {
             self.forward_message(
-                sim,
-                assets,
+                tcx,
                 crate::messenger::Message::pc(
                     crate::messenger::PcMessage::StopRecordingMacro,
                     None,
@@ -428,26 +423,18 @@ impl EngineInner {
 
     fn dispatch_group_move_pc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         ctx: &GroupMoveRouteCtx<'_>,
         mut pc: GroupMovePcRoute,
     ) {
-        if ctx.plan.is_jump_click
-            && self
-                .group_move_pc_jump(sim, assets, ctx, &mut pc)
-                .is_break()
-        {
+        if ctx.plan.is_jump_click && self.group_move_pc_jump(tcx, ctx, &mut pc).is_break() {
             return;
         }
-        if self
-            .group_move_pc_simple_route(sim, assets, ctx, &pc)
-            .is_break()
-        {
+        if self.group_move_pc_simple_route(tcx, ctx, &pc).is_break() {
             return;
         }
-        if let Some(source) = self.group_move_pc_gate_source(assets, ctx, &pc) {
-            self.group_move_pc_gate_route(sim, assets, ctx, &pc, source);
+        if let Some(source) = self.group_move_pc_gate_source(tcx.assets, ctx, &pc) {
+            self.group_move_pc_gate_route(tcx, ctx, &pc, source);
         }
     }
 
@@ -762,8 +749,7 @@ impl EngineInner {
     /// replaced) goal sector and layer written back into `pc`.
     fn group_move_pc_jump(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         ctx: &GroupMoveRouteCtx<'_>,
         pc: &mut GroupMovePcRoute,
     ) -> std::ops::ControlFlow<()> {
@@ -814,7 +800,7 @@ impl EngineInner {
             };
         let Some(resolved_jump_dest) = resolved_jump_dest else {
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 *pc_id,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
@@ -832,7 +818,7 @@ impl EngineInner {
                 resolved_jump_dest,
                 run,
                 recorded_qa_move_route(sector, sector_index, layer),
-                assets,
+                tcx.assets,
             );
             return std::ops::ControlFlow::Break(());
         }
@@ -956,15 +942,14 @@ impl EngineInner {
             };
             let Some(gate_path) = gate_path else {
                 self.hero_speaking(
-                    assets,
+                    tcx.assets,
                     approach_owner,
                     crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 );
                 return std::ops::ControlFlow::Break(());
             };
             self.launch_gate_movement_sequence(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: approach_owner,
@@ -1019,7 +1004,7 @@ impl EngineInner {
                 "jump-sector click has no executable jump line and no underlying motion sector"
             );
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 *pc_id,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
@@ -1036,8 +1021,7 @@ impl EngineInner {
     /// routing.
     fn group_move_pc_simple_route(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         ctx: &GroupMoveRouteCtx<'_>,
         pc: &GroupMovePcRoute,
     ) -> std::ops::ControlFlow<()> {
@@ -1114,7 +1098,7 @@ impl EngineInner {
                     // HERO_UNABLE_TO_DO_SOMETHING and skips the
                     // move for this PC.
                     self.hero_speaking(
-                        assets,
+                        tcx.assets,
                         *pc_id,
                         crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                     );
@@ -1139,7 +1123,7 @@ impl EngineInner {
                             }),
                             pc_effective_layer,
                         ),
-                        assets,
+                        tcx.assets,
                     );
                 return std::ops::ControlFlow::Break(());
             }
@@ -1180,7 +1164,7 @@ impl EngineInner {
                 append_arrival_speech(&mut seq, *pc_id);
             }
             self.append_posture_recovery(*pc_id, &mut seq);
-            self.launch_sequence(sim, assets, seq);
+            self.launch_sequence(tcx, seq);
             if show_marker && !is_door_click {
                 self.feedback
                     .ground_mark
@@ -1312,8 +1296,7 @@ impl EngineInner {
     /// movement order launch (or the unable bark when no route exists).
     fn group_move_pc_gate_route(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         ctx: &GroupMoveRouteCtx<'_>,
         pc: &GroupMovePcRoute,
         source: GroupMoveGateSource,
@@ -1465,7 +1448,7 @@ impl EngineInner {
                     "skipping gate path without resolved goal sector"
                 );
                 self.hero_speaking(
-                    assets,
+                    tcx.assets,
                     *pc_id,
                     crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 );
@@ -1525,8 +1508,7 @@ impl EngineInner {
                     }
                 };
                 self.launch_gate_movement_order(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     crate::engine::movement::GateRouteRequest {
                         entity_id: *pc_id,
@@ -1558,7 +1540,7 @@ impl EngineInner {
                 // without appending a direct MOVE when gate routing
                 // fails.
                 self.hero_speaking(
-                    assets,
+                    tcx.assets,
                     *pc_id,
                     crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 );
@@ -1803,8 +1785,7 @@ mod shared_resolution_tests {
         )));
         assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
         engine.perform_group_move(
-            &crate::sim_rng::SimulationContext::with_seed(1),
-            &assets,
+            TickCtx::new(&crate::sim_rng::SimulationContext::with_seed(1), &assets),
             &actors,
             click,
             false,

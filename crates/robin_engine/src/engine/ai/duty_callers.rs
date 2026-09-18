@@ -5,13 +5,13 @@ use crate::ai::{
     AiEntityHandle, AiSpeechAttempt, AiState, DutyFlags, GotoFlags, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::SeekFlags;
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_kill_nearby_sleeping_enemies(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         observer_camp: Camp,
     ) {
@@ -25,7 +25,7 @@ impl EngineInner {
             && self.world.weather.is_forest_level
             && !entity.soldier_data().is_some_and(|soldier| soldier.rider);
         if trainer || forest_foot_soldier {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, owner, DutyFlags::empty());
         }
 
         self.enemy_ai_mut(owner, "sleeping enemy list reset")
@@ -44,7 +44,7 @@ impl EngineInner {
                     .expect("fighter must be human")
                     .carrier
                     .is_some()
-                || !self.patrol_member_visible(assets, owner, target)
+                || !self.patrol_member_visible(tcx.assets, owner, target)
                 || !self.sleeping_enemy_attack_allowed(owner, target)
             {
                 continue;
@@ -54,13 +54,12 @@ impl EngineInner {
                 .push(target.index());
         }
 
-        self.approach_selected_sleeping_enemy(sim, assets, owner);
+        self.approach_selected_sleeping_enemy(tcx, owner);
     }
 
     pub(in crate::engine) fn execute_approach_sleeping_enemies(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         targets: Vec<crate::ai::HumanHandle>,
     ) {
@@ -70,7 +69,7 @@ impl EngineInner {
             "retained sleeping enemies require an empty hostile list"
         );
         enemy.list_them = targets;
-        self.approach_selected_sleeping_enemy(sim, assets, owner);
+        self.approach_selected_sleeping_enemy(tcx, owner);
     }
 
     pub(in crate::engine) fn select_nearest_battle_target(
@@ -81,19 +80,13 @@ impl EngineInner {
             .map(|target| self.expect_human_id_for_ai_handle(target.get(), "nearest battle target"))
     }
 
-    fn approach_selected_sleeping_enemy(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    fn approach_selected_sleeping_enemy(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         let nearest = self.select_nearest_battle_target(owner);
         self.ai_mut(owner, "sleeping enemy primary target")
             .primary_target = nearest.map(|id| AiEntityHandle::new(id.index()));
         if nearest.is_some() {
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 owner,
                 AiState::Attacking,
                 Substate::AttackingApproachingSleepingEnemy,
@@ -105,9 +98,9 @@ impl EngineInner {
             let target =
                 self.expect_human_id_for_ai_handle(target.get(), "sleeping enemy approach target");
             let position = self.live_ai_position(target);
-            self.duty_go_near(sim, assets, owner, position, 20, GotoFlags::RUN);
+            self.duty_go_near(tcx, owner, position, 20, GotoFlags::RUN);
         } else {
-            self.execute_ai_return_to_duty(sim, assets, owner, DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, owner, DutyFlags::empty());
         }
     }
 
@@ -229,8 +222,7 @@ mod tests {
         enemy.base.current_substate = Substate::AttackingBowObserving;
         enemy.list_them = vec![owner.index()];
         engine.execute_kill_nearby_sleeping_enemies(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Camp::Lacklandists,
         );
@@ -256,8 +248,7 @@ mod tests {
             MapPoint::new(1417.7587, 185.4791),
         );
         engine.execute_approach_sleeping_enemies(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             targets.map(|id| id.index()).to_vec(),
         );

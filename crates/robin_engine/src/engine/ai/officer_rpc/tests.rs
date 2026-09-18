@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn rebuilt_live_enemies_preserve_first_seen_order_and_liveness() {
@@ -119,8 +120,7 @@ fn tower_alert_finishes_recipient_callback_and_battle_decision_inline() {
         |profile| profile.rank = ProfileRank::Knight,
     );
     engine.execute_ai_callback(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventDone),
     );
@@ -190,7 +190,10 @@ fn checkpoint_search_preserves_exact_sector_and_cursor_before_pivot_skip() {
         });
         ai.base.checkpoint_charly = Some(AiEntityHandle::new(charly.index()));
         ai.base.macro_in_progress = true;
-        engine.execute_ai_search_charly(&crate::sim_rng::test_context(), &assets, owner);
+        engine.execute_ai_search_charly(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
         let ai = engine.observation_ai(owner);
         assert!(!ai.base.macro_in_progress);
         assert_eq!(
@@ -228,7 +231,10 @@ fn officer_missing_checkpoint_reports_and_alerts_without_building_search_route()
     ai.base.macro_in_progress = true;
     ai.base.macro_command_offset = 23;
     engine.observation_ai_mut(charly).reported_to_officer = true;
-    engine.execute_ai_search_charly(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_search_charly(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let ai = engine.observation_ai(owner);
     assert!(ai.search_charly_way.is_empty());
     assert_eq!(
@@ -321,8 +327,7 @@ fn officer_report_uses_live_cone_and_synchronous_acceptance_or_refusal() {
             visible
         );
         engine.execute_ai_officer_rpc(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -391,8 +396,7 @@ fn report_cannot_cross_an_opaque_wall() {
     ai.base.antagonist = Some(AiEntityHandle::new(officer.index()));
     assert!(!engine.npc_is_detecting_human(&assets, owner, officer, 100));
     engine.execute_ai_officer_rpc(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventTimer),
     );
@@ -422,8 +426,7 @@ fn referral_completion_faces_live_friend_and_arms_wait_timer() {
         .element_data_mut()
         .set_direction_instantly(12);
     engine.execute_ai_officer_rpc(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventMyTalk2),
     );
@@ -451,8 +454,7 @@ fn referral_completion_requires_its_friend() {
     ai.base.current_state = AiState::Seeking;
     ai.base.current_substate = Substate::SeekingSendCharlyToOfficer;
     engine.execute_ai_officer_rpc(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventMyTalk2),
     );
@@ -471,8 +473,7 @@ fn lecture_defence_relays_to_live_officer_and_ignores_unrelated_timer() {
     ai.base.current_substate = Substate::SeekingOfficerLectureCharly;
     ai.base.antagonist = Some(AiEntityHandle::new(owner.index()));
     engine.execute_ai_officer_rpc(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventTimer),
     );
@@ -481,8 +482,7 @@ fn lecture_defence_relays_to_live_officer_and_ignores_unrelated_timer() {
         Substate::SeekingCharlyGetLectureByOfficer
     );
     engine.execute_ai_officer_rpc(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::CallYourTalk1),
     );
@@ -491,8 +491,7 @@ fn lecture_defence_relays_to_live_officer_and_ignores_unrelated_timer() {
         Substate::SeekingCharlyGetLectureByOfficer2
     );
     engine.execute_ai_officer_rpc(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::new(StimulusType::EventMyTalk1),
     );

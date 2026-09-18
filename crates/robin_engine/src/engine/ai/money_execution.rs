@@ -3,6 +3,7 @@
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, DutyFlags, GotoFlags, MoneyFightOperation, Substate};
 use crate::ai_enemy::EnemyAi;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
@@ -592,8 +593,7 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             self.engine.execute_ai_callback(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 target,
                 &crate::ai::Stimulus::with_human(StimulusType::CallFinishBrawl, self.owner.index()),
             );

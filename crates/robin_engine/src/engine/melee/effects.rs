@@ -5,6 +5,7 @@
 use super::*;
 use crate::combat::{self};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
+use crate::engine::TickCtx;
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
@@ -342,12 +343,11 @@ impl EngineInner {
     /// to the ladder's low entry point.
     pub(crate) fn translate_ladder_wall_fall(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
-        self.say_ouch(sim, assets, victim_id, None);
+        self.say_ouch(tcx, victim_id, None);
         let victim = self.expect_entity(victim_id, "ladder damage effect victim");
         let victim_sector = victim.element_data().sector();
 
@@ -359,8 +359,7 @@ impl EngineInner {
             .postponed;
         if let Some(postponed) = postponed {
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 &mut Vec::new(),
                 postponed.sequence_id,
                 postponed.element_index,
@@ -368,7 +367,7 @@ impl EngineInner {
             );
         }
         let low_entry = victim_sector
-            .and_then(|s| self.find_lift_low_entry(assets, u16::from(s)))
+            .and_then(|s| self.find_lift_low_entry(tcx.assets, u16::from(s)))
             .expect("ladder-fall victim has no lift low entry");
         let mut order = crate::order::Order::new(
             OrderType::FallingLadderWall,
@@ -482,8 +481,7 @@ impl EngineInner {
     /// (priority lives on the actor, not the element).
     pub(crate) fn dispatch_fall(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -573,7 +571,7 @@ impl EngineInner {
             // direction computation disabled.
             self.push_translated_damage_order((seq_id, elem_idx), anim);
         } else {
-            self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
         }
     }
 
@@ -609,8 +607,7 @@ impl EngineInner {
     ///   to `Lying` / `DeadBack` when the sprite terminates.
     pub(super) fn translate_shoulder_damage(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
@@ -621,7 +618,7 @@ impl EngineInner {
             self.get_entity(victim_id),
             Some(Entity::Soldier(_) | Entity::Civilian(_))
         ) {
-            self.say_ouch(sim, assets, victim_id, None);
+            self.say_ouch(tcx, victim_id, None);
         }
 
         // Read posture + carrier/carried relationships.
@@ -730,7 +727,7 @@ impl EngineInner {
                 crate::element::Command::Fall,
                 Some(partner_id),
             );
-            let partner_seq_id = self.launch_element(sim, assets, elem);
+            let partner_seq_id = self.launch_element(tcx, elem);
             // For the CarryingOnShoulders / HelpingToClimb branches
             // the partner (the *carried* body) also receives a roll
             // translation on its new Fall sequence element, so a body
@@ -741,7 +738,7 @@ impl EngineInner {
                 posture,
                 Posture::CarryingOnShoulders | Posture::HelpingToClimb
             ) {
-                self.try_queue_roll(assets, partner_id, (partner_seq_id, 0));
+                self.try_queue_roll(tcx.assets, partner_id, (partner_seq_id, 0));
             }
         }
 
@@ -749,7 +746,7 @@ impl EngineInner {
         // victim's own damage element so a shoulder-damaged actor
         // landing on a slope rolls instead of stopping at the final
         // fall frame.  `try_queue_roll` is a no-op on flat terrain.
-        self.try_queue_roll(assets, victim_id, damage_element);
+        self.try_queue_roll(tcx.assets, victim_id, damage_element);
 
         tracing::debug!(
             entity = ?victim_id,
@@ -762,8 +759,7 @@ impl EngineInner {
     /// Author a strike-specific falling reaction for execution by the victim.
     pub(super) fn apply_push_effect(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         attacker_id: EntityId,
         push: &PushStrikeInfo,
@@ -803,7 +799,7 @@ impl EngineInner {
             self.get_entity(victim_id),
             Some(Entity::Soldier(_) | Entity::Civilian(_))
         ) {
-            self.say_ouch(sim, assets, victim_id, None);
+            self.say_ouch(tcx, victim_id, None);
         }
 
         // Shoulder-posture victims route through
@@ -817,7 +813,7 @@ impl EngineInner {
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
         ) {
-            self.translate_shoulder_damage(sim, assets, victim_id, damage_element);
+            self.translate_shoulder_damage(tcx, victim_id, damage_element);
             return true;
         }
 
@@ -827,7 +823,7 @@ impl EngineInner {
         // afterwards so the downstream ladder/wall + flight
         // selection sees the carrier's new Upright posture.
         let victim_posture = if victim_posture == Posture::CarryingCorpse {
-            self.force_drop_carried_corpse_instant(sim, assets, victim_id);
+            self.force_drop_carried_corpse_instant(tcx, victim_id);
             self.expect_entity(victim_id, "push effect victim after corpse drop")
                 .element_data()
                 .posture()
@@ -838,7 +834,7 @@ impl EngineInner {
         // Entities on a ladder/wall get the ladder-fall variant
         // instead of the normal push flight.
         if matches!(victim_posture, Posture::OnLadder | Posture::OnWall) {
-            self.translate_ladder_wall_fall(sim, assets, victim_id, damage_element);
+            self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             return true;
         }
 
@@ -908,13 +904,13 @@ impl EngineInner {
                 } else {
                     false
                 };
-                self.quit_swordfight(sim, assets, victim_id);
+                self.quit_swordfight(tcx, victim_id);
                 if is_pc {
                     // Run the PC kill cascade (gang removal, trumpet,
                     // new-PC stat decrement, macro burn, dead_pc
                     // gate) for the push-fatal path so it matches the
                     // damage-element death path.
-                    self.apply_pc_kill_cascade(sim, assets, victim_id);
+                    self.apply_pc_kill_cascade(tcx, victim_id);
                 }
             } else if is_unconscious {
                 // Animated push damage always ends the swordfight,
@@ -922,10 +918,10 @@ impl EngineInner {
                 // unconscious before this hit. Only concussion handling's fuller
                 // KO cascade is conditional on the conscious-to-unconscious
                 // transition.
-                self.quit_swordfight(sim, assets, victim_id);
+                self.quit_swordfight(tcx, victim_id);
             }
 
-            self.try_queue_roll(assets, victim_id, damage_element);
+            self.try_queue_roll(tcx.assets, victim_id, damage_element);
 
             tracing::debug!(
                 victim = ?victim_id,
@@ -948,9 +944,9 @@ impl EngineInner {
                 } else {
                     false
                 };
-                self.quit_swordfight(sim, assets, victim_id);
+                self.quit_swordfight(tcx, victim_id);
                 if is_pc {
-                    self.apply_pc_kill_cascade(sim, assets, victim_id);
+                    self.apply_pc_kill_cascade(tcx, victim_id);
                 }
             }
             if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)

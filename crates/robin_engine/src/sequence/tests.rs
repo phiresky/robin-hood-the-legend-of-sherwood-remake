@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::sim_rng::test_context;
 
@@ -211,8 +212,7 @@ fn stop_preserves_live_replacement_following_link_after_nested_callback() {
         },
         || {
             engine.stop_owner_current_from_root(
-                &test_context(),
-                &assets,
+                TickCtx::new(&test_context(), &assets),
                 &mut Vec::new(),
                 Some((id, 0)),
                 SequencePriority::Normal,
@@ -561,8 +561,7 @@ fn lazy_stop_priority_is_used_by_live_stop() {
             expected
         );
         engine.stop_owner_current_from_root(
-            &test_context(),
-            &assets,
+            TickCtx::new(&test_context(), &assets),
             &mut Vec::new(),
             Some((root, 0)),
             SequencePriority::Preference,
@@ -616,8 +615,7 @@ fn movement_stop_resolves_priority_before_deciding_to_rewrite() {
     let sequence = engine.t_launch_element(&assets, movement);
     engine.t_element_in_progress(&assets, sequence, 0);
     assert!(!engine.stop_movement_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         (sequence, 0),
@@ -890,7 +888,14 @@ fn impossible_starts_postponed_before_clearing_orders_and_reading_owner() {
                 assert_eq!(root_element.postponed, None);
             }
         },
-        || engine.element_impossible(&test_context(), &assets, &mut Vec::new(), root, 0),
+        || {
+            engine.element_impossible(
+                TickCtx::new(&test_context(), &assets),
+                &mut Vec::new(),
+                root,
+                0,
+            )
+        },
     );
     assert_eq!(*callbacks.borrow(), vec![successor, root]);
 }
@@ -1508,8 +1513,7 @@ fn stop_owner_interrupts_actor_work_postponed_by_injury() {
         .postponed = Some(SequenceElementRef::new(parry_seq, 0));
 
     engine.stop_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -1567,8 +1571,7 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
         Some(SequenceElementRef::new(current_seq, 0));
 
     engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         Some((current_seq, 0)),
         SequencePriority::Preference,
@@ -1591,8 +1594,7 @@ fn split_stop_scans_work_registered_by_selected_element_callback() {
     let callback_look_seq = engine.t_launch_element(&assets, callback_look);
 
     engine.stop_pending_elements(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -1672,8 +1674,7 @@ fn stop_owner_completes_deep_cross_postponed_chain() {
     }
 
     engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         Some((chain[0], 0)),
         SequencePriority::Preference,
@@ -1728,8 +1729,7 @@ fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
     }
 
     engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         Some((root, 0)),
         SequencePriority::Preference,
@@ -1767,8 +1767,7 @@ fn deep_selected_stop_preserves_strong_prefix_and_reaches_weak_tail() {
         .unwrap()
         .postponed = Some(SequenceElementRef::new(weak, 0));
     engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         Some((root, 0)),
         SequencePriority::Preference,
@@ -1807,8 +1806,7 @@ fn strong_selected_element_does_not_hide_weak_same_sequence_successor() {
     let sequence = engine.t_launch_sequence(&assets, sequence);
 
     engine.stop_owner_current_from_root(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         Some((sequence, 0)),
         SequencePriority::Preference,
@@ -1860,8 +1858,7 @@ fn repeated_selected_stops_do_not_scan_unrelated_retained_sequences() {
 
     for &sequence in &roots {
         engine.stop_owner_current_from_root(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             Some((sequence, 0)),
             SequencePriority::Preference,
@@ -1912,8 +1909,7 @@ fn stop_pending_elements_do_not_scan_unrelated_retained_sequences() {
     }
 
     engine.stop_pending_elements(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -1973,8 +1969,7 @@ fn pending_stop_removes_each_owner_entry_before_the_next_callback() {
         },
         || {
             engine.stop_pending_elements(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 &mut Vec::new(),
                 owner,
                 SequencePriority::Preference,
@@ -2010,8 +2005,7 @@ fn pending_stop_leaves_work_registered_inside_a_callback_for_the_next_scan() {
         },
         || {
             engine.stop_pending_elements(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 &mut Vec::new(),
                 owner,
                 SequencePriority::Preference,
@@ -2074,8 +2068,7 @@ fn stop_owner_walks_nested_cross_postponed_graph() {
         .postponed = Some(SequenceElementRef::new(middle_seq, 0));
 
     engine.stop_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -2165,8 +2158,7 @@ fn stop_owner_walks_postponed_graph_from_pending_strong_blocker() {
     );
 
     engine.stop_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -2236,8 +2228,7 @@ fn stop_owner_does_not_scan_unselected_postponed_branches() {
         Some(SequenceElementRef::new(current_seq, 0));
 
     engine.stop_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         owner,
         SequencePriority::Preference,
@@ -2397,7 +2388,11 @@ fn immediate_command_finishes_during_launch() {
     let mut sequence = Sequence::new();
     sequence.append_element(make_simple_element(1, Command::LockUser, None));
     let id = engine
-        .launch_sequence_inline(&test_context(), &assets, &mut Vec::new(), sequence)
+        .launch_sequence_inline(
+            TickCtx::new(&test_context(), &assets),
+            &mut Vec::new(),
+            sequence,
+        )
         .unwrap();
     assert!(engine.players.user_locked);
     assert_eq!(
@@ -3286,8 +3281,7 @@ fn loaded_nonadjacent_next_controls_stop_recursion() {
         .unwrap()
         .next = Some(SequenceElementRef::new(sequence_id, 2));
     engine.stop_owner_current_from_root(
-        &test_context(),
-        &assets,
+        TickCtx::new(&test_context(), &assets),
         &mut Vec::new(),
         Some((sequence_id, 0)),
         SequencePriority::Normal,
@@ -3351,8 +3345,7 @@ fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
             crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
         ]);
     let changed = engine.stop_movement_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         fixture_owner_0,
         crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
@@ -3380,8 +3373,7 @@ fn stop_movement_rewrites_order_and_shortens_only_element_destination() {
     // play; only movement actions without a rewrite arm were interrupted
     // above.
     engine.stop_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         fixture_owner_0,
         SequencePriority::NonInterruptable,
@@ -3426,8 +3418,7 @@ fn stop_movement_rewrite_does_not_cancel_path_for_move_waiting() {
             crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
         ]);
     engine.stop_movement_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         fixture_owner_0,
         crate::coordinates::MapPoint::default(),
@@ -3466,8 +3457,7 @@ fn stop_movement_cancels_path_on_interrupt() {
             crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
         ]);
     engine.stop_movement_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         fixture_owner_0,
         crate::coordinates::MapPoint::default(),
@@ -3504,8 +3494,7 @@ fn stop_movement_interrupts_element_with_unknown_action() {
             crate::engine::PendingPathRequest::test_request(fixture_owner_0, seq_id, 0),
         ]);
     engine.stop_movement_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         fixture_owner_0,
         crate::coordinates::MapPoint::default(),
@@ -3887,7 +3876,7 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
     let mut todo = SequenceElement::new(1, Command::LeaveListen, Some(owner));
     todo.priority = SequencePriority::NonInterruptable;
     let todo_seq = engine.t_launch_element(&assets, todo);
-    engine.element_impossible(&sim, &assets, &mut Vec::new(), todo_seq, 0);
+    engine.element_impossible(TickCtx::new(&sim, &assets), &mut Vec::new(), todo_seq, 0);
     assert_eq!(
         engine
             .orders
@@ -3903,7 +3892,7 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
     active.priority = SequencePriority::NonInterruptable;
     let active_seq = engine.t_launch_element(&assets, active);
     engine.t_element_in_progress(&assets, active_seq, 0);
-    engine.element_impossible(&sim, &assets, &mut Vec::new(), active_seq, 0);
+    engine.element_impossible(TickCtx::new(&sim, &assets), &mut Vec::new(), active_seq, 0);
     assert_eq!(
         engine
             .orders
@@ -3915,7 +3904,12 @@ fn non_interruptable_impossible_guard_only_protects_in_progress_owner() {
         "an executing non-interruptable owner remains protected"
     );
 
-    engine.element_impossible_from_execute(&sim, &assets, &mut Vec::new(), active_seq, 0);
+    engine.element_impossible_from_execute(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        active_seq,
+        0,
+    );
     assert_eq!(
         engine
             .orders
@@ -3955,7 +3949,7 @@ fn death_cleanup_preserves_exact_dead_human_todo_whitelist() {
         (command, sequence)
     });
 
-    engine.kill_owner_sequences(&sim, &assets, &mut Vec::new(), owner, None);
+    engine.kill_owner_sequences(TickCtx::new(&sim, &assets), &mut Vec::new(), owner, None);
 
     for (command, sequence) in admitted {
         assert_eq!(
@@ -4010,7 +4004,12 @@ fn death_cleanup_preserves_postponed_wait_transferred_to_damage_replacement() {
     );
     engine.t_postpone_element(&assets, rejected, 0);
 
-    engine.kill_owner_sequences(&sim, &assets, &mut Vec::new(), owner, Some(damage));
+    engine.kill_owner_sequences(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        Some(damage),
+    );
 
     assert_eq!(
         engine

@@ -5,6 +5,7 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, EnemyRecovery, MoneyFightOperation, Remark, Stimulus,
     StimulusInfo, Substate,
 };
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -12,21 +13,21 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_enemy_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_enemy_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_enemy_event(stimulus)
     }
 }
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn execute_ai_enemy_event(&mut self, stimulus: &Stimulus) -> bool {
-        if let Some(result) =
-            self.engine
-                .execute_ai_officer_rpc(self.sim, self.assets, self.owner, stimulus)
-        {
+        if let Some(result) = self.engine.execute_ai_officer_rpc(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            stimulus,
+        ) {
             return result;
         }
         if self.execute_ai_combat_impact_event(stimulus) {
@@ -303,8 +304,10 @@ impl AiOwnerCtx<'_> {
                 }
                 self.execute_reconsider_swordfight(event == StimulusType::EventAdversaryWeak);
                 if event == StimulusType::EventAfterCombatInjury {
-                    self.engine
-                        .combat_insult_after_reconsider(self.sim, self.assets, self.owner);
+                    self.engine.combat_insult_after_reconsider(
+                        TickCtx::new(self.sim, self.assets),
+                        self.owner,
+                    );
                 }
             }
             StimulusType::EventSwordStrike
@@ -320,8 +323,7 @@ impl AiOwnerCtx<'_> {
                     panic!("sword strike requires attacker");
                 };
                 self.engine.execute_ai_consider_to_begin_parade(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
                     attacker.get(),
                 );
@@ -389,15 +391,13 @@ impl AiOwnerCtx<'_> {
                             .element_data(),
                     ) {
                         self.engine.dispatch_enemy_in_house_alert(
-                            self.sim,
+                            TickCtx::new(self.sim, self.assets),
                             self.owner,
-                            self.assets,
                         );
                     } else {
                         let position = self.engine.live_ai_position(id);
                         self.engine.execute_ai_panic(
-                            self.sim,
-                            self.assets,
+                            TickCtx::new(self.sim, self.assets),
                             self.owner,
                             Some(position),
                             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -437,9 +437,8 @@ impl AiOwnerCtx<'_> {
                             .element_data(),
                     ) {
                         self.engine.dispatch_enemy_in_house_alert(
-                            self.sim,
+                            TickCtx::new(self.sim, self.assets),
                             self.owner,
-                            self.assets,
                         );
                     }
                 }
@@ -490,7 +489,7 @@ mod tests {
         );
         let stimulus = Stimulus::with_human(StimulusType::EventView, target.index());
         assert!(engine.admit_ai_think_live(owner, &stimulus));
-        assert!(!engine.execute_ai_enemy_event(&sim, &assets, owner, &stimulus));
+        assert!(!engine.execute_ai_enemy_event(TickCtx::new(&sim, &assets), owner, &stimulus));
         let after = engine.observation_ai(owner);
         assert_eq!(after.base.current_state, AiState::Sleeping);
         assert_eq!(after.base.current_substate, Substate::SleepingAwakening);

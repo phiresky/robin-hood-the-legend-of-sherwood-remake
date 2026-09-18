@@ -9,6 +9,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::entities::Entities;
 use crate::movement::AbilityKind;
 use crate::order::{Order, OrderType};
@@ -2824,7 +2825,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
 
         for expected_direction in [2, 3, 4] {
-            engine.tick_selected_ability(&sim, &assets, attacker, false);
+            engine.tick_selected_ability(TickCtx::new(&sim, &assets), attacker, false);
             let entity = engine.world.entities.get(attacker).unwrap();
             assert_eq!(entity.element_data().direction(), expected_direction);
             assert_eq!(
@@ -2900,11 +2901,11 @@ mod tests {
         let sim = crate::sim_rng::test_context();
 
         for expected_attacker in [2, 4] {
-            engine.tick_selected_ability(&sim, &assets, attacker, false);
+            engine.tick_selected_ability(TickCtx::new(&sim, &assets), attacker, false);
             assert_eq!(engine.direction_of(attacker), expected_attacker);
             assert_eq!(engine.direction_of(victim), 8);
         }
-        engine.tick_selected_ability(&sim, &assets, attacker, false);
+        engine.tick_selected_ability(TickCtx::new(&sim, &assets), attacker, false);
         assert_eq!(engine.direction_of(attacker), 4);
         assert_eq!(engine.direction_of(victim), 6);
         assert_eq!(
@@ -3051,8 +3052,10 @@ mod tests {
         engine.world.entities = entities;
         engine.orders.sequence_manager = manager;
         let motion = engine.tick_selected_ability(
-            &crate::sim_rng::test_context(),
-            &crate::engine::LevelAssets::new(),
+            TickCtx::new(
+                &crate::sim_rng::test_context(),
+                &crate::engine::LevelAssets::new(),
+            ),
             owner,
             true,
         );
@@ -3194,8 +3197,7 @@ mod tests {
         let mut assets = crate::engine::LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(carry_profiles());
         engine.tick_selected_ability(
-            &crate::sim_rng::SimulationContext::with_seed(1),
-            &assets,
+            TickCtx::new(&crate::sim_rng::SimulationContext::with_seed(1), &assets),
             carrier,
             false,
         );

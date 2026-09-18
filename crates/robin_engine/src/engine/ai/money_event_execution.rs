@@ -3,6 +3,7 @@ use crate::ai::{
     AiEntityHandle, AiState, DutyFlags, EmoticonType, GotoFlags, MoneyFightOperation, Remark,
     ReportType, Stimulus, StimulusInfo, StimulusType, Substate,
 };
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -11,12 +12,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_money_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_money_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_money_event(stimulus)
     }
 
     fn money_event_timer(&mut self, owner: EntityId, duration: u32) {
@@ -179,8 +179,11 @@ impl AiOwnerCtx<'_> {
                     {
                         let mut panic = Stimulus::new(EventPanic);
                         panic.info = StimulusInfo::Position(center);
-                        self.engine
-                            .execute_ai_callback(self.sim, self.assets, target, &panic);
+                        self.engine.execute_ai_callback(
+                            TickCtx::new(self.sim, self.assets),
+                            target,
+                            &panic,
+                        );
                     }
                 }
                 self.execute_maybe_officer_sees_me_fighting();
@@ -218,8 +221,7 @@ impl AiOwnerCtx<'_> {
                 {
                     self.stop_ai_owner();
                     self.engine.launch_element(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::StandUp,
@@ -394,7 +396,7 @@ impl AiOwnerCtx<'_> {
                 let mut event = Stimulus::new(StimulusType::EventSeesBrawl);
                 event.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
                 self.engine
-                    .execute_ai_callback(self.sim, self.assets, chief, &event);
+                    .execute_ai_callback(TickCtx::new(self.sim, self.assets), chief, &event);
             }
         } else {
             self.engine.money_event_timer(self.owner, 20);
@@ -414,7 +416,8 @@ impl AiOwnerCtx<'_> {
             Some(self.owner),
             Some(target),
         ));
-        self.engine.launch_sequence(self.sim, self.assets, sequence);
+        self.engine
+            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
     }
 
     fn money_arrival_live(&mut self) {
@@ -452,8 +455,11 @@ impl AiOwnerCtx<'_> {
                 if other != self.owner && (state.is_take_money() || state.is_fight_for_money()) {
                     let mut event = Stimulus::new(StimulusType::EventObjectAway);
                     event.info = StimulusInfo::Stolen(stolen);
-                    self.engine
-                        .execute_ai_callback(self.sim, self.assets, other, &event);
+                    self.engine.execute_ai_callback(
+                        TickCtx::new(self.sim, self.assets),
+                        other,
+                        &event,
+                    );
                 }
             }
             self.duty_set_state(AiState::Wondering, Substate::WonderingTakingMoney);
@@ -666,8 +672,7 @@ mod tests {
     ) {
         assert_eq!(
             engine.execute_ai_money_event(
-                &crate::sim_rng::test_context(),
-                assets,
+                TickCtx::new(&crate::sim_rng::test_context(), assets),
                 owner,
                 &Stimulus::new(stimulus)
             ),

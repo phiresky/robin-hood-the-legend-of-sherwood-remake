@@ -1,5 +1,6 @@
 use super::*;
 use crate::element::{Command, Posture};
+use crate::engine::TickCtx;
 use crate::engine::movement::{FailedPathRequest, PendingPathRequest, PendingPathRequestQueue};
 use crate::engine::test_support::actors::make_test_soldier;
 use crate::order::{Order, OrderType};
@@ -49,8 +50,7 @@ fn live_waiter_preparation_cancels_only_its_owner() {
     ];
 
     engine.prepare_cross_postponed_waiter(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         waiter,
         0,

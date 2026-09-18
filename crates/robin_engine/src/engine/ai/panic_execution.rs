@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::{AiState, AlertLevel, GotoFlags, Position, Stimulus, StimulusType, Substate};
+use crate::engine::TickCtx;
 
 fn panic_retry_side(creation_order: u32) -> u8 {
     if creation_order & 1 != 0 { 4 } else { 12 }
@@ -47,8 +48,7 @@ mod tests {
                 let (_, draws) = crate::sim_rng::with_draw_trace(|| {
                     engine
                         .execute_ai_common_fleeing_event(
-                            &crate::sim_rng::test_context(),
-                            &assets,
+                            TickCtx::new(&crate::sim_rng::test_context(), &assets),
                             owner,
                             &Stimulus::new(stimulus),
                         )
@@ -98,12 +98,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_common_fleeing_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_common_fleeing_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_common_fleeing_event(stimulus)
     }
 }
 
@@ -233,7 +232,8 @@ impl AiOwnerCtx<'_> {
                         };
                         *destination = crate::coordinates::MapPoint::new(point.x, point.y);
                         *flags = crate::sequence::MoveFlags::MAP;
-                        self.engine.launch_element(self.sim, self.assets, movement);
+                        self.engine
+                            .launch_element(TickCtx::new(self.sim, self.assets), movement);
                     } else {
                         self.duty_go_to(destination, GotoFlags::RUN);
                         self.engine.observation_timer(self.owner, 30);

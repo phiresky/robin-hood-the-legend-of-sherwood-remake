@@ -1,6 +1,7 @@
 //! Unit tests for the script native dispatch.
 
 use super::*;
+use crate::engine::TickCtx;
 use crate::interp::*;
 use crate::vm::Instruction::*;
 
@@ -992,13 +993,13 @@ fn patch_native_completes_before_the_next_native_query() {
     let patch = ScriptHandleCodec::patch_handle_from_index(0);
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "ApplyPatch", &[patch])
+            .call_external_native(TickCtx::new(&sim, &assets), "ApplyPatch", &[patch])
             .unwrap(),
         1
     );
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "IsPatchApplied", &[patch])
+            .call_external_native(TickCtx::new(&sim, &assets), "IsPatchApplied", &[patch])
             .unwrap(),
         1
     );
@@ -1602,8 +1603,7 @@ fn activating_a_rescue_pc_makes_it_player_controllable() {
     engine.scripts.attach_native_capabilities(&assets);
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "Activate",
             &[ScriptHandleCodec::actor_handle(owner)],
         )
@@ -1716,25 +1716,25 @@ fn select_all_and_unselect_all_are_immediately_query_visible() {
     let sim = crate::sim_rng::test_context();
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "Select", &[31])
+            .call_external_native(TickCtx::new(&sim, &assets), "Select", &[31])
             .unwrap(),
         1
     );
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "GetNumberOfSelectedPCs", &[])
+            .call_external_native(TickCtx::new(&sim, &assets), "GetNumberOfSelectedPCs", &[])
             .unwrap(),
         2
     );
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "Select", &[0])
+            .call_external_native(TickCtx::new(&sim, &assets), "Select", &[0])
             .unwrap(),
         1
     );
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "GetNumberOfSelectedPCs", &[])
+            .call_external_native(TickCtx::new(&sim, &assets), "GetNumberOfSelectedPCs", &[])
             .unwrap(),
         0
     );
@@ -2565,21 +2565,28 @@ fn selection_native_completes_portrait_cleanup_before_later_queries() {
     let sim = crate::sim_rng::test_context();
     let target_handle = ScriptHandleCodec::actor_handle(target);
     engine
-        .call_external_native(&sim, &assets, "SelectActorPC", &[target_handle, 1])
+        .call_external_native(
+            TickCtx::new(&sim, &assets),
+            "SelectActorPC",
+            &[target_handle, 1],
+        )
         .unwrap();
     assert_eq!(engine.players.seats[0].selection, [target]);
     assert!(!engine.pc(previous).portrait.open);
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "IsPCSelected", &[target_handle])
+            .call_external_native(
+                TickCtx::new(&sim, &assets),
+                "IsPCSelected",
+                &[target_handle]
+            )
             .unwrap(),
         1
     );
     assert_eq!(
         engine
             .call_external_native(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 "IsPCSelected",
                 &[ScriptHandleCodec::actor_handle(previous)]
             )
@@ -3082,11 +3089,11 @@ fn scroll_status_native_finishes_the_open_animation_before_querying() {
     let sim = crate::sim_rng::test_context();
     let scroll = ScriptHandleCodec::actor_handle(owner);
     engine
-        .call_external_native(&sim, &assets, "SetScrollStatus", &[scroll, 3])
+        .call_external_native(TickCtx::new(&sim, &assets), "SetScrollStatus", &[scroll, 3])
         .unwrap();
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "GetScrollStatus", &[scroll])
+            .call_external_native(TickCtx::new(&sim, &assets), "GetScrollStatus", &[scroll])
             .unwrap(),
         3
     );
@@ -3122,14 +3129,14 @@ fn sound_destruction_completes_before_the_next_native_query() {
     let sim = crate::sim_rng::test_context();
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "DestroySoundSource", &[handle])
+            .call_external_native(TickCtx::new(&sim, &assets), "DestroySoundSource", &[handle])
             .unwrap(),
         1
     );
     assert!(engine.feedback.sound_sim.sources.get(0).is_none());
     assert_eq!(
         engine
-            .call_external_native(&sim, &assets, "GetSoundSourceScript", &[0])
+            .call_external_native(TickCtx::new(&sim, &assets), "GetSoundSourceScript", &[0])
             .unwrap(),
         0
     );
@@ -3660,8 +3667,7 @@ fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetAlwaysAttentive",
                 &[ScriptHandleCodec::actor_handle(owner), 1],
             )
@@ -3773,8 +3779,7 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
         assert_eq!(
             engine
                 .call_external_native(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     "SetAlwaysAttentive",
                     &[
                         ScriptHandleCodec::actor_handle(owner),

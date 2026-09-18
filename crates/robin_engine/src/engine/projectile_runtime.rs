@@ -5,31 +5,21 @@ use super::*;
 use crate::bow_shot;
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{Animation, Command, Entity, EntityId, ObjectType};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(crate) fn tick_existing_projectile(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) -> bool {
-        self.tick_projectile(sim, assets, id, false)
+    pub(crate) fn tick_existing_projectile(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {
+        self.tick_projectile(tcx, id, false)
     }
 
-    pub(crate) fn tick_new_projectile_once(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) -> bool {
-        self.tick_projectile(sim, assets, id, true)
+    pub(crate) fn tick_new_projectile_once(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {
+        self.tick_projectile(tcx, id, true)
     }
 
     fn tick_projectile(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         id: EntityId,
         primed_segment_already_advanced: bool,
     ) -> bool {
@@ -79,7 +69,7 @@ impl EngineInner {
         }
         if projectile.projectile.falling {
             if !projectile.projectile.flying {
-                return self.finish_projectile_landing(sim, assets, id);
+                return self.finish_projectile_landing(tcx, id);
             }
             return true;
         }
@@ -97,7 +87,7 @@ impl EngineInner {
         );
         if let Some(holder) = shield {
             let (entities, sight_obstacles, fast_find_grid, _) =
-                self.world.entities_mut_with_sight(assets);
+                self.world.entities_mut_with_sight(tcx.assets);
             let Entity::Projectile(projectile) =
                 entities.get_mut(id).expect("shield impact lost projectile")
             else {
@@ -108,13 +98,13 @@ impl EngineInner {
                 let check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid,
                     sight_obstacles,
-                    water_zones: Some(&assets.environment.water_zones),
+                    water_zones: Some(&tcx.assets.environment.water_zones),
                 };
                 if bow_shot::make_arrow_falling_down(projectile, true, Some(&check)) {
-                    self.finish_projectile_landing(sim, assets, id);
+                    self.finish_projectile_landing(tcx, id);
                 }
             }
-            self.on_projectile_shield_hit(sim, assets, holder, fx);
+            self.on_projectile_shield_hit(tcx, holder, fx);
             return true;
         }
         if let Some(victim) = bow_shot::projectile_human_victim(
@@ -124,11 +114,11 @@ impl EngineInner {
             id,
             old,
         ) {
-            if !self.hit_projectile_human(sim, assets, id, victim, old)
+            if !self.hit_projectile_human(tcx, id, victim, old)
                 && matches!(self.expect_entity(id, "projectile impact continuation"),
                     Entity::Projectile(projectile) if !projectile.projectile.flying)
             {
-                return self.finish_projectile_landing(sim, assets, id);
+                return self.finish_projectile_landing(tcx, id);
             }
         } else if let Some((target, command)) =
             bow_shot::projectile_target_victim(&self.world.entities, id, old)
@@ -142,25 +132,24 @@ impl EngineInner {
             element.data = crate::sequence::SequenceElementData::Interaction {
                 antagonist: shooter,
             };
-            self.launch_element(sim, assets, element);
+            self.launch_element(tcx, element);
             self.stop_projectile(id);
             let impact = self
                 .expect_entity(target, "projectile target impact")
                 .element_data()
                 .position_map();
-            self.projectile_impact_feedback(sim, assets, id, impact);
+            self.projectile_impact_feedback(tcx, id, impact);
         } else if matches!(self.expect_entity(id, "projectile landing"),
             Entity::Projectile(projectile) if !projectile.projectile.flying)
         {
-            return self.finish_projectile_landing(sim, assets, id);
+            return self.finish_projectile_landing(tcx, id);
         }
         true
     }
 
     pub(super) fn on_projectile_shield_hit(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         holder: EntityId,
         impact_fx: Option<u32>,
     ) {
@@ -187,8 +176,7 @@ impl EngineInner {
             });
         if !already_parrying {
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(1, Command::ParryShield, Some(holder)),
             );
         }
@@ -196,8 +184,7 @@ impl EngineInner {
 
     fn hit_projectile_human(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         id: EntityId,
         victim: EntityId,
         old: WorldPoint3D,
@@ -214,17 +201,17 @@ impl EngineInner {
         match kind {
             ObjectType::Apple => {
                 self.burst_projectile(id);
-                self.on_apple_hit_human(sim, assets, id, victim);
+                self.on_apple_hit_human(tcx, id, victim);
             }
             ObjectType::Stone => {
                 self.burst_projectile(id);
-                self.on_stone_hit_human(sim, assets, id, victim, shooter);
+                self.on_stone_hit_human(tcx, id, victim, shooter);
             }
             ObjectType::Arrow => {
-                match self.classify_arrow_hit(sim, assets, victim, shooter) {
+                match self.classify_arrow_hit(tcx, victim, shooter) {
                     ArrowHitOutcome::PassThrough => return false,
                     ArrowHitOutcome::Ricochet => {
-                        self.start_arrow_ricochet(sim, assets, id);
+                        self.start_arrow_ricochet(tcx, id);
                         return false;
                     }
                     ArrowHitOutcome::Damage => {}
@@ -236,8 +223,7 @@ impl EngineInner {
                     };
                     let damage = projectile.projectile.damage;
                     self.queue_projectile_damage(
-                        sim,
-                        assets,
+                        tcx,
                         victim,
                         shooter,
                         Command::ReceiveArrowDamage,
@@ -253,7 +239,7 @@ impl EngineInner {
                             self.expect_entity(id, "arrow damage origin"),
                         )
                         .expect("arrow hit requires its trajectory origin");
-                        self.dispatch_event_get_arrow(sim, assets, victim, origin);
+                        self.dispatch_event_get_arrow(tcx, victim, origin);
                     }
                 }
             }
@@ -265,7 +251,7 @@ impl EngineInner {
             .expect_entity(victim, "projectile human impact")
             .element_data()
             .position_map();
-        self.projectile_impact_feedback(sim, assets, id, impact);
+        self.projectile_impact_feedback(tcx, id, impact);
         true
     }
 
@@ -300,14 +286,8 @@ impl EngineInner {
         projectile.projectile.trajectory_runtime.clear();
     }
 
-    fn projectile_impact_feedback(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-        position: MapPoint,
-    ) {
-        let was_distraction = self.emit_noise_distraction_impact(sim, assets, id, position);
+    fn projectile_impact_feedback(&mut self, tcx: TickCtx<'_>, id: EntityId, position: MapPoint) {
+        let was_distraction = self.emit_noise_distraction_impact(tcx, id, position);
         let Entity::Projectile(projectile) = self.expect_entity(id, "projectile impact sound")
         else {
             unreachable!()
@@ -326,12 +306,7 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn finish_projectile_landing(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        id: EntityId,
-    ) -> bool {
+    pub(super) fn finish_projectile_landing(&mut self, tcx: TickCtx<'_>, id: EntityId) -> bool {
         let Entity::Projectile(projectile) = self
             .world
             .entities
@@ -344,14 +319,14 @@ impl EngineInner {
             projectile.projectile.trajectory_frame_count = 0;
             projectile.projectile.trajectory.clear();
             projectile.projectile.trajectory_runtime.clear();
-            self.maybe_splash_on_landing(sim, assets, id);
+            self.maybe_splash_on_landing(tcx, id);
             return false;
         }
         if projectile.projectile.disappear {
             return false;
         }
         self.burst_projectile(id);
-        let (entities, sight_obstacles, _, _) = self.world.entities_mut_with_sight(assets);
+        let (entities, sight_obstacles, _, _) = self.world.entities_mut_with_sight(tcx.assets);
         let Entity::Projectile(projectile) =
             entities.get_mut(id).expect("projectile landing lost owner")
         else {
@@ -396,8 +371,7 @@ impl EngineInner {
         if projectile.object.object_type == ObjectType::Arrow {
             let elevation = projectile.element.position().z.max(0.0) as u16;
             self.broadcast_noise_synchronously(
-                sim,
-                assets,
+                tcx,
                 crate::ai::NoiseType::Zonk,
                 noise_position,
                 noise_layer,
@@ -406,7 +380,7 @@ impl EngineInner {
                 Some(id),
             );
         }
-        self.projectile_impact_feedback(sim, assets, id, impact);
+        self.projectile_impact_feedback(tcx, id, impact);
         true
     }
 }

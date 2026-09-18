@@ -6,6 +6,7 @@ use crate::ai::{
 };
 use crate::ai_enemy::task_priority;
 use crate::element::{Element as _, Human as _};
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
 
@@ -31,8 +32,7 @@ fn officer_report_in_progress(substate: Substate) -> bool {
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_instruct_group(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         use crate::ai::{Hint, ReportType};
@@ -82,7 +82,7 @@ impl EngineInner {
                 .get() as usize
         };
         let path_size = path_owner.map_or(0, |charly| {
-            assets.navigation.hiking_paths[path_index(self, charly)]
+            tcx.assets.navigation.hiking_paths[path_index(self, charly)]
                 .waypoints
                 .len()
         });
@@ -102,11 +102,11 @@ impl EngineInner {
                 // Assignment replaces the checkpoint's path contents during
                 // recipient callbacks; the cursor and stride remain local.
                 let path = path_index(self, charly);
-                let waypoint = &assets.navigation.hiking_paths[path].waypoints[waypoint_index];
+                let waypoint = &tcx.assets.navigation.hiking_paths[path].waypoints[waypoint_index];
                 instruction.seek_point = Position {
                     x: waypoint.x as f32,
                     y: waypoint.y as f32,
-                    sector: assets.navigation.hiking_waypoint_sector(
+                    sector: tcx.assets.navigation.hiking_waypoint_sector(
                         path,
                         waypoint_index,
                         waypoint.sector,
@@ -123,7 +123,7 @@ impl EngineInner {
             let target = self.expect_human_id_for_ai_handle(target, "group instruction recipient");
             let mut stimulus = Stimulus::new(StimulusType::CallInstruction);
             stimulus.info = StimulusInfo::Hint(instruction);
-            if self.execute_ai_callback(sim, assets, target, &stimulus) {
+            if self.execute_ai_callback(tcx, target, &stimulus) {
                 index += 1;
             } else {
                 self.enemy_ai_mut(owner, "refused group instruction")
@@ -134,8 +134,7 @@ impl EngineInner {
         }
         if count > 0 {
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 owner,
                 AiState::Seeking,
                 Substate::SeekingOfficerWaitForInstructedGroup,
@@ -145,49 +144,45 @@ impl EngineInner {
                 .expect_ai_controller_mut(owner, format_args!("group instruction timer"))
                 .launch_timer(30, self.control.frame_counter);
         } else {
-            self.execute_ai_return_to_duty(sim, assets, owner, crate::ai::DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, owner, crate::ai::DutyFlags::empty());
         }
     }
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_alert_officer_for_caller(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         caller: crate::ai::OfficerAlertCaller,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_officer_for_caller(caller)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_officer_for_caller(caller)
     }
 
     pub(in crate::engine) fn execute_ai_alert_officer(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_officer()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_officer()
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_alert_soldiers(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         center: Position,
         flags: u16,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_alert_soldiers(center, flags)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_alert_soldiers(center, flags)
     }
 
     pub(in crate::engine) fn execute_ai_command_soldiers_to_attack(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         center: Position,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).command_soldiers_to_attack(center)
+        AiOwnerCtx::new(self, tcx, owner).command_soldiers_to_attack(center)
     }
 }
 
@@ -196,7 +191,7 @@ impl AiOwnerCtx<'_> {
         &mut self,
         center: Position,
     ) -> bool {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
             .run_and_alert_soldiers(center)
     }
 
@@ -204,12 +199,13 @@ impl AiOwnerCtx<'_> {
         &mut self,
         reason: crate::ai::ReportType,
     ) {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
             .officer_look_for_soldier(reason);
     }
 
     pub(in crate::engine) fn execute_ai_tower_guard_alert(&mut self, center: Position) {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).tower_guard_alert(center);
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
+            .tower_guard_alert(center);
         self.execute_battle_decisions();
     }
 
@@ -250,7 +246,8 @@ impl AiOwnerCtx<'_> {
     }
 
     pub(in crate::engine) fn execute_ai_alert_officer(&mut self) -> bool {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).alert_officer()
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
+            .alert_officer()
     }
 
     fn execute_failed_ai_alert(&mut self, failure: crate::ai::AlertSoldiersFailureContinuation) {
@@ -299,7 +296,7 @@ impl AiOwnerCtx<'_> {
         center: Position,
         flags: u16,
     ) -> bool {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner)
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
             .alert_soldiers(center, flags)
     }
 
@@ -361,8 +358,11 @@ impl AiOwnerCtx<'_> {
             if reacts {
                 let mut stimulus = Stimulus::new(StimulusType::EventSeesBrawl);
                 stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-                self.engine
-                    .execute_ai_callback(self.sim, self.assets, candidate, &stimulus);
+                self.engine.execute_ai_callback(
+                    TickCtx::new(self.sim, self.assets),
+                    candidate,
+                    &stimulus,
+                );
                 return;
             }
         }
@@ -650,7 +650,7 @@ impl AiOwnerCtx<'_> {
                 let mut stimulus = Stimulus::new(StimulusType::CallTowerGuardAlert);
                 stimulus.info = StimulusInfo::Hint(hint);
                 self.engine
-                    .execute_ai_callback(self.sim, self.assets, id, &stimulus);
+                    .execute_ai_callback(TickCtx::new(self.sim, self.assets), id, &stimulus);
                 match self
                     .engine
                     .enemy_ai(id, "alerted recipient rank")
@@ -693,8 +693,11 @@ impl AiOwnerCtx<'_> {
         if let Some(recipient) = recipient {
             let mut stimulus = Stimulus::new(StimulusType::CallTowerGuardCallsMe);
             stimulus.info = StimulusInfo::Hint(hint);
-            self.engine
-                .execute_ai_callback(self.sim, self.assets, recipient, &stimulus);
+            self.engine.execute_ai_callback(
+                TickCtx::new(self.sim, self.assets),
+                recipient,
+                &stimulus,
+            );
         }
     }
 
@@ -930,10 +933,11 @@ impl AiOwnerCtx<'_> {
                 Some(AiEntityHandle::new(self.owner.index()));
             let mut stimulus = Stimulus::new(StimulusType::CallAlert);
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-            if !self
-                .engine
-                .execute_ai_callback(self.sim, self.assets, target, &stimulus)
-            {
+            if !self.engine.execute_ai_callback(
+                TickCtx::new(self.sim, self.assets),
+                target,
+                &stimulus,
+            ) {
                 continue;
             }
             let target_world = self
@@ -1142,7 +1146,8 @@ impl AiOwnerCtx<'_> {
                 Command::GatherSoldiers,
                 Some(self.owner),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine
+                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
 
             self.execute_ai_speech(crate::ai::AiSpeechAttempt {
                 remark: Remark::OfficerCallsGroup,
@@ -1267,10 +1272,11 @@ impl AiOwnerCtx<'_> {
                 continue;
             }
             let stimulus = Stimulus::with_position(StimulusType::CallCombatAlert, center);
-            if self
-                .engine
-                .execute_ai_callback(self.sim, self.assets, member, &stimulus)
-            {
+            if self.engine.execute_ai_callback(
+                TickCtx::new(self.sim, self.assets),
+                member,
+                &stimulus,
+            ) {
                 accepted += 1;
                 let member_position = self.engine.live_ai_position(member);
                 let owner_position = self.engine.live_ai_position(self.owner);
@@ -1327,7 +1333,8 @@ impl AiOwnerCtx<'_> {
             FieldValue::Integer(point_direction as u32),
         );
         sequence.append_element(point);
-        self.engine.launch_sequence(self.sim, self.assets, sequence);
+        self.engine
+            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
 
         let frame = self.engine.control.frame_counter;
         self.enemy_mut()

@@ -4,6 +4,7 @@ use crate::ai::{
     AiState, BodyReaction, DutyFlags, EmoticonType, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
 #[cfg(test)]
@@ -13,12 +14,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_body_reaction(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         operation: BodyReaction,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_body_reaction(operation)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_body_reaction(operation)
     }
 
     fn body_target(&self, owner: EntityId) -> EntityId {
@@ -248,7 +248,8 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(body),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine
+                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
 
             self.engine.body_timer(self.owner, 50);
             self.engine.seek_enemy_mut(self.owner).base.clear_emoticon();
@@ -415,8 +416,7 @@ mod tests {
             let farther = covering_net(&mut engine, body, 450.0, true, false);
             let chosen = covering_net(&mut engine, body, 350.0, true, crumpled);
             engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 BodyReaction::Examine { body: body.index() },
             );
@@ -452,8 +452,7 @@ mod tests {
     fn examining_missing_body_rejects_invalid_identity() {
         let (mut engine, assets, owner, _) = fixture();
         engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             BodyReaction::Examine { body: u32::MAX - 1 },
         );
@@ -472,8 +471,7 @@ mod tests {
         engine.seek_enemy_mut(owner).other_bodies_to_examine =
             vec![recovered.index(), down.index()];
         engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             BodyReaction::SleeperTimer,
         );
@@ -496,8 +494,7 @@ mod tests {
             entity.human_data_mut().unwrap().unconscious = unconscious;
             entity.npc_data_mut().unwrap().life_points = if dead { 0 } else { 50 };
             engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 BodyReaction::NetDone,
             );
@@ -524,8 +521,7 @@ mod tests {
         engine.human_mut(body).stuck_under_nets_counter = 1;
         let net = covering_net(&mut engine, body, 350.0, true, false);
         engine.execute_ai_body_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             BodyReaction::NetDone,
         );
@@ -570,8 +566,7 @@ mod tests {
             std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[usize::from(profile)]
                 .duty = duty;
             engine.execute_ai_body_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 BodyReaction::DeadBodyAlert { center },
             );

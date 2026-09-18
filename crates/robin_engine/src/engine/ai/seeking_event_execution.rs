@@ -3,6 +3,7 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, GotoFlags, SeekPoint, Stimulus, StimulusType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -11,12 +12,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_seeking_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seeking_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seeking_event(stimulus)
     }
 
     fn seek_event_timer(&mut self, owner: EntityId, duration: u32) {
@@ -353,7 +353,8 @@ impl AiOwnerCtx<'_> {
                     Some(self.owner),
                     Some(net),
                 ));
-                self.engine.launch_sequence(self.sim, self.assets, sequence);
+                self.engine
+                    .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
 
                 self.engine
                     .seek_enemy_mut(self.owner)
@@ -434,8 +435,7 @@ pub(super) mod tests {
             let sim = crate::sim_rng::test_context();
             assert_eq!(
                 engine.execute_ai_seeking_event(
-                    &sim,
-                    &assets,
+                    TickCtx::new(&sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventTimer)
                 ),
@@ -472,8 +472,7 @@ pub(super) mod tests {
                 Substate::DefaultPatrolEnrouteWaiting;
             assert_eq!(
                 engine.execute_ai_seeking_event(
-                    &sim,
-                    &assets,
+                    TickCtx::new(&sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventTimer)
                 ),
@@ -505,8 +504,7 @@ pub(super) mod tests {
         let sim = crate::sim_rng::test_context();
         assert_eq!(
             engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint)
             ),
@@ -544,8 +542,7 @@ pub(super) mod tests {
         let sim = crate::sim_rng::test_context();
         assert_eq!(
             engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer)
             ),
@@ -554,8 +551,7 @@ pub(super) mod tests {
         assert_eq!(engine.seek_enemy(owner).base.when_does_timer_ring, 110);
         assert_eq!(
             engine.execute_ai_seeking_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint)
             ),
@@ -594,8 +590,7 @@ pub(super) mod tests {
         crate::sim_rng::with_seed(441, |sim| {
             assert_eq!(
                 engine.execute_ai_seeking_event(
-                    sim,
-                    &assets,
+                    TickCtx::new(sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventReachPoint)
                 ),
@@ -639,7 +634,11 @@ pub(super) mod tests {
             StimulusType::EventCouldntReachPoint,
         ] {
             assert_eq!(
-                engine.execute_ai_seeking_event(&sim, &assets, owner, &Stimulus::new(event)),
+                engine.execute_ai_seeking_event(
+                    TickCtx::new(&sim, &assets),
+                    owner,
+                    &Stimulus::new(event)
+                ),
                 None
             );
         }

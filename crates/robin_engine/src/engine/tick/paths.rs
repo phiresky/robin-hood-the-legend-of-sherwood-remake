@@ -1,6 +1,7 @@
 //! Existing tick phase implementations; scheduling remains in the parent tick spine.
 
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Advance queued pathfinding and failed-path deadlines before any entity
@@ -9,11 +10,7 @@ impl EngineInner {
     /// The original game processes path requests once before collision and
     /// entity updates, returning at most one completed
     /// request and begins at most one successor at that scheduling point.
-    pub(in crate::engine) fn hourglass_phase_paths(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(in crate::engine) fn hourglass_phase_paths(&mut self, tcx: TickCtx<'_>) {
         // Rust computes A* synchronously, but the queue retains the original
         // one-call latency and one-completion-per-frame observation order.
         // Original starts its successor before returning the completed head
@@ -21,12 +18,12 @@ impl EngineInner {
         // coordinator applies cross-owner consequences.
         self.trace_path_barrier("enter");
         let completed = self.path_schedule_context().process_requests(
-            assets.navigation.pathfinder_graph.as_ref(),
-            sim.config().synchronous_pathfinding,
+            tcx.assets.navigation.pathfinder_graph.as_ref(),
+            tcx.sim.config().synchronous_pathfinding,
         );
         self.trace_path_barrier("after_schedule");
         self.trace_path_barrier_completed("completed", &completed);
-        self.apply_completed_path_work(sim, assets, completed);
+        self.apply_completed_path_work(tcx, completed);
 
         // ── Failed-path timeout ───────────────────────────────────
         // Move / Seek elements whose pathfind failed stay in `InProgress`
@@ -39,7 +36,7 @@ impl EngineInner {
             let request = expired.request;
             if expired.owner_is_pc {
                 self.hero_speaking(
-                    assets,
+                    tcx.assets,
                     request.owner,
                     crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 );
@@ -52,13 +49,7 @@ impl EngineInner {
             {
                 element.command = crate::element::Command::MoveOk;
             }
-            self.element_impossible(
-                sim,
-                assets,
-                &mut Vec::new(),
-                request.seq_id,
-                request.elem_idx,
-            );
+            self.element_impossible(tcx, &mut Vec::new(), request.seq_id, request.elem_idx);
             tracing::debug!(
                 actor = ?request.owner,
                 seq_id = ?request.seq_id,
@@ -90,8 +81,7 @@ impl EngineInner {
         }
         for (human_id, mobile_child, amount) in impacts {
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new_damage(
                     1,
                     Command::ReceiveMobileDamage,

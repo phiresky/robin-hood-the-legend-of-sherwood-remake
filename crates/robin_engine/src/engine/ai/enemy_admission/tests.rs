@@ -1,5 +1,6 @@
 use super::*;
 use crate::ai::AiLockFlags;
+use crate::engine::TickCtx;
 
 fn fixture() -> (EngineInner, LevelAssets, EntityId) {
     let (mut engine, assets, owner, _) =
@@ -21,8 +22,7 @@ fn admit(
     event: StimulusType,
 ) -> bool {
     engine.begin_enemy_think(
-        &crate::sim_rng::test_context(),
-        assets,
+        TickCtx::new(&crate::sim_rng::test_context(), assets),
         owner,
         &Stimulus::new(event),
     )

@@ -5,6 +5,7 @@ use crate::ai::{
     StoredEnumWord, Substate,
 };
 use crate::ai_enemy::SeekFlags;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -40,8 +41,7 @@ mod tests {
         ai.detached_patrol_path_status.current_waypoint_index = 3;
         ai.detached_patrol_path_status.last_waypoint_index = 2;
         engine.execute_ai_seen_charly(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             partner.index(),
         );
@@ -62,23 +62,21 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_seen_charly(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         target: u32,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_charly(target)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_charly(target)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn unalert_live_charly_seekers(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         charly: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).unalert_live_charly_seekers(charly)
+        AiOwnerCtx::new(self, tcx, owner).unalert_live_charly_seekers(charly)
     }
 }
 
@@ -120,8 +118,11 @@ impl AiOwnerCtx<'_> {
                         self.observation_say(Remark::FoundCharly);
                         let mut call = Stimulus::new(StimulusType::CallGoToOfficer);
                         call.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
-                        self.engine
-                            .execute_ai_callback(self.sim, self.assets, charly, &call);
+                        self.engine.execute_ai_callback(
+                            TickCtx::new(self.sim, self.assets),
+                            charly,
+                            &call,
+                        );
                         self.engine.observation_ai_mut(self.owner).base.antagonist =
                             Some(AiEntityHandle::new(target));
                         assert_eq!(
@@ -203,7 +204,8 @@ impl AiOwnerCtx<'_> {
             || ai.synchronize_charly.is_none()
             || !ai.macro_in_progress
         {
-            self.engine.halt_actor(self.sim, self.assets, self.owner);
+            self.engine
+                .halt_actor(TickCtx::new(self.sim, self.assets), self.owner);
 
             self.engine.execute_ai_set_alert_status(
                 self.assets,
@@ -291,8 +293,7 @@ impl AiOwnerCtx<'_> {
                         .live_ai_detects_180(self.assets, candidate, self.owner)
             {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     candidate,
                     &Stimulus::with_human(StimulusType::CallCharlyIsBack, charly.index()),
                 );

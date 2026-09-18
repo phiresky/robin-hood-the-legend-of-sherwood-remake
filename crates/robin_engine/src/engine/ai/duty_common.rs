@@ -69,8 +69,7 @@ mod tests {
         let destination = engine.live_ai_position(owner);
 
         engine.duty_go_to_speed(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             destination,
             GotoFlags::empty(),
@@ -116,8 +115,7 @@ mod tests {
         orders.clear();
 
         engine.duty_go_to_speed(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Position {
                 x: 500.0,
@@ -153,8 +151,7 @@ mod tests {
         };
 
         engine.duty_face_position_at_elevation(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             target,
             7.790_524,
@@ -192,8 +189,7 @@ mod tests {
             ..engine.live_ai_position(owner)
         };
         engine.duty_face_position_at_elevation(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             target,
             -1.0,
@@ -225,8 +221,7 @@ mod tests {
             let mut destination = engine.live_ai_position(owner);
             destination.x += 300.0;
             engine.duty_go_to(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 destination,
                 goto,
@@ -354,8 +349,7 @@ mod tests {
             engine.t_element_in_progress(&LevelAssets::new(), sequence, 0);
             enemy_mut(&mut engine, owner).base.patrol_chief = Some(chief);
             engine.execute_common_ai_duty(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 DutyFlags::empty(),
             );
@@ -423,8 +417,7 @@ mod tests {
             PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
         ai.current_task_priority = task_priority::ENEMY;
         engine.execute_ai_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );
@@ -454,8 +447,7 @@ mod tests {
         ai.base.current_substate = Substate::SeekingCharlyGoToOfficer;
         ai.base.antagonist = Some(AiEntityHandle::new(officer.index()));
         engine.execute_ai_officer_rpc(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             &Stimulus::new(StimulusType::EventReachPoint),
         );
@@ -474,8 +466,8 @@ mod tests {
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         engine.control.frame_counter = 40;
-        engine.begin_ai_special_strike(&sim, &assets, owner);
-        engine.reconcile_ai_special_strike(&sim, &assets, owner, true);
+        engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), owner);
+        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, true);
         let ai = enemy(&engine, owner);
         assert!(ai.pending_special_strike);
         assert_eq!(
@@ -489,7 +481,7 @@ mod tests {
         ] {
             enemy_mut(&mut engine, owner).base.locks_flag_field = locks;
             engine.control.frame_counter = 41;
-            engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
+            engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
             let ai = enemy(&engine, owner);
             assert!(ai.pending_special_strike);
             assert_eq!(
@@ -500,12 +492,11 @@ mod tests {
         enemy_mut(&mut engine, owner).base.locks_flag_field = AiLockFlags::FREEZE;
         engine.control.frame_counter = 41;
         engine.execute_ai_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );
-        engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
+        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
         let ai = enemy_mut(&mut engine, owner);
         assert!(ai.pending_special_strike);
         assert_eq!(
@@ -523,21 +514,24 @@ mod tests {
         ai.base.non_script_unlock(AiLockFlags::FREEZE);
         let event = ai.base.stimulus_queue.remove(0);
         engine.control.frame_counter = 42;
-        engine.execute_ai_callback(&crate::sim_rng::test_context(), &assets, owner, &event);
+        engine.execute_ai_callback(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+            &event,
+        );
         let ai = enemy_mut(&mut engine, owner);
         assert!(!ai.pending_special_strike);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.next_sword_strike_frame, 62);
         engine.control.frame_counter = 62;
-        engine.begin_ai_special_strike(&sim, &assets, owner);
+        engine.begin_ai_special_strike(TickCtx::new(&sim, &assets), owner);
         engine.duty_set_state(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             AiState::Attacking,
             Substate::AttackingSwordfightParade,
         );
-        engine.reconcile_ai_special_strike(&sim, &assets, owner, false);
+        engine.reconcile_ai_special_strike(TickCtx::new(&sim, &assets), owner, false);
         let ai = enemy(&engine, owner);
         assert!(!ai.pending_special_strike);
         assert_eq!(
@@ -551,8 +545,7 @@ mod tests {
         let (mut engine, assets, ids) = fixture(2);
         let (owner, target) = (ids[0], ids[1]);
         engine.execute_ai_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::with_human(StimulusType::EventEnterSwordfight, target.index()),
         );
@@ -589,8 +582,7 @@ mod tests {
                 ai.will_be_attentive = true;
                 ai.forced_attentive = forced;
                 engine.execute_ai_callback(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(stimulus),
                 );
@@ -600,8 +592,7 @@ mod tests {
                 assert_eq!(ai.forced_attentive, forced);
                 if stimulus == StimulusType::EventLoseConsciousness {
                     engine.execute_ai_callback(
-                        &crate::sim_rng::test_context(),
-                        &assets,
+                        TickCtx::new(&crate::sim_rng::test_context(), &assets),
                         owner,
                         &Stimulus::new(StimulusType::EventFitAgain),
                     );
@@ -628,8 +619,7 @@ mod tests {
         ai.base.current_state = AiState::Wondering;
         ai.base.current_substate = Substate::WonderingWatchingForMoreMoney;
         engine.execute_ai_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );
@@ -665,8 +655,7 @@ mod tests {
     }
     fn duty(engine: &mut EngineInner, assets: &LevelAssets, owner: EntityId) {
         engine.execute_ai_return_to_duty(
-            &crate::sim_rng::test_context(),
-            assets,
+            TickCtx::new(&crate::sim_rng::test_context(), assets),
             owner,
             DutyFlags::empty(),
         );
@@ -811,8 +800,7 @@ mod tests {
             .unwrap()
             .eye_status = crate::element::EyeStatus::Closed;
         engine.finish_live_enemy_state(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             AiState::Default,
             Substate::DefaultInMacro,
@@ -838,8 +826,7 @@ mod tests {
         let owner = ids[0];
         engine.execute_ai_set_alert_status(&assets, owner, AlertLevel::Red, AlertFlags::empty());
         engine.duty_set_state(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             AiState::Wondering,
             Substate::WonderingUnderNet,
@@ -932,8 +919,7 @@ mod tests {
                     .action_state = crate::element::ActionState::HoldingShield;
                 enemy_mut(&mut engine, bearer).base.launch_timer(0, 0);
                 engine.execute_ai_callback(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     bearer,
                     &Stimulus::new(StimulusType::EventTimer),
                 );
@@ -950,86 +936,79 @@ use super::*;
 use crate::ai::{
     AiState, AlertFlags, AlertLevel, DutyFlags, GotoFlags, Position, Substate, WillStopCaller,
 };
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(in crate::engine) fn duty_set_state(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         state: AiState,
         substate: Substate,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_set_state(state, substate)
+        AiOwnerCtx::new(self, tcx, owner).duty_set_state(state, substate)
     }
 
     pub(in crate::engine) fn duty_face_direction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         direction: u16,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_face_direction(direction)
+        AiOwnerCtx::new(self, tcx, owner).duty_face_direction(direction)
     }
 
     pub(in crate::engine) fn duty_face_position_at_elevation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
         elevation: f32,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner)
-            .duty_face_position_at_elevation(position, elevation)
+        AiOwnerCtx::new(self, tcx, owner).duty_face_position_at_elevation(position, elevation)
     }
 
     pub(in crate::engine) fn duty_go_to(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         destination: Position,
         flags: GotoFlags,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_go_to(destination, flags)
+        AiOwnerCtx::new(self, tcx, owner).duty_go_to(destination, flags)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn duty_go_to_speed(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         destination: Position,
         flags: GotoFlags,
         speed: f32,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_go_to_speed(destination, flags, speed)
+        AiOwnerCtx::new(self, tcx, owner).duty_go_to_speed(destination, flags, speed)
     }
 
     pub(in crate::engine) fn duty_go_near(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         destination: Position,
         distance: i32,
         flags: GotoFlags,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_go_near(destination, distance, flags)
+        AiOwnerCtx::new(self, tcx, owner).duty_go_near(destination, distance, flags)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_common_ai_duty(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         flags: DutyFlags,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_common_ai_duty(flags)
+        AiOwnerCtx::new(self, tcx, owner).execute_common_ai_duty(flags)
     }
 }
 
@@ -1082,8 +1061,7 @@ impl AiOwnerCtx<'_> {
         };
         if notify {
             self.engine.call_live_ai_state_change_filter(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 state,
                 source,
@@ -1091,8 +1069,7 @@ impl AiOwnerCtx<'_> {
         }
         if let Some(forced_attentive) = forced_attentive {
             self.engine.finish_live_enemy_state(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 state,
                 substate,
@@ -1133,8 +1110,7 @@ impl AiOwnerCtx<'_> {
                 .already_turned = true;
         } else {
             self.engine.launch_live_ai_turn(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 direction as i16,
                 false,
@@ -1202,7 +1178,8 @@ impl AiOwnerCtx<'_> {
         let mut sequence = Sequence::new();
         sequence.append_element(turn);
         sequence.append_element(point);
-        self.engine.launch_sequence(self.sim, self.assets, sequence);
+        self.engine
+            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
     }
 
     pub(in crate::engine) fn duty_go_to(&mut self, destination: Position, flags: GotoFlags) {
@@ -1321,8 +1298,13 @@ impl AiOwnerCtx<'_> {
         ) {
             return;
         }
-        self.engine
-            .launch_ai_move(self.sim, self.assets, self.owner, destination, flags, speed);
+        self.engine.launch_ai_move(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            destination,
+            flags,
+            speed,
+        );
     }
 
     pub(in crate::engine) fn duty_go_near(
@@ -1530,7 +1512,9 @@ impl AiOwnerCtx<'_> {
             && (here.x - initial.x).abs().max((here.y - initial.y).abs()) < 3.0
         {
             self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-            let bored = self.engine.ai_bored_time(self.sim, self.assets, self.owner);
+            let bored = self
+                .engine
+                .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
             let frame = self.engine.control.frame_counter;
             let ai = self.engine.ai_mut(self.owner, "duty post timer");
             ai.launch_timer(bored as u32, frame);

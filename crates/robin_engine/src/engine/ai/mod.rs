@@ -73,6 +73,7 @@ mod swordfight_candidates;
 mod swordfight_execution;
 mod wondering_execution;
 mod wondering_remaining;
+use crate::engine::TickCtx;
 #[cfg(test)]
 pub(crate) use detection::capture_heard_callbacks;
 pub(crate) use detection::debug_detectable_mutation_load_snapshot;
@@ -681,8 +682,7 @@ mod panic_boundary_tests {
         let pc_id = engine.add_test_entity(enemy_ai_hero());
 
         engine.duty_set_state(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             pc_id,
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,
@@ -722,8 +722,7 @@ mod panic_boundary_tests {
             .push(crate::profiles::HtHWeaponProfile::default());
 
         engine.execute_ai_panic(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             pc_id,
             None,
             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -776,8 +775,7 @@ mod panic_boundary_tests {
                     .set_direction_instantly(12);
                 let (_, draws) = crate::sim_rng::with_draw_trace(|| {
                     engine.execute_ai_panic(
-                        &crate::sim_rng::test_context(),
-                        &assets,
+                        TickCtx::new(&crate::sim_rng::test_context(), &assets),
                         owner,
                         center,
                         4,
@@ -831,7 +829,7 @@ mod panic_boundary_tests {
             .soldiers
             .push(crate::profiles::SoldierProfile::default());
 
-        engine.tick_npc_stuck_on_ladder_for_npc(&sim, pc_id, &assets);
+        engine.tick_npc_stuck_on_ladder_for_npc(TickCtx::new(&sim, &assets), pc_id);
 
         assert_eq!(
             engine
@@ -864,8 +862,7 @@ mod panic_boundary_tests {
             .push(crate::profiles::HtHWeaponProfile::default());
 
         engine.execute_ai_panic(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             npc_id,
             None,
             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -895,8 +892,7 @@ mod panic_boundary_tests {
         }
 
         engine.execute_ai_panic(
-            &sim,
-            &LevelAssets::default(),
+            TickCtx::new(&sim, &LevelAssets::default()),
             npc_id,
             None,
             8,
@@ -927,8 +923,7 @@ mod panic_boundary_tests {
 
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             engine.execute_ai_panic(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 npc_id,
                 Some(crate::ai::Position::default()),
                 crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -1887,26 +1882,21 @@ pub(super) fn extract_exact_forecast_input(
 }
 
 impl EngineInner {
-    pub(in crate::engine) fn ai_bored_time(
-        &self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> u16 {
+    pub(in crate::engine) fn ai_bored_time(&self, tcx: TickCtx<'_>, owner: EntityId) -> u16 {
         let entity = self.expect_entity(owner, "bored timer owner");
         let (rank, pride) = entity
             .enemy_ai()
             .map(|ai| {
                 (
-                    ai.profile(&assets.profile_manager).rank,
-                    ai.profile(&assets.profile_manager).pride,
+                    ai.profile(&tcx.assets.profile_manager).rank,
+                    ai.profile(&tcx.assets.profile_manager).pride,
                 )
             })
             .unwrap_or((crate::profiles::ProfileRank::None, 0));
         entity
             .ai_controller()
             .expect("bored timer requires AI")
-            .get_bored_time_for(sim, self.control.frame_counter, rank, pride)
+            .get_bored_time_for(tcx.sim, self.control.frame_counter, rank, pride)
     }
 }
 
@@ -2545,12 +2535,7 @@ impl EngineInner {
     /// `send_before_door_to_fight` per occupant — is implemented as
     /// [`EngineInner::init_battle_before_door`] and called below.
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
-    pub(crate) fn dispatch_enemy_in_house_alert(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        source: EntityId,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn dispatch_enemy_in_house_alert(&mut self, tcx: TickCtx<'_>, source: EntityId) {
         // Find the source NPC's building sector.
         let source_sector = {
             let Some(entity) = self.entities().get(source) else {
@@ -2676,7 +2661,7 @@ impl EngineInner {
         // Every live civilian panics.
         let panic_runs = crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8;
         for civ_id in civilian_ids {
-            self.process_building_civilian_panic(sim, assets, civ_id, panic_runs);
+            self.process_building_civilian_panic(tcx, civ_id, panic_runs);
         }
 
         // Outnumbered side flees; the stronger side pursues.
@@ -2696,7 +2681,7 @@ impl EngineInner {
             (opposing_ids, source_ids)
         };
 
-        self.init_battle_before_door(sim, assets, &fleeing, &pursuing);
+        self.init_battle_before_door(tcx, &fleeing, &pursuing);
 
         tracing::debug!(
             source = source.index(),
@@ -2712,14 +2697,8 @@ impl EngineInner {
     /// `civilians[i].panic(AI_STANDARD_PANIC_RUNS)` loop body in
     /// `enemy_in_house_alert`.
     #[tracing::instrument(level = "trace", skip_all, fields(civ = civ_id.index(), runs))]
-    fn process_building_civilian_panic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        civ_id: EntityId,
-        runs: u8,
-    ) {
-        self.execute_ai_panic(sim, assets, civ_id, None, runs, crate::ai::AlertLevel::Red);
+    fn process_building_civilian_panic(&mut self, tcx: TickCtx<'_>, civ_id: EntityId, runs: u8) {
+        self.execute_ai_panic(tcx, civ_id, None, runs, crate::ai::AlertLevel::Red);
     }
 
     pub(in crate::engine) fn execute_ai_direction_goal(&mut self, owner: EntityId, direction: u16) {
@@ -2731,30 +2710,19 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_look_sidewards(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         direction: crate::ai::LookDirection,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_look_sidewards(direction)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_look_sidewards(direction)
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.index()))]
-    pub(crate) fn nearby_civilians_panic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source: EntityId,
-    ) {
-        self.nearby_civilians_panic_generic(sim, assets, source);
+    pub(crate) fn nearby_civilians_panic(&mut self, tcx: TickCtx<'_>, source: EntityId) {
+        self.nearby_civilians_panic_generic(tcx, source);
     }
 
-    fn nearby_civilians_panic_generic(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        source: EntityId,
-    ) {
+    fn nearby_civilians_panic_generic(&mut self, tcx: TickCtx<'_>, source: EntityId) {
         let panic_center = self.live_ai_position(source);
         let box_center = self
             .expect_entity(source, "civilian panic source")
@@ -2805,7 +2773,7 @@ impl EngineInner {
                 continue;
             }
             if !crate::sight_obstacle::is_reachable_3d(
-                self.sight_obstacles(assets),
+                self.sight_obstacles(tcx.assets),
                 [eye.x, eye.y, eye.z],
                 [detection.x, detection.y, detection.z],
                 crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
@@ -2813,13 +2781,12 @@ impl EngineInner {
                 continue;
             }
             self.dispatch_think_with_drain(
-                sim,
+                tcx,
                 npc_id,
                 &crate::ai::Stimulus::with_position(
                     crate::ai::StimulusType::EventPanic,
                     panic_center,
                 ),
-                assets,
             );
         }
     }
@@ -2837,12 +2804,7 @@ impl EngineInner {
     ///     go_to(current_waypoint_position, flags);
     /// }
     /// ```
-    pub(crate) fn relaunch_path_at_new_speed(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        npc_id: EntityId,
-    ) {
+    pub(crate) fn relaunch_path_at_new_speed(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         let frame = self.control.frame_counter;
         let creation_order = self.world.original_creation_order(npc_id);
         let ai = self.ai_mut(npc_id, "patrol speed owner");
@@ -2855,8 +2817,8 @@ impl EngineInner {
             return;
         }
         let will_stop = ai.will_stop_at_next_waypoint_at(
-            sim,
-            &assets.navigation.hiking_paths,
+            tcx.sim,
+            &tcx.assets.navigation.hiking_paths,
             frame,
             Some(creation_order),
             crate::ai::WillStopCaller::SetPathWalkingFlags,
@@ -2866,12 +2828,12 @@ impl EngineInner {
             .as_ref()
             .expect("patrol speed change requires initialized path");
         let waypoint = path
-            .current_waypoint(&assets.navigation.hiking_paths)
+            .current_waypoint(&tcx.assets.navigation.hiking_paths)
             .expect("patrol speed change requires current waypoint");
         let destination = crate::ai::Position {
             x: waypoint.x as f32,
             y: waypoint.y as f32,
-            sector: assets.navigation.hiking_waypoint_sector(
+            sector: tcx.assets.navigation.hiking_waypoint_sector(
                 usize::from(path.hiking_path_index),
                 usize::from(path.current_waypoint_index),
                 waypoint.sector,
@@ -2882,15 +2844,14 @@ impl EngineInner {
         if !will_stop {
             flags |= crate::ai::GotoFlags::DONT_STOP;
         }
-        self.duty_go_to(sim, assets, npc_id, destination, flags);
+        self.duty_go_to(tcx, npc_id, destination, flags);
     }
     /// Complete a panic request against live actor and door state.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
 
     pub(in crate::engine) fn execute_ai_panic(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
         center: Option<crate::ai::Position>,
         runs: u8,
@@ -2928,8 +2889,7 @@ impl EngineInner {
         if let Some(door) = door {
             if is_civilian {
                 self.execute_ai_speech(
-                    sim,
-                    assets,
+                    tcx,
                     npc_id,
                     crate::ai::AiSpeechAttempt {
                         remark: crate::ai::Remark::CivPanic,
@@ -2938,19 +2898,23 @@ impl EngineInner {
                 );
             }
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingRunToDoor,
             );
-            self.execute_ai_set_alert_status(assets, npc_id, alert, crate::ai::AlertFlags::empty());
+            self.execute_ai_set_alert_status(
+                tcx.assets,
+                npc_id,
+                alert,
+                crate::ai::AlertFlags::empty(),
+            );
             {
                 let ai = self.ai_mut(npc_id, "panic door");
                 ai.lasting_panic_runs = 0;
             }
             let position = self.panic_door_position(door);
-            self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
+            self.duty_go_to(tcx, npc_id, position, crate::ai::GotoFlags::RUN);
             let ai = self.ai_mut(npc_id, "panic route result");
             if !ai.couldnt_reachpoint {
                 return;
@@ -2962,7 +2926,7 @@ impl EngineInner {
                     .expect("directed panic retry has an accessible building door");
                 self.ai_mut(npc_id, "panic retry direction").directed_panic = false;
                 let position = self.panic_door_position(retry);
-                self.duty_go_to(sim, assets, npc_id, position, crate::ai::GotoFlags::RUN);
+                self.duty_go_to(tcx, npc_id, position, crate::ai::GotoFlags::RUN);
                 let ai = self.ai_mut(npc_id, "panic retry result");
                 if !ai.couldnt_reachpoint {
                     return;
@@ -2971,8 +2935,7 @@ impl EngineInner {
             }
         }
         self.begin_panic_no_door_branch(
-            sim,
-            assets,
+            tcx,
             npc_id,
             center,
             runs,
@@ -3146,8 +3109,7 @@ impl EngineInner {
     /// error.
     fn begin_panic_no_door_branch(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
         center: Option<crate::ai::Position>,
         runs: u8,
@@ -3180,15 +3142,13 @@ impl EngineInner {
         if is_new_panic {
             // New panic — full side-effect set.
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 crate::ai::AiState::Fleeing,
                 crate::ai::Substate::FleeingPanic,
             );
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 crate::ai::AiSpeechAttempt {
                     remark: if is_civilian {
@@ -3199,7 +3159,12 @@ impl EngineInner {
                     flags: 0,
                 },
             );
-            self.execute_ai_set_alert_status(assets, npc_id, alert, crate::ai::AlertFlags::empty());
+            self.execute_ai_set_alert_status(
+                tcx.assets,
+                npc_id,
+                alert,
+                crate::ai::AlertFlags::empty(),
+            );
             {
                 let ai = self.ai_mut(npc_id, "panic owner after speech");
                 ai.lasting_panic_runs = runs.wrapping_add(1);
@@ -3213,8 +3178,7 @@ impl EngineInner {
             // Think (and its two direction/distance RNG draws) before Panic
             // returns to its caller.
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventReachPoint),
             );
@@ -3279,21 +3243,15 @@ impl EngineInner {
 
     /// Close typed decision-tick completion after area seeking/panic and their recursively
     /// produced owner work have stabilized.
-    pub(super) fn end_script_ai_native_think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        npc_id: EntityId,
-    ) {
-        self.execute_ai_end_think(sim, assets, npc_id);
+    pub(super) fn end_script_ai_native_think(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
+        self.execute_ai_end_think(tcx, npc_id);
     }
 
     /// Execute script-driven area search before the native call returns.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(in crate::engine) fn execute_ai_script_seek_area(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
         center: crate::ai::Position,
         radius: u16,
@@ -3309,8 +3267,7 @@ impl EngineInner {
             Self::trace_seek_area_script_caller(npc_id, frame, creation_order);
         }
         self.execute_ai_seek_area(
-            sim,
-            assets,
+            tcx,
             npc_id,
             center,
             radius,
@@ -3357,6 +3314,7 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
             ));
         }
-        self.engine.launch_sequence(self.sim, self.assets, sequence);
+        self.engine
+            .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
     }
 }

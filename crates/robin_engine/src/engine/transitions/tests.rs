@@ -1,6 +1,7 @@
 use super::*;
 use crate::element::{Camp, Entity};
 use crate::element_kinds::{ActionState as AS, Posture as P};
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 use crate::sequence::{SequenceElement, SequencePriority};
 
@@ -68,7 +69,13 @@ fn generate_transition(
 ) -> bool {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
-    engine.generate_transition(&sim, &assets, &mut Vec::new(), owner, seq, idx)
+    engine.generate_transition(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        seq,
+        idx,
+    )
 }
 
 #[test]
@@ -80,11 +87,23 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
+        engine.try_generate_transition(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            seq_id,
+            elem_idx
+        ),
         Ok(false)
     );
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx + 1),
+        engine.try_generate_transition(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            seq_id,
+            elem_idx + 1
+        ),
         Err(TransitionError::MissingElement {
             seq_id,
             elem_idx: elem_idx + 1
@@ -97,7 +116,13 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
         .unwrap()
         .owner = None;
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
+        engine.try_generate_transition(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            seq_id,
+            elem_idx
+        ),
         Err(TransitionError::OwnerMismatch {
             expected: owner,
             actual: None
@@ -105,7 +130,13 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
     );
     engine.remove_entity(owner);
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq_id, elem_idx),
+        engine.try_generate_transition(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            seq_id,
+            elem_idx
+        ),
         Err(TransitionError::MissingOwner(owner))
     );
 }
@@ -325,7 +356,13 @@ fn sword_exit_transition_synchronously_quits_the_fight() {
     }
     let sim = crate::sim_rng::test_context();
     assert_eq!(
-        engine.try_generate_transition(&sim, &assets, &mut Vec::new(), owner, seq, idx),
+        engine.try_generate_transition(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            seq,
+            idx
+        ),
         Ok(true)
     );
 
@@ -462,8 +499,7 @@ fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
 
     let ok = dispatch_make_final_action_transition(
         &mut engine,
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         seq,
         idx,
@@ -645,8 +681,7 @@ fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
     assert!(enter.is_empty());
     assert!(dispatch_make_posture_transition(
         &mut engine,
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         seq,
         idx,
         owner,
@@ -689,8 +724,7 @@ fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
     assert_eq!(change, CP::MUST_BE_UPRIGHT);
     assert!(dispatch_make_posture_transition(
         &mut engine,
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         seq,
         idx,
         owner,
@@ -982,11 +1016,10 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     // arbitrates, so drive it instead of manually staging states.
     let mut display = crate::engine::HostDisplayState::default();
     let enter = engine.launch_element(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         SequenceElement::new(1, Command::EnterAttentiveMode, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
     assert_eq!(
         engine
             .orders
@@ -1001,11 +1034,10 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
         enemy.will_be_attentive = false;
     }
     let leave = engine.launch_element(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         SequenceElement::new(1, Command::LeaveAttentiveMode, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let leave_element = engine
         .orders
@@ -1025,14 +1057,13 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
         enemy.attentive = true;
     }
     engine.element_terminated(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         enter,
         0,
     );
 
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         orders_for(&engine, leave, 0),
@@ -1089,10 +1120,16 @@ fn postponed_sword_entry_rebuilds_exit_from_live_moving_state() {
     // The transition-only fixture starts graph accounting without admitting
     // work. Resume this postponed instruction through the live manager FIFO.
     engine
-        .register_sequence_element(&sim, &assets, &mut Vec::new(), sequence, index, true)
+        .register_sequence_element(
+            TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            sequence,
+            index,
+            true,
+        )
         .unwrap();
     let mut display = crate::engine::HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         orders_for(&engine, sequence, index),
@@ -1166,8 +1203,7 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
     );
     assert_eq!(result, crate::abilities::BeginResult::Started);
     engine.element_in_progress(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         seq,
         idx,
@@ -1218,7 +1254,7 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
     );
 
     for _ in 0..16 {
-        engine.tick_actor_animation_for(&sim, &assets, owner);
+        engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
         if engine
             .get_entity(owner)
             .expect("purse thrower remains live")

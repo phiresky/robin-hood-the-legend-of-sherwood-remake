@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn set_actor_location_honolulu_finishes_before_same_callback_unlock() {
@@ -7,8 +8,7 @@ fn set_actor_location_honolulu_finishes_before_same_callback_unlock() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerHonolulu",
             &[],
@@ -48,8 +48,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetActorLocation",
                 &[handle, sector_location]
             )
@@ -67,8 +66,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetActorLocation",
                 &[handle, point_location]
             )
@@ -95,8 +93,7 @@ fn set_actor_location_preserves_original_partial_order_and_bool_contract() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetActorLocation",
                 &[handle, point_location]
             )
@@ -137,8 +134,7 @@ fn set_actor_location_preserves_authored_sparse_sector_identity() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetActorLocation",
                 &[handle, point_location]
             )
@@ -159,8 +155,7 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
 
     let life = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerLife",
             &[],
@@ -172,8 +167,7 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
 
     let concussion = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerConcussion",
             &[],
@@ -198,8 +192,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
         assert_eq!(
             engine
                 .call_external_native(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     "SetPersistentProperty",
                     &[handle, 3, amount],
                 )
@@ -224,8 +217,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetPersistentProperty",
                 &[handle, 2, 65_535]
             )
@@ -269,8 +261,7 @@ fn scripted_invulnerable_life_setter_forces_literal_one_hundred() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetPersistentProperty",
                 &[handle, 2, 0]
             )
@@ -332,8 +323,7 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
     // concussion threshold (CONCUSSION_MAX itself would wrap to 44).
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "SetPersistentProperty",
             &[persistent_handle, 3, 100],
         )
@@ -342,8 +332,7 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
 
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "SetActorPosture",
             &[posture_handle, 17],
         )
@@ -358,8 +347,7 @@ fn posture_wait_uses_real_instruction_path_before_callback_resumes() {
 
     let posture = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerPosture",
             &[],
@@ -389,8 +377,7 @@ fn anonymous_archer_accepts_a_non_pc_human_and_adds_hidden_titbit_inline() {
     assert_eq!(
         engine
             .call_external_native(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 "SetActorPosture",
                 &[handle, 100]
             )
@@ -418,8 +405,7 @@ fn upright_from_carrying_corpse_rejects_a_non_pc_human() {
         .set_posture(Posture::CarryingCorpse);
 
     let _ = engine.call_external_native(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         "SetActorPosture",
         &[handle, 0],
     );
@@ -432,8 +418,7 @@ fn action_state_set_get_resumes_after_real_wait_instruction() {
 
     let state = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerActionState",
             &[],
@@ -468,8 +453,7 @@ fn recorded_timer_is_registered_before_thanx_returns() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerTimer",
             &[],
@@ -517,34 +501,48 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     // MSG_UNLOCK_USER only adds the saved selection. With no preceding lock,
     // it must leave the live selection untouched.
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Start", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Start",
+            &[],
+        )
         .unwrap();
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "RecordUnLockUser",
             &[],
         )
         .unwrap();
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Thanx", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Thanx",
+            &[],
+        )
         .unwrap();
     assert_eq!(engine.players.seats[0].selection, vec![pc_id]);
 
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Start", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Start",
+            &[],
+        )
         .unwrap();
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "RecordLockUser",
             &[],
         )
         .unwrap();
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Thanx", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Thanx",
+            &[],
+        )
         .unwrap();
     assert!(engine.players.user_locked);
     assert!(engine.players.seats[0].selection.is_empty());
@@ -554,18 +552,25 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     );
 
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Start", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Start",
+            &[],
+        )
         .unwrap();
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "RecordUnLockUser",
             &[],
         )
         .unwrap();
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Thanx", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Thanx",
+            &[],
+        )
         .unwrap();
     assert!(!engine.players.user_locked);
     assert_eq!(engine.players.seats[0].selection, vec![pc_id]);
@@ -574,18 +579,25 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     // The original saved list is not consumed; repeated Unlock remains an
     // additive idempotent selection restore.
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Start", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Start",
+            &[],
+        )
         .unwrap();
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "RecordUnLockUser",
             &[],
         )
         .unwrap();
     engine
-        .call_external_native(&crate::sim_rng::test_context(), &assets, "Thanx", &[])
+        .call_external_native(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            "Thanx",
+            &[],
+        )
         .unwrap();
     assert_eq!(engine.players.seats[0].selection, vec![pc_id]);
     assert_eq!(engine.players.selection_before_user_lock, vec![pc_id]);

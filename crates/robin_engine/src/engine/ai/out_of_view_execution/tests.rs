@@ -1,6 +1,7 @@
 use super::*;
 use crate::coordinates::{GroundPoint, WorldPoint3D};
 use crate::element::{Camp, Detectable, DetectableType};
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::make_test_ai_soldier;
 
 fn fixture() -> (EngineInner, LevelAssets, [EntityId; 3]) {
@@ -90,8 +91,7 @@ fn out_of_view_compares_ai_primary_instead_of_actor_principal() {
     let seed = sim.seed();
     crate::sight_obstacle::begin_parity_visibility_capture();
     assert!(!engine.execute_ai_out_of_view(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         &Stimulus::with_human(StimulusType::EventOutOfView, lost.index())
     ));
@@ -115,8 +115,7 @@ fn out_of_view_compares_ai_primary_instead_of_actor_principal() {
 fn perpendicular_non_primary_loss_rebuilds_from_current_detectables() {
     let (mut engine, assets, [owner, primary, lost]) = fixture();
     engine.execute_ai_out_of_view(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
     );
@@ -149,8 +148,7 @@ fn removed_detectable_forecasts_the_current_stimulus_target_lazily() {
     let expected = engine.live_ai_position(lost);
     assert_ne!(expected, engine.live_ai_position(primary));
     engine.execute_ai_out_of_view(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::with_human(StimulusType::EventOutOfView, lost.index()),
     );

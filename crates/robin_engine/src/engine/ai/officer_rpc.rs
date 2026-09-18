@@ -7,14 +7,14 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::SeekFlags;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rpc(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
@@ -30,7 +30,7 @@ impl EngineInner {
             event,
             StimulusType::EventTimer | StimulusType::EventDone | StimulusType::EventSyncCharly
         ) {
-            AiOwnerCtx::new(self, sim, assets, owner).charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if matches!(
@@ -59,7 +59,7 @@ impl EngineInner {
                 | Substate::SeekingCharly
                 | Substate::SeekingCharlyWatching
         ) {
-            AiOwnerCtx::new(self, sim, assets, owner).charly_event(substate, stimulus);
+            AiOwnerCtx::new(self, tcx, owner).charly_event(substate, stimulus);
             return Some(false);
         }
         if self.observation_ai(owner).base.current_substate == Substate::SeekingCharlyGoToOfficer
@@ -68,7 +68,7 @@ impl EngineInner {
                 StimulusType::EventTimer | StimulusType::EventReachPoint
             )
         {
-            AiOwnerCtx::new(self, sim, assets, owner).report_back(event);
+            AiOwnerCtx::new(self, tcx, owner).report_back(event);
             return Some(false);
         }
         if !matches!(
@@ -86,13 +86,14 @@ impl EngineInner {
             panic!("officer call {event:?} requires a human sender");
         };
         let target = self.expect_human_id_for_ai_handle(target.get(), "officer call sender");
-        Some(AiOwnerCtx::new(self, sim, assets, owner).rpc_event(event, target))
+        Some(AiOwnerCtx::new(self, tcx, owner).rpc_event(event, target))
     }
 }
 
 impl AiOwnerCtx<'_> {
     fn halt(&mut self) {
-        self.engine.halt_actor(self.sim, self.assets, self.owner);
+        self.engine
+            .halt_actor(TickCtx::new(self.sim, self.assets), self.owner);
     }
     fn face(&mut self, target: EntityId) {
         self.observation_face_entity(target, false);
@@ -161,8 +162,7 @@ impl AiOwnerCtx<'_> {
                         self.enemy_mut().base.antagonist =
                             Some(AiEntityHandle::new(target.index()));
                         if self.engine.execute_ai_callback(
-                            self.sim,
-                            self.assets,
+                            TickCtx::new(self.sim, self.assets),
                             target,
                             &Stimulus::with_human(CallAlert, self.owner.index()),
                         ) {
@@ -497,8 +497,7 @@ impl AiOwnerCtx<'_> {
                     );
                     let target = self.target();
                     if self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         friend,
                         &Stimulus::with_human(CallGoToOfficer, target.index()),
                     ) {
@@ -545,8 +544,7 @@ impl AiOwnerCtx<'_> {
             }
             (SeekingCharlyGoToOfficerSeen, EventReachPoint) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.target(),
                     &Stimulus::with_human(CallCoordinate, self.owner.index()),
                 );
@@ -559,8 +557,7 @@ impl AiOwnerCtx<'_> {
             (SeekingCharlyGetLectureByOfficer2, EventMyTalk1)
             | (SeekingOfficerLectureCharly, EventMyTalk1) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.target(),
                     &Stimulus::new(CallYourTalk1),
                 );
@@ -642,8 +639,7 @@ impl AiOwnerCtx<'_> {
             }
             (SeekingOfficerLectureCharlyPointing, EventMyTalk3) => {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.target(),
                     &Stimulus::new(CallYourTalk2),
                 );
@@ -690,8 +686,7 @@ impl AiOwnerCtx<'_> {
             self.engine.control.frame_counter,
         ) {
             if self.engine.execute_ai_callback(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 officer,
                 &Stimulus::with_human(StimulusType::CallMrOfficerIAmBack, self.owner.index()),
             ) {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::coordinates::WorldPoint3D;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::make_test_ai_soldier;
 
 fn fixture(positions: &[(f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
@@ -38,8 +39,7 @@ fn drunk_body_observer_records_the_body_before_rejecting_its_priority() {
         .expect("body is an NPC")
         .life_points = 0;
     engine.execute_ai_seen_body(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         body.index(),
     );
@@ -136,7 +136,10 @@ fn react_as_officer(body_y: f32) -> (EngineInner, EntityId, EntityId) {
     };
     target.human.unconscious = true;
     engine.seek_enemy_mut(ids[2]).base.current_substate = Substate::DefaultOnPost;
-    engine.execute_ai_body_reaction_timer(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_body_reaction_timer(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     (engine, owner, body)
 }
 
@@ -195,8 +198,7 @@ fn self_body_sighting_updates_report_and_queues_another_examination() {
     ai.current_task_priority = crate::ai_enemy::task_priority::BODY;
     ai.new_task_priority = crate::ai_enemy::task_priority::BODY;
     engine.execute_ai_seen_body(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         owner.index(),
     );

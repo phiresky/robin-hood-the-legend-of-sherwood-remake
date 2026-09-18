@@ -3,13 +3,13 @@ use crate::ai::{
     AiEntityHandle, AiState, DutyFlags, GotoFlags, Position, Remark, ReportType, SpeechFlags,
     Stimulus, StimulusInfo, StimulusType, Substate,
 };
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn begin_friendly_think(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
@@ -53,12 +53,12 @@ impl EngineInner {
             }
             _ => return true,
         };
-        self.duty_set_state(sim, assets, owner, state, substate);
+        self.duty_set_state(tcx, owner, state, substate);
         let actor = self.ai_actor_mut(owner, "civilian admission eye status");
         crate::ai_vision::set_view_status(actor, eye_status);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(
-                assets,
+                tcx.assets,
                 owner,
                 crate::ai::AlertLevel::Green,
                 crate::ai::AlertFlags::empty(),
@@ -74,12 +74,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_friendly_behavior(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_friendly_behavior(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_friendly_behavior(stimulus)
     }
 
     fn friendly_brain(&self, owner: EntityId) -> &crate::ai_friendly::FriendlyAi {
@@ -106,19 +105,13 @@ impl EngineInner {
         )
     }
 
-    fn civilian_face_human(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: EntityId,
-    ) {
+    fn civilian_face_human(&mut self, tcx: TickCtx<'_>, owner: EntityId, target: EntityId) {
         let position = self.live_ai_position(target);
         let elevation = self
             .expect_entity(target, "civilian facing human")
             .position_iface()
             .get_elevation() as i16;
-        self.duty_face_position_at_elevation(sim, assets, owner, position, f32::from(elevation));
+        self.duty_face_position_at_elevation(tcx, owner, position, f32::from(elevation));
     }
 
     fn live_child_flee_destination(
@@ -287,8 +280,7 @@ impl AiOwnerCtx<'_> {
                     panic!("civilian panic needs position");
                 };
                 self.engine.execute_ai_panic(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
                     Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -329,8 +321,7 @@ impl AiOwnerCtx<'_> {
             EventNetAway => {
                 let position = self.engine.friendly_brain(self.owner).base.seek_position;
                 self.engine.execute_ai_panic(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
                     Some(position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -377,8 +368,7 @@ impl AiOwnerCtx<'_> {
     fn civilian_panic_from_human(&mut self, target: EntityId) {
         let position = self.engine.live_ai_position(target);
         self.engine.execute_ai_panic(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             self.owner,
             Some(position),
             crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -410,8 +400,11 @@ impl AiOwnerCtx<'_> {
                 });
             }
             self.civilian_stop();
-            self.engine
-                .civilian_face_human(self.sim, self.assets, self.owner, target);
+            self.engine.civilian_face_human(
+                TickCtx::new(self.sim, self.assets),
+                self.owner,
+                target,
+            );
             self.engine
                 .civilian_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
         } else if self.engine.entity_data_in_building_sector(
@@ -425,8 +418,7 @@ impl AiOwnerCtx<'_> {
             });
 
             self.engine.execute_ai_panic(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 None,
                 crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,
@@ -627,8 +619,11 @@ impl AiOwnerCtx<'_> {
                     if !moved {
                         self.duty_set_state(AiState::Fleeing, Substate::FleeingChildChasedEnd);
                         let target = self.engine.civilian_chaser(self.owner);
-                        self.engine
-                            .civilian_face_human(self.sim, self.assets, self.owner, target);
+                        self.engine.civilian_face_human(
+                            TickCtx::new(self.sim, self.assets),
+                            self.owner,
+                            target,
+                        );
                         self.engine.civilian_timer(self.owner, 20);
                     }
                 }
@@ -663,8 +658,7 @@ mod tests {
             }
 
             assert!(!engine.begin_friendly_think(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
             ));
@@ -705,8 +699,7 @@ mod tests {
             ai.base.sorrow_level = 7;
 
             assert!(!engine.begin_friendly_think(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(event),
             ));
@@ -747,8 +740,7 @@ mod tests {
             ),
         ] {
             engine.duty_set_state(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 state,
                 substate,
@@ -768,8 +760,7 @@ mod tests {
         engine.execute_ai_delete_detectable_type(owner, Friend);
         let sim = crate::sim_rng::test_context();
         engine.duty_set_state(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             AiState::Default,
             Substate::DefaultOnPost,
@@ -868,9 +859,9 @@ mod tests {
             .start_sequence_level(sequence);
         let sim = crate::sim_rng::test_context();
         engine.select_sequence_element(owner, Some((sequence, 0)));
-        engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+        engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), sequence, 0);
 
-        engine.civilian_face_human(&sim, &assets, owner, target);
+        engine.civilian_face_human(TickCtx::new(&sim, &assets), owner, target);
 
         let turn = engine
             .orders
@@ -898,8 +889,7 @@ mod tests {
             }
             assert_eq!(
                 engine.execute_friendly_behavior(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventStop)
                 ),
@@ -926,8 +916,7 @@ mod tests {
         let position = engine.live_ai_position(body);
         assert_eq!(
             engine.execute_friendly_behavior(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::with_human(StimulusType::EventSeesBody, body.index())
             ),
@@ -958,8 +947,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         assert_eq!(
             engine.execute_friendly_behavior(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer)
             ),
@@ -975,8 +963,7 @@ mod tests {
         );
         assert_eq!(
             engine.execute_friendly_behavior(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint)
             ),
@@ -997,8 +984,7 @@ mod tests {
         stimulus.info = StimulusInfo::Object(AiEntityHandle::new(target.index()));
         assert_eq!(
             engine.execute_friendly_behavior(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &stimulus
             ),
@@ -1031,8 +1017,7 @@ mod tests {
         let (mut engine, assets, owner, _) = fixture();
         assert_eq!(
             engine.execute_friendly_behavior(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::with_human(StimulusType::CallYouJustWait, u32::MAX),
             ),
@@ -1049,8 +1034,7 @@ mod tests {
             let stimulus = Stimulus::with_position(event, position);
             assert_eq!(
                 engine.execute_friendly_behavior(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &stimulus
                 ),
@@ -1077,8 +1061,7 @@ mod tests {
             ai.fleeing_seen_enemy_counter = count;
             assert_eq!(
                 engine.execute_friendly_behavior(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::with_human(StimulusType::EventView, target.index())
                 ),
@@ -1108,8 +1091,7 @@ mod tests {
         ai.base.launch_timer(0, 100);
         let sim = crate::sim_rng::test_context();
         engine.execute_ai_callback(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -1123,8 +1105,7 @@ mod tests {
         ai.base.current_substate = Substate::FleeingRunToDoor;
         assert_eq!(
             engine.execute_friendly_behavior(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::with_human(StimulusType::EventView, target.index())
             ),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::test_support::asm::{STARTUP_CLASS, empty_mission_script};
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
@@ -122,9 +123,9 @@ fn flight_sector_scan_uses_position_changed_by_preceding_zone_callback() {
             active: true,
         }));
     engine.attach_script_bindings(&assets);
-    engine.initialize_zone_scripts(&sim, &assets);
+    engine.initialize_zone_scripts(TickCtx::new(&sim, &assets));
 
-    engine.update_script_sectors_after_flight(&sim, &assets, owner);
+    engine.update_script_sectors_after_flight(TickCtx::new(&sim, &assets), owner);
 
     assert_eq!(
         engine
@@ -235,8 +236,7 @@ fn unlock_ai_filter_preserves_enclosing_scroll_context() {
     ai.current_state = crate::ai::AiState::Default;
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             ScriptVmKey::Global,
             "Probe",
             &[],
@@ -332,8 +332,7 @@ fn lock_ai_completion_preserves_receiver_and_scroll_for_nested_message() {
     sequence.append_element(message);
     engine
         .launch_sequence_inline(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut active,
             sequence,
         )
@@ -484,8 +483,7 @@ fn scripted_noise_finishes_live_listeners_before_resuming_the_same_actor_vm() {
     let owner = ScriptHandleCodec::actor_handle(listeners[0]);
     let result = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             ScriptVmKey::Actor(owner),
             "Probe",
             &[],
@@ -575,8 +573,7 @@ fn fresh_callback_driver_obeys_live_vm_depth_and_ignores_receiver_guards() {
     // fresh local Vec while the outer activation guards remain installed.
     let invoke = |engine: &mut EngineInner| {
         engine.call_script_vm(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             ScriptVmKey::Global,
             "FilterAIEvent",
             &[],
@@ -620,8 +617,7 @@ fn repeated_patch_target_skips_one_shot_vm_and_respects_config_and_locks() {
     engine.script_domains.interactables.patches.push(patch);
     let activate = |engine: &mut EngineInner| {
         engine.call_script_vm_inner(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             ScriptVmKey::Target(42),
             "ActivatedBySword",
             &[1],
@@ -713,8 +709,7 @@ fn target_callback_discovers_two_patch_bindings_and_restores_them_from_save() {
     engine.attach_script_bindings(&assets);
     let activate = |engine: &mut EngineInner| {
         engine.call_script_vm_inner(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             ScriptVmKey::Target(42),
             "ActivatedBySword",
             &[1],
@@ -911,8 +906,7 @@ fn assign_post_engine_boundary_retains_exact_return_to_duty_sector() {
         .with_arena_index(arena);
 
     engine.execute_ai_assign_post(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::ai::Position {
             x: 780.0,
@@ -992,16 +986,14 @@ fn shipped_stare_natives_leave_view_direction_and_pending_work_untouched() {
         npc.follow_target = None;
     }
     let pending = engine.launch_element(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(owner)),
     );
     let actor = crate::natives::ScriptHandleCodec::actor_handle(owner);
 
     engine
         .execute_synchronous_script_request(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             crate::interp::SynchronousScriptRequest::StareActor {
                 actor,
                 target,
@@ -1013,8 +1005,7 @@ fn shipped_stare_natives_leave_view_direction_and_pending_work_untouched() {
         .unwrap();
     engine
         .execute_synchronous_script_request(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             crate::interp::SynchronousScriptRequest::StareLocation {
                 actor,
                 target: crate::ai::Position {
@@ -1157,8 +1148,7 @@ fn customize_minimap_accepts_vip_dots_and_gates_vip_multi_to_humans() {
     let non_human_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(1);
 
     engine.apply_host_commands(
-        &sim,
-        &LevelAssets::default(),
+        TickCtx::new(&sim, &LevelAssets::default()),
         vec![crate::natives::EngineCommand::CustomizeMinimapDisplay {
             actor_handle: human_handle,
             dot_type: crate::minimap::CustomDot::VipMulti as i32,
@@ -1174,8 +1164,7 @@ fn customize_minimap_accepts_vip_dots_and_gates_vip_multi_to_humans() {
     );
 
     engine.apply_host_commands(
-        &sim,
-        &LevelAssets::default(),
+        TickCtx::new(&sim, &LevelAssets::default()),
         vec![crate::natives::EngineCommand::CustomizeMinimapDisplay {
             actor_handle: non_human_handle,
             dot_type: crate::minimap::CustomDot::VipMulti as i32,
@@ -1327,8 +1316,7 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
 
         engine.apply_host_commands(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             vec![crate::natives::EngineCommand::SetActorLocation {
                 actor_handle,
                 x: 1000.0,
@@ -1398,8 +1386,7 @@ fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
     }));
 
     engine.apply_host_commands(
-        &sim,
-        &LevelAssets::default(),
+        TickCtx::new(&sim, &LevelAssets::default()),
         vec![crate::natives::EngineCommand::DisplayPopupText { text_id: 11 }],
     );
 
@@ -1436,8 +1423,12 @@ fn external_this_actor_success_keeps_canonical_entity_ownership() {
     engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine.attach_script_bindings(&LevelAssets::new());
 
-    let result =
-        engine.call_external_native_with_this(sim, &LevelAssets::new(), "ThisActor", &[], Some(99));
+    let result = engine.call_external_native_with_this(
+        TickCtx::new(sim, &LevelAssets::new()),
+        "ThisActor",
+        &[],
+        Some(99),
+    );
 
     assert_eq!(result, Ok(99));
     assert_eq!(engine.world.entities.len(), 1);
@@ -1549,15 +1540,15 @@ fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
             engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
             engine.attach_script_bindings(&assets);
             assert_eq!(
-                engine.call_external_native(&sim, &assets, "InitGlobal", &[0, 7]),
+                engine.call_external_native(TickCtx::new(&sim, &assets), "InitGlobal", &[0, 7]),
                 Ok(0)
             );
             assert_eq!(
-                engine.call_external_native(&sim, &assets, "GetGlobal", &[1]),
+                engine.call_external_native(TickCtx::new(&sim, &assets), "GetGlobal", &[1]),
                 Ok(0)
             );
             assert_eq!(
-                engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 9]),
+                engine.call_external_native(TickCtx::new(&sim, &assets), "SetGlobal", &[15, 9]),
                 Ok(0)
             );
             assert_eq!(engine.scripts.globals.len(), 16);
@@ -1589,18 +1580,22 @@ fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
                     .attach_program(program.clone());
                 restored.attach_script_bindings(&assets);
                 assert_eq!(
-                    restored.call_external_native(&sim, &assets, "GetGlobal", &[15]),
+                    restored.call_external_native(TickCtx::new(&sim, &assets), "GetGlobal", &[15]),
                     Ok(9)
                 );
                 assert_eq!(
-                    restored.call_external_native(&sim, &assets, "SetGlobal", &[14, 13]),
+                    restored.call_external_native(
+                        TickCtx::new(&sim, &assets),
+                        "SetGlobal",
+                        &[14, 13]
+                    ),
                     Ok(0)
                 );
                 assert_eq!(restored.scripts.globals[14], 13);
             }
             let rollback = engine.clone();
             assert_eq!(
-                engine.call_external_native(&sim, &assets, "SetGlobal", &[15, 17]),
+                engine.call_external_native(TickCtx::new(&sim, &assets), "SetGlobal", &[15, 17]),
                 Ok(0)
             );
             assert_ne!(crate::replay::state_hash(&engine), before);
@@ -1669,7 +1664,11 @@ fn external_remove_all_subordinates_finishes_clear_before_returning() {
     engine.attach_script_bindings(&assets);
     let chief_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
     assert_eq!(
-        engine.call_external_native(&sim, &assets, "RemoveAllSubordinates", &[chief_handle],),
+        engine.call_external_native(
+            TickCtx::new(&sim, &assets),
+            "RemoveAllSubordinates",
+            &[chief_handle],
+        ),
         Ok(0)
     );
 
@@ -1714,8 +1713,9 @@ fn native_mutation_writes_the_canonical_script_domains_in_place() {
     let canonical_entities = std::ptr::from_ref(&engine.world.entities);
     let door = crate::natives::ScriptHandleCodec::door_handle_from_index(0);
 
-    let result =
-        engine.with_script_session(sim, &assets, |script, script_domains, capabilities| {
+    let result = engine.with_script_session(
+        TickCtx::new(sim, &assets),
+        |script, script_domains, capabilities| {
             assert_eq!(
                 std::ptr::from_mut(script_domains),
                 canonical_domains,
@@ -1737,7 +1737,8 @@ fn native_mutation_writes_the_canonical_script_domains_in_place() {
             );
             HostFunctions::call(&mut context, NativeFn::SetDoorLockedPC as u32, &mut stack)
                 .expect_return("SetDoorLockedPC is synchronous")
-        });
+        },
+    );
 
     assert_eq!(result, Some(0));
     assert!(!engine.script_domains.interactables.doors[0].locked_pc);
@@ -1769,27 +1770,30 @@ fn native_ai_mutation_writes_engine_inner_directly() {
     engine.attach_script_bindings(&assets);
     let canonical_ai_global = std::ptr::addr_of_mut!(engine.ai.global);
 
-    let result = engine.with_script_session(sim, &assets, |script, script_domains, queries| {
-        let mut context = crate::natives::NativeContext::with_bindings(
-            &mut script.state,
-            script_domains,
-            &script.bindings,
-            queries,
-        );
-        assert_eq!(
-            std::ptr::from_mut(context.ai_global_mut()),
-            canonical_ai_global,
-            "the native capability must borrow EngineInner's AI allocation"
-        );
-        let mut stack = NativeStack::default();
-        stack.push_i32(8);
-        HostFunctions::call(
-            &mut context,
-            NativeFn::DeleteRepulsivePoint as u32,
-            &mut stack,
-        )
-        .expect_return("DeleteRepulsivePoint is synchronous")
-    });
+    let result = engine.with_script_session(
+        TickCtx::new(sim, &assets),
+        |script, script_domains, queries| {
+            let mut context = crate::natives::NativeContext::with_bindings(
+                &mut script.state,
+                script_domains,
+                &script.bindings,
+                queries,
+            );
+            assert_eq!(
+                std::ptr::from_mut(context.ai_global_mut()),
+                canonical_ai_global,
+                "the native capability must borrow EngineInner's AI allocation"
+            );
+            let mut stack = NativeStack::default();
+            stack.push_i32(8);
+            HostFunctions::call(
+                &mut context,
+                NativeFn::DeleteRepulsivePoint as u32,
+                &mut stack,
+            )
+            .expect_return("DeleteRepulsivePoint is synchronous")
+        },
+    );
 
     assert_eq!(result, Some(0));
     assert!(engine.ai.global.repulsive_points.is_empty());
@@ -1804,8 +1808,12 @@ fn external_native_rejects_a_detached_live_script() {
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
 
-    let _ =
-        engine.call_external_native_with_this(sim, &LevelAssets::new(), "ThisActor", &[], Some(99));
+    let _ = engine.call_external_native_with_this(
+        TickCtx::new(sim, &LevelAssets::new()),
+        "ThisActor",
+        &[],
+        Some(99),
+    );
 }
 
 #[test]
@@ -1821,10 +1829,11 @@ fn script_session_normal_return_restores_state_and_hash() {
     let hash_before = robin_util::state_hash::compute(&engine);
     let canonical_entities = std::ptr::from_ref(&engine.world.entities);
 
-    let result = engine.with_script_session(sim, &assets, |_script, _, capabilities| {
-        assert_eq!(capabilities.entities_owner_ptr(), canonical_entities);
-        73
-    });
+    let result =
+        engine.with_script_session(TickCtx::new(sim, &assets), |_script, _, capabilities| {
+            assert_eq!(capabilities.entities_owner_ptr(), canonical_entities);
+            73
+        });
 
     assert_eq!(result, Some(73));
     assert_eq!(engine.world.entities.len(), 1);
@@ -1845,7 +1854,7 @@ fn script_callback_error_keeps_canonical_owners_in_place() {
     engine.attach_script_bindings(&assets);
 
     let result: Result<(), &'static str> = engine
-        .with_script_session(sim, &assets, |_script, _, _capabilities| {
+        .with_script_session(TickCtx::new(sim, &assets), |_script, _, _capabilities| {
             Err("simulated script error")
         })
         .unwrap();
@@ -1891,19 +1900,22 @@ fn script_callback_unwind_keeps_canonical_owners_in_place() {
     engine.attach_script_bindings(&assets);
     let _verify = VerifyRestoredOnUnwind(&engine);
 
-    let _ = engine.with_script_session(sim, &assets, |script, script_domains, capabilities| {
-        script_domains.mission_ui.outline_display = true;
-        {
-            let mut context = crate::natives::NativeContext::with_bindings(
-                &mut script.state,
-                script_domains,
-                &script.bindings,
-                capabilities,
-            );
-            context.ai_global_mut().golden_eye_mode = true;
-        }
-        panic!("simulated script panic");
-    });
+    let _ = engine.with_script_session(
+        TickCtx::new(sim, &assets),
+        |script, script_domains, capabilities| {
+            script_domains.mission_ui.outline_display = true;
+            {
+                let mut context = crate::natives::NativeContext::with_bindings(
+                    &mut script.state,
+                    script_domains,
+                    &script.bindings,
+                    capabilities,
+                );
+                context.ai_global_mut().golden_eye_mode = true;
+            }
+            panic!("simulated script panic");
+        },
+    );
 }
 
 #[test]
@@ -1915,8 +1927,7 @@ fn external_native_early_returns_without_touching_callback_state() {
     engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
 
     let result = engine.call_external_native_with_this(
-        sim,
-        &LevelAssets::new(),
+        TickCtx::new(sim, &LevelAssets::new()),
         "NotAnOriginalNative",
         &[],
         Some(99),

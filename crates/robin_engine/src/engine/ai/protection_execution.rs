@@ -6,12 +6,12 @@ mod tests;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(in crate::engine) fn launch_ai_raise_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         point: crate::coordinates::WorldPoint3D,
     ) {
@@ -28,18 +28,17 @@ impl EngineInner {
                 z: point.z,
             },
         );
-        self.launch_element(sim, assets, element);
+        self.launch_element(tcx, element);
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_shield_expected_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         event: crate::ai::StimulusType,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_shield_expected_event(event)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_shield_expected_event(event)
     }
 
     fn shield_timer(&mut self, owner: EntityId, delay: u32) {
@@ -340,12 +339,11 @@ impl EngineInner {
 
     pub(in crate::engine) fn refresh_ai_arrow_protection(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         called_from_hourglass: bool,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).refresh_ai_arrow_protection(called_from_hourglass)
+        AiOwnerCtx::new(self, tcx, owner).refresh_ai_arrow_protection(called_from_hourglass)
     }
 }
 
@@ -393,7 +391,7 @@ impl AiOwnerCtx<'_> {
             .element_data()
             .position();
         self.engine
-            .launch_ai_raise_shield(self.sim, self.assets, self.owner, point);
+            .launch_ai_raise_shield(TickCtx::new(self.sim, self.assets), self.owner, point);
     }
 
     fn execute_ai_protecting_shield_timer(&mut self) {
@@ -469,8 +467,7 @@ impl AiOwnerCtx<'_> {
             if crate::sim_rng::u32(self.sim, crate::sim_rng::RngSite::ShieldAdvance, 0..4) == 0 {
                 self.duty_set_state(AiState::Attacking, Substate::AttackingAdvancingWithShield);
                 self.engine.launch_element(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     crate::sequence::SequenceElement::new(
                         1,
                         crate::element::Command::LowerShield,
@@ -645,8 +642,11 @@ impl AiOwnerCtx<'_> {
                 .expect_entity(target, "shield danger point")
                 .element_data()
                 .position();
-            self.engine
-                .launch_ai_raise_shield(self.sim, self.assets, self.owner, point);
+            self.engine.launch_ai_raise_shield(
+                TickCtx::new(self.sim, self.assets),
+                self.owner,
+                point,
+            );
 
             let ai = self
                 .engine

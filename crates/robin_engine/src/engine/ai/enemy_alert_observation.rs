@@ -4,6 +4,7 @@ use crate::ai::{
     AiState, EmoticonType, Hint, Noise, NoiseType, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::ProfileRank;
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -31,12 +32,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn alert_face_noise_position(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         noise: &Noise,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).alert_face_noise_position(noise)
+        AiOwnerCtx::new(self, tcx, owner).alert_face_noise_position(noise)
     }
 
     fn alert_noise_is_already_investigated(&self, owner: EntityId) -> bool {
@@ -50,45 +50,41 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_ai_heard_noise(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         noise: &Noise,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_heard_noise(noise)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_heard_noise(noise)
     }
 
     #[cfg(test)]
     pub(super) fn execute_ai_look_there_reaction(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_look_there_reaction(position)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_look_there_reaction(position)
     }
 
     #[cfg(test)]
     pub(super) fn execute_ai_tower_alert_reaction(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         hint: &Hint,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_tower_alert_reaction(hint)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_tower_alert_reaction(hint)
     }
 
     #[cfg(test)]
     pub(super) fn execute_ai_combat_alert_reaction(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_combat_alert_reaction(position)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_combat_alert_reaction(position)
     }
 }
 

@@ -5,6 +5,7 @@ use crate::ai::{
 };
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
 use crate::element::Element as _;
+use crate::engine::TickCtx;
 use crate::profiles::{CivilianType, ProfileRank};
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -13,12 +14,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_wondering_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_wondering_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_wondering_event(stimulus)
     }
 
     fn wondering_timer(&mut self, owner: EntityId, duration: u32) {
@@ -38,13 +38,8 @@ impl EngineInner {
     }
 
     #[cfg(test)]
-    fn chase_live_children(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).chase_live_children()
+    fn chase_live_children(&mut self, tcx: TickCtx<'_>, owner: EntityId) -> bool {
+        AiOwnerCtx::new(self, tcx, owner).chase_live_children()
     }
 
     fn live_whistle_officer(&self, assets: &LevelAssets, owner: EntityId) -> Option<EntityId> {
@@ -226,8 +221,7 @@ impl AiOwnerCtx<'_> {
             (Substate::WonderingAppleChasingChild, EventMyTalk1) => {
                 let target = self.engine.wondering_antagonist(self.owner);
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     target,
                     &Stimulus::new(CallYourTalk1),
                 );
@@ -433,8 +427,7 @@ impl AiOwnerCtx<'_> {
                 StimulusType::EventAppleChaseNear
             };
             self.engine.execute_ai_callback(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 target,
                 &Stimulus::with_human(event, self.owner.index()),
             );
@@ -586,8 +579,7 @@ mod tests {
             }
             assert_eq!(
                 engine.execute_ai_wondering_event(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventTimer)
                 ),
@@ -620,8 +612,7 @@ mod tests {
         ] {
             assert_eq!(
                 engine.execute_ai_wondering_event(
-                    &sim,
-                    &assets,
+                    TickCtx::new(&sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventTimer)
                 ),
@@ -653,8 +644,7 @@ mod tests {
         ai.base.seek_position = remembered;
         assert_eq!(
             engine.execute_ai_wondering_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint)
             ),
@@ -684,8 +674,7 @@ mod tests {
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
             assert_eq!(
                 engine.execute_ai_wondering_event(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(StimulusType::EventTimer)
                 ),
@@ -713,8 +702,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         assert_eq!(
             engine.execute_ai_wondering_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer)
             ),
@@ -730,8 +718,7 @@ mod tests {
         assert_eq!(ai.base.when_does_timer_ring, 110);
         assert_eq!(
             engine.execute_ai_wondering_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint),
             ),
@@ -743,8 +730,7 @@ mod tests {
         );
         assert_eq!(
             engine.execute_ai_wondering_event(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
             ),
@@ -778,8 +764,7 @@ mod tests {
             ] {
                 assert_eq!(
                     engine.execute_ai_wondering_event(
-                        &crate::sim_rng::test_context(),
-                        &assets,
+                        TickCtx::new(&crate::sim_rng::test_context(), &assets),
                         owner,
                         &Stimulus::new(event)
                     ),
@@ -794,7 +779,10 @@ mod tests {
     fn apple_chase_without_visible_children_clears_previous_antagonist() {
         let (mut engine, assets, owner, target) = fixture(false);
         engine.seek_enemy_mut(owner).base.antagonist = Some(AiEntityHandle::new(target.index()));
-        assert!(!engine.chase_live_children(&crate::sim_rng::test_context(), &assets, owner));
+        assert!(!engine.chase_live_children(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner
+        ));
         assert_eq!(engine.seek_enemy(owner).base.antagonist, None);
     }
 
@@ -808,8 +796,7 @@ mod tests {
         ai.base.lasting_panic_runs = 0;
         assert_eq!(
             engine.execute_ai_wondering_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
             ),

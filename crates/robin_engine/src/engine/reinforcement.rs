@@ -18,16 +18,12 @@ use crate::element::{
     EntityId, HULK_LENGTH, HumanData, PcData,
 };
 use crate::engine::LevelAssets;
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
 
 impl EngineInner {
-    pub(crate) fn create_reinforcement(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        dead_pc: Option<EntityId>,
-    ) {
+    pub(crate) fn create_reinforcement(&mut self, tcx: TickCtx<'_>, dead_pc: Option<EntityId>) {
         // Pick a random reinforcement door.
         let door_count = self.ai.global.reinforcement_doors.len();
         if door_count == 0 {
@@ -39,7 +35,7 @@ impl EngineInner {
             "reinforcement requires an installed mission script"
         );
         let pick = crate::sim_rng::usize(
-            sim,
+            tcx.sim,
             crate::sim_rng::RngSite::ReinforcementDoor,
             0..door_count,
         );
@@ -81,9 +77,9 @@ impl EngineInner {
             return;
         };
         let Some(char_idx) = campaign.get_random_peasant_from_gang(
-            sim,
+            tcx.sim,
             preferred_profile_idx,
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
         ) else {
             tracing::info!("REINFORCEMENT: no eligible peasant in gang.");
             return;
@@ -105,7 +101,7 @@ impl EngineInner {
         // Resolve the CharacterProfile (clone what we need so we can
         // drop the campaign borrow before mutating entities).
         let (profile_filename, profile_name, kind, has_lockpick, has_climb, has_jump) = {
-            let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
+            let Some(profile) = tcx.assets.profile_manager.get_character(profile_idx) else {
                 return;
             };
             let kind = crate::character_kind::CharacterKind::from_profile(
@@ -141,7 +137,7 @@ impl EngineInner {
         // silent fallback.
         let mut sprite = crate::sprite::Sprite::default();
         if let Err(e) = sprite.load_frame_info_cached(
-            &assets.sprite_scriptor,
+            &tcx.assets.sprite_scriptor,
             crate::sprite_script::FrameKind::Character,
             &profile_filename,
             &profile_name,
@@ -154,7 +150,8 @@ impl EngineInner {
             return;
         }
 
-        let pathfinder_index = assets
+        let pathfinder_index = tcx
+            .assets
             .profile_manager
             .get_character(profile_idx)
             .expect("reinforcement character profile remains available")
@@ -173,7 +170,7 @@ impl EngineInner {
         // and then walks in via the `PASS_DOOR` element below.
         //
         let obstacle_index = self.get_projection_area_index(
-            assets,
+            tcx.assets,
             door_snap.sector_out,
             door_snap.layer_out,
             door_snap.point_out,
@@ -195,7 +192,7 @@ impl EngineInner {
             // the plane here.
             let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 Some(obs),
-                assets.environment.static_sight_obstacles.as_slice(),
+                tcx.assets.environment.static_sight_obstacles.as_slice(),
             );
             element.sprite.position_iface.set_obstacle(Some(obs), plane);
         }
@@ -265,13 +262,13 @@ impl EngineInner {
             let dx = -50.0
                 + 100.0
                     * crate::sim_rng::c_rand_unit_inclusive(
-                        sim,
+                        tcx.sim,
                         crate::sim_rng::RngSite::ReinforcementJitter,
                     );
             let dy = -50.0
                 + 100.0
                     * crate::sim_rng::c_rand_unit_inclusive(
-                        sim,
+                        tcx.sim,
                         crate::sim_rng::RngSite::ReinforcementJitter,
                     );
             let candidate = pin + MapVec::new(dx, dy);
@@ -304,7 +301,7 @@ impl EngineInner {
             seq.append_element(mv);
         }
 
-        let seq_id = self.launch_sequence(sim, assets, seq);
+        let seq_id = self.launch_sequence(tcx, seq);
         tracing::info!(
             new_pc = ?new_id,
             ?seq_id,
@@ -482,8 +479,7 @@ mod tests {
             });
 
         engine.dispatch_sim_console_command(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             &mut None,
             &crate::console::ConsoleCommand::Reinforcement,
         );
@@ -535,6 +531,6 @@ mod tests {
                 point_in: MapPoint::new(0.0, 0.0),
             });
 
-        engine.create_reinforcement(sim, &LevelAssets::new(), None);
+        engine.create_reinforcement(TickCtx::new(sim, &LevelAssets::new()), None);
     }
 }

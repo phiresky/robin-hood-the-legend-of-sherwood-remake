@@ -4,6 +4,7 @@ use crate::ai::{
     AiState, AlertLevel, DutyFlags, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{SeekFlags, task_priority};
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -12,11 +13,10 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_search_charly(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_search_charly()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_search_charly()
     }
 }
 

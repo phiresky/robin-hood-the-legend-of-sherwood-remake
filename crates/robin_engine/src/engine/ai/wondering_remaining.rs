@@ -5,6 +5,7 @@ use crate::ai::{
     AiState, DutyFlags, EmoticonType, LookDirection, MoneyFightOperation, Remark, SpeechFlags,
     Stimulus, StimulusType, Substate,
 };
+use crate::engine::TickCtx;
 
 impl EngineInner {
     fn remaining_wondering_timer(&mut self, owner: EntityId, frames: u32) {
@@ -176,8 +177,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target, "brawl conversation participant");
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         target,
                         &Stimulus::new(call),
                     )
@@ -208,8 +208,7 @@ impl AiOwnerCtx<'_> {
                             .expect_human_id_for_ai_handle(target, "brawl dismissed participant");
                         if matches!(target, EntityId::Soldier(_)) {
                             self.engine.execute_ai_callback(
-                                self.sim,
-                                self.assets,
+                                TickCtx::new(self.sim, self.assets),
                                 target,
                                 &Stimulus::new(EventReturnToDuty),
                             );
@@ -229,8 +228,7 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target.get(), "brawl cleanup antagonist");
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         target,
                         &Stimulus::new(CallCleanUpAfterBrawl),
                     );
@@ -310,8 +308,7 @@ impl AiOwnerCtx<'_> {
                         _ => CallYourTalk3,
                     };
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         target,
                         &Stimulus::new(call),
                     );
@@ -333,8 +330,7 @@ impl AiOwnerCtx<'_> {
                     .engine
                     .expect_human_id_for_ai_handle(body.get(), "brawl victim wake target");
                 self.engine.launch_element(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     crate::sequence::SequenceElement::new_interaction(
                         1,
                         crate::element::Command::WakeUp,

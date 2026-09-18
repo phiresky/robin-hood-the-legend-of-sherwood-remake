@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::for_both_creation_orders;
 
 #[test]
@@ -125,7 +126,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     engine.control.frame_counter = 0;
 
     crate::sim_rng::with_seed(0xA013_7A70, |sim| {
-        engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
+        engine.tick_patrol_coordination_for_npc(TickCtx::new(sim, &assets), chief)
     });
 
     let member_entity = engine.ent(member);
@@ -171,7 +172,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
     engine.control.frame_counter = 1;
 
     crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
-        engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
+        engine.tick_patrol_coordination_for_npc(TickCtx::new(sim, &assets), chief)
     });
 
     assert_eq!(
@@ -285,7 +286,7 @@ fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
         enemy.base.current_substate = Substate::DefaultInMacro;
         enemy.ambush_point_array_reset = false;
         enemy.ambush_point_status = vec![AmbushPointStatus::Near];
-        engine.tick_refresh_ambush_points_for_npc(&sim, npc_id, &assets);
+        engine.tick_refresh_ambush_points_for_npc(TickCtx::new(&sim, &assets), npc_id);
         let enemy = engine.enemy(npc_id);
         assert_eq!(enemy.ambush_point_array_reset, iq > 30);
         assert_eq!(
@@ -337,7 +338,7 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
         id: 0,
     }];
 
-    engine.tick_refresh_ambush_points_for_npc(sim, npc_id, &assets);
+    engine.tick_refresh_ambush_points_for_npc(TickCtx::new(sim, &assets), npc_id);
 
     let enemy = engine.enemy(npc_id);
     assert_eq!(
@@ -368,7 +369,7 @@ fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
     ai.when_does_timer_ring = u32::MAX - 5;
     ai.substate_at_last_timer_launch = ai.current_substate;
 
-    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
     let ai = engine.ai_ctrl(npc_id);
     assert!(
         !ai.timer_is_running || ai.when_does_timer_ring != u32::MAX - 5,
@@ -398,7 +399,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
         Stimulus::new(StimulusType::EventTimer),
     ];
 
-    engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), npc_id);
     let ai = engine.ai_ctrl(npc_id);
     assert!(ai.locks_flag_field.contains(AiLockFlags::BUSY));
     assert_eq!(
@@ -479,8 +480,9 @@ fn panic_generated_reachpoint_precedes_retained_panic_sibling_and_draws_twice() 
         ),
     ];
 
-    let (_, draws) =
-        with_draw_trace(|| engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets));
+    let (_, draws) = with_draw_trace(|| {
+        engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), npc_id)
+    });
 
     assert_eq!(draws, vec![RngSite::AiPanic, RngSite::AiPanic]);
     let ai = engine.ai_ctrl(npc_id);
@@ -555,9 +557,17 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
                 engine.refresh_npc_view_for_npc(receiver_id);
-                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, &assets);
+                engine.dispatch_think_with_drain(
+                    TickCtx::new(sim, &assets),
+                    receiver_id,
+                    &stimulus,
+                );
             } else {
-                engine.dispatch_think_with_drain(sim, receiver_id, &stimulus, &assets);
+                engine.dispatch_think_with_drain(
+                    TickCtx::new(sim, &assets),
+                    receiver_id,
+                    &stimulus,
+                );
                 engine.refresh_npc_view_for_npc(receiver_id);
             }
         });
@@ -628,7 +638,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     engine.set_actors_frozen(true);
 
     crate::sim_rng::with_seed(0x0A01_3F20, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets)
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
     });
 
     let npc = engine.ent(npc_id);
@@ -658,7 +668,7 @@ fn consecutive_combat_callbacks_commit_unconscious_eyes_inline() {
 
     crate::sim_rng::with_seed(0xA013_105E, |sim| {
         for stimulus in stimuli {
-            engine.execute_ai_callback(sim, &assets, npc_id, &stimulus);
+            engine.execute_ai_callback(TickCtx::new(sim, &assets), npc_id, &stimulus);
         }
     });
 
@@ -729,12 +739,17 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
 
         if natural {
             crate::sim_rng::with_seed(0x0A01_3B11, |sim| {
-                engine.tick_concussion_healing_for(sim, waker_id, &assets)
+                engine.tick_concussion_healing_for(TickCtx::new(sim, &assets), waker_id)
             });
         } else {
             crate::sim_rng::with_seed(0x0A01_3B11, |sim| {
                 assert_eq!(
-                    engine.apply_scripted_concussion(sim, &assets, waker_id, 0, false),
+                    engine.apply_scripted_concussion(
+                        TickCtx::new(sim, &assets),
+                        waker_id,
+                        0,
+                        false
+                    ),
                     ConcussionOutcome::WokeUp
                 );
                 ()
@@ -748,7 +763,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         );
 
         crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         });
 
         let snapshot = |engine: &EngineInner| {
@@ -760,7 +775,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         let first_slot = snapshot(&engine);
 
         crate::sim_rng::with_seed(0x0A01_3B13, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         });
         let next_slot = snapshot(&engine);
 
@@ -835,11 +850,11 @@ fn royalist_blip_auto_reveal_obeys_the_common_sixteen_frame_cadence() {
     // Slot 0 has Original creation order 31. Frame 2 is closed; frame 1 below
     // is open for the common modulo-16 blip cadence.
     engine.control.frame_counter = 2;
-    engine.tick_enemy_ai(sim, &assets);
+    engine.tick_enemy_ai(TickCtx::new(sim, &assets));
     assert!(engine.elem(observer_id).blipped);
 
     engine.control.frame_counter = 1;
-    engine.tick_enemy_ai(sim, &assets);
+    engine.tick_enemy_ai(TickCtx::new(sim, &assets));
     assert!(!engine.elem(observer_id).blipped);
 }
 
@@ -900,7 +915,7 @@ fn closed_cadence_cannot_reuse_visibility_blocked_by_eyes_blip_or_guard() {
                 .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_PC)
         );
         crate::sim_rng::with_seed(0xA013_1A00 + blocker as u64, |sim| {
-            engine.tick_enemy_ai(sim, &assets)
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
         });
 
         let observer = engine.npc(observer_id);
@@ -978,7 +993,9 @@ fn closed_cadence_cached_visibility_contributes_to_maximal_sharpness() {
     detectable.seen_now = true;
     detectable.seen_last_frame = true;
 
-    crate::sim_rng::with_seed(0xA013_1A10, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_1A10, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let ai = engine.ai_ctrl(observer_id);
     assert_eq!(

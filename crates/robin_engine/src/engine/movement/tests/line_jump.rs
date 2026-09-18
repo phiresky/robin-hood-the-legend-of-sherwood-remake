@@ -1230,8 +1230,7 @@ mod suite {
 
         let before = engine.map_pos_of(owner);
         let _ = engine.dispatch_ordered_move_seek_instruct(
-            &crate::sim_rng::test_context(),
-            &extraction_test_assets(),
+            TickCtx::new(&crate::sim_rng::test_context(), &extraction_test_assets()),
             &mut Vec::new(),
             owner,
             sequence,

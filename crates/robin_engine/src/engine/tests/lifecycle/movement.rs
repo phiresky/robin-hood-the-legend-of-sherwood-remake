@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn terminal_building_move_preserves_prior_actor_done_edge() {
@@ -189,7 +190,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
 
     let mut executed_transition = false;
     for _ in 0..16 {
-        let executed = engine.tick_actor_animation_for(&sim, &assets, owner);
+        let executed = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), owner);
         executed_transition |= executed.is_some();
         if engine.action_state_of(owner) == ActionState::Waiting {
             break;
@@ -234,7 +235,7 @@ fn deferred_face_to_does_not_overwrite_a_newer_live_movement_goal() {
         .ent_mut(owner)
         .position_iface_mut()
         .set_map_goal(live_goal);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine.ent(owner).position_iface().map_goal(),
@@ -266,8 +267,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     let expected_direction =
         crate::position_interface::vector_to_sector_0_to_15_iso(target.x - 100.0, target.y - 100.0);
     engine.duty_face_position_at_elevation(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         crate::ai::Position {
             x: target.x,
@@ -301,7 +301,7 @@ fn positional_face_to_captures_direction_before_deferred_manager_instruction() {
     // If manager-time instruction incorrectly re-resolves the point, this
     // position would reverse the requested direction.
     engine.place_map(owner, MapPoint::new(300.0, 100.0));
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         u8::from(engine.ent(owner).position_iface().get_direction_goal()),
@@ -417,8 +417,7 @@ fn goto_replacing_move_waiting_publishes_gate_failure_before_tail_halt() {
     engine.t_element_in_progress(&LevelAssets::new(), waiting_sequence, 0);
 
     engine.duty_go_to(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         crate::ai::Position {
             x: 100.0,
@@ -472,8 +471,7 @@ fn goto_replacing_move_waiting_constructs_authorized_move_before_tail_halt() {
 
     let sequence_count_before_drain = engine.orders.sequence_manager.sequence_count();
     engine.duty_go_to(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         crate::ai::Position {
             x: 100.0,
@@ -523,8 +521,7 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
 
     let first_sequence = engine
         .launch_ai_move(
-            &sim,
-            &LevelAssets::new(),
+            TickCtx::new(&sim, &LevelAssets::new()),
             owner,
             crate::ai::Position {
                 x: 100.0,
@@ -538,8 +535,7 @@ fn ai_move_constructs_at_owner_boundary_and_waits_for_manager_instruction() {
         .unwrap();
     let second_sequence = engine
         .launch_ai_move(
-            &sim,
-            &LevelAssets::new(),
+            TickCtx::new(&sim, &LevelAssets::new()),
             owner,
             crate::ai::Position {
                 x: 300.0,
@@ -591,8 +587,7 @@ fn ordinary_move_construction_does_not_invent_path_waiter_tail() {
 
     let launched = engine
         .launch_ai_move(
-            &sim,
-            &LevelAssets::new(),
+            TickCtx::new(&sim, &LevelAssets::new()),
             owner,
             crate::ai::Position {
                 x: 100.0,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
@@ -62,7 +63,7 @@ fn later_npc_hears_the_pc_noise_from_its_completed_creation_slot() {
     let assets = engine.test_runtime_assets();
 
     crate::sim_rng::with_seed(0xA013_0016, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets)
+        engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
     });
 
     let actor = engine.actor(pc);
@@ -103,8 +104,7 @@ fn arrow_reaction_with_null_interesting_object_clears_stale_look_there_focus() {
     let assets = engine.test_runtime_assets();
     crate::sim_rng::with_seed(0xA013_1091, |sim| {
         engine.execute_ai_callback(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             receiver_id,
             &Stimulus::with_position(StimulusType::EventGetArrow, Position::default()),
         );

@@ -1,12 +1,12 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Translate one Move/Seek at the exact sequence-processing
     /// FIFO position where its `Go()` action was emitted.
     pub(in crate::engine) fn dispatch_ordered_move_seek_instruct(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
@@ -57,7 +57,7 @@ impl EngineInner {
                 element_index,
                 "Move/Seek action has invalid sequence-element data"
             );
-            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
+            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
             return;
         };
 
@@ -85,8 +85,8 @@ impl EngineInner {
             {
                 actor.post_seek_sequence = Some(post_seek);
             }
-            self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
-            self.start_post_seek_sequence(sim, assets, active_scripts, owner, None);
+            self.element_terminated(tcx, active_scripts, sequence_id, element_index);
+            self.start_post_seek_sequence(tcx, active_scripts, owner, None);
             return;
         }
 
@@ -96,7 +96,7 @@ impl EngineInner {
         // precede seek-refresh/cross-sector lowering: that lowering can consume
         // the wrapper without ever reaching ordinary path dispatch.
         if !self.extract_move_instruction_owner(owner) {
-            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
+            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
             return;
         }
 
@@ -117,11 +117,11 @@ impl EngineInner {
                 "move instruct refused: anonymous archer",
             );
             self.hero_speaking(
-                assets,
+                tcx.assets,
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
+            self.element_impossible(tcx, active_scripts, sequence_id, element_index);
             return;
         }
 
@@ -176,8 +176,7 @@ impl EngineInner {
                         actor.wait_time = 25;
                     }
                     if self.try_handle_same_sector_actor_seek_wait(
-                        sim,
-                        assets,
+                        tcx,
                         active_scripts,
                         crate::engine::refresh_seek::EntitySeekRequest {
                             owner,
@@ -221,8 +220,7 @@ impl EngineInner {
                         actor.wait_time = 25;
                     }
                     if self.try_dispatch_cross_sector_entity_seek(
-                        sim,
-                        assets,
+                        tcx,
                         active_scripts,
                         crate::engine::refresh_seek::EntitySeekRequest {
                             owner,
@@ -237,15 +235,9 @@ impl EngineInner {
                         return;
                     }
                     let Some(resolved) =
-                        self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
+                        self.resolve_entity_seek(tcx, owner, target, flags, seek_distance)
                     else {
-                        self.element_impossible(
-                            sim,
-                            assets,
-                            active_scripts,
-                            sequence_id,
-                            element_index,
-                        );
+                        self.element_impossible(tcx, active_scripts, sequence_id, element_index);
                         return;
                     };
                     if let Some(crate::sequence::SequenceElementData::Movement {
@@ -309,7 +301,7 @@ impl EngineInner {
             // SEEK to MOVE and retained the semantic marker in `flags`.
             if !flags.contains(crate::sequence::MoveFlags::SEEK) || !is_last_of_sequence {
                 self.finalize_special_move_position(
-                    assets,
+                    tcx.assets,
                     owner,
                     super::special_motion::SpecialMovePosition::Map(destination),
                     None,
@@ -320,7 +312,7 @@ impl EngineInner {
                     None,
                     "building interior move",
                 );
-                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
+                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
                 return;
             }
 
@@ -330,8 +322,7 @@ impl EngineInner {
                 .is_some_and(|actor| actor.post_seek_sequence.is_some());
             if has_post_seek && target_element.is_none() {
                 self.start_post_seek_sequence(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     owner,
                     Some((sequence_id, element_index)),
@@ -368,8 +359,7 @@ impl EngineInner {
         if is_seek
             && target_element.is_none()
             && self.try_dispatch_cross_sector_point_seek(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 crate::engine::refresh_seek::PointSeekRequest {
                     owner,
@@ -415,8 +405,7 @@ impl EngineInner {
             );
             replacement.data = replacement_data;
             self.relaunch_seek_replacement(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 owner,
                 sequence_id,
@@ -427,8 +416,7 @@ impl EngineInner {
         }
 
         self.dispatch_prepared_move_instruction(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             sequence_id,
@@ -444,11 +432,7 @@ impl EngineInner {
     ///
     /// The original game updates the sequence manager after the entity loop
     /// and drains its FIFO there.
-    pub(in crate::engine) fn hourglass_phase_sequences_authoritative(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(in crate::engine) fn hourglass_phase_sequences_authoritative(&mut self, tcx: TickCtx<'_>) {
         // Release cross-actor shoulder-climb dependencies from canonical
         // gameplay state rather than the optional UI action callback. The
         // helping transition publishes HelpingToClimb on its DONE edge, but
@@ -498,19 +482,18 @@ impl EngineInner {
             // element it registers all belong to this same manager drain.
             // Falling out of the whole loop instead would strand the
             // successor until the next frame and leave the actor orderless.
-            self.dispatch_sequence_phase_action(sim, assets, action);
+            self.dispatch_sequence_phase_action(tcx, action);
         }
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn hourglass_phase_sequences(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut HostDisplayState,
-        assets: &LevelAssets,
     ) {
         let camera = self.feedback.cutscene_camera.display.clone();
-        self.hourglass_phase_sequences_authoritative(sim, assets);
+        self.hourglass_phase_sequences_authoritative(tcx);
         self.feedback.cutscene_camera.display = camera;
         let mut input = InputState::default();
         for event in self

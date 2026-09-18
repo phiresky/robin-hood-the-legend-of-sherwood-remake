@@ -4,13 +4,13 @@ mod tests;
 use super::*;
 use crate::ai::{AiState, EmoticonType, GotoFlags, Position, Remark, StimulusType, Substate};
 use crate::ai_enemy::{AiMapVec, EnemyAi, SeekFlags, UNDEFINED_DIRECTION};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_combat_unexpected_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
@@ -29,7 +29,7 @@ impl EngineInner {
                 | Substate::AttackingObserve
         ) {
             self.combat_event_ai_mut(owner).base.primary_target = Some(target);
-            self.execute_ai_begin_swordfight(sim, assets, owner);
+            self.execute_ai_begin_swordfight(tcx, owner);
         }
         true
     }
@@ -61,25 +61,23 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn duty_face_position_ground(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).duty_face_position_ground(position)
+        AiOwnerCtx::new(self, tcx, owner).duty_face_position_ground(position)
     }
 
     #[cfg(test)]
     pub(super) fn duty_face_position_signed_elevation(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
         elevation: i16,
         fast: bool,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner)
+        AiOwnerCtx::new(self, tcx, owner)
             .duty_face_position_signed_elevation(position, elevation, fast)
     }
 
@@ -97,12 +95,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_combat_expected_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         event: StimulusType,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_combat_expected_event(event)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_combat_expected_event(event)
     }
 
     fn combat_event_rider_retreat_goal(&self, owner: EntityId) -> Option<Position> {
@@ -241,8 +238,12 @@ impl AiOwnerCtx<'_> {
                 .base
                 .already_turned = true;
         } else {
-            self.engine
-                .launch_live_ai_turn(self.sim, self.assets, self.owner, direction, true);
+            self.engine.launch_live_ai_turn(
+                TickCtx::new(self.sim, self.assets),
+                self.owner,
+                direction,
+                true,
+            );
         }
     }
 
@@ -252,8 +253,7 @@ impl AiOwnerCtx<'_> {
 
     fn combat_event_command(&mut self, command: crate::element::Command) {
         self.engine.launch_element(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
         );
     }
@@ -332,8 +332,10 @@ impl AiOwnerCtx<'_> {
                         .set_emoticon(EmoticonType::None);
 
                     self.execute_reconsider_swordfight(false);
-                    self.engine
-                        .combat_insult_after_reconsider(self.sim, self.assets, self.owner);
+                    self.engine.combat_insult_after_reconsider(
+                        TickCtx::new(self.sim, self.assets),
+                        self.owner,
+                    );
                 }
             }
             (AttackingSwordfightSpecialStrike, EventDone | EventTimer) => {
@@ -696,10 +698,9 @@ impl AiOwnerCtx<'_> {
                     self.duty_go_to(goal, GotoFlags::RUN);
                 } else {
                     self.engine.dispatch_think_with_drain(
-                        self.sim,
+                        TickCtx::new(self.sim, self.assets),
                         self.owner,
                         &crate::ai::Stimulus::new(EventReachPoint),
-                        self.assets,
                     );
                 }
             }
@@ -782,7 +783,8 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(target),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine
+                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
         }
     }
 
@@ -824,8 +826,11 @@ impl AiOwnerCtx<'_> {
             let target = self
                 .engine
                 .expect_human_id_for_ai_handle(target.get(), "combat principal");
-            self.engine
-                .set_as_new_principal_opponent(self.sim, self.assets, self.owner, target);
+            self.engine.set_as_new_principal_opponent(
+                TickCtx::new(self.sim, self.assets),
+                self.owner,
+                target,
+            );
         }
     }
 
@@ -849,10 +854,9 @@ impl AiOwnerCtx<'_> {
                         == Substate::AttackingReserve
                 {
                     self.engine.dispatch_think_with_drain(
-                        self.sim,
+                        TickCtx::new(self.sim, self.assets),
                         friend,
                         &crate::ai::Stimulus::new(StimulusType::CallCoordinate),
-                        self.assets,
                     );
                 }
             }

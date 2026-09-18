@@ -3,29 +3,28 @@
 use super::*;
 use crate::ai::{AiState, GotoFlags, Remark, Stimulus, StimulusInfo, Substate};
 use crate::element::Human as _;
+use crate::engine::TickCtx;
 use crate::parameters_ai::{AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE};
 
 impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_friendly_callback(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_friendly_callback(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_friendly_callback(stimulus)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn civilian_alert_soldier(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         check_door_path: bool,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).civilian_alert_soldier(check_door_path)
+        AiOwnerCtx::new(self, tcx, owner).civilian_alert_soldier(check_door_path)
     }
 
     fn select_civilian_alert_soldier(
@@ -288,8 +287,7 @@ impl AiOwnerCtx<'_> {
                         .base
                         .seek_position;
                     self.engine.execute_ai_panic(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -355,8 +353,7 @@ impl AiOwnerCtx<'_> {
                     self.reporting_state(Substate::SeekingCivilianGiveAlertingReportToSoldierPoint);
                     let target = self.engine.reporting_target(self.owner);
                     self.engine.execute_ai_callback(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         target,
                         &Stimulus::with_human(StimulusType::CallReport, self.owner.index()),
                     );
@@ -397,8 +394,7 @@ impl AiOwnerCtx<'_> {
                     let civilian = self.engine.reporting_civilian_mut(self.owner);
                     let center = civilian.base.seek_position;
                     self.engine.execute_ai_panic(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -465,8 +461,7 @@ impl AiOwnerCtx<'_> {
                         .base
                         .seek_position;
                     self.engine.execute_ai_panic(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         self.owner,
                         Some(center),
                         AI_STANDARD_PANIC_RUNS as u8,
@@ -521,15 +516,13 @@ impl AiOwnerCtx<'_> {
         let frame = self.engine.control.frame_counter;
         let target = self.engine.reporting_target(self.owner);
         let accepted = self.engine.execute_ai_callback(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             target,
             &Stimulus::with_human(StimulusType::CallAlert, self.owner.index()),
         );
         if !accepted {
             self.engine.execute_ai_panic(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 None,
                 AI_STANDARD_PANIC_RUNS as u8,
@@ -638,7 +631,7 @@ mod tests {
     fn alert_route_finishes_before_emitting_success_remark() {
         let (mut engine, assets, owner, [first, _]) = alert_fixture();
         let sim = crate::sim_rng::test_context();
-        assert!(engine.civilian_alert_soldier(&sim, &assets, owner, false));
+        assert!(engine.civilian_alert_soldier(TickCtx::new(&sim, &assets), owner, false));
         let ai = engine.reporting_civilian_mut(owner);
         assert_eq!(
             ai.base.antagonist,
@@ -653,7 +646,7 @@ mod tests {
         let (mut engine, assets, owner, [first, _]) = alert_fixture();
         engine.reporting_civilian_mut(owner).base.couldnt_reachpoint = true;
         let sim = crate::sim_rng::test_context();
-        assert!(engine.civilian_alert_soldier(&sim, &assets, owner, false));
+        assert!(engine.civilian_alert_soldier(TickCtx::new(&sim, &assets), owner, false));
         let ai = engine.reporting_civilian_mut(owner);
         assert_eq!(
             ai.base.antagonist,
@@ -696,8 +689,7 @@ mod tests {
             ..position
         };
         engine.execute_friendly_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -930,8 +922,7 @@ mod tests {
             ai.base.current_music_alert_status = crate::ai::AlertLevel::Yellow;
             ai.base.view_alert_status = crate::ai::AlertLevel::Yellow;
             engine.execute_friendly_callback(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::with_position(
                     StimulusType::CallPatrolCoordinate,
@@ -985,8 +976,7 @@ mod tests {
             Substate::DefaultPatrolEnrouteWaiting;
         let frame = engine.control.frame_counter;
         engine.execute_friendly_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -1007,8 +997,7 @@ mod tests {
         engine.reporting_civilian_mut(owner).base.current_substate =
             Substate::DefaultPatrolEnrouteWaiting;
         engine.execute_friendly_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -1021,8 +1010,7 @@ mod tests {
         engine.reporting_civilian_mut(owner).base.antagonist =
             Some(crate::ai::AiEntityHandle::new(42));
         engine.execute_friendly_callback(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
             &Stimulus::new(StimulusType::EventReachPoint),
         );
@@ -1039,8 +1027,7 @@ mod tests {
             .current_substate = Substate::SeekingWaitForAlertingCivilian;
         assert_eq!(
             engine.execute_friendly_callback(
-                &crate::sim_rng::test_context(),
-                &LevelAssets::default(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint),
             ),
@@ -1071,8 +1058,7 @@ mod tests {
             };
             assert_eq!(
                 engine.execute_friendly_callback(
-                    &crate::sim_rng::test_context(),
-                    &LevelAssets::default(),
+                    TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
                     owner,
                     &stimulus,
                 ),
@@ -1099,8 +1085,7 @@ mod tests {
             .set_direction_instantly(direction as i16);
         entity.actor_data_mut().unwrap().action_state = crate::element::ActionState::Waiting;
         engine.execute_friendly_callback(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
             &Stimulus::new(StimulusType::EventDone),
         );

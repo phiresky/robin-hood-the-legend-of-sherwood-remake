@@ -4,6 +4,7 @@
 use super::object_use::{coin_pickup_target, determine_use_command};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId, Human as _};
+use crate::engine::TickCtx;
 use crate::engine::movement::GoalShape;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::player_command::{CompositeSwordTechnique, GestureQuality};
@@ -75,8 +76,7 @@ fn sword_gesture_sequence(
 impl EngineInner {
     pub(super) fn dispatch_player_sword_strike(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         target: &EntityId,
         command: &Command,
@@ -94,11 +94,10 @@ impl EngineInner {
             with_seek,
             "PlayerCommand::SwordStrikeCmd"
         );
-        self.prepare_tactical_player_combat_command(sim, assets, *actor);
+        self.prepare_tactical_player_combat_command(tcx, *actor);
         if *with_seek {
             self.apply_sword_strike_with_seek(
-                sim,
-                assets,
+                tcx,
                 *actor,
                 *target,
                 *command,
@@ -115,14 +114,13 @@ impl EngineInner {
             // post-entity manager drain; it does not arbitrate
             // against and interrupt the actor's current order on the
             // input callback stack.
-            self.launch_sequence(sim, assets, sequence);
+            self.launch_sequence(tcx, sequence);
         }
     }
 
     pub(super) fn apply_enter_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         target_id: EntityId,
         running: bool,
@@ -132,13 +130,13 @@ impl EngineInner {
 
         let recording = self.players.qa_recording_for.contains(&pc_id);
         if !recording {
-            self.prepare_tactical_player_combat_command(sim, assets, pc_id);
+            self.prepare_tactical_player_combat_command(tcx, pc_id);
         }
 
         // VIP gate
         let target_is_vip = self
             .get_entity(target_id)
-            .map(|e| crate::engine::melee::is_vip_from_profile(e, &assets.profile_manager))
+            .map(|e| crate::engine::melee::is_vip_from_profile(e, &tcx.assets.profile_manager))
             .unwrap_or(false);
         if target_is_vip {
             let pc_is_robin = self
@@ -149,7 +147,7 @@ impl EngineInner {
                 let speak = SequenceElement::new(1, Command::SpeakVipsAreForRobin, Some(pc_id));
                 let mut sequence = Sequence::new();
                 sequence.append_element(speak);
-                self.launch_sequence(sim, assets, sequence);
+                self.launch_sequence(tcx, sequence);
                 return;
             }
         }
@@ -184,13 +182,13 @@ impl EngineInner {
         if !status_ok {
             // Fallthrough to use-interaction.  Rewrite coin clicks
             // to the source purse before launching the Take sequence.
-            if let Some(cmd) = determine_use_command(self, assets, pc_id, target_id) {
+            if let Some(cmd) = determine_use_command(self, tcx.assets, pc_id, target_id) {
                 let launch_target = if cmd == Command::Take {
                     coin_pickup_target(self, target_id)
                 } else {
                     target_id
                 };
-                self.apply_interaction_with_seek(sim, assets, pc_id, launch_target, cmd, false);
+                self.apply_interaction_with_seek(tcx, pc_id, launch_target, cmd, false);
                 if recording {
                     self.stop_recording_macro();
                 }
@@ -222,19 +220,12 @@ impl EngineInner {
             && let Some(aggressor_line_idx) = crate::engine::melee::is_table_swordfight_needed(
                 &self.world.entities,
                 &self.world.fast_grid,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 pc_id,
                 target_id,
             )
         {
-            self.apply_table_swordfight(
-                sim,
-                assets,
-                pc_id,
-                target_id,
-                aggressor_line_idx,
-                action_style,
-            );
+            self.apply_table_swordfight(tcx, pc_id, target_id, aggressor_line_idx, action_style);
             return;
         }
 
@@ -244,10 +235,10 @@ impl EngineInner {
             .and_then(|entity| entity.pc_data())
             .map(|pc| pc.profile_index);
         let hth_weapon_id = self.get_entity(pc_id).and_then(|entity| {
-            crate::engine::melee::get_hth_weapon_id_full(entity, &assets.profile_manager)
+            crate::engine::melee::get_hth_weapon_id_full(entity, &tcx.assets.profile_manager)
         });
         let seek_tolerance = hth_weapon_id
-            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
             .map(|p| p.distance[crate::weapons::WeaponDistance::Default as usize] as f32)
             .unwrap_or(40.0);
         if recording {
@@ -417,7 +408,7 @@ impl EngineInner {
                 // post-seek work exactly like the Original. Arrival speech
                 // and generic posture recovery belong to PC group moves, not
                 // soldier interaction.
-                self.launch_gate_movement_order(sim, assets, &mut Vec::new(), crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
+                self.launch_gate_movement_order(tcx, &mut Vec::new(), crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
                         crate::position_interface::SectorHandle::new(adj_src_sector)
                             .unwrap_or_else(|| {
                                 panic!(
@@ -436,7 +427,7 @@ impl EngineInner {
             // classical Seek + EnterSwordfight when no line is set.
             if path_failed {
                 self.hero_speaking(
-                    assets,
+                    tcx.assets,
                     pc_id,
                     crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 );
@@ -477,7 +468,7 @@ impl EngineInner {
                 let mut sequence = Sequence::new();
                 sequence.append_element(move_elem);
                 sequence.append_element(enter_elem);
-                self.launch_sequence(sim, assets, sequence);
+                self.launch_sequence(tcx, sequence);
                 return;
             }
         }
@@ -485,13 +476,12 @@ impl EngineInner {
 
         let sequence =
             classical_swordfight_sequence(pc_id, target_id, action_style, seek_tolerance);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 
     pub(super) fn apply_table_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         target_id: EntityId,
         aggressor_line_idx: u32,
@@ -576,13 +566,12 @@ impl EngineInner {
         let mut sequence = Sequence::new();
         sequence.append_element(move_elem);
         sequence.append_element(enter_elem);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 
     pub(super) fn apply_sword_strike_with_seek(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         target_id: EntityId,
         strike_cmd: Command,
@@ -598,7 +587,7 @@ impl EngineInner {
                 .and_then(|entity| {
                     crate::engine::melee::get_hth_weapon_id_full(
                         entity,
-                        &assets.profile_manager,
+                        &tcx.assets.profile_manager,
                     )
                 })
                 .unwrap_or_else(|| {
@@ -606,7 +595,7 @@ impl EngineInner {
                         "legacy SwordStrikeCmd for {pc_id:?} against {target_id:?} has no equipped HtH weapon profile"
                     )
                 });
-            let weapon = assets
+            let weapon = tcx.assets
                 .profile_manager
                 .get_hth_weapon(weapon_id)
                 .unwrap_or_else(|| {
@@ -637,7 +626,7 @@ impl EngineInner {
         }
 
         if !same_sector {
-            self.launch_sequence(sim, assets, strike_sequence);
+            self.launch_sequence(tcx, strike_sequence);
             return;
         }
 
@@ -655,7 +644,7 @@ impl EngineInner {
                 ?strike_cmd,
                 "apply_sword_strike_with_seek: unsupported seek strike requested; launching direct strike"
             );
-            self.launch_sequence(sim, assets, strike_sequence);
+            self.launch_sequence(tcx, strike_sequence);
             return;
         }
 
@@ -691,7 +680,7 @@ impl EngineInner {
         // tail. It does not arbitrate it synchronously against an older
         // postponed chain: if that chain is released before the update reaches
         // this new seek, the older successor is instructed first.
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 }
 

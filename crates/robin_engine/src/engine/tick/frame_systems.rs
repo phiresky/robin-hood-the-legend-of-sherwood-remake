@@ -1,6 +1,7 @@
 //! Existing tick phase implementations; scheduling remains in the parent tick spine.
 
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Consume the host sound-manager update that completed after the
@@ -13,8 +14,7 @@ impl EngineInner {
     /// following frame's recorded input commands.
     pub(in crate::engine) fn hourglass_phase_sound_boundary(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> Result<(), String> {
         // The sound update completes after the preceding engine frame in the
@@ -25,7 +25,7 @@ impl EngineInner {
         // The original game handles sound completion inline while walking the pending
         // sound list. That callback may synchronously Think/Say and append a
         // request which a later resolution in this same boundary consumes.
-        self.settle_npc_speech_completions(sim, assets);
+        self.settle_npc_speech_completions(tcx);
         let replay_injected_resolutions = std::mem::take(
             &mut self
                 .feedback
@@ -64,7 +64,7 @@ impl EngineInner {
                     ));
                 }
                 if let Some(execution) = execution {
-                    execution.validate_speech_resolution(assets, &pending, &resolution)?;
+                    execution.validate_speech_resolution(tcx.assets, &pending, &resolution)?;
                 }
                 self.feedback.sound_sim.pending_exclamations.remove(0);
             } else if replay_injected_resolutions {
@@ -101,7 +101,7 @@ impl EngineInner {
                     .sound_sim
                     .finished_exclamations
                     .push((resolution.actor_id, u32::from(resolution.exclamation_id)));
-                self.settle_npc_speech_completions(sim, assets);
+                self.settle_npc_speech_completions(tcx);
             } else {
                 self.feedback.sound_sim.playing_exclamations.push(
                     crate::sound::PlayingExclamation {
@@ -118,11 +118,10 @@ impl EngineInner {
     /// Finish sound deadlines before mission and entity work observes the frame.
     pub(in crate::engine) fn hourglass_phase_deferred_effects_start(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         execution: Option<&crate::ranked_resim::RankedExecutionContext>,
     ) -> bool {
-        self.hourglass_phase_sound_boundary(sim, assets, execution)
+        self.hourglass_phase_sound_boundary(tcx, execution)
             .unwrap_or_else(|reason| panic!("internal sound boundary rejected: {reason}"));
         let cur_frame = self.control.frame_counter;
         // Drain matured sound-source finishes.  Replaces the
@@ -222,12 +221,8 @@ impl EngineInner {
     }
 
     /// Execute each live owner completely before advancing to the next slot.
-    pub(super) fn hourglass_phase_entity_systems(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
-        self.tick_actor_owner_envelopes(sim, assets);
+    pub(super) fn hourglass_phase_entity_systems(&mut self, tcx: TickCtx<'_>) {
+        self.tick_actor_owner_envelopes(tcx);
 
         // Close posture writes made outside an actor's own update. Owner-local
         // posture transitions already publish before the next owner runs.
@@ -245,9 +240,8 @@ impl EngineInner {
     /// consume the entity/sequence/NPC state established above.
     pub(in crate::engine) fn hourglass_phase_gameplay_systems(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         _display: &mut CameraDisplayState,
-        assets: &LevelAssets,
     ) {
         // Active abilities, Listen/Heard, projectiles, and beggar simulation
         // already executed in their live owner slots.
@@ -255,7 +249,7 @@ impl EngineInner {
         // Combat progression without a proven cross-subsystem ordering
         // discrepancy remains batched. Fallback-timed completions already
         // cleared at their owning actor slots above and are skipped here.
-        self.tick_melee_combat(sim, assets);
+        self.tick_melee_combat(tcx);
 
         // Order completion was published inside each actor's Execute boundary.
         // Clear presentation motion edges only after their frame consumers.
@@ -276,8 +270,7 @@ impl EngineInner {
     /// condolation, self-stimulus, and immediate-action drains.
     pub(super) fn hourglass_phase_deferred_effects_end(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         was_swordfighting: bool,
     ) {
         // ── Swordfight-drag IgnoreMouseEvent bracket ────────────
@@ -297,13 +290,13 @@ impl EngineInner {
         // ── Titbit sync + per-frame update ──────────────────────
         // First, sync persistent titbits (emoticons, unconscious
         // stars, alert indicators) with current entity state.
-        self.sync_titbits(assets);
+        self.sync_titbits(tcx.assets);
 
         // Then run the titbit update to advance animations and
         // expire finished titbits.
         {
             let query = EntityTitbitQuery {
-                sim,
+                sim: tcx.sim,
                 entities: &self.world.entities,
                 sequence_manager: &self.orders.sequence_manager,
                 follow_element: self.players.seats[0].follow_element,
@@ -352,7 +345,7 @@ impl EngineInner {
                 // MSG_UNSELECT_CHARACTER to the engine/game receivers at
                 // this exact point. Do not leave the authoritative selection
                 // mutation in Rust's next-frame message queue.
-                if self.is_sherwood(&assets.profile_manager)
+                if self.is_sherwood(&tcx.assets.profile_manager)
                     && let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id)
                 {
                     pc.pc.interface_hidden = true;
@@ -383,7 +376,7 @@ impl EngineInner {
             }
         });
         for r in expired {
-            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(tcx, &mut Vec::new(), r.sequence_id, r.element_index);
         }
     }
 }

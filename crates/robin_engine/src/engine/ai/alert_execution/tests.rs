@@ -2,6 +2,7 @@ use super::*;
 use crate::ai::{PathId, PatrolPath, ReportType};
 use crate::ai_enemy::SeekFlags;
 use crate::coordinates::WorldPoint3D;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::make_test_ai_soldier;
 
 #[test]
@@ -117,7 +118,10 @@ fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
 #[test]
 fn officer_group_instruction_retries_location_first_after_refusal() {
     let (mut engine, assets, [owner, refused, second, third]) = group_fixture();
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let officer = engine
         .world
         .entities
@@ -180,7 +184,10 @@ fn officer_group_path_advances_waypoint_on_refusal() {
         .expect_enemy_ai_mut(owner, format_args!("checkpoint report"));
     officer.base.my_reconnaissance_report.report_type = ReportType::MissedCharly;
     officer.base.my_reconnaissance_report.charly = Some(AiEntityHandle::new(refused.index()));
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     let officer = engine
         .world
         .entities
@@ -275,7 +282,10 @@ fn officer_group_path_reassignment_uses_live_waypoints_with_initial_stride() {
         .as_mut()
         .unwrap()
         .bind_actor(handle, "ChangePath");
-    engine.execute_ai_officer_instruct_group(&crate::sim_rng::test_context(), &assets, owner);
+    engine.execute_ai_officer_instruct_group(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+    );
     assert_eq!(
         engine
             .world

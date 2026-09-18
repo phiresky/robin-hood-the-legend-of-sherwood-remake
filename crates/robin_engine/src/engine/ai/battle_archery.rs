@@ -5,6 +5,7 @@ use crate::ai::{
     AiSpeechAttempt, AiState, Decision, EmoticonType, GotoFlags, Position, Remark, Substate,
 };
 use crate::ai_enemy::{AiMapVec, archer};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
@@ -135,8 +136,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_battle_archery_point(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> ControlFlow<bool, Decision> {
         let ai = self.enemy_ai(owner, "archery waypoint");
@@ -169,8 +169,7 @@ impl EngineInner {
         self.enemy_ai_mut(owner, "archery elevation")
             .enemy_had_this_elevation = elevation;
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             owner,
             AiState::Attacking,
             if shooting {
@@ -187,8 +186,7 @@ impl EngineInner {
         }
         let position = self.ai.global.archery_sectors[sector].points[index].position;
         self.duty_go_to(
-            sim,
-            assets,
+            tcx,
             owner,
             position,
             if shooting {
@@ -370,7 +368,10 @@ mod tests {
         ai.my_archery_point_index = crate::sector::ArcheryPointIdx(1);
         engine.ai.global.archery_sectors[0].points[1].owner = Some(target);
         assert!(matches!(
-            engine.execute_ai_battle_archery_point(&crate::sim_rng::test_context(), &assets, owner),
+            engine.execute_ai_battle_archery_point(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner
+            ),
             ControlFlow::Continue(Decision::Shoot)
         ));
         assert!(

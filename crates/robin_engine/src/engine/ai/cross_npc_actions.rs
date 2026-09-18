@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     fn required_cross_npc_enemy_mut(
@@ -26,12 +27,7 @@ impl EngineInner {
     /// direct duty transition, movement construction, and recursive callbacks
     /// inside this engine-owned script barrier while leaving ordinary owner
     /// instruction to subsequent sequence processing.
-    pub(crate) fn script_remove_all_subordinates(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        chief: EntityId,
-    ) {
+    pub(crate) fn script_remove_all_subordinates(&mut self, tcx: TickCtx<'_>, chief: EntityId) {
         let member_count = self
             .ai(chief, "RemoveAllSubordinates chief")
             .theoretical_patrol
@@ -58,7 +54,7 @@ impl EngineInner {
             if !should_return {
                 continue;
             }
-            self.execute_ai_return_to_duty(sim, assets, member, crate::ai::DutyFlags::empty());
+            self.execute_ai_return_to_duty(tcx, member, crate::ai::DutyFlags::empty());
             // A forced duty call does not close a Think frame. Keep its
             // close-post latch available for the actor's actual completion.
         }
@@ -223,8 +219,7 @@ impl EngineInner {
     /// before returning.
     pub(in crate::engine) fn broadcast_noise_synchronously(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
         origin_layer: Option<crate::position_interface::Layer>,
@@ -252,7 +247,7 @@ impl EngineInner {
             let stimulus = Stimulus::with_noise(StimulusType::EventHear, subjective_noise);
 
             // Each listener observes all mutations from the preceding call.
-            self.execute_ai_callback(sim, assets, npc_id, &stimulus);
+            self.execute_ai_callback(tcx, npc_id, &stimulus);
         }
         self.display_one_shot_noise(noise);
     }
@@ -317,17 +312,16 @@ impl EngineInner {
     /// before returning its handled result.
     pub(in crate::engine) fn dispatch_think_with_drain(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: crate::element::EntityId,
         stimulus: &crate::ai::Stimulus,
-        assets: &LevelAssets,
     ) -> bool {
         let had_ai_at_entry = self
             .entities()
             .get(npc_id)
             .and_then(Entity::ai_controller)
             .is_some();
-        let handled = self.dispatch_filtered_stimulus_inner(sim, assets, npc_id, stimulus);
+        let handled = self.dispatch_filtered_stimulus_inner(tcx, npc_id, stimulus);
 
         // PCs can participate in direct swordfights but have no NPC AI
         // controller or AI-owned recovery effects to drain.
@@ -347,8 +341,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_look_there(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         source_id: EntityId,
         position: crate::ai::Position,
         radius: u16,
@@ -403,7 +396,7 @@ impl EngineInner {
             let dy = target.y - caller.y;
             let dz = target.z - caller.z;
             if look_there_target_is_inside_radius(dx * dx + dy * dy + dz * dz, radius_squared) {
-                self.execute_ai_callback(sim, assets, target_id, &stimulus);
+                self.execute_ai_callback(tcx, target_id, &stimulus);
             }
         }
     }

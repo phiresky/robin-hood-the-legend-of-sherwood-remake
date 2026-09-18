@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
@@ -48,13 +49,12 @@ fn running_stairs_turns_twice_when_the_first_motion_is_already_at_goal() {
     movement.orders.push_back(order);
     let sim = crate::sim_rng::test_context();
     let assets = engine.test_runtime_assets();
-    let sequence = engine.launch_element(&sim, &assets, movement);
-    engine.element_in_progress(&sim, &assets, &mut Vec::new(), sequence, 0);
+    let sequence = engine.launch_element(TickCtx::new(&sim, &assets), movement);
+    engine.element_in_progress(TickCtx::new(&sim, &assets), &mut Vec::new(), sequence, 0);
     engine.select_sequence_element(owner, Some((sequence, 0)));
 
     engine.tick_entity_movement_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         Some(MovementOwnerSelection {
             seq_id: sequence,
@@ -170,7 +170,7 @@ fn climb_orders_keep_start_and_done_inside_entity_seek_routes() {
         let assets = engine.test_runtime_assets();
 
         for expected in [MotionState::Start, MotionState::Done] {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
             let actor = engine.actor(owner);
             assert_eq!(actor.continuation.motion_state, expected, "{action:?}");
             assert_eq!(
@@ -219,8 +219,7 @@ fn absent_and_stale_selections_do_not_run_movement_or_completion() {
     let before = engine.map_pos_of(owner);
     for selected in [None, Some(stale)] {
         let result = engine.tick_entity_movement_owner(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             selected,
         );

@@ -3,6 +3,7 @@ use super::battle_decision_observation_tests::fixture;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, Decision, LogLineType, Substate};
 use crate::coordinates::WorldPoint3D;
+use crate::engine::TickCtx;
 
 #[test]
 fn missed_pc_search_reads_current_forecast_instead_of_old_seek_position() {
@@ -15,8 +16,7 @@ fn missed_pc_search_reads_current_forecast_instead_of_old_seek_position() {
     ai.missed_pc = Some(AiEntityHandle::new(target.index()));
     ai.base.seek_position.x = 111.0;
     engine.execute_live_battle_without_visible_enemies(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Vec::new(),
     );
@@ -34,8 +34,7 @@ fn missed_pc_search_requires_the_current_target_entity() {
     ai.pc_missed = true;
     ai.missed_pc = Some(AiEntityHandle::new(u32::MAX));
     engine.execute_live_battle_without_visible_enemies(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Vec::new(),
     );
@@ -48,8 +47,7 @@ fn directed_cassos_reads_the_live_target_and_completes_panic() {
     let position = engine.live_ai_position(target);
     engine.enemy_mut(owner).base.seek_position.x = 321.0;
     let result = engine.execute_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Decision::Cassos,
         Substate::AttackingReactiontimeRunning,
@@ -76,8 +74,7 @@ fn repeated_cassos_without_a_target_remains_undirected() {
     ai.base.current_substate = Substate::FleeingPanic;
     ai.base.lasting_panic_runs = 11;
     let result = engine.execute_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Decision::Cassos,
         Substate::FleeingPanic,
@@ -96,8 +93,7 @@ fn cassos_rejects_a_stale_persistent_target_instead_of_using_seek_position() {
     let (mut engine, assets, owner, _) = fixture(false);
     engine.enemy_mut(owner).list_them = vec![u32::MAX];
     engine.execute_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Decision::Cassos,
         Substate::AttackingReactiontimeRunning,
@@ -135,7 +131,10 @@ fn help_decision_finishes_real_officer_route_before_fallback_and_logs_once() {
         });
         ai.forced_next_battle_decision = Decision::LookForHelp;
         let (_, draws) = crate::sim_rng::with_draw_trace(|| {
-            engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+            engine.execute_battle_decisions(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+            );
         });
         assert_eq!(
             draws
@@ -186,8 +185,7 @@ fn archer_step_back_without_target_completes_shoot_to_observation_fallback() {
         .unwrap()
         .number_of_arrows = 1;
     let result = engine.execute_live_battle_decision(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         Decision::ArcherStepBack,
         Substate::AttackingReactiontimeRunning,

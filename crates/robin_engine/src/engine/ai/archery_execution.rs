@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType, Substate};
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -63,8 +64,7 @@ mod tests {
             ai.base.current_substate = Substate::SeekingSeekpointApproachingBeggar;
             ai.is_archer_unit = archer;
             assert!(engine.execute_ai_archery_expected_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 StimulusType::EventReachPoint
             ));
@@ -95,8 +95,7 @@ mod tests {
     fn live_npc_beggar_identification_launches_show_face_and_waits() {
         let (mut engine, assets, owner, beggar) = beggar_fixture(true);
         assert!(engine.execute_ai_archery_expected_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             StimulusType::EventTimer
         ));
@@ -144,8 +143,7 @@ mod tests {
             .expect_enemy_ai_mut(owner, format_args!("false beggar archer"))
             .is_archer_unit = true;
         assert!(engine.execute_ai_archery_expected_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             StimulusType::EventTimer
         ));
@@ -221,8 +219,7 @@ mod tests {
         ai.current_substate = Substate::AttackingBowRunningBehindShieldBearer;
         ai.primary_target = Some(AiEntityHandle::new(target.index()));
         assert!(engine.execute_ai_archery_expected_event(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             owner,
             StimulusType::EventDone
         ));
@@ -243,12 +240,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_archery_expected_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         event: StimulusType,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_archery_expected_event(event)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_archery_expected_event(event)
     }
 
     fn live_beggar_to_examine(&self, owner: EntityId) -> EntityId {
@@ -348,15 +344,15 @@ impl AiOwnerCtx<'_> {
                     self.engine
                         .ai_mut(self.owner, "beggar inspection timer")
                         .launch_timer(time, frame);
-                    self.engine.launch_sequence(self.sim, self.assets, sequence);
+                    self.engine
+                        .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
                 }
             }
             (Substate::SeekingSeekpointIdentifyingBeggar1, StimulusType::EventTimer) => {
                 let beggar = self.engine.live_beggar_to_examine(self.owner);
                 if matches!(beggar, EntityId::Civilian(_) | EntityId::Soldier(_)) {
                     self.engine.launch_element(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::BeggarShowFace,
@@ -365,8 +361,7 @@ impl AiOwnerCtx<'_> {
                     );
                     let beggar = self.engine.live_beggar_to_examine(self.owner);
                     self.engine.execute_ai_speech(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         beggar,
                         crate::ai::AiSpeechAttempt {
                             remark: crate::ai::Remark::CivBeggarIdentifiesHimself,
@@ -388,8 +383,7 @@ impl AiOwnerCtx<'_> {
                     ai.list_them.push(beggar.index());
                     if ai.is_archer() {
                         self.engine.launch_element(
-                            self.sim,
-                            self.assets,
+                            TickCtx::new(self.sim, self.assets),
                             crate::sequence::SequenceElement::new(
                                 1,
                                 crate::element::Command::LeaveBeggar,
@@ -407,8 +401,11 @@ impl AiOwnerCtx<'_> {
                             "false beggar shot target",
                         );
                         self.stop_ai_owner();
-                        self.engine
-                            .shoot_bow_at(self.sim, self.assets, self.owner, target);
+                        self.engine.shoot_bow_at(
+                            TickCtx::new(self.sim, self.assets),
+                            self.owner,
+                            target,
+                        );
                     } else {
                         self.execute_ai_begin_swordfight();
                     }
@@ -472,8 +469,11 @@ impl AiOwnerCtx<'_> {
                         .engine
                         .expect_human_id_for_ai_handle(target.get(), "aimed shot target");
                     self.stop_ai_owner();
-                    self.engine
-                        .shoot_bow_at(self.sim, self.assets, self.owner, target);
+                    self.engine.shoot_bow_at(
+                        TickCtx::new(self.sim, self.assets),
+                        self.owner,
+                        target,
+                    );
                 } else {
                     self.engine
                         .enemy_ai_mut(self.owner, "unsafe aimed shot")

@@ -1,5 +1,6 @@
 use super::*;
 use crate::element::Human as _;
+use crate::engine::TickCtx;
 
 #[test]
 fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
@@ -21,8 +22,7 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
     engine.enemy_mut(right).left_combat_neighbour = Some(AiEntityHandle::new(owner.index()));
     let sim = crate::sim_rng::test_context();
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingRunningToPhalanx,
@@ -37,8 +37,7 @@ fn live_state_changes_preserve_formation_links_then_clear_both_reciprocals() {
         Some(AiEntityHandle::new(right.index()))
     );
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingOverviewLookLeft,
@@ -78,8 +77,7 @@ fn live_state_change_releases_archery_ownership_without_clearing_special_strike(
     ai.my_archery_sector = Some(0);
     ai.pending_special_strike = true;
     engine.duty_set_state(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         AiState::Default,
         Substate::DefaultOnPost,
@@ -110,9 +108,8 @@ fn removal_revalidates_stimuli_detached_across_a_synchronous_boundary() {
     let ai = engine.ai_ctrl_mut(observer);
     let history = ai.last_stimulus;
     engine.dispatch_optical_stimuli(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         observer,
-        &LevelAssets::new(),
         detached,
     );
     let ai = engine.ai_ctrl(observer);
@@ -166,7 +163,7 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -178,14 +175,14 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
     for frame in [101, 102] {
         engine.control.frame_counter = frame;
         super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, frame);
-        engine.settle_npc_speech_completions(&sim, &assets);
+        engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
         let ai = mytalk_ai(&engine, soldier_id);
         assert_eq!(ai.current_remark, Remark::Arrow);
     }
 
     engine.control.frame_counter = 103;
     super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
-    engine.settle_npc_speech_completions(&sim, &assets);
+    engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
     assert_eq!(
@@ -212,7 +209,7 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
@@ -222,7 +219,7 @@ fn replay_host_resolution_without_logical_request_keeps_authoritative_completion
 
     engine.control.frame_counter = 103;
     super::super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
-    engine.settle_npc_speech_completions(&sim, &assets);
+    engine.settle_npc_speech_completions(TickCtx::new(&sim, &assets));
     assert!(engine.feedback.sound_sim.playing_exclamations.is_empty());
     assert_eq!(
         mytalk_ai(&engine, soldier_id).current_remark,
@@ -257,7 +254,7 @@ fn replay_host_resolution_preserves_an_unrelated_reconstructed_pending_request()
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     assert_eq!(engine.feedback.sound_sim.pending_exclamations.len(), 1);
     let retained = &engine.feedback.sound_sim.pending_exclamations[0];
@@ -300,7 +297,10 @@ fn live_host_resolution_without_logical_request_remains_an_invariant_failure() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&crate::sim_rng::test_context(), &assets, None);
+    engine.hourglass_phase_deferred_effects_start(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        None,
+    );
 }
 
 #[test]
@@ -318,7 +318,7 @@ fn zero_duration_resolution_completes_mytalk_at_current_boundary() {
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(ai.current_remark, Remark::Arrow);
 
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
 
     let ai = mytalk_ai(&engine, soldier_id);
     assert_eq!(engine.control.frame_counter, 100);
@@ -351,15 +351,14 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.duty_face_direction(&sim, &assets, owner, 7);
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 7);
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Default,
         Substate::DefaultGotoPostTurn,
     );
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
 
     // This is the movement-condolation mode that exposed the bug. Face and
     // attentive-mode changes both launch inline, but their ordinary
@@ -405,7 +404,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
 
     // Repeating the already-requested target must observe will_be_attentive
     // and must not append a duplicate deferred Leave.
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
     assert_eq!(
         engine
             .orders
@@ -416,7 +415,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let owned_after_manager: Vec<_> = engine
         .orders
@@ -477,18 +476,16 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.stop_ai_owner(&sim, &assets, owner);
+    engine.stop_ai_owner(TickCtx::new(&sim, &assets), owner);
 
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingReactiontime,
     );
     engine.duty_set_state(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         AiState::Attacking,
         Substate::AttackingTooProudToAttackApproach,
@@ -535,9 +532,9 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let owner = engine.add_test_entity(soldier_entity);
     let assets = engine.test_runtime_assets();
 
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, true, false);
-    engine.set_soldier_attentive_mode(&sim, &assets, owner, false, false);
-    engine.duty_face_direction(&sim, &assets, owner, 14);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, true, false);
+    engine.set_soldier_attentive_mode(TickCtx::new(&sim, &assets), owner, false, false);
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 14);
 
     let owned: Vec<_> = engine
         .orders
@@ -574,12 +571,11 @@ fn matured_mytalk_completion_precedes_following_console_command() {
         exclamation_id: Remark::Arrow as u16,
         duration_frames: 3,
     }]);
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
     engine.control.frame_counter = 103;
-    engine.hourglass_phase_deferred_effects_start(&sim, &assets, None);
+    engine.hourglass_phase_deferred_effects_start(TickCtx::new(&sim, &assets), None);
     engine.dispatch_sim_console_command(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Some(soldier_id),
         &crate::console::ConsoleCommand::Hades,
     );
@@ -620,8 +616,7 @@ fn category_rejection_completes_notification_before_returning_with_a_cleared_lat
         let owner = add_speech_test_npc(&mut engine, &mut assets, kind, 221);
         crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.execute_ai_speech(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             AiSpeechAttempt {
                 remark,
@@ -910,10 +905,9 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
     let friend = engine.enemy_mut(friend_id);
     friend.base.primary_target = Some(crate::ai::AiEntityHandle::new(new_target_id.index()));
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         owner_id,
         &Stimulus::new(StimulusType::EventTimer),
-        &assets,
     );
 
     let owner = engine.enemy(owner_id);
@@ -1007,8 +1001,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
 
     assert_eq!(
         engine.execute_ai_officer_rendezvous_event(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             officer_id,
             &Stimulus::new(StimulusType::EventDone)
         ),
@@ -1062,7 +1055,7 @@ fn officer_call_rejection_closes_return_to_duty_actor_fixed_point() {
     );
 
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
     let current = engine
         .world
         .entities
@@ -1180,7 +1173,7 @@ fn live_return_to_duty_publishes_goto_after_attentive_inline() {
     ai.attentive = true;
     ai.will_be_attentive = true;
 
-    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    engine.execute_ai_return_to_duty(TickCtx::new(&sim, &assets), owner, DutyFlags::empty());
     let commands = engine
         .orders
         .sequence_manager
@@ -1226,8 +1219,7 @@ fn officer_call_acceptance_keeps_wait_state_timer_and_beggar() {
 
     assert_eq!(
         engine.execute_ai_officer_rendezvous_event(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             officer_id,
             &Stimulus::new(StimulusType::EventDone)
         ),
@@ -1315,10 +1307,9 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
     target_ai.base.antagonist = Some(crate::ai::AiEntityHandle::new(source_id.index()));
 
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         target_id,
         &crate::ai::Stimulus::with_human(StimulusType::CallCoordinate, source_id.index()),
-        &assets,
     );
 
     let turns: Vec<_> = engine
@@ -1370,7 +1361,7 @@ fn recursive_break_phalanx_preserves_enclosing_think_without_owning_end_think() 
         member.base.already_on_point = true;
     }
 
-    engine.execute_ai_break_phalanx(&sim, &assets, member_id, false, false);
+    engine.execute_ai_break_phalanx(TickCtx::new(&sim, &assets), member_id, false, false);
 
     engine.enemy(member_id);
     assert_eq!(
@@ -1388,8 +1379,7 @@ fn phalanx_gather_instruction_skips_a_member_who_already_left_the_formation() {
     let (mut engine, _officer_id, soldier_id, assets) = setup_review2_officer_and_soldier();
     let before = engine.enemy(soldier_id).gather_position;
     engine.instruct_live_phalanx(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &[soldier_id],
         Position {
             x: 55.0,
@@ -1424,13 +1414,11 @@ fn selection_followup_retargets_recording_before_forwarding_returns() {
     let assets = engine.test_runtime_assets();
     let sim = crate::sim_rng::test_context();
     engine.forward_message(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         Message::pc(PcMessage::StartRecordingMacro, Some(first)),
     );
     engine.forward_message(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         Message::pc(PcMessage::SelectCharacter, Some(second)),
     );
 

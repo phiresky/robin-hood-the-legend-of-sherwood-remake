@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
@@ -42,8 +43,7 @@ fn lethal_piercing_damage_quits_swordfight_from_a_flying_posture() {
         .start_sequence_level(sequence);
 
     engine.dispatch_receive_damage(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         victim,
         sequence,
@@ -125,8 +125,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         .start_sequence_level(sequence);
 
     engine.dispatch_receive_damage(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         victim,
         sequence,
@@ -429,12 +428,11 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     engine.set_action_state_of(victim, ActionState::Moving);
 
     let seq = engine.t_launch_element_with(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
     );
     let mut display = HostDisplayState::default();
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let element = engine
         .orders
@@ -504,7 +502,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 
     let mut invalid = engine.clone();
     invalid.place_map(victim, crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    invalid.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     assert_eq!(
         invalid
             .orders
@@ -532,7 +530,11 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 
     engine.place_map(victim, crate::coordinates::MapPoint::new(0.0, 20.0));
     let live_facing = crate::position_interface::vector_to_sector_0_to_15_iso(0.0, 20.0);
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+    engine.tick_selected_ability(
+        TickCtx::new(&sim, &assets),
+        attacker,
+        engine.actors_frozen(),
+    );
 
     let victim_ai = engine.ai_ctrl(victim);
     assert!(
@@ -576,11 +578,10 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
 
     let assets = engine.test_runtime_assets();
     let seq = engine.t_launch_element_with(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         SequenceElement::new_interaction(1, Command::HitCmd, Some(attacker), Some(victim)),
     );
-    engine.t_hourglass_phase_sequences_with(&sim, &assets);
+    engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &assets));
 
     let hit = engine
         .orders
@@ -702,7 +703,11 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     engine.actor_mut(attacker).execute_order_initialising = true;
 
     assert_ne!(
-        engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen()),
+        engine.tick_selected_ability(
+            TickCtx::new(&sim, &assets),
+            attacker,
+            engine.actors_frozen()
+        ),
         Some(crate::sprite::MotionState::Done),
         "the first valid Execute must leave a later terminal boundary to recheck"
     );
@@ -717,7 +722,11 @@ fn hit_done_rechecks_live_target_distance_before_launching_damage() {
     for branch in [&mut in_range, &mut out_of_range] {
         let mut result = None;
         for _ in 0..10 {
-            result = branch.tick_selected_ability(&sim, &assets, attacker, branch.actors_frozen());
+            result = branch.tick_selected_ability(
+                TickCtx::new(&sim, &assets),
+                attacker,
+                branch.actors_frozen(),
+            );
             if result == Some(crate::sprite::MotionState::Done) {
                 break;
             }
@@ -776,15 +785,14 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
         victim.set_layer(3);
         victim.set_sector(crate::position_interface::SectorHandle::new(2));
     }
-    let old_wait = engine.actor_wait(&sim, &assets, victim);
+    let old_wait = engine.actor_wait(TickCtx::new(&sim, &assets), victim);
     let strangle = launch_initialized_strangle(&mut engine, attacker, victim, hotspot);
     engine
         .ai_ctrl_mut(victim)
         .non_script_lock(AiLockFlags::FREEZE);
     let unrelated = engine.entity_id_for_index(0).unwrap();
     let outer_wait = engine.t_launch_element_with(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(unrelated)),
     );
     let observed = std::rc::Rc::new(std::cell::Cell::new(false));
@@ -815,8 +823,7 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
         },
         || {
             engine.stop_actor_orders(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 &mut Vec::new(),
                 attacker,
                 SequencePriority::Normal,
@@ -849,7 +856,10 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.tick_one_actor_animation_action_change_slot(&sim, &assets, attacker);
+                engine.tick_one_actor_animation_action_change_slot(
+                    TickCtx::new(&sim, &assets),
+                    attacker,
+                );
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -867,7 +877,12 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
 
     assert_failed_strangle_cleanup(&engine, attacker, victim, launch);
-    assert_failed_strangle_setup_is_not_repeated(&mut engine, &sim, &assets, attacker, victim);
+    assert_failed_strangle_setup_is_not_repeated(
+        &mut engine,
+        TickCtx::new(&sim, &assets),
+        attacker,
+        victim,
+    );
 }
 
 fn add_strangle_placement_failure_scene(
@@ -1159,8 +1174,7 @@ fn assert_failed_strangle_cleanup(
 
 fn assert_failed_strangle_setup_is_not_repeated(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     attacker: EntityId,
     victim: EntityId,
 ) {
@@ -1170,7 +1184,7 @@ fn assert_failed_strangle_setup_is_not_repeated(
         victim_entity.element_data().sprite.current_frame,
         engine.orders.sequence_manager.sequences_iter().count(),
     );
-    engine.tick_selected_ability(sim, assets, attacker, engine.actors_frozen());
+    engine.tick_selected_ability(tcx, attacker, engine.actors_frozen());
     let victim_entity = engine.ent(victim);
     assert_eq!(
         (
@@ -1197,8 +1211,7 @@ fn strangle_condolation_rejects_non_interaction_owner_data() {
         .insert_element(SequenceElement::new(1, Command::StrangleCmd, Some(owner)));
     engine.orders.sequence_manager.start_sequence_level(seq);
     engine.element_impossible(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut Vec::new(),
         seq,
         0,
@@ -1274,7 +1287,7 @@ fn lethal_swordfight_cleanup_only_unlinks_the_survivor() {
         *victim_entity.human_and_life_points_mut().unwrap().1 = 0;
     }
 
-    engine.quit_swordfight(&sim, &assets, victim);
+    engine.quit_swordfight(TickCtx::new(&sim, &assets), victim);
 
     let survivor_entity = engine.ent(survivor);
     assert!(survivor_entity.human_data().unwrap().opponents.is_empty());
@@ -1339,7 +1352,7 @@ fn explicit_quit_dispatch_preserves_cross_postponed_sword_movement_action() {
         .unwrap()
         .postponed = Some(crate::sequence::SequenceElementRef::new(movement, 0));
 
-    engine.dispatch_quit_swordfight(&sim, &assets, &mut Vec::new(), owner, quit, 0);
+    engine.dispatch_quit_swordfight(TickCtx::new(&sim, &assets), &mut Vec::new(), owner, quit, 0);
 
     let movement = engine
         .orders
@@ -1393,7 +1406,12 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     engine.select_sequence_element(victim, Some((damage_sequence, 0)));
     engine.t_element_in_progress(&LevelAssets::new(), damage_sequence, 0);
 
-    engine.handle_death_with_damage_element(&sim, &assets, victim, (damage_sequence, 0), None);
+    engine.handle_death_with_damage_element(
+        TickCtx::new(&sim, &assets),
+        victim,
+        (damage_sequence, 0),
+        None,
+    );
 
     let enemy = engine.enemy(victim);
     assert_eq!(
@@ -1429,7 +1447,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
         victim_entity.set_posture(Posture::Dead);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
     }
-    engine.do_next_order(&sim, &assets, damage_sequence, 0);
+    engine.do_next_order(TickCtx::new(&sim, &assets), damage_sequence, 0);
     assert_eq!(
         engine
             .orders
@@ -1441,7 +1459,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     );
     assert_eq!(engine.actor_command(victim), Command::Wait);
 
-    engine.ensure_wait_element(&sim, &assets, victim);
+    engine.ensure_wait_element(TickCtx::new(&sim, &assets), victim);
     let wait_sequence = engine
         .orders
         .sequence_manager
@@ -1459,8 +1477,7 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     // stamped action-state-after-transition, not the live actor field.
     engine.stamp_element_transition_state(victim, wait_sequence, 0);
     engine.dispatch_wait_command(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         &mut Vec::new(),
         victim,
         Command::Wait,

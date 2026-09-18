@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod tests {
@@ -271,8 +272,7 @@ mod tests {
             );
 
             engine.execute_ai_coordinate_patrol(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &StimulusInfo::Position(Position {
                     x: 100.0 + distance,
@@ -303,23 +303,16 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_coordinate_patrol(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         info: &crate::ai::StimulusInfo,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_coordinate_patrol(info)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_coordinate_patrol(info)
     }
 
     /// Apply facing from the two actor values it actually reads. In particular,
     /// this runs after coordinate Think, so callback changes are visible.
-    fn instruct_patrol_direction(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        member: EntityId,
-        direction: u16,
-    ) {
+    fn instruct_patrol_direction(&mut self, tcx: TickCtx<'_>, member: EntityId, direction: u16) {
         let entity = self
             .entities()
             .expect_entity(member, format_args!("patrol direction member"));
@@ -339,16 +332,15 @@ impl EngineInner {
             {
                 ai.already_turned = true;
             } else {
-                self.launch_live_ai_turn(sim, assets, member, direction as i16, false);
+                self.launch_live_ai_turn(tcx, member, direction as i16, false);
             }
         }
     }
 
     pub(in crate::engine) fn instruct_patrol_direction_to_patrol_members(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         owner: EntityId,
-        assets: &LevelAssets,
         direction: u16,
     ) {
         let member_count = self.ai(owner, "patrol direction chief").patrol.len();
@@ -358,7 +350,7 @@ impl EngineInner {
                 .patrol
                 .get(index)
                 .expect("patrol shrank during direction callback");
-            self.instruct_patrol_direction(sim, assets, member, direction);
+            self.instruct_patrol_direction(tcx, member, direction);
             // Register turns now; owner instruction belongs to the later
             // sequence-manager pass, as with coordinate Think below.
         }
@@ -369,8 +361,7 @@ impl EngineInner {
     /// their owners, without an all-NPC patrol snapshot.
     pub(in crate::engine) fn tick_patrol_coordination_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         use crate::ai::{AiState, Stimulus, StimulusType, Substate};
@@ -385,7 +376,7 @@ impl EngineInner {
             return;
         }
         if ai.needs_patrol_reinit {
-            self.initialize_patrol_for_npc(assets, owner);
+            self.initialize_patrol_for_npc(tcx.assets, owner);
         }
 
         let ai = self.ai(owner, "patrol chief");
@@ -446,7 +437,7 @@ impl EngineInner {
             }
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, target);
             self.debug_patrol_turn_lifecycle("before_coordinate_think", member);
-            self.execute_ai_callback(sim, assets, member, &stimulus);
+            self.execute_ai_callback(tcx, member, &stimulus);
             // Construct Move before applying direction, but leave its deferred
             // InstructOwner for the normal sequence-manager phase.
             self.debug_patrol_turn_lifecycle("after_coordinate_think", member);
@@ -455,12 +446,12 @@ impl EngineInner {
                 .patrol
                 .get(index)
                 .expect("patrol shrank during coordinate callback");
-            self.instruct_patrol_direction(sim, assets, member, direction);
+            self.instruct_patrol_direction(tcx, member, direction);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", member);
 
             self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", member);
         }
-        self.reacquire_patrol_members(assets, owner);
+        self.reacquire_patrol_members(tcx.assets, owner);
     }
 
     fn reacquire_patrol_members(&mut self, assets: &LevelAssets, owner: EntityId) {

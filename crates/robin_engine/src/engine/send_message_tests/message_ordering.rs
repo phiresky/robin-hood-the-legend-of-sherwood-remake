@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 fn send_message_element(
     level: u16,
@@ -33,8 +34,8 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         Command::UnlockAi,
         Some(receiver),
     ));
-    let old_id = engine.t_launch_sequence_with(&sim, &assets, old_sequence);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let old_id = engine.t_launch_sequence_with(TickCtx::new(&sim, &assets), old_sequence);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine.world.entities.current_element_for_actor(receiver),
@@ -54,8 +55,8 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         FieldValue::Animation(OrderType::RaisingShield),
     );
     replacement.append_element(new_animation);
-    let replacement_id = engine.t_launch_sequence_with(&sim, &assets, replacement);
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    let replacement_id = engine.t_launch_sequence_with(TickCtx::new(&sim, &assets), replacement);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let manager = &engine.orders.sequence_manager;
     assert_eq!(
@@ -105,8 +106,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let assets = LevelAssets::new();
 
     let active_id = engine.launch_element(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         SequenceElement::new_movement(1, Command::Move, Some(receiver), OrderType::RunningUpright),
     );
     engine.select_sequence_element(receiver, Some((active_id, 0)));
@@ -119,8 +119,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let frame_before = engine.control.frame_counter;
     engine
         .call_external_native(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             "SendMessageWithArguments",
             &[handle, 1234, 55, -7],
         )
@@ -164,7 +163,7 @@ fn script_send_message_callback_completes_before_sequence_launch_returns() {
     // The send-message command's immediate path invokes message processing
     // inline.
     engine
-        .call_external_native(sim, &assets, "SendMessage", &[handle, 314])
+        .call_external_native(TickCtx::new(sim, &assets), "SendMessage", &[handle, 314])
         .expect("SendMessage should complete synchronously");
 
     assert_eq!(
@@ -195,10 +194,10 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
     let frame_before = engine.control.frame_counter;
 
     engine
-        .call_external_native(sim, &assets, "SendMessage", &[handle, 41])
+        .call_external_native(TickCtx::new(sim, &assets), "SendMessage", &[handle, 41])
         .expect("first SendMessage");
     engine
-        .call_external_native(sim, &assets, "SendMessage", &[handle, 72])
+        .call_external_native(TickCtx::new(sim, &assets), "SendMessage", &[handle, 72])
         .expect("second SendMessage");
 
     assert_eq!(engine.control.frame_counter, frame_before);
@@ -291,9 +290,8 @@ fn target_activation_callback_precedes_later_engine_sibling() {
 
     let mut display = crate::engine::HostDisplayState::default();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         &mut display,
-        &LevelAssets::new(),
     );
 
     assert!(
@@ -324,9 +322,8 @@ fn send_message_callback_precedes_later_move_translation() {
 
     let assets = engine.test_runtime_assets();
     engine.hourglass_phase_sequences(
-        &crate::sim_rng::test_context(),
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut crate::engine::HostDisplayState::default(),
-        &assets,
     );
 
     assert_eq!(
@@ -403,8 +400,7 @@ fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             super::ScriptVmKey::Actor(handle),
             "TriggerNextLevel",
             &[],
@@ -434,8 +430,7 @@ fn missing_send_message_receiver_reports_failure_after_successor_cleanup() {
     ));
     let error = engine
         .launch_sequence_inline(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
             sequence,
         )

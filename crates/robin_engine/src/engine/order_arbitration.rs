@@ -4,6 +4,7 @@
 //! cleanup and order-state updates borrow only their world/order domains.
 use super::state::OrderRuntime;
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Apply the human actor's specialized admission guard. It runs before
@@ -52,8 +53,7 @@ impl EngineInner {
     /// incoming element remains accepted after those callbacks.
     pub(crate) fn arbitrate_instruct(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         new_seq: crate::sequence::SequenceId,
         new_idx: usize,
@@ -134,12 +134,12 @@ impl EngineInner {
         // Civilian instruction handling refuses everything except RECEIVE_PURSE /
         // BEGGAR_SHOW_FACE / WAIT when the civilian is a beggar.
         if self.beggar_rejects_command(owner, new_command) {
-            self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
+            self.element_impossible(tcx, active_scripts, new_seq, new_idx);
             return false;
         }
 
         if self.human_instruct_rejects_command(owner, new_command) {
-            self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
+            self.element_impossible(tcx, active_scripts, new_seq, new_idx);
             return false;
         }
 
@@ -187,21 +187,13 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .take_over_postponed(cur_seq, cur_idx, new_seq, new_idx);
-                self.element_impossible(sim, assets, active_scripts, new_seq, new_idx);
+                self.element_impossible(tcx, active_scripts, new_seq, new_idx);
                 false
             }
             PriorityDecision::Postpone => {
                 // `new.Postpone(current)` — may recurse when the target
                 // already has a postponed chain.
-                self.engine_postpone(
-                    sim,
-                    assets,
-                    active_scripts,
-                    cur_seq,
-                    cur_idx,
-                    new_seq,
-                    new_idx,
-                );
+                self.engine_postpone(tcx, active_scripts, cur_seq, cur_idx, new_seq, new_idx);
                 false
             }
             PriorityDecision::PostponeCurrent => {
@@ -252,15 +244,7 @@ impl EngineInner {
                 // Callbacks observe the incoming instruction before the outgoing
                 // element is postponed, and may replace it recursively.
                 self.select_sequence_element(owner, Some((new_seq, new_idx)));
-                self.engine_postpone(
-                    sim,
-                    assets,
-                    active_scripts,
-                    new_seq,
-                    new_idx,
-                    cur_seq,
-                    cur_idx,
-                );
+                self.engine_postpone(tcx, active_scripts, new_seq, new_idx, cur_seq, cur_idx);
                 self.current_sequence_element_for_actor(owner) == Some((new_seq, new_idx))
             }
             PriorityDecision::InterruptCurrent => {
@@ -280,8 +264,7 @@ impl EngineInner {
                 // the incoming instruction. Returning never restores selection.
                 self.select_sequence_element(owner, Some((new_seq, new_idx)));
                 self.element_interrupted(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     cur_seq,
                     cur_idx,
@@ -298,8 +281,7 @@ impl EngineInner {
     /// may recurse, swap, or interrupt deeper in the chain.
     pub(super) fn engine_postpone(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         blocker_seq: crate::sequence::SequenceId,
         blocker_idx: usize,
@@ -307,8 +289,7 @@ impl EngineInner {
         waiter_idx: usize,
     ) {
         self.engine_postpone_with_debug_depth(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             blocker_seq,
             blocker_idx,
@@ -320,8 +301,7 @@ impl EngineInner {
 
     pub(super) fn engine_postpone_with_debug_depth(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         blocker_seq: crate::sequence::SequenceId,
         blocker_idx: usize,
@@ -483,13 +463,7 @@ impl EngineInner {
                             waiter_seq,
                             waiter_idx,
                         );
-                        self.element_impossible(
-                            sim,
-                            assets,
-                            active_scripts,
-                            waiter_seq,
-                            waiter_idx,
-                        );
+                        self.element_impossible(tcx, active_scripts, waiter_seq, waiter_idx);
                         return;
                     }
                     PriorityDecision::Postpone => {
@@ -511,8 +485,7 @@ impl EngineInner {
                             .sequence_manager
                             .set_cross_postponed_link((blocker_seq, blocker_idx), None);
                         self.engine_postpone_with_debug_depth(
-                            sim,
-                            assets,
+                            tcx,
                             active_scripts,
                             waiter_seq,
                             waiter_idx,
@@ -537,15 +510,13 @@ impl EngineInner {
                             .sequence_manager
                             .set_cross_postponed_link((blocker_seq, blocker_idx), None);
                         self.prepare_cross_postponed_waiter(
-                            sim,
-                            assets,
+                            tcx,
                             active_scripts,
                             waiter_seq,
                             waiter_idx,
                         );
                         self.element_interrupted(
-                            sim,
-                            assets,
+                            tcx,
                             active_scripts,
                             existing_seq,
                             existing_idx,
@@ -596,7 +567,7 @@ impl EngineInner {
                 {
                     e.orders.clear();
                 }
-                self.element_terminated(sim, assets, active_scripts, waiter_seq, waiter_idx);
+                self.element_terminated(tcx, active_scripts, waiter_seq, waiter_idx);
                 return;
             }
 
@@ -614,13 +585,7 @@ impl EngineInner {
                     Some((waiter_seq, waiter_idx)),
                 );
             }
-            self.prepare_cross_postponed_waiter(
-                sim,
-                assets,
-                active_scripts,
-                waiter_seq,
-                waiter_idx,
-            );
+            self.prepare_cross_postponed_waiter(tcx, active_scripts, waiter_seq, waiter_idx);
             tracing::trace!(
                 target: "parity_launch",
                 depth,
@@ -645,13 +610,12 @@ impl EngineInner {
     /// keep running on a stale path.
     pub(crate) fn stop_actor_orders(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
     ) {
-        self.stop_actor_orders_phase(sim, assets, active_scripts, owner, stop_priority, true);
+        self.stop_actor_orders_phase(tcx, active_scripts, owner, stop_priority, true);
     }
 
     /// Run the actor-selected half of actor stopping, leaving the
@@ -659,13 +623,12 @@ impl EngineInner {
     /// selected element's synchronous condolence callback.
     pub(super) fn stop_owner_current(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
     ) {
-        self.stop_actor_orders_phase(sim, assets, active_scripts, owner, stop_priority, false);
+        self.stop_actor_orders_phase(tcx, active_scripts, owner, stop_priority, false);
     }
 
     /// Finish actor stopping after the selected element's synchronous
@@ -673,8 +636,7 @@ impl EngineInner {
     /// each stopped entry sends its own card before the scan advances.
     pub(super) fn stop_owner_pending_after_callback(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
@@ -682,15 +644,14 @@ impl EngineInner {
         let resolver = |engine: &EngineInner, element: &crate::sequence::SequenceElement| {
             Self::priority_resolver(&engine.world.entities)(element)
         };
-        self.stop_pending_elements(sim, assets, active_scripts, owner, stop_priority, &resolver);
+        self.stop_pending_elements(tcx, active_scripts, owner, stop_priority, &resolver);
     }
 }
 
 impl EngineInner {
     fn prepare_cross_postponed_waiter(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
 
         waiter_seq: crate::sequence::SequenceId,
@@ -703,7 +664,7 @@ impl EngineInner {
         {
             w.orders.clear();
         }
-        self.postpone_element(sim, assets, active_scripts, waiter_seq, waiter_idx);
+        self.postpone_element(tcx, active_scripts, waiter_seq, waiter_idx);
     }
 }
 /// Cancel pending and failed path requests before interrupting or postponing
@@ -722,8 +683,7 @@ pub(super) fn stop_owner_active_mechanics(orders: &mut OrderRuntime, owner: Enti
 impl EngineInner {
     fn stop_actor_orders_phase(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: crate::sequence::SequencePriority,
@@ -781,8 +741,7 @@ impl EngineInner {
 
         tracing::trace!(target: "parity_stop", ?owner, "before stop_movement_for_owner");
         self.stop_movement_for_owner(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             owner,
             owner_pos,
@@ -805,17 +764,10 @@ impl EngineInner {
 
         tracing::trace!(target: "parity_stop", ?owner, "before sequence stop_owner");
         if include_pending {
-            self.stop_owner(sim, assets, active_scripts, owner, stop_priority, &resolver);
+            self.stop_owner(tcx, active_scripts, owner, stop_priority, &resolver);
         } else {
             let root = self.world.entities.current_element_for_actor(owner);
-            self.stop_owner_current_from_root(
-                sim,
-                assets,
-                active_scripts,
-                root,
-                stop_priority,
-                &resolver,
-            );
+            self.stop_owner_current_from_root(tcx, active_scripts, root, stop_priority, &resolver);
         }
 
         tracing::trace!(target: "parity_stop", ?owner, "after sequence stop_owner");

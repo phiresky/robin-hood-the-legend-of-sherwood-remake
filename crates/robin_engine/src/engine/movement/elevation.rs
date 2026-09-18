@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     // ─── Elevation-line crossing ──────────────────────────────────
@@ -552,8 +553,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn check_for_non_elevation_line_crossing_indices(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         old_pos: MapPoint,
         new_pos: MapPoint,
@@ -593,13 +593,13 @@ impl EngineInner {
                 (line.is_patch, line.is_script, line.is_sound)
             };
             if is_patch && is_pc {
-                self.dispatch_patch_line_crossing(sim, assets, entity_id, new_pos, line_index);
+                self.dispatch_patch_line_crossing(tcx, entity_id, new_pos, line_index);
             }
             if is_script {
-                self.dispatch_script_line_crossing(sim, assets, entity_id, new_pos, line_index);
+                self.dispatch_script_line_crossing(tcx, entity_id, new_pos, line_index);
             }
             if is_sound {
-                self.dispatch_sound_line_crossing(assets, entity_id, new_pos, line_index);
+                self.dispatch_sound_line_crossing(tcx.assets, entity_id, new_pos, line_index);
             }
         }
     }
@@ -616,8 +616,7 @@ impl EngineInner {
     /// and script/patch boundaries while initializing a generic dying order.
     pub(in crate::engine) fn dispatch_actor_post_execute_line_crossing(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) {
         #[cfg(test)]
@@ -679,7 +678,7 @@ impl EngineInner {
             .collect::<Vec<_>>();
 
         let crossed_elevation = self.check_for_elevation_line_crossing_indices(
-            assets,
+            tcx.assets,
             entity_id,
             old_pos,
             new_pos,
@@ -688,7 +687,7 @@ impl EngineInner {
         );
         if crossed_elevation || crossing_count > 1 {
             if is_human {
-                self.update_roll_after_crossing(assets, entity_id);
+                self.update_roll_after_crossing(tcx.assets, entity_id);
             }
             let compute_direction = self
                 .actor_installed_order(entity_id)
@@ -708,8 +707,7 @@ impl EngineInner {
         }
 
         self.check_for_non_elevation_line_crossing_indices(
-            sim,
-            assets,
+            tcx,
             entity_id,
             old_pos,
             new_pos,
@@ -739,8 +737,7 @@ impl EngineInner {
     /// `apply_patch`.
     pub(in crate::engine) fn dispatch_patch_line_crossing(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         new_pos: MapPoint,
         line_index: crate::fast_find_grid::LineIndex,
@@ -817,7 +814,7 @@ impl EngineInner {
         };
 
         if apply {
-            self.apply_patch(sim, assets, patch_index);
+            self.apply_patch(tcx, patch_index);
         }
     }
 

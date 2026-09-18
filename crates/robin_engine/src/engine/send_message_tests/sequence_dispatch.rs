@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn nested_sequence_actions_finish_before_parent_tail() {
@@ -17,8 +18,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(ordering_handle),
             "TriggerParentOrder",
             &[],
@@ -58,8 +58,7 @@ fn child_dispatch_failure_leaves_parent_successor_unexecuted() {
     let missing_handle = ScriptHandleCodec::actor_handle(missing_id);
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(failure_handle),
             "TriggerFailure",
             &[missing_handle],
@@ -129,8 +128,7 @@ fn open_scroll_terminates_before_nested_child_failure() {
 
     let error = engine
         .start_sequence_inline(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             sequence_id,
         )
@@ -195,8 +193,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
 
     let error = engine
         .start_sequence_inline(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             sequence_id,
         )
@@ -240,8 +237,7 @@ fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
         .with_current_scroll(scroll_handle);
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Scroll(scroll_handle),
             "TriggerScroll",
             &[observer_handle],
@@ -270,8 +266,7 @@ fn scroll_ownerless_send_message_preserves_this_scroll_in_global_and_parent() {
         .with_current_scroll(scroll_handle);
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Scroll(scroll_handle),
             "TriggerOwnerless",
             &[],

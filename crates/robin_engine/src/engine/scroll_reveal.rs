@@ -17,6 +17,7 @@
 //! in `engine/archery.rs` invokes [`EngineInner::reveal_scrolls`] on the
 //! `WaitingWithPurse` → transition boundary.
 
+use crate::engine::TickCtx;
 use serde::{Deserialize, Serialize};
 
 use super::{EngineInner, LevelAssets};
@@ -76,7 +77,7 @@ mod tests {
         assets.entities.scroll_entity_ids.push(scroll_id);
 
         let revealed = engine
-            .reveal_scroll(&sim, &assets, 0)
+            .reveal_scroll(TickCtx::new(&sim, &assets), 0)
             .expect("scroll is revealable");
 
         assert_ne!(revealed, scroll_id);
@@ -91,7 +92,7 @@ mod tests {
         assert_eq!(amulet.element.layer(), 2);
         assert_eq!(amulet.element.direction(), 13);
         assert_eq!(engine.scroll_status(scroll_id), ScrollStatus::Taken);
-        assert_eq!(engine.reveal_scroll(&sim, &assets, 0), None);
+        assert_eq!(engine.reveal_scroll(TickCtx::new(&sim, &assets), 0), None);
     }
 }
 
@@ -241,13 +242,7 @@ impl EngineInner {
     ///    refreshes the minimap dot.
     ///
     /// `scroll_handle` and `pc_handle` are actor script handles.
-    pub(crate) fn take_scroll(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        pc: EntityId,
-        scroll: EntityId,
-    ) {
+    pub(crate) fn take_scroll(&mut self, tcx: TickCtx<'_>, pc: EntityId, scroll: EntityId) {
         // Flip the taken flag.
         if let Some(entity) = self.get_entity_mut(scroll)
             && let Some(obj) = entity.object_data_mut()
@@ -271,8 +266,7 @@ impl EngineInner {
         let scroll_handle = crate::natives::ScriptHandleCodec::actor_handle(scroll);
         let pc_handle = crate::natives::ScriptHandleCodec::actor_handle(pc);
         let script_result = self.call_script_vm(
-            sim,
-            assets,
+            tcx,
             super::ScriptVmKey::Scroll(scroll_handle),
             "IsTaken",
             &[pc_handle],
@@ -353,19 +347,18 @@ impl EngineInner {
     /// Returns the revealed scroll or replacement amulet for highlighting.
     /// Returns `None` if the
     /// scroll is not revealable.
-    pub(crate) fn reveal_scroll(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        scroll_id: u16,
-    ) -> Option<EntityId> {
-        if !self.is_scroll_revealable(assets, scroll_id) {
+    pub(crate) fn reveal_scroll(&mut self, tcx: TickCtx<'_>, scroll_id: u16) -> Option<EntityId> {
+        if !self.is_scroll_revealable(tcx.assets, scroll_id) {
             return None;
         }
-        let eid = *assets.entities.scroll_entity_ids.get(scroll_id as usize)?;
+        let eid = *tcx
+            .assets
+            .entities
+            .scroll_entity_ids
+            .get(scroll_id as usize)?;
 
-        if self.is_scroll_to_be_replaced_by_amulet(sim, eid) {
-            let amulet = self.spawn_scroll_amulet(sim, assets, eid);
+        if self.is_scroll_to_be_replaced_by_amulet(tcx.sim, eid) {
+            let amulet = self.spawn_scroll_amulet(tcx, eid);
             self.set_scroll_status(eid, ScrollStatus::Taken);
             Some(amulet)
         } else {
@@ -390,8 +383,7 @@ impl EngineInner {
     /// `None` if the entity isn't a civilian / beggar.
     pub(crate) fn reveal_scrolls(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         beggar: EntityId,
     ) -> Option<BeggarRemark> {
         // Snapshot the beggar's current scroll set before mutating.
@@ -413,7 +405,7 @@ impl EngineInner {
                 .achievements
                 .record_beggar_response(beggar, true, false)
                 .expect("beggar response after finalization");
-            self.say_beggar_remark(sim, assets, beggar, BeggarRemark::ExhaustedThanx);
+            self.say_beggar_remark(tcx, beggar, BeggarRemark::ExhaustedThanx);
             return Some(BeggarRemark::ExhaustedThanx);
         }
         let current_set = scroll_sets[current_idx].clone();
@@ -421,14 +413,14 @@ impl EngineInner {
         // Count revealable scrolls in the current set without mutating.
         let revealable_count = current_set
             .iter()
-            .filter(|&&sid| self.is_scroll_revealable(assets, sid))
+            .filter(|&&sid| self.is_scroll_revealable(tcx.assets, sid))
             .count();
 
         let remark = if revealable_count != 0 {
             // Reveal each scroll and queue it onto the minimap.
             let mut highlighted = Vec::new();
             for &scroll_id in &current_set {
-                if let Some(revealed) = self.reveal_scroll(sim, assets, scroll_id) {
+                if let Some(revealed) = self.reveal_scroll(tcx, scroll_id) {
                     highlighted.push(revealed.index());
                 }
             }
@@ -448,19 +440,19 @@ impl EngineInner {
             // cursor advances.  The scrolls just revealed in
             // `current_set` no longer count (their status is now
             // `Visible`), so the check reports on future sets only.
-            if self.are_there_revealable_scrolls(assets, beggar) {
+            if self.are_there_revealable_scrolls(tcx.assets, beggar) {
                 BeggarRemark::GivesInfo
             } else {
                 BeggarRemark::GivesLastInfo
             }
-        } else if self.are_there_revealable_scrolls(assets, beggar) {
+        } else if self.are_there_revealable_scrolls(tcx.assets, beggar) {
             BeggarRemark::WantsMore
         } else {
             BeggarRemark::Thanx
         };
 
         // Fire the speech cue on the beggar's AI controller.
-        self.say_beggar_remark(sim, assets, beggar, remark);
+        self.say_beggar_remark(tcx, beggar, remark);
 
         // Common tail — unconditionally bump the chat cooldown and
         // advance the scroll-set cursor in both the revealable and
@@ -475,7 +467,7 @@ impl EngineInner {
             c.civilian.current_scroll_set = c.civilian.current_scroll_set.saturating_add(1);
         }
 
-        let exhausted = !self.are_there_revealable_scrolls(assets, beggar);
+        let exhausted = !self.are_there_revealable_scrolls(tcx.assets, beggar);
         self.mission_domain
             .achievements
             .record_beggar_response(beggar, exhausted, revealable_count != 0)
@@ -484,16 +476,9 @@ impl EngineInner {
     }
 
     /// Fire and settle the beggar speech cue at this interaction boundary.
-    fn say_beggar_remark(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        beggar: EntityId,
-        remark: BeggarRemark,
-    ) {
+    fn say_beggar_remark(&mut self, tcx: TickCtx<'_>, beggar: EntityId, remark: BeggarRemark) {
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             beggar,
             crate::ai::AiSpeechAttempt {
                 remark: remark.remark(),
@@ -502,26 +487,21 @@ impl EngineInner {
         );
     }
 
-    fn spawn_scroll_amulet(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        scroll_id: EntityId,
-    ) -> EntityId {
+    fn spawn_scroll_amulet(&mut self, tcx: TickCtx<'_>, scroll_id: EntityId) -> EntityId {
         // Resolve the amulet sprite from the preloaded scriptor cache
         // (`BONUS_FourLeavedClover` / "BONUS Trefle"). A miss here
         // means `preload_scroll_amulet_sprite` didn't run — treat as
         // a bug.
         let mut sprite = crate::sprite::Sprite::default();
         if let Err(e) = sprite.load_frame_info_cached(
-            &assets.sprite_scriptor,
+            &tcx.assets.sprite_scriptor,
             crate::sprite_script::FrameKind::Object,
             "BONUS_FourLeavedClover",
             "BONUS Trefle",
         ) {
             panic!("Scroll-reveal amulet sprite cache lookup failed (scroll {scroll_id:?}): {e}");
         }
-        sprite.force_random_sprite_frame(sim, crate::sim_rng::RngSite::ScrollRevealFrame);
+        sprite.force_random_sprite_frame(tcx.sim, crate::sim_rng::RngSite::ScrollRevealFrame);
 
         let mut element = {
             let mut initial_element = crate::element::ElementData::default();
@@ -541,7 +521,7 @@ impl EngineInner {
             .element_data();
         let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
             scroll.obstacle_index(),
-            assets.environment.static_sight_obstacles.as_slice(),
+            tcx.assets.environment.static_sight_obstacles.as_slice(),
         );
         element.sprite.apply_placement(
             scroll.position_map(),

@@ -1,22 +1,22 @@
 //! Direct actor update, including execution, completion, and the derived tail.
 
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(crate) fn tick_one_actor_animation_action_change_slot(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) {
         use crate::sprite::MotionState;
         self.debug_patrol_turn_lifecycle("actor_slot_before_prelude", entity_id);
-        self.tick_actor_prelude(sim, assets, entity_id);
+        self.tick_actor_prelude(tcx, entity_id);
         self.debug_patrol_turn_lifecycle("actor_slot_after_prelude", entity_id);
         // Derived updates finish their callbacks before entering the base
         // actor update. Only abortion retains this entry selection.
         let aborted_element = self.world.entities.current_element_for_actor(entity_id);
-        self.apply_delayed_actor_position(sim, assets, entity_id);
+        self.apply_delayed_actor_position(tcx, entity_id);
         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::BaseActor(entity_id));
 
         let frozen_without_order = self
@@ -41,12 +41,7 @@ impl EngineInner {
                 entity_id,
                 Some(crate::order::OrderType::NonanimationEnd),
             );
-            self.tick_actor_derived_tail(
-                sim,
-                assets,
-                entity_id,
-                crate::order::OrderType::NonanimationEnd,
-            );
+            self.tick_actor_derived_tail(tcx, entity_id, crate::order::OrderType::NonanimationEnd);
             return;
         }
 
@@ -54,7 +49,7 @@ impl EngineInner {
         // whether it is active. The actor update
         // then installs Wait whenever its order is empty. Active
         // controls world presence/rendering, not sequence time.
-        self.ensure_wait_element(sim, assets, entity_id);
+        self.ensure_wait_element(tcx, entity_id);
         // Sequence launch through element dispatch to instruction is
         // synchronous. A command registered for later manager or
         // deferred processing cannot suppress this transient
@@ -141,7 +136,7 @@ impl EngineInner {
         // replace the selected order in the same owner walk, so
         // sampling in a global pre-pass would validate stale work.
         let validity_motion = (!enter_swordfight_corpse_exit)
-            .then(|| self.pre_tick_human_execute_validity_for(sim, assets, entity_id))
+            .then(|| self.pre_tick_human_execute_validity_for(tcx, entity_id))
             .flatten();
         let validity_short_circuited = validity_motion.is_some();
         if !validity_short_circuited
@@ -296,33 +291,33 @@ impl EngineInner {
                 break 'execute motion;
             }
             if let Some(selection) = movement_selection {
-                if self.abort_orphaned_sword_movement(sim, assets, entity_id, selection) {
+                if self.abort_orphaned_sword_movement(tcx, entity_id, selection) {
                     break 'execute MotionState::Aborted;
                 }
                 if super::refresh_seek::perform_seek_lost_actor_target(self, entity_id, selection) {
                     break 'execute MotionState::Terminated;
                 }
-                if let Some(motion) = self.tick_refreshing_seek_for_owner(sim, assets, entity_id) {
+                if let Some(motion) = self.tick_refreshing_seek_for_owner(tcx, entity_id) {
                     break 'execute motion;
                 }
                 if self.selected_seek_refresh_decision(entity_id).is_some() {
                     self.apply_pre_perform_seek_facing_prologue(entity_id);
                 }
-                if self.tick_refresh_seek_for_owner(sim, assets, entity_id) {
+                if self.tick_refresh_seek_for_owner(tcx, entity_id) {
                     break 'execute MotionState::InProgress;
                 }
                 break 'execute self
-                    .tick_entity_movement_owner(sim, assets, entity_id, Some(selection))
+                    .tick_entity_movement_owner(tcx, entity_id, Some(selection))
                     .expect("selected movement owner did not execute");
             }
             if let Some(selection) = melee_selection {
                 break 'execute self
-                    .tick_selected_melee_owner(sim, assets, entity_id, selection)
+                    .tick_selected_melee_owner(tcx, entity_id, selection)
                     .expect("selected melee owner did not execute");
             }
             if let Some((_, _, order_id)) = bow_selection {
                 break 'execute self
-                    .tick_bow_shot_for(sim, assets, entity_id, order_id)
+                    .tick_bow_shot_for(tcx, entity_id, order_id)
                     .expect("selected bow owner did not execute");
             }
             if ability_selection.is_some() {
@@ -334,27 +329,27 @@ impl EngineInner {
                 .is_some_and(|ability| ability.kind == crate::movement::AbilityKind::Listen);
                 if listen {
                     if let Some(motion) =
-                        self.tick_enemy_ai_blip_detection_for_owner(sim, assets, entity_id)
+                        self.tick_enemy_ai_blip_detection_for_owner(tcx, entity_id)
                     {
                         break 'execute motion;
                     }
                 }
                 break 'execute self
-                    .tick_selected_ability(sim, assets, entity_id, self.actors_frozen())
+                    .tick_selected_ability(tcx, entity_id, self.actors_frozen())
                     .expect("selected ability owner did not execute");
             }
             if let Some(order_id) = beggar_selection {
-                self.tick_beggar_bid_for(sim, assets, entity_id, order_id);
+                self.tick_beggar_bid_for(tcx, entity_id, order_id);
                 break 'execute MotionState::InProgress;
             }
             if enter_swordfight_corpse_exit {
-                self.force_drop_carried_corpse_instant(sim, assets, entity_id);
+                self.force_drop_carried_corpse_instant(tcx, entity_id);
                 break 'execute MotionState::Terminated;
             }
             let result = if selected_order_type == Some(crate::order::OrderType::Rolling) {
-                self.tick_rolling_owner(sim, assets, entity_id)
+                self.tick_rolling_owner(tcx, entity_id)
             } else {
-                self.tick_actor_animation_for(sim, assets, entity_id)
+                self.tick_actor_animation_for(tcx, entity_id)
             };
             result.unwrap_or(MotionState::InProgress)
         };
@@ -375,8 +370,7 @@ impl EngineInner {
                 .is_some_and(Entity::is_pc)
         {
             self.tick_pc_combat_anim_speech_for_owner(
-                sim,
-                assets,
+                tcx,
                 entity_id,
                 selected_order_type,
                 selected_command,
@@ -388,10 +382,10 @@ impl EngineInner {
             validity_short_circuited,
             execution_frozen,
         ) {
-            self.tick_waiting_sword_execute_for(sim, assets, entity_id);
+            self.tick_waiting_sword_execute_for(tcx, entity_id);
         }
         if let Some(order_type) = selected_order_type {
-            self.tick_parry_counter_for_execute(sim, assets, entity_id, order_type, &mut motion);
+            self.tick_parry_counter_for_execute(tcx, entity_id, order_type, &mut motion);
         }
         {
             let actor = self
@@ -415,7 +409,7 @@ impl EngineInner {
             actor.execute_order_initialising = false;
         }
         self.debug_drop_owner_boundary("execute_latch_cleared", entity_id, selected_order);
-        self.dispatch_actor_post_execute_line_crossing(sim, assets, entity_id);
+        self.dispatch_actor_post_execute_line_crossing(tcx, entity_id);
         // Crossing callbacks can synchronously instruct a replacement and
         // publish its motion state before completion inspects this actor.
         let completion_motion = self
@@ -426,13 +420,7 @@ impl EngineInner {
             .expect("actor disappeared during line crossing")
             .continuation
             .motion_state;
-        self.finish_actor_execute_completion(
-            sim,
-            assets,
-            entity_id,
-            aborted_element,
-            completion_motion,
-        );
+        self.finish_actor_execute_completion(tcx, entity_id, aborted_element, completion_motion);
 
         // Order advancement may synchronously expose a real postponed
         // successor through state changes and readiness. If it does not,
@@ -447,7 +435,7 @@ impl EngineInner {
         // ActionChange can synchronously replace this or a later
         // actor's order and the next slot must sample that live.
         observe_actor_animation_boundary(ActorAnimationBoundaryPhase::ActionChange(entity_id));
-        self.dispatch_actor_action_change_for(sim, assets, entity_id);
+        self.dispatch_actor_action_change_for(tcx, entity_id);
         // Do not derive the actor order from the manager at the tail. The
         // exact identity was published at update entry and is
         // subsequently changed only by order advancement, selected
@@ -465,7 +453,7 @@ impl EngineInner {
             entity_id,
             Some(installed_tail_order_type),
         );
-        self.tick_actor_derived_tail(sim, assets, entity_id, installed_tail_order_type);
+        self.tick_actor_derived_tail(tcx, entity_id, installed_tail_order_type);
         if let Some(entity) = self.world.entities.get(entity_id) {
             super::animation::direction_provenance_snapshot(
                 entity.position_iface(),

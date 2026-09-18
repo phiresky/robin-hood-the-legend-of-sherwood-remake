@@ -3,6 +3,7 @@
 use super::*;
 use crate::ai::{AiState, DutyFlags, GotoFlags, LookDirection, Stimulus, StimulusType, Substate};
 use crate::ai_enemy::{ProfileRank, SeekFlags, UNDEFINED_DIRECTION};
+use crate::engine::TickCtx;
 
 impl EngineInner {
     fn remaining_search_timer(&mut self, owner: EntityId, frames: u32) {
@@ -54,8 +55,12 @@ impl AiOwnerCtx<'_> {
                     .engine
                     .ai(self.owner, "arrow reaction broadcast")
                     .seek_position;
-                self.engine
-                    .execute_ai_look_there(self.sim, self.assets, self.owner, position, 100);
+                self.engine.execute_ai_look_there(
+                    TickCtx::new(self.sim, self.assets),
+                    self.owner,
+                    position,
+                    100,
+                );
                 self.engine.remaining_search_timer(self.owner, 200);
             }
             (SeekingArrow, EventTimer | EventReachPoint) => {

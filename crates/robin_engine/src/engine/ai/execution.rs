@@ -5,6 +5,7 @@ use super::*;
 #[cfg(test)]
 use crate::ai::Stimulus;
 use crate::ai::{AiState, Substate};
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod after_script_tests {
@@ -27,8 +28,7 @@ mod after_script_tests {
             Stimulus::new(StimulusType::EventAfterScriptGoOn),
         ];
         assert!(!engine.execute_ai_callback(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventAfterScriptGoOn)
         ));
@@ -96,54 +96,45 @@ impl EngineInner {
         u8::try_from(self.ai.think_call_stack.len()).expect("think recursion depth overflow")
     }
 
-    pub(in crate::engine) fn execute_ai_end_think(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_end_think()
+    pub(in crate::engine) fn execute_ai_end_think(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_end_think()
     }
 
     pub(crate) fn execute_ai_return_to_duty(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         flags: crate::ai::DutyFlags,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_return_to_duty(flags)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_return_to_duty(flags)
     }
 
     pub(crate) fn execute_ai_callback(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_callback(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_callback(stimulus)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_handler_body(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_handler_body(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_handler_body(stimulus)
     }
 
     pub(in crate::engine) fn execute_ai_think(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_think(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_think(stimulus)
     }
 }
 
@@ -269,8 +260,11 @@ impl AiOwnerCtx<'_> {
 
     /// Execute a nested actor decision to completion before its caller resumes.
     pub(crate) fn execute_ai_callback(&mut self, stimulus: &crate::ai::Stimulus) -> bool {
-        self.engine
-            .dispatch_think_with_drain(self.sim, self.owner, stimulus, self.assets)
+        self.engine.dispatch_think_with_drain(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            stimulus,
+        )
     }
 
     /// Run the body of an already admitted decision without entering a new frame.
@@ -353,7 +347,7 @@ impl AiOwnerCtx<'_> {
         {
             if stimulus.stimulus_type == StimulusType::EventTimer {
                 self.engine
-                    .execute_ai_phalanx_timer(self.sim, self.assets, self.owner);
+                    .execute_ai_phalanx_timer(TickCtx::new(self.sim, self.assets), self.owner);
             } else {
                 self.execute_ai_phalanx_instruction();
             }
@@ -371,8 +365,7 @@ impl AiOwnerCtx<'_> {
             false
         } else if enemy_owner
             && (self.engine.execute_ai_combat_unexpected_event(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 stimulus,
             ) || self.execute_ai_combat_expected_event(stimulus.stimulus_type))
@@ -380,8 +373,7 @@ impl AiOwnerCtx<'_> {
             false
         } else if enemy_owner
             && let Some(handled) = self.engine.execute_ai_officer_rendezvous_event(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 self.owner,
                 stimulus,
             )
@@ -429,10 +421,13 @@ impl AiOwnerCtx<'_> {
             .is_some()
         {
             self.engine
-                .begin_enemy_think(self.sim, self.assets, self.owner, stimulus)
+                .begin_enemy_think(TickCtx::new(self.sim, self.assets), self.owner, stimulus)
         } else {
-            self.engine
-                .begin_friendly_think(self.sim, self.assets, self.owner, stimulus)
+            self.engine.begin_friendly_think(
+                TickCtx::new(self.sim, self.assets),
+                self.owner,
+                stimulus,
+            )
         };
         if !admitted {
             self.execute_ai_end_think();
@@ -488,10 +483,10 @@ mod tests {
         assert_eq!(engine.ai_think_depth(), 2);
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
-        engine.execute_ai_end_think(&sim, &assets, second);
+        engine.execute_ai_end_think(TickCtx::new(&sim, &assets), second);
         assert_eq!(engine.ai.think_call_stack, vec![first]);
         assert_eq!(engine.ai_think_depth(), 1);
-        engine.execute_ai_end_think(&sim, &assets, first);
+        engine.execute_ai_end_think(TickCtx::new(&sim, &assets), first);
         assert!(engine.ai.think_call_stack.is_empty());
     }
 
@@ -510,8 +505,7 @@ mod tests {
         ai.already_on_point = true;
         ai.already_turned = true;
         engine.execute_ai_end_think(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
         );
         let ai = engine
@@ -546,8 +540,7 @@ mod tests {
         ai.already_on_point = true;
         ai.already_turned = true;
         engine.execute_ai_end_think(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             owner,
         );
         let ai = engine
@@ -570,10 +563,10 @@ mod tests {
         enter(&mut engine, owner);
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
-        engine.execute_ai_end_think(&sim, &assets, owner);
+        engine.execute_ai_end_think(TickCtx::new(&sim, &assets), owner);
         assert_eq!(engine.ai.think_call_stack, vec![owner]);
         assert_eq!(engine.ai_think_depth(), 1);
-        engine.execute_ai_end_think(&sim, &assets, owner);
+        engine.execute_ai_end_think(TickCtx::new(&sim, &assets), owner);
         assert!(engine.ai.think_call_stack.is_empty());
     }
 }

@@ -2,6 +2,7 @@
 
 use super::{recorded_ground_target_titbit_layer, recorded_interaction_quick_phase};
 use crate::element::{Command, EntityId};
+use crate::engine::TickCtx;
 use crate::engine::{EngineInner, LevelAssets};
 use crate::profiles::Action;
 use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
@@ -9,8 +10,7 @@ use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
 impl EngineInner {
     pub(super) fn dispatch_target_interaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         target: &EntityId,
         command: &Command,
@@ -20,14 +20,14 @@ impl EngineInner {
         if recording_interaction
             && *command == Command::EnterSwordfight
             && self.get_entity(*target).is_some_and(|entity| {
-                crate::engine::melee::is_vip_from_profile(entity, &assets.profile_manager)
+                crate::engine::melee::is_vip_from_profile(entity, &tcx.assets.profile_manager)
             })
             && !self
                 .get_entity(*actor)
                 .and_then(|entity| entity.pc_data())
                 .is_some_and(|pc| pc.robin)
         {
-            self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+            self.apply_enter_swordfight(tcx, *actor, *target, *running);
             return;
         }
         // Macro recording: if `actor` is in the recording set
@@ -85,12 +85,12 @@ impl EngineInner {
                 let pc_char_profile = self
                     .get_entity(*actor)
                     .and_then(|e| e.pc_data())
-                    .and_then(|pc| assets.profile_manager.get_character(pc.profile_index));
+                    .and_then(|pc| tcx.assets.profile_manager.get_character(pc.profile_index));
                 let pc_has_search =
                     pc_char_profile.is_some_and(|p| p.has_contextual_action(Action::Search));
                 let pc_is_vip = self
                     .get_entity(*actor)
-                    .is_some_and(|e| self.is_entity_vip(assets, e));
+                    .is_some_and(|e| self.is_entity_vip(tcx.assets, e));
                 crate::engine::target_interaction::target_qa_titbit(
                     filter,
                     pc_has_search,
@@ -167,8 +167,7 @@ impl EngineInner {
                     crate::order::OrderType::WalkingUpright
                 };
                 self.replay_recorded_target_interaction(
-                    sim,
-                    assets,
+                    tcx,
                     *actor,
                     *target,
                     *command,
@@ -179,10 +178,10 @@ impl EngineInner {
                     turn_point,
                 );
             } else if *command == Command::EnterSwordfight {
-                self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+                self.apply_enter_swordfight(tcx, *actor, *target, *running);
                 return;
             } else {
-                self.apply_interaction_with_seek(sim, assets, *actor, *target, *command, *running);
+                self.apply_interaction_with_seek(tcx, *actor, *target, *command, *running);
             }
             self.stop_recording_macro();
             return;
@@ -204,7 +203,7 @@ impl EngineInner {
         // would seek at the 30-unit interaction default instead,
         // stopping the PC short of — or past — the opponent.
         if *command == Command::EnterSwordfight {
-            self.apply_enter_swordfight(sim, assets, *actor, *target, *running);
+            self.apply_enter_swordfight(tcx, *actor, *target, *running);
         } else if matches!(
             command,
             Command::SearchCmd
@@ -219,21 +218,23 @@ impl EngineInner {
         ) && !self.players.qa_recording_for.contains(actor)
         {
             if *running {
-                self.actor_make_fast(sim, *actor);
-            } else if self
-                .apply_target_interaction_route(sim, assets, *actor, *target, *command, *running)
+                self.actor_make_fast(tcx.sim, *actor);
+            } else if self.apply_target_interaction_route(tcx, *actor, *target, *command, *running)
             {
-                self.hero_speaking(assets, *actor, crate::engine::melee::HERO_ACCEPT_COMMAND);
+                self.hero_speaking(
+                    tcx.assets,
+                    *actor,
+                    crate::engine::melee::HERO_ACCEPT_COMMAND,
+                );
             }
         } else {
-            self.apply_interaction_with_seek(sim, assets, *actor, *target, *command, *running);
+            self.apply_interaction_with_seek(tcx, *actor, *target, *command, *running);
         }
     }
 
     pub(super) fn dispatch_ground_target(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         target_pos: &crate::coordinates::WorldPoint3D,
         command: &Command,
@@ -306,7 +307,7 @@ impl EngineInner {
         // instruction at the post-entity manager boundary.
         let mut seq = Sequence::new();
         seq.append_element(elem);
-        self.launch_or_record_quick_action_sequence(sim, assets, *actor, seq);
+        self.launch_or_record_quick_action_sequence(tcx, *actor, seq);
         if recording {
             self.stop_recording_macro();
         }

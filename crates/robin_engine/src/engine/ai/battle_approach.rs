@@ -4,18 +4,18 @@ use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
 use crate::ai::{AiEntityHandle, AiSpeechAttempt, AiState, GotoFlags, Position, Remark, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, rider_charge_goal_geometry};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 use crate::weapons::WeaponDistance;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_rebalance_swordfight(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         target: EntityId,
     ) {
-        if self.direct_enter_swordfight(sim, assets, owner, target) {
+        if self.direct_enter_swordfight(tcx, owner, target) {
             self.enemy_ai_mut(owner, "combat rebalance")
                 .base
                 .primary_target = Some(AiEntityHandle::new(target.index()));
@@ -91,32 +91,29 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_begin_swordfight(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_begin_swordfight()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_begin_swordfight()
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_reconsider_enemy_approach(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         reachpoint: bool,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_reconsider_enemy_approach(reachpoint)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_reconsider_enemy_approach(reachpoint)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_maybe_make_rider_attack(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_maybe_make_rider_attack()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_maybe_make_rider_attack()
     }
 
     fn live_rider_attack_destination(
@@ -221,8 +218,7 @@ impl AiOwnerCtx<'_> {
             return;
         }
         self.engine.launch_element(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             crate::sequence::SequenceElement::new(
                 1,
                 crate::element::Command::QuitSwordfight,
@@ -245,13 +241,14 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::JumplineDestination,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine.launch_element(self.sim, self.assets, element);
+        self.engine
+            .launch_element(TickCtx::new(self.sim, self.assets), element);
     }
 
     pub(in crate::engine) fn execute_ai_begin_swordfight(&mut self) {
         self.stop_ai_owner();
         self.engine
-            .nearby_civilians_panic(self.sim, self.assets, self.owner);
+            .nearby_civilians_panic(TickCtx::new(self.sim, self.assets), self.owner);
 
         let target = self.engine.approach_primary(self.owner);
         let entity = self.engine.expect_entity(target, "swordfight target stop");
@@ -267,8 +264,7 @@ impl AiOwnerCtx<'_> {
                 .is_moving()
         {
             self.engine.stop_actor_orders(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 &mut Vec::new(),
                 target,
                 crate::sequence::SequencePriority::Normal,
@@ -301,7 +297,8 @@ impl AiOwnerCtx<'_> {
             crate::sequence::Field::SwordfightPrepared,
             crate::sequence::FieldValue::Integer(0),
         );
-        self.engine.launch_element(self.sim, self.assets, element);
+        self.engine
+            .launch_element(TickCtx::new(self.sim, self.assets), element);
 
         self.engine.clear_live_combat_neighbours(self.owner);
         self.engine.approach_focus(self.owner, None);
@@ -869,8 +866,7 @@ mod tests {
         );
         assert_eq!(engine.map_pos_of(target), MapPoint::new(70.0, 80.0));
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -888,8 +884,7 @@ mod tests {
         engine.enemy_mut(owner).base.primary_target =
             Some(AiEntityHandle::new(replacement.index()));
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             true,
         );
@@ -996,8 +991,7 @@ mod tests {
             let sequences_before = engine.orders.sequence_manager.sequence_count();
             let target_position = engine.live_ai_position(target);
             engine.execute_ai_reconsider_enemy_approach(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 true,
             );
@@ -1053,8 +1047,7 @@ mod tests {
         move_actor(&mut engine, target, 585.0, 1726.0);
         engine.set_active(friend, false);
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -1202,8 +1195,7 @@ mod tests {
         ai.base.current_substate = Substate::AttackingRunningToEnemy;
         ai.base.primary_target = Some(AiEntityHandle::new(replacement.index()));
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -1245,8 +1237,7 @@ mod tests {
             };
             install_stopping_state_callback(&mut engine, &assets, owner);
             engine.execute_ai_reconsider_enemy_approach(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 true,
             );
@@ -1275,8 +1266,7 @@ mod tests {
         move_actor(&mut engine, target, 200.0, 100.0);
         engine.enemy_mut(owner).sword_is_charge_weapon = true;
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -1386,8 +1376,7 @@ mod tests {
             engine.place(target, WorldPoint3D::new(500.0, 500.0 - distance, 0.0));
             let position = engine.live_ai_position(target);
             assert!(engine.execute_ai_maybe_make_rider_attack(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner
             ));
             let ai = engine
@@ -1469,8 +1458,7 @@ mod tests {
             .expect_ai_controller_mut(owner, format_args!("rider target"))
             .primary_target = Some(AiEntityHandle::new(target.index()));
         assert!(engine.execute_ai_maybe_make_rider_attack(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner
         ));
         assert_eq!(
@@ -1494,8 +1482,7 @@ mod tests {
         entity.element_data_mut().set_posture(Posture::OnShoulders);
         entity.human_data_mut().unwrap().carrier = Some(carrier);
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -1520,8 +1507,7 @@ mod tests {
         ai.primary_target = None;
         ai.current_substate = Substate::AttackingSwordfight;
         engine.execute_ai_reconsider_enemy_approach(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );

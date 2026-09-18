@@ -1,6 +1,7 @@
 //! Default and sleeping decisions executed against live actor state.
 use super::*;
 use crate::ai::*;
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -23,35 +24,28 @@ impl EngineInner {
     }
 
     #[cfg(test)]
-    fn default_bored_live(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).default_bored_live()
+    fn default_bored_live(&mut self, tcx: TickCtx<'_>, owner: EntityId) -> bool {
+        AiOwnerCtx::new(self, tcx, owner).default_bored_live()
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_default_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_default_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_default_event(stimulus)
     }
 
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_common_expected_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_common_expected_event(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_common_expected_event(stimulus)
     }
 }
 
@@ -121,7 +115,9 @@ impl AiOwnerCtx<'_> {
             Substate::DefaultOnPostLookingSidewards => {
                 if kind == StimulusType::EventDone {
                     self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-                    let frames = self.engine.ai_bored_time(self.sim, self.assets, self.owner);
+                    let frames = self
+                        .engine
+                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
@@ -181,13 +177,17 @@ impl AiOwnerCtx<'_> {
                             .set_posture(posture);
                     }
                     self.duty_set_state(AiState::Default, Substate::DefaultOnPost);
-                    let frames = self.engine.ai_bored_time(self.sim, self.assets, self.owner);
+                    let frames = self
+                        .engine
+                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
             Substate::DefaultOnPost => {
                 if kind == StimulusType::EventTimer && !self.default_bored_live() {
-                    let frames = self.engine.ai_bored_time(self.sim, self.assets, self.owner);
+                    let frames = self
+                        .engine
+                        .ai_bored_time(TickCtx::new(self.sim, self.assets), self.owner);
                     self.engine.default_timer(self.owner, u32::from(frames));
                 }
             }
@@ -256,8 +256,11 @@ impl AiOwnerCtx<'_> {
                     .current_waypoint_index;
                 let mut event = Stimulus::new(StimulusType::EventSyncCharly);
                 event.info = StimulusInfo::Index(waypoint.into());
-                self.engine
-                    .dispatch_think_with_drain(self.sim, id, &event, self.assets);
+                self.engine.dispatch_think_with_drain(
+                    TickCtx::new(self.sim, self.assets),
+                    id,
+                    &event,
+                );
             }
             if self.engine.default_ai(id).current_substate != Substate::DefaultSynchronizing {
                 self.engine
@@ -318,9 +321,8 @@ impl AiOwnerCtx<'_> {
             crate::level_data::WaypointCommand::Script(_) => {
                 let (path, waypoint) = script_waypoint;
                 self.engine.execute_ai_waypoint_script(
-                    self.sim,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
-                    self.assets,
                     path,
                     waypoint,
                 );
@@ -452,8 +454,7 @@ mod tests {
             ai.current_substate = substate;
             assert_eq!(
                 engine.execute_ai_default_event(
-                    &sim,
-                    &assets,
+                    TickCtx::new(&sim, &assets),
                     owner,
                     &Stimulus::new(StimulusType::CallYourTalk0)
                 ),
@@ -495,7 +496,11 @@ mod tests {
                 StimulusType::CallLookThere,
             ] {
                 assert_eq!(
-                    engine.execute_ai_default_event(&sim, &assets, owner, &Stimulus::new(event)),
+                    engine.execute_ai_default_event(
+                        TickCtx::new(&sim, &assets),
+                        owner,
+                        &Stimulus::new(event)
+                    ),
                     None,
                     "{substate:?} / {event:?}"
                 );
@@ -517,8 +522,7 @@ mod tests {
         ai.max_visibility = 1;
         assert_eq!(
             engine.execute_ai_default_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer)
             ),
@@ -549,8 +553,7 @@ mod tests {
                     ..Default::default()
                 });
             engine.execute_ai_common_expected_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventReachPoint),
             );
@@ -627,7 +630,10 @@ mod movement_tests {
         orders.clear();
         engine.ai_ctrl_mut(owner).current_substate = Substate::DefaultGotoPost;
 
-        assert!(!engine.default_bored_live(&crate::sim_rng::test_context(), &assets, owner));
+        assert!(!engine.default_bored_live(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner
+        ));
     }
 
     fn registered_turn(engine: &EngineInner, owner: EntityId, command: Command) -> u32 {
@@ -671,7 +677,7 @@ mod movement_tests {
             config.fix_hard_reaction_times = fixed;
             let sim = SimulationContext::with_seed_and_config(123, config);
             let before = sim.seed();
-            engine.execute_ai_react_live(&sim, &assets, owner, 100);
+            engine.execute_ai_react_live(TickCtx::new(&sim, &assets), owner, 100);
             assert_eq!(engine.default_ai(owner).when_does_timer_ring, deadline);
             assert_eq!(
                 sim.seed(),
@@ -720,7 +726,10 @@ mod movement_tests {
             if live_member {
                 ai.base.patrol.push(member);
             }
-            engine.execute_ai_body_reaction_timer(&crate::sim_rng::test_context(), &assets, owner);
+            engine.execute_ai_body_reaction_timer(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+            );
             assert_eq!(
                 engine.default_ai(owner).current_substate,
                 if live_member {
@@ -748,8 +757,7 @@ mod movement_tests {
                 let (mut engine, assets, owner) = fixture(animation);
                 let point = engine.live_ai_position(owner);
                 engine.duty_go_to_speed(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     point,
                     GotoFlags::RUN,
@@ -779,8 +787,7 @@ mod movement_tests {
             point.x += 1.0;
             point.y += 3.0;
             engine.duty_go_near(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 point,
                 0,
@@ -804,8 +811,7 @@ mod movement_tests {
                 .stop_before_end_of_path_distance = 65;
             let flags = GotoFlags::NEAR | GotoFlags::SWORD;
             engine.duty_go_to(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 point,
                 flags,
@@ -852,8 +858,7 @@ mod movement_tests {
             let mut point = engine.live_ai_position(owner);
             point.x += 100.0;
             engine.duty_go_to(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 point,
                 GotoFlags::RUN,
@@ -897,7 +902,11 @@ mod movement_tests {
                 .expect_entity_mut(owner, format_args!("facing action fixture"));
             entity.actor_data_mut().unwrap().action_state = state;
             let direction = entity.element_data().direction() as u16;
-            engine.duty_face_direction(&crate::sim_rng::test_context(), &assets, owner, direction);
+            engine.duty_face_direction(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+                direction,
+            );
             let idle = matches!(state, ActionState::Waiting | ActionState::Bored);
             assert_eq!(engine.default_ai(owner).already_turned, idle, "{state:?}");
             if !idle {
@@ -920,7 +929,11 @@ mod movement_tests {
                 .actor_data_mut()
                 .unwrap()
                 .action_state = ActionState::Moving;
-            engine.duty_face_direction(&crate::sim_rng::test_context(), &assets, owner, direction);
+            engine.duty_face_direction(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+                direction,
+            );
             assert_eq!(
                 registered_turn(&engine, owner, Command::Turn),
                 u32::from(direction)
@@ -941,8 +954,7 @@ mod movement_tests {
         let mut point = engine.live_ai_position(owner);
         point.x += 100.0;
         engine.duty_face_position_signed_elevation(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             point,
             0,
@@ -1008,8 +1020,7 @@ mod movement_tests {
             MapPoint::new(500.0, 500.0)
         );
         engine.duty_face_position_ground(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Position {
                 x: 100.0,
@@ -1087,8 +1098,7 @@ mod movement_tests {
             };
             engine.default_ai_mut(owner).seek_position = noise.origin.legacy_position();
             engine.alert_face_noise_position(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &noise,
             );

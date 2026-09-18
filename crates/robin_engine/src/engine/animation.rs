@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::element::{ActionState, Command, Entity, EyeStatus, Posture};
+use crate::engine::TickCtx;
 use crate::sprite::{FrameProgression, MotionState};
 
 const WEAKNESS_DISMISH: u16 = 5;
@@ -392,8 +393,7 @@ fn forwards_pc_bow_action_on_start(
 /// Executes owner and antagonist changes before the selected animation arm returns.
 fn apply_soldier_execute_side_effects(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -589,7 +589,7 @@ fn apply_soldier_execute_side_effects(
             }
         }
         (OT::DrinkingAle, MS::Terminated) => {
-            engine.execute_drink_done(assets, (entity_id, antagonist));
+            engine.execute_drink_done(tcx.assets, (entity_id, antagonist));
         }
 
         // TAKING DONE: pick up the antagonist (Purse or Coin) and add
@@ -598,7 +598,7 @@ fn apply_soldier_execute_side_effects(
         // for `(OT::Taking, MS::Terminated)` fires before this).
         (OT::Taking, MS::Done) => {
             if let Some(a) = antagonist {
-                engine.execute_pickups(sim, assets, (entity_id, a));
+                engine.execute_pickups(tcx, (entity_id, a));
             }
         }
 
@@ -610,7 +610,7 @@ fn apply_soldier_execute_side_effects(
         // target direction is correct); here we just fire the remark
         // once the animation actually starts.
         (OT::GettingFreeFromWasp, MS::Start) => {
-            engine.execute_wasp_sting_remark(sim, assets, entity_id);
+            engine.execute_wasp_sting_remark(tcx, entity_id);
         }
         // NB: `wasp_victim = false` is not handled here.  The reset
         // lives in `EngineInner::send_condolation_card`
@@ -838,8 +838,7 @@ pub(super) fn apply_npc_execute_side_effects(
 /// command on motion Done.
 pub(super) fn apply_pc_target_interaction_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -863,7 +862,7 @@ pub(super) fn apply_pc_target_interaction_side_effect(
         OrderType::Searching => Command::ActivateSearch,
         _ => return,
     };
-    engine.execute_pc_target_activations(sim, assets, (entity_id, target, activation));
+    engine.execute_pc_target_activations(tcx, (entity_id, target, activation));
 }
 
 /// Stage the exact post-sprite `TakingNet` tail. The original does not remove
@@ -872,8 +871,7 @@ pub(super) fn apply_pc_target_interaction_side_effect(
 /// owner slot.
 fn apply_taking_net_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -885,8 +883,7 @@ fn apply_taking_net_side_effect(
         && let Some(net) = antagonist
     {
         engine.execute_taking_net_ticks(
-            sim,
-            assets,
+            tcx,
             TakingNetTick {
                 taker: entity_id,
                 net,
@@ -899,8 +896,7 @@ fn apply_taking_net_side_effect(
 
 fn apply_waking_up_done_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -910,7 +906,7 @@ fn apply_waking_up_done_side_effect(
         && matches!(motion, MotionState::Done)
         && let Some(target) = antagonist
     {
-        engine.execute_waking_up_done(sim, assets, (entity_id, target));
+        engine.execute_waking_up_done(tcx, (entity_id, target));
     }
 }
 
@@ -1288,8 +1284,7 @@ fn rejected_dead_idle_posture_callback_required(
 /// Object removal and pickup callbacks finish before this action returns.
 fn apply_pc_taking_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -1305,7 +1300,7 @@ fn apply_pc_taking_side_effect(
         && matches!(motion, MotionState::Done)
         && let Some(a) = antagonist
     {
-        engine.execute_pickups(sim, assets, (entity_id, a));
+        engine.execute_pickups(tcx, (entity_id, a));
     }
 }
 
@@ -1627,8 +1622,7 @@ fn apply_smalltalk_start_and_recovery_side_effect(
 /// victim at the action-done tag.
 fn apply_striking_down_sword_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     antagonist: Option<EntityId>,
@@ -1666,7 +1660,7 @@ fn apply_striking_down_sword_side_effect(
                 );
                 return;
             };
-            engine.execute_killed_at_bottom(sim, assets, (target, entity_id));
+            engine.execute_killed_at_bottom(tcx, (target, entity_id));
         }
         _ => {}
     }
@@ -1947,8 +1941,7 @@ fn finish_flight_action_state(entity: &mut Entity, anim_type: OrderType, motion:
 /// the soldier can resume the fight before order advancement.
 fn apply_combat_injury_side_effect(
     engine: &mut EngineInner,
-    sim: &crate::sim_rng::SimulationContext,
-    assets: &LevelAssets,
+    tcx: TickCtx<'_>,
     anim_type: OrderType,
     motion: MotionState,
     entity_id: EntityId,
@@ -1966,7 +1959,7 @@ fn apply_combat_injury_side_effect(
             .expect_entity(entity_id, "combat injury owner")
             .is_soldier()
     {
-        engine.dispatch_combat_injury_think_for_actor_hourglass(sim, entity_id, assets);
+        engine.dispatch_combat_injury_think_for_actor_hourglass(tcx, entity_id);
         super::tick::observe_actor_animation_boundary(
             super::tick::ActorAnimationBoundaryPhase::CombatInjuryThink(entity_id),
         );
@@ -2461,7 +2454,7 @@ fn dispatch_arm_completion(
             // picked at post-tick time based on entity subclass.
             if ctx.is_npc {
                 ctx.engine
-                    .execute_cry_for_help_under_net(sim, ctx.assets, ctx.entity_id);
+                    .execute_cry_for_help_under_net(TickCtx::new(sim, ctx.assets), ctx.entity_id);
             }
         }
         return ExecuteOutcome::Consumed;
@@ -2534,8 +2527,7 @@ fn finish_actor_execute_result(
 impl EngineInner {
     pub(super) fn finish_patch_transition_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::types::LevelAssets,
+        tcx: TickCtx<'_>,
         patch_idx: crate::patch::PatchIndex,
     ) {
         {
@@ -2549,7 +2541,7 @@ impl EngineInner {
                 });
             patch.in_transition = false;
         }
-        self.apply_patch_final(sim, assets, patch_idx, false);
+        self.apply_patch_final(tcx, patch_idx, false);
 
         for door in self.script_domains.interactables.doors.iter_mut() {
             if door.patch_index == Some(patch_idx) {
@@ -2583,8 +2575,7 @@ impl EngineInner {
     /// still run `ActionChange` for skipped actors.
     pub(super) fn tick_actor_animation_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::types::LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) -> Option<MotionState> {
         let entry = match self.actor_animation_entry(entity_id) {
@@ -2605,16 +2596,9 @@ impl EngineInner {
             return None;
         };
 
-        self.initialize_actor_animation_placement(assets, entity_id);
+        self.initialize_actor_animation_placement(tcx.assets, entity_id);
 
-        self.execute_actor_animation(
-            sim,
-            assets,
-            entity_id,
-            selected_generic_order,
-            entry,
-            operands,
-        )
+        self.execute_actor_animation(tcx, entity_id, selected_generic_order, entry, operands)
     }
 
     /// Initialize live takeoff and death placement before generic sprite dispatch.
@@ -2891,7 +2875,7 @@ mod soldier_take_drink_parity_tests {
                         .active = false;
                 }
                 let result = engine
-                    .tick_actor_animation_for(&sim, &assets, owner)
+                    .tick_actor_animation_for(TickCtx::new(&sim, &assets), owner)
                     .expect("selected drinking order must execute");
                 saw_done |= result == MotionState::Done;
                 let alcohol = engine
@@ -2952,7 +2936,7 @@ mod soldier_take_drink_parity_tests {
             (5, 5, MotionState::Terminated),
         ] {
             let result = engine
-                .tick_actor_animation_for(&sim, &assets, owner)
+                .tick_actor_animation_for(TickCtx::new(&sim, &assets), owner)
                 .unwrap();
             let actor = engine.get_entity(owner).unwrap();
             assert_eq!(actor.sprite().current_row, entry_direction);
@@ -3241,14 +3225,13 @@ mod shoulder_idle_initialization_tests {
             .start_sequence_level(helper_wait);
         engine.select_sequence_element(helper_id, Some((helper_wait, 0)));
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             helper_wait,
             0,
         );
 
-        engine.tick_actor_animation_for(&sim, &assets, helper_id);
+        engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), helper_id);
 
         let (_, _, order) = engine
             .orders
@@ -3278,7 +3261,7 @@ mod shoulder_idle_initialization_tests {
             .expect("carried wait must remain selected")
             .2
             .order_id;
-        engine.tick_actor_animation_for(&sim, &assets, helper_id);
+        engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), helper_id);
         assert_eq!(
             engine
                 .orders
@@ -3350,14 +3333,13 @@ mod shoulder_idle_initialization_tests {
         engine.orders.sequence_manager.start_sequence_level(wait_id);
         engine.select_sequence_element(climber_id, Some((wait_id, 0)));
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             wait_id,
             0,
         );
 
-        engine.tick_actor_animation_for(&sim, &assets, climber_id);
+        engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), climber_id);
 
         let climber = engine.get_entity(climber_id).unwrap().element_data();
         assert_eq!(climber.direction(), 12);

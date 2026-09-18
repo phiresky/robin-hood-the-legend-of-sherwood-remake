@@ -8,6 +8,7 @@ pub(crate) mod shortcuts;
 
 use super::commands::SelectionCommandBatchMode;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
+use crate::engine::TickCtx;
 use crate::player_command::{PlayerCommand, PlayerInput};
 
 /// Sprite action-conversion table with every action unmapped; tests then map
@@ -69,17 +70,15 @@ impl EngineInner {
     /// to see which directions were pressed this frame.
     pub(crate) fn apply_commands(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut HostDisplayState,
         input: &mut InputState,
-        assets: &LevelAssets,
         commands: &[PlayerInput],
     ) {
         self.apply_commands_with_mode(
-            sim,
+            tcx,
             display,
             input,
-            assets,
             commands,
             SelectionCommandBatchMode::InferNestedSelection,
         );
@@ -87,16 +86,15 @@ impl EngineInner {
 
     pub(crate) fn apply_commands_with_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut HostDisplayState,
         input: &mut InputState,
-        assets: &LevelAssets,
         commands: &[PlayerInput],
         mode: SelectionCommandBatchMode,
     ) {
         let event_start = self.feedback.pending_side_effects.host_events.len();
         let mut camera = self.feedback.cutscene_camera.display.clone();
-        self.apply_commands_authoritative(sim, &mut camera, assets, commands, mode);
+        self.apply_commands_authoritative(tcx, &mut camera, commands, mode);
         self.feedback.cutscene_camera.display = camera;
         for event in self.feedback.pending_side_effects.host_events[event_start..]
             .iter()
@@ -127,7 +125,7 @@ impl EngineInner {
             .cloned()
             .map(PlayerInput::host)
             .collect::<Vec<_>>();
-        self.apply_commands(&sim, display, input, assets, &commands);
+        self.apply_commands(TickCtx::new(&sim, assets), display, input, &commands);
     }
 
     /// Apply a single [`PlayerCommand`] as if it came from
@@ -137,19 +135,12 @@ impl EngineInner {
     /// [`crate::engine::Engine::advance_frame`].
     pub(crate) fn apply_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut HostDisplayState,
         input: &mut InputState,
-        assets: &LevelAssets,
         cmd: &PlayerCommand,
     ) {
-        self.apply_commands(
-            sim,
-            display,
-            input,
-            assets,
-            &[PlayerInput::host(cmd.clone())],
-        );
+        self.apply_commands(tcx, display, input, &[PlayerInput::host(cmd.clone())]);
     }
 }
 

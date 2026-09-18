@@ -6,6 +6,7 @@
 use super::*;
 use crate::coordinates::MapPoint;
 use crate::element::{EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::gate::DoorType;
 use crate::order::OrderType;
 use crate::sector::LiftType;
@@ -454,8 +455,7 @@ struct BuiltDoorPass {
 impl EngineInner {
     pub(super) fn instruct_pass_door(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity_id: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -554,7 +554,7 @@ impl EngineInner {
                 ?direct,
                 "PassDoor: actor not authorized"
             );
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
         let lift_type = match door.door_type {
@@ -570,7 +570,7 @@ impl EngineInner {
                 ?direct,
                 "PassDoor: actor not authorized for lift type"
             );
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
 
@@ -937,12 +937,7 @@ impl EngineInner {
 // ─── Engine completion methods ─────────────────────────────
 
 impl EngineInner {
-    pub(super) fn execute_passing_door_order(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(super) fn execute_passing_door_order(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let position = self
             .world
             .entities
@@ -951,7 +946,7 @@ impl EngineInner {
             .position_iface();
         if let Some(door) = position.get_door() {
             let direct = position.get_door_direction();
-            self.execute_pass_door(sim, assets, entity_id, door, direct);
+            self.execute_pass_door(tcx, entity_id, door, direct);
         } else {
             self.world
                 .entities
@@ -968,8 +963,7 @@ impl EngineInner {
     /// Called by a PassingDoor order while the actor still owns a live door.
     pub(super) fn execute_pass_door(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
         direct: bool,
@@ -1270,7 +1264,7 @@ impl EngineInner {
         // Refresh paired jump lines unconditionally on every sector
         // swap so swordfighters across a jump line re-evaluate their
         // per-opponent paired jump lines for the new sector.
-        self.update_opponents_jump_lines(assets, entity_id);
+        self.update_opponents_jump_lines(tcx.assets, entity_id);
 
         // ── Building-exit material / obstacle refresh ──
         // After leaving a building and switching to the outside sector,
@@ -1287,12 +1281,12 @@ impl EngineInner {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
             let new_obstacle = self.find_projection_area_at(
-                assets,
+                tcx.assets,
                 target_layer,
                 target_sector.with_arena_index(target_sector_index),
                 door_point_out,
             );
-            self.set_obstacle_and_material(assets, entity_id, new_obstacle);
+            self.set_obstacle_and_material(tcx.assets, entity_id, new_obstacle);
         }
 
         // ── Enter callbacks ──
@@ -1399,7 +1393,7 @@ impl EngineInner {
         // ── Door patch application ──
         // Toggles the door's background tile patches (e.g. open/close
         // visual).
-        self.apply_door_patch(sim, assets, door_index);
+        self.apply_door_patch(tcx, door_index);
 
         // Applying the patch starts a transition animation on the
         // patch's FX entity.  `gate_state` is advanced from `Opening`
@@ -1499,12 +1493,7 @@ impl EngineInner {
     /// Apply the patch associated with a door, if any.
     ///
     /// Executes the patch transition and its terrain updates directly.
-    fn apply_door_patch(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        door_index: crate::gate::DoorIndex,
-    ) {
+    fn apply_door_patch(&mut self, tcx: TickCtx<'_>, door_index: crate::gate::DoorIndex) {
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
             match self
@@ -1549,7 +1538,7 @@ impl EngineInner {
             }
         }
 
-        self.apply_patch(sim, assets, patch_index);
+        self.apply_patch(tcx, patch_index);
 
         tracing::debug!(
             door = %door_index,

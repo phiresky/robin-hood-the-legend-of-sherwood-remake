@@ -3,6 +3,7 @@
 use super::*;
 use crate::coordinates::{MapVec, SpriteFrameOffset, SpriteLocalPoint};
 use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 use crate::sprite_script::SpriteScript;
 
@@ -79,7 +80,11 @@ fn run_test_bow_owner(
     ));
     engine.publish_selected_order_as_installed(owner);
     engine.control.set_actors_frozen(frozen);
-    engine.tick_bow_shot_for(sim, &crate::engine::LevelAssets::new(), owner, order_id);
+    engine.tick_bow_shot_for(
+        TickCtx::new(sim, &crate::engine::LevelAssets::new()),
+        owner,
+        order_id,
+    );
     *entities = engine.world.entities;
     *sequences = engine.orders.sequence_manager;
 }
@@ -523,7 +528,7 @@ fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
     let mut pulse_count = 0;
     let mut restored = None;
     for _ in 0..12 {
-        engine.tick_one_actor_animation_action_change_slot(&sim, &assets, owner);
+        engine.tick_one_actor_animation_action_change_slot(TickCtx::new(&sim, &assets), owner);
         if test_bow_done_pulse(&engine.world.entities, owner) {
             pulse_count += 1;
             restored = Some(engine.clone());
@@ -535,7 +540,7 @@ fn bow_done_pulse_fires_once_and_stays_consumed_after_state_clone() {
     );
     let mut engine = restored.expect("captured state immediately after DONE");
     for _ in 0..8 {
-        engine.tick_one_actor_animation_action_change_slot(&sim, &assets, owner);
+        engine.tick_one_actor_animation_action_change_slot(TickCtx::new(&sim, &assets), owner);
         assert!(
             !test_bow_done_pulse(&engine.world.entities, owner),
             "restored animation must not release again"
@@ -876,8 +881,7 @@ fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
     let mut released = false;
     for _ in 0..64 {
         engine.tick_one_actor_animation_action_change_slot(
-            sim,
-            &assets,
+            TickCtx::new(sim, &assets),
             EntityId::Pc(crate::entity_id::PcId(0)),
         );
         released |= test_bow_done_pulse(
@@ -1666,7 +1670,7 @@ fn tick_arrows_follows_trajectory_and_hits() {
     let victim = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let sim = crate::sim_rng::test_context();
     for _ in 0..20 {
-        engine.tick_existing_projectile(&sim, &assets, arrow_id);
+        engine.tick_existing_projectile(TickCtx::new(&sim, &assets), arrow_id);
         if projectile_activation_seen(&engine, victim, Command::ReceiveArrowDamage) {
             break;
         }
@@ -1734,7 +1738,7 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
             .unwrap()
             .element_data()
             .position();
-        engine.tick_existing_projectile(&sim, &assets, arrow_id);
+        engine.tick_existing_projectile(TickCtx::new(&sim, &assets), arrow_id);
         if projectile_activation_seen(&engine, victim, Command::ReceiveArrowDamage) {
             impact_old = Some(old);
             break;
@@ -1803,8 +1807,7 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
 
     let (mut engine, assets) = projectile_engine(entities);
     engine.tick_new_projectile_once(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         EntityId::Projectile(crate::entity_id::ProjectileId(2)),
     );
     assert!(projectile_activation_seen(
@@ -2388,7 +2391,10 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
     let projectile = EntityId::Projectile(crate::entity_id::ProjectileId(1));
     let target = EntityId::Target(crate::entity_id::TargetId(0));
     for _ in 0..20 {
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        engine.tick_existing_projectile(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            projectile,
+        );
         if projectile_activation_seen(&engine, target, Command::ActivateApple) {
             break;
         }
@@ -2472,8 +2478,7 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
     let entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
     let (mut engine, assets) = projectile_engine(entities);
     engine.tick_existing_projectile(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         EntityId::Projectile(crate::entity_id::ProjectileId(1)),
     );
     assert!(
@@ -2539,8 +2544,7 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
     let entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
     let (mut engine, assets) = projectile_engine(entities);
     engine.tick_existing_projectile(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         EntityId::Projectile(crate::entity_id::ProjectileId(1)),
     );
     assert!(
@@ -2657,7 +2661,10 @@ fn tick_arrows_has_no_artificial_lifetime_timeout() {
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
     let mut despawn_frame = None;
     for frame in 0..260 {
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        engine.tick_existing_projectile(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            projectile,
+        );
         if !engine.world.entities.get(projectile).unwrap().is_active() {
             despawn_frame = Some(frame);
             break;
@@ -2720,7 +2727,10 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
     let entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(100.0, 100.0))]);
     let (mut engine, assets) = projectile_engine(entities);
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
-    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    engine.tick_existing_projectile(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        projectile,
+    );
     assert!(
         !projectile_activation_seen(
             &engine,
@@ -2773,7 +2783,10 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
     // First tick: apple reaches target, bursts.
     let (mut engine, assets) = projectile_engine(entities);
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
-    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    engine.tick_existing_projectile(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        projectile,
+    );
     assert!(
         projectile_activation_seen(
             &engine,
@@ -2792,7 +2805,10 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
     }
 
     let impact_sound_count = engine.feedback.pending_side_effects.sounds.len();
-    engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    engine.tick_existing_projectile(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        projectile,
+    );
     assert_eq!(
         engine.feedback.pending_side_effects.sounds.len(),
         impact_sound_count,
@@ -2835,7 +2851,10 @@ fn tick_arrows_impact_fx_per_projectile_type() {
         ]);
         let (mut engine, assets) = projectile_engine(entities);
         let projectile = engine.world.entities.get_at_index(0).unwrap().0;
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        engine.tick_existing_projectile(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            projectile,
+        );
         engine
             .feedback
             .pending_side_effects
@@ -3865,7 +3884,10 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
     let (mut engine, assets) = projectile_engine(entities);
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
     for _ in 0..10 {
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, arrow_id);
+        engine.tick_existing_projectile(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            arrow_id,
+        );
         if let Entity::Projectile(p) = engine.world.entities.get(arrow_id).unwrap() {
             if p.projectile.falling {
                 break;
@@ -4179,7 +4201,10 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
     arrow.projectile.velocity_increment = WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664);
     arrow.projectile.flying = true;
 
-    assert!(engine.tick_new_projectile_once(&crate::sim_rng::test_context(), &assets, arrow_id,));
+    assert!(engine.tick_new_projectile_once(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        arrow_id,
+    ));
     assert!(projectile_activation_seen(
         &engine,
         EntityId::Soldier(crate::entity_id::SoldierId(1)),
@@ -4265,7 +4290,10 @@ fn tick_arrows_miss_and_land_despawns() {
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
     let mut landed = false;
     for _ in 0..10 {
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+        engine.tick_existing_projectile(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            projectile,
+        );
         let Entity::Projectile(arrow) = engine.world.entities.get(projectile).unwrap() else {
             panic!("expected arrow");
         };
@@ -4345,8 +4373,10 @@ fn one_waypoint_falling_arrow_into_hole_disappears_without_ground_snap() {
     ]);
     let (mut engine, assets) = projectile_engine(entities);
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
-    let retain =
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    let retain = engine.tick_existing_projectile(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        projectile,
+    );
     assert!(
         !retain,
         "terminal projectile asks its concrete owner to retire it"
@@ -4397,8 +4427,10 @@ fn falling_arrow_into_water_retires_without_ground_snap() {
     ]);
     let (mut engine, assets) = projectile_engine(entities);
     let projectile = engine.world.entities.get_at_index(1).unwrap().0;
-    let retain =
-        engine.tick_existing_projectile(&crate::sim_rng::test_context(), &assets, projectile);
+    let retain = engine.tick_existing_projectile(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        projectile,
+    );
     assert!(
         !retain,
         "terminal projectile asks its concrete owner to retire it"

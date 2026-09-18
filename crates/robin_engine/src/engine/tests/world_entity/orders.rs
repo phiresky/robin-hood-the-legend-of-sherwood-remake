@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn removal_cleans_all_seats_and_owned_queues_without_reordering_survivors() {
@@ -317,7 +318,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
         human.smalltalk_initiative = true;
     }
 
-    engine.quit_swordfight_with_far_opponents(&sim, &assets, owner);
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
 
     let owner_human = engine.human(owner);
     assert_eq!(owner_human.opponents, vec![near]);
@@ -350,8 +351,8 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.t_element_in_progress_with(&sim, &assets, sequence, 0);
-            engine.t_element_terminated_with(&sim, &assets, sequence, 0);
+            engine.t_element_in_progress_with(TickCtx::new(&sim, &assets), sequence, 0);
+            engine.t_element_terminated_with(TickCtx::new(&sim, &assets), sequence, 0);
             assert_eq!(
                 engine
                     .orders
@@ -402,7 +403,7 @@ fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
         sector,
         level: 0,
     };
-    engine.execute_ai_return_to_duty(&sim, &assets, owner, DutyFlags::empty());
+    engine.execute_ai_return_to_duty(TickCtx::new(&sim, &assets), owner, DutyFlags::empty());
 
     let ai = engine.enemy(owner);
     assert_eq!(ai.base.current_state, AiState::Default);
@@ -493,10 +494,9 @@ fn get_report_from_soldier_closes_body_deletions_at_owner_boundary() {
         .clone();
 
     engine.dispatch_think_with_drain(
-        &sim,
+        TickCtx::new(&sim, &assets),
         officer_id,
         &Stimulus::with_human(StimulusType::CallReport, soldier_id.index()),
-        &assets,
     );
 
     let recipient = engine.ent(soldier_id);

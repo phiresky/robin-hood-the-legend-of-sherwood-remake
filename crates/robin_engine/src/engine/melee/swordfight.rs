@@ -5,6 +5,7 @@
 use super::*;
 use crate::combat::{self};
 use crate::element::{ActionState, Command, Entity, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::SequenceElementData;
 
@@ -266,8 +267,7 @@ impl EngineInner {
     /// substate.
     pub(super) fn delete_opponent(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         opponent_id: EntityId,
     ) -> bool {
@@ -275,7 +275,7 @@ impl EngineInner {
             return false;
         }
 
-        self.recompute_relative_fighting_ability(entity_id, assets);
+        self.recompute_relative_fighting_ability(entity_id, tcx.assets);
         let principal = self
             .get_entity(entity_id)
             .and_then(Entity::human_data)
@@ -306,7 +306,7 @@ impl EngineInner {
             {
                 pc.melee_target = None;
             }
-            self.enable_pc_actions_temp(sim, assets, 0, entity_id);
+            self.enable_pc_actions_temp(tcx, 0, entity_id);
         }
         if self
             .world
@@ -315,8 +315,7 @@ impl EngineInner {
             .is_some_and(|entity| entity.enemy_ai().is_some())
         {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 entity_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
@@ -508,12 +507,7 @@ impl EngineInner {
     /// - Empty list → quit the swordfight entirely.
     /// - Two or more opponents → re-pick the principal.
     /// - Exactly one → leave the principal where it is.
-    pub(crate) fn evaluate_opponents(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(crate) fn evaluate_opponents(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let count = self
             .get_entity(entity_id)
             .and_then(|e| e.human_data())
@@ -541,8 +535,7 @@ impl EngineInner {
             // relationship teardown alone does not own the visible
             // lowering-sword transition.
             self.launch_element(
-                sim,
-                assets,
+                tcx,
                 crate::sequence::SequenceElement::new(1, Command::QuitSwordfight, Some(entity_id)),
             );
 
@@ -555,7 +548,7 @@ impl EngineInner {
             // soldier in its pre-quit substate while the falling-edge
             // OUTOFVIEW arrived, which changed how that event was routed.
             if matches!(self.world.entities.get(entity_id), Some(Entity::Pc(_))) {
-                self.enable_pc_actions_temp(sim, assets, 0, entity_id);
+                self.enable_pc_actions_temp(tcx, 0, entity_id);
             }
             if self
                 .world
@@ -564,14 +557,13 @@ impl EngineInner {
                 .is_some_and(|entity| entity.enemy_ai().is_some())
             {
                 self.execute_ai_callback(
-                    sim,
-                    assets,
+                    tcx,
                     entity_id,
                     &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
                 );
             }
         } else if count >= 2 {
-            self.choose_principal_opponent(sim, entity_id);
+            self.choose_principal_opponent(tcx.sim, entity_id);
         }
     }
 
@@ -715,8 +707,7 @@ impl EngineInner {
     ///
     pub(crate) fn set_as_new_principal_opponent(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         new_opponent_id: EntityId,
     ) {
@@ -750,7 +741,7 @@ impl EngineInner {
                 &self.world.entities,
                 entity_id,
                 new_opponent_id,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 &self.world.fast_grid,
             ) {
                 let mut elem = crate::sequence::SequenceElement::new_generic(
@@ -766,7 +757,7 @@ impl EngineInner {
                     crate::sequence::Field::JumplineDestination,
                     crate::sequence::FieldValue::Integer(0),
                 );
-                self.launch_element(sim, assets, elem);
+                self.launch_element(tcx, elem);
             }
         }
     }
@@ -782,13 +773,12 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn enter_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         initiator: EntityId,
         opponent: EntityId,
         sword_hurted: bool,
     ) -> bool {
-        self.enter_swordfight_with_jump_line(sim, assets, initiator, opponent, sword_hurted, None)
+        self.enter_swordfight_with_jump_line(tcx, initiator, opponent, sword_hurted, None)
     }
 
     /// Variant of [`enter_swordfight`] that threads the
@@ -798,16 +788,14 @@ impl EngineInner {
     /// the far side.
     pub(crate) fn enter_swordfight_with_jump_line(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         initiator: EntityId,
         opponent: EntityId,
         sword_hurted: bool,
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
         self.enter_swordfight_impl(
-            sim,
-            assets,
+            tcx,
             initiator,
             opponent,
             sword_hurted,
@@ -823,18 +811,16 @@ impl EngineInner {
     /// opponent preparation for entering a swordfight.
     pub(crate) fn direct_enter_swordfight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         initiator: EntityId,
         opponent: EntityId,
     ) -> bool {
-        self.enter_swordfight_impl(sim, assets, initiator, opponent, false, None, false)
+        self.enter_swordfight_impl(tcx, initiator, opponent, false, None, false)
     }
 
     fn enter_swordfight_impl(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         initiator: EntityId,
         opponent: EntityId,
         sword_hurted: bool,
@@ -877,8 +863,7 @@ impl EngineInner {
             // Swordfight entry continues and publishes the relationship.
             let _ = with_swordfight_preparation_scope(opponent, initiator, || {
                 self.stop_owner_current(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     opponent,
                     crate::sequence::SequencePriority::Preference,
@@ -899,8 +884,7 @@ impl EngineInner {
                 // the original game's fixed sequence-element count, but closes each
                 // stopped root's card before advancing to the next captured root.
                 self.stop_owner_pending_after_callback(
-                    sim,
-                    assets,
+                    tcx,
                     &mut Vec::new(),
                     opponent,
                     crate::sequence::SequencePriority::Preference,
@@ -915,7 +899,7 @@ impl EngineInner {
                         crate::ai::StimulusType::EventEnterSwordfight,
                         initiator.index(),
                     );
-                    self.dispatch_think_with_drain(sim, opponent, &stimulus, assets);
+                    self.dispatch_think_with_drain(tcx, opponent, &stimulus);
                 }
             });
         }
@@ -924,7 +908,7 @@ impl EngineInner {
             &self.world.entities,
             initiator,
             opponent,
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
             &self.world.fast_grid,
         ) {
             tracing::warn!(
@@ -987,16 +971,16 @@ impl EngineInner {
                     .world
                     .entities
                     .get(initiator)
-                    .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
-                    .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                    .and_then(|e| get_hth_weapon_id_full(e, &tcx.assets.profile_manager))
+                    .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
                     .map(|p| p.distance[3] as f32)
                     .unwrap_or(70.0);
                 let uber_b = self
                     .world
                     .entities
                     .get(opponent)
-                    .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
-                    .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                    .and_then(|e| get_hth_weapon_id_full(e, &tcx.assets.profile_manager))
+                    .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
                     .map(|p| p.distance[3] as f32)
                     .unwrap_or(70.0);
                 if dist > uber_a || dist > uber_b {
@@ -1023,7 +1007,7 @@ impl EngineInner {
                     .and_then(|e| e.compute_eyes_point(Some(Posture::Upright)));
                 if let (Some(a), Some(b)) = (eye_a, eye_b)
                     && !crate::sight_obstacle::is_reachable_3d(
-                        self.sight_obstacles(assets),
+                        self.sight_obstacles(tcx.assets),
                         [a.x, a.y, a.z],
                         [b.x, b.y, b.z],
                         crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
@@ -1136,7 +1120,7 @@ impl EngineInner {
                 },
             );
             seq.append_element(elem);
-            self.launch_sequence(sim, assets, seq);
+            self.launch_sequence(tcx, seq);
         } else if !already_opponent {
             // Part 1: walk the opponent's existing opponent list.
             // If any of their opponents have >1 opponents themselves,
@@ -1157,8 +1141,8 @@ impl EngineInner {
                     .map(|h| h.opponents.len())
                     .unwrap_or(0);
                 if ally_opp_count > 1 {
-                    self.delete_opponent(sim, assets, ally_id, opponent);
-                    self.delete_opponent(sim, assets, opponent, ally_id);
+                    self.delete_opponent(tcx, ally_id, opponent);
+                    self.delete_opponent(tcx, opponent, ally_id);
                 }
                 // Index the live list while opponent removal may
                 // shrink it, so a removed slot advances past the element
@@ -1193,8 +1177,8 @@ impl EngineInner {
                     .and_then(Entity::human_data)
                     .and_then(|human| human.opponents.get(purge_index).copied())
                 {
-                    self.delete_opponent(sim, assets, opp_id, human_to_purge);
-                    self.delete_opponent(sim, assets, human_to_purge, opp_id);
+                    self.delete_opponent(tcx, opp_id, human_to_purge);
+                    self.delete_opponent(tcx, human_to_purge, opp_id);
                     // Match the original game's mutable list walk rather than draining a
                     // snapshot: deletion shifts the next entry left while the
                     // loop counter still advances.
@@ -1251,7 +1235,7 @@ impl EngineInner {
         // Preserve the call order because the first initiative check happens
         // before the reciprocal list entry is installed.
         if opponent_added {
-            self.recompute_relative_fighting_ability(opponent, assets);
+            self.recompute_relative_fighting_ability(opponent, tcx.assets);
             self.take_smalltalk_initiative(opponent);
         }
         let initiator_added = Self::add_opponent(
@@ -1270,7 +1254,7 @@ impl EngineInner {
             );
         }
         if initiator_added {
-            self.recompute_relative_fighting_ability(initiator, assets);
+            self.recompute_relative_fighting_ability(initiator, tcx.assets);
             self.take_smalltalk_initiative(initiator);
         }
 
@@ -1324,13 +1308,7 @@ impl EngineInner {
             .get(initiator)
             .is_some_and(Entity::is_pc)
         {
-            self.set_pc_action_from_message(
-                sim,
-                assets,
-                0,
-                initiator,
-                crate::profiles::Action::NoAction,
-            );
+            self.set_pc_action_from_message(tcx, 0, initiator, crate::profiles::Action::NoAction);
         }
         if let Some(pc) = self
             .world
@@ -1360,12 +1338,7 @@ impl EngineInner {
     /// bookkeeping. It does not mutate a survivor's action state or
     /// launch the visible lowering-sword transition; the explicit
     /// `Command::QuitSwordfight` dispatcher owns that.
-    pub(crate) fn quit_swordfight(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(crate) fn quit_swordfight(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let opponent_count = self
             .expect_entity(entity_id, "swordfight exit owner")
             .human_data()
@@ -1382,7 +1355,7 @@ impl EngineInner {
                 .get(index)
                 .expect("required live opponent slot during swordfight exit");
             assert!(
-                self.delete_opponent(sim, assets, opp_id, entity_id),
+                self.delete_opponent(tcx, opp_id, entity_id),
                 "swordfight exit owner {entity_id:?} was absent from reciprocal opponent {opp_id:?}"
             );
         }
@@ -1410,7 +1383,7 @@ impl EngineInner {
             }
         }
         if enable_self_actions {
-            self.enable_pc_actions_temp(sim, assets, 0, entity_id);
+            self.enable_pc_actions_temp(tcx, 0, entity_id);
         }
 
         // When a non-dead AI owner voluntarily quits a swordfight,
@@ -1423,8 +1396,7 @@ impl EngineInner {
                 .is_some()
         {
             self.execute_ai_callback(
-                sim,
-                assets,
+                tcx,
                 entity_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
             );
@@ -1449,14 +1421,13 @@ impl EngineInner {
     /// Called from the AI tick when soldiers re-evaluate their combat state.
     pub(crate) fn quit_swordfight_with_far_opponents(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) {
         let (opponents, uber_range) = {
             let entity = self.expect_entity(entity_id, "swordfight opponent refresh owner");
-            let range = get_hth_weapon_id_full(entity, &assets.profile_manager)
-                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            let range = get_hth_weapon_id_full(entity, &tcx.assets.profile_manager)
+                .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
                 .map(|p| p.distance[3] as f32) // UBER range
                 .unwrap_or(70.0);
             let opps = entity
@@ -1473,8 +1444,8 @@ impl EngineInner {
                 .world
                 .entities
                 .get(opp_id)
-                .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
-                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                .and_then(|e| get_hth_weapon_id_full(e, &tcx.assets.profile_manager))
+                .and_then(|idx| tcx.assets.profile_manager.get_hth_weapon(idx))
                 .map(|p| p.distance[3] as f32)
                 .unwrap_or(70.0);
 
@@ -1489,7 +1460,7 @@ impl EngineInner {
                     entity_id,
                     opp_id
                 ));
-                assert!(self.delete_opponent(sim, assets, opp_id, entity_id));
+                assert!(self.delete_opponent(tcx, opp_id, entity_id));
                 removed.push(opp_id);
             }
         }
@@ -1515,9 +1486,9 @@ impl EngineInner {
             remaining
         );
         for opp_id in &removed {
-            self.evaluate_opponents(sim, assets, *opp_id);
+            self.evaluate_opponents(tcx, *opp_id);
         }
-        self.evaluate_opponents(sim, assets, entity_id);
+        self.evaluate_opponents(tcx, entity_id);
     }
 
     // ─── Experience points ──────────────────────────────────────────
@@ -1615,8 +1586,7 @@ impl EngineInner {
     /// caller's downstream death handling must be skipped.
     pub(in crate::engine) fn close_pc_wounded_coma_boundary(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         victim_id: EntityId,
         damage: u16,
         life_points_before: i16,
@@ -1635,7 +1605,7 @@ impl EngineInner {
             .unwrap_or((false, 0, false));
         let sherwood_immunity = victim_is_pc
             && self.control.sim_config.script_enabled
-            && self.is_sherwood(&assets.profile_manager);
+            && self.is_sherwood(&tcx.assets.profile_manager);
         let coma_saved = victim_is_pc
             && life_points_before > 0
             && damage > 0
@@ -1645,7 +1615,7 @@ impl EngineInner {
             // branch still runs: the campaign is marked in-coma, the amulet
             // is consumed, and posture becomes Lying.
             && i32::from(damage) >= i32::from(life_points_before)
-            && self.try_pc_coma_save(sim, assets, victim_id, damage);
+            && self.try_pc_coma_save(tcx, victim_id, damage);
 
         if coma_saved && sherwood_immunity {
             // The original game's Sherwood guards apply while setting life points and
@@ -1675,7 +1645,7 @@ impl EngineInner {
             .map(super::get_life_points)
             .unwrap_or(life_points_before);
         if coma_saved && stored_life_points < life_points_before - 20 {
-            self.hero_speaking(assets, victim_id, HERO_HURT);
+            self.hero_speaking(tcx.assets, victim_id, HERO_HURT);
         }
         coma_saved
     }
@@ -1689,8 +1659,7 @@ impl EngineInner {
     /// proceed with normal death handling).
     pub(super) fn try_pc_coma_save(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         damage: u16,
     ) -> bool {
@@ -1698,7 +1667,8 @@ impl EngineInner {
             let entity = self.expect_entity(pc_id, "swordfight damage status owner");
             match entity {
                 Entity::Pc(pc) => {
-                    let vip = assets
+                    let vip = tcx
+                        .assets
                         .profile_manager
                         .get_character(pc.pc.profile_index)
                         .map(|p| p.vip)
@@ -1780,7 +1750,7 @@ impl EngineInner {
         // Preserve the interrupted action state when leaving the swordfight.
         // The next damage/wait animation uses it to choose the appropriate
         // unconscious animation.
-        self.quit_swordfight(sim, assets, pc_id);
+        self.quit_swordfight(tcx, pc_id);
 
         // Add unconscious star titbit (event-driven creation).
         self.add_unconscious_star(pc_id);

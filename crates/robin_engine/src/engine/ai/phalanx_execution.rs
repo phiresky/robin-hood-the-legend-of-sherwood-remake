@@ -4,6 +4,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, Position, Stimulus, StimulusType, Substate};
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
 use crate::coordinates::MapVec;
+use crate::engine::TickCtx;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 #[cfg(test)]
@@ -196,13 +197,12 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_break_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         tell_right: bool,
         tell_left: bool,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_break_phalanx(tell_right, tell_left)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_break_phalanx(tell_right, tell_left)
     }
 
     fn phalanx_line_accessible(
@@ -224,8 +224,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn instruct_live_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         members: &[EntityId],
         left: Position,
         right: MapVec,
@@ -239,28 +238,21 @@ impl EngineInner {
             ai.gather_position = shifted(left, right, index as f32);
             ai.gather_direction = direction;
             ai.gather_position_instructed = true;
-            self.execute_ai_callback(
-                sim,
-                assets,
-                member,
-                &Stimulus::new(StimulusType::CallInstruction),
-            );
+            self.execute_ai_callback(tcx, member, &Stimulus::new(StimulusType::CallInstruction));
         }
     }
 
     pub(in crate::engine) fn reconsider_live_phalanx(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).reconsider_live_phalanx()
+        AiOwnerCtx::new(self, tcx, owner).reconsider_live_phalanx()
     }
 
     pub(in crate::engine) fn execute_ai_phalanx_timer(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         let primary = self.ai(owner, "phalanx timer target").primary_target;
@@ -280,13 +272,13 @@ impl EngineInner {
                 .expect_entity(target, "phalanx shield danger point")
                 .element_data()
                 .position();
-            self.launch_ai_raise_shield(sim, assets, owner, point);
+            self.launch_ai_raise_shield(tcx, owner, point);
 
             self.world
                 .entities
                 .expect_ai_controller_mut(owner, format_args!("phalanx shield timer"))
                 .launch_timer(20, self.control.frame_counter);
-        } else if !self.reconsider_live_phalanx(sim, assets, owner) {
+        } else if !self.reconsider_live_phalanx(tcx, owner) {
             if let Some(primary) = self.ai(owner, "phalanx direction target").primary_target {
                 let owner_position = self.live_ai_position(owner);
                 let target = self.live_ai_position(
@@ -298,14 +290,14 @@ impl EngineInner {
                 ) as u16;
                 self.execute_ai_direction_goal(owner, direction);
 
-                self.refresh_retained_shield_obstacle(assets, owner);
+                self.refresh_retained_shield_obstacle(tcx.assets, owner);
 
                 self.world
                     .entities
                     .expect_ai_controller_mut(owner, format_args!("phalanx facing timer"))
                     .launch_timer(20, self.control.frame_counter);
             } else {
-                self.execute_ai_get_battle_overview(sim, assets, owner, 0);
+                self.execute_ai_get_battle_overview(tcx, owner, 0);
             }
         }
     }
@@ -346,8 +338,7 @@ impl AiOwnerCtx<'_> {
                     | Substate::AttackingBowAiming
             ) {
                 self.engine.execute_ai_callback(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     archer,
                     &Stimulus::new(StimulusType::CallCoordinate),
                 );
@@ -362,16 +353,24 @@ impl AiOwnerCtx<'_> {
     ) {
         if tell_left {
             if let Some(left) = self.engine.phalanx_neighbour(self.owner, false) {
-                self.engine
-                    .execute_ai_break_phalanx(self.sim, self.assets, left, false, true);
+                self.engine.execute_ai_break_phalanx(
+                    TickCtx::new(self.sim, self.assets),
+                    left,
+                    false,
+                    true,
+                );
             } else {
                 self.engine
                     .reinitialize_live_phalanx_enemies(self.assets, self.owner);
             }
         }
         if tell_right && let Some(right) = self.engine.phalanx_neighbour(self.owner, true) {
-            self.engine
-                .execute_ai_break_phalanx(self.sim, self.assets, right, true, false);
+            self.engine.execute_ai_break_phalanx(
+                TickCtx::new(self.sim, self.assets),
+                right,
+                true,
+                false,
+            );
         }
         let right = self
             .engine
@@ -511,8 +510,7 @@ impl AiOwnerCtx<'_> {
                 return false;
             }
             self.engine.instruct_live_phalanx(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 &members,
                 new_left,
                 right,
@@ -542,8 +540,7 @@ impl AiOwnerCtx<'_> {
                     .phalanx_line_accessible(self.owner, left, last, last.level)
                 {
                     self.engine.instruct_live_phalanx(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         &members,
                         left,
                         right,

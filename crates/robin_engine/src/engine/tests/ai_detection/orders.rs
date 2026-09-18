@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
@@ -223,7 +224,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     let mut restored = engine.clone();
     restored.actor_mut(listener).execute_order_initialising = false;
     assert_eq!(
-        restored.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        restored.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
         Some(crate::sprite::MotionState::InProgress)
     );
     assert_eq!(restored.actor(listener).wait_time, 0);
@@ -232,14 +233,14 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     for invocation in 1..25 {
         engine.actor_mut(listener).execute_order_initialising = invocation == 1;
         assert_eq!(
-            engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+            engine.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
             Some(crate::sprite::MotionState::InProgress)
         );
         assert_eq!(engine.actor(listener).wait_time, 25 - invocation);
         assert!(engine.elem(near).blipped);
     }
     assert_eq!(
-        engine.tick_enemy_ai_blip_detection_for_owner(&sim, &assets, listener),
+        engine.tick_enemy_ai_blip_detection_for_owner(TickCtx::new(&sim, &assets), listener),
         Some(crate::sprite::MotionState::Terminated)
     );
     assert!(
@@ -425,7 +426,7 @@ fn patrol_direction_instruction_registers_member_turn_before_returning() {
         .current_substate = Substate::DefaultPatrolEnrouteWaiting;
 
     crate::sim_rng::with_seed(0x0A01_3D1A, |sim| {
-        engine.instruct_patrol_direction_to_patrol_members(sim, chief, &assets, 7)
+        engine.instruct_patrol_direction_to_patrol_members(TickCtx::new(sim, &assets), chief, 7)
     });
 
     let member_ai = engine.ai_ctrl(member);
@@ -497,7 +498,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     timer_ai.timer_is_running = true;
     timer_ai.when_does_timer_ring = 0;
     timer_ai.substate_at_last_timer_launch = timer_ai.current_substate;
-    engine.tick_ai_normal_timer_for_npc(sim, timer_owner, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), timer_owner);
     assert_eq!(
         engine.ai_ctrl(timer_owner).current_substate,
         Substate::DefaultGotoPost,
@@ -516,11 +517,10 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
             ai.stimulus_queue.push(stimulus);
         }
     }
-    engine.tick_ai_queued_stimuli_for_npc(sim, retained_owner, &assets);
+    engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), retained_owner);
     assert_launched(&engine, retained_owner, Command::Turn, "retained Think");
     engine.execute_ai_callback(
-        sim,
-        &assets,
+        TickCtx::new(sim, &assets),
         self_owner,
         &Stimulus::new(StimulusType::EventDone),
     );
@@ -540,7 +540,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     // every fixture civilian), not its entity index: phase is
     // (frame & 255) - ((register + 100) & 255) and must be ≡ 0 mod 16.
     engine.control.frame_counter = 100;
-    engine.tick_periodic_ai_for_npc(sim, periodic_owner, &assets);
+    engine.tick_periodic_ai_for_npc(TickCtx::new(sim, &assets), periodic_owner);
     assert_eq!(
         engine.ai_ctrl(periodic_owner).stuck_counter,
         0,
@@ -555,7 +555,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     macro_ai.number_of_remaining_macro_bytes = 3;
     macro_ai.macro_timer_is_running = true;
     macro_ai.when_does_macro_timer_ring = 0;
-    engine.tick_ai_macro_timer_for_npc(sim, macro_owner, &assets);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), macro_owner);
     assert_launched(&engine, macro_owner, Command::Turn, "macro VM");
 }
 
@@ -594,7 +594,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
     });
 
     crate::sim_rng::with_seed(0xA013_2640, |sim| {
-        engine.dispatch_filtered_stimulus(sim, &assets, subordinate_id, &stimulus);
+        engine.dispatch_filtered_stimulus(TickCtx::new(sim, &assets), subordinate_id, &stimulus);
     });
 
     let chief = engine.ai_ctrl(chief_id);
@@ -659,7 +659,7 @@ fn natural_recovery_finishes_inline_for_soldiers_and_civilians() {
         ai.current_substate = Substate::SleepingUnconscious;
 
         crate::sim_rng::with_seed(0x0A01_3F17, |sim| {
-            engine.tick_concussion_healing_for(sim, npc_id, &assets)
+            engine.tick_concussion_healing_for(TickCtx::new(sim, &assets), npc_id)
         });
 
         let entity = engine.ent(npc_id);
@@ -717,7 +717,9 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
     let assets = engine.test_runtime_assets();
 
     crate::sight_obstacle::begin_parity_visibility_capture();
-    crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_B11F, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
     let queries = crate::sight_obstacle::take_parity_visibility_capture();
 
     assert_eq!(
@@ -759,8 +761,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         let mut spawned = None;
         crate::sim_rng::with_seed(0x0B0A_00CB, |sim| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
-                sim,
-                &assets,
+                TickCtx::new(sim, &assets),
                 |engine, owner| {
                     if owner != pc_id {
                         return;

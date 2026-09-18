@@ -2,6 +2,7 @@
 use super::*;
 use crate::ai::{AiState, DutyFlags, EmoticonType, EnemyRecovery, Remark, Substate};
 use crate::element::{DetectableType, EyeStatus};
+use crate::engine::TickCtx;
 
 impl EngineInner {
     fn recovery_open_eyes(&mut self, owner: EntityId) {
@@ -128,8 +129,7 @@ impl AiOwnerCtx<'_> {
                         .is_empty()
                 {
                     self.engine.launch_element(
-                        self.sim,
-                        self.assets,
+                        TickCtx::new(self.sim, self.assets),
                         crate::sequence::SequenceElement::new(
                             1,
                             crate::element::Command::QuitSwordfight,

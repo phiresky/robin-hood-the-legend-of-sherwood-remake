@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::ai::*;
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -15,8 +16,7 @@ struct MacroOwner {
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_assign_post(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         post_position: Position,
         post_direction: u16,
@@ -33,19 +33,13 @@ impl EngineInner {
         ai.special_action = false;
 
         if !ai.script_locked && ai.current_state == AiState::Default {
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReturnToDuty),
-            );
+            self.execute_ai_callback(tcx, owner, &Stimulus::new(StimulusType::EventReturnToDuty));
         }
     }
 
     pub(in crate::engine) fn execute_ai_assign_patrol_path(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         assignment: PatrolAssignment,
         script_way: bool,
@@ -72,8 +66,7 @@ impl EngineInner {
                 ai.is_stay_at_home = false;
                 if !ai.script_locked && ai.current_state == AiState::Default {
                     self.execute_ai_callback(
-                        sim,
-                        assets,
+                        tcx,
                         owner,
                         &Stimulus::new(StimulusType::EventReturnToDuty),
                     );
@@ -99,11 +92,11 @@ impl EngineInner {
                 // resolves the script's Way to an index here, so `ScriptWay`
                 // inherits the index overload's guard. Keep it (failing loud
                 // beats a wild dereference), but note the divergence.
-                if idx > assets.navigation.hiking_paths.len() {
+                if idx > tcx.assets.navigation.hiking_paths.len() {
                     tracing::warn!(
                         npc = ai.me,
                         idx = pid.get(),
-                        count = assets.navigation.hiking_paths.len(),
+                        count = tcx.assets.navigation.hiking_paths.len(),
                         "patrol-path assignment: index out of range",
                     );
                     return false;
@@ -118,7 +111,7 @@ impl EngineInner {
                     )
                 };
                 ai.patrol_path =
-                    PatrolPath::new(pid, &assets.navigation.hiking_paths).map(|mut path| {
+                    PatrolPath::new(pid, &tcx.assets.navigation.hiking_paths).map(|mut path| {
                         // Initializing a new path resets current/forward only.
                         path.last_waypoint_index = last_waypoint_index;
                         path.history = history;
@@ -140,8 +133,7 @@ impl EngineInner {
                 }
                 if !ai.script_locked && ai.current_state == AiState::Default {
                     self.execute_ai_callback(
-                        sim,
-                        assets,
+                        tcx,
                         owner,
                         &Stimulus::new(StimulusType::EventReturnToDuty),
                     );
@@ -153,8 +145,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_script_unlock(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         self.execute_ai_blink_all_enemies(owner);
@@ -170,28 +161,18 @@ impl EngineInner {
             .any(|s| s.stimulus_type == StimulusType::EventAfterScriptGoOn);
         ai.script_locked = false;
         if ai.current_state != AiState::Sleeping && !after_script && !unconscious {
-            self.execute_ai_callback(
-                sim,
-                assets,
-                owner,
-                &Stimulus::new(StimulusType::EventReturnToDuty),
-            );
+            self.execute_ai_callback(tcx, owner, &Stimulus::new(StimulusType::EventReturnToDuty));
         }
     }
 
-    pub(in crate::engine) fn run_ai_macro(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).run_ai_macro()
+    pub(in crate::engine) fn run_ai_macro(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
+        AiOwnerCtx::new(self, tcx, owner).run_ai_macro()
     }
 }
 
 impl AiOwnerCtx<'_> {
     pub(in crate::engine) fn run_ai_macro(&mut self) {
-        AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).run();
+        AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner).run();
     }
 }
 
@@ -260,8 +241,7 @@ impl AiOwnerCtx<'_> {
 
     fn assign_path(&mut self, assignment: PatrolAssignment) {
         self.engine.execute_ai_assign_patrol_path(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             self.owner,
             assignment,
             false,
@@ -380,16 +360,19 @@ impl AiOwnerCtx<'_> {
                             level: wp.level,
                         })
                     {
-                        self.engine
-                            .duty_go_to(sim, self.assets, self.owner, next_wp, walk_flags);
+                        self.engine.duty_go_to(
+                            TickCtx::new(sim, self.assets),
+                            self.owner,
+                            next_wp,
+                            walk_flags,
+                        );
                         // An already-reached waypoint can start another macro.
                         // Its deadline survives this invocation's cancellation.
 
                         self.finish_patrol_macro_debug(ctx, "goto_completed");
                     } else {
                         self.engine.execute_ai_return_to_duty(
-                            sim,
-                            self.assets,
+                            TickCtx::new(sim, self.assets),
                             self.owner,
                             DutyFlags::empty(),
                         );
@@ -449,8 +432,11 @@ impl AiOwnerCtx<'_> {
                     self.break_macro_debug(ctx, "face_to_truncated");
                     return std::ops::ControlFlow::Break(());
                 };
-                self.engine
-                    .duty_face_direction(sim, self.assets, self.owner, direction);
+                self.engine.duty_face_direction(
+                    TickCtx::new(sim, self.assets),
+                    self.owner,
+                    direction,
+                );
 
                 self.consume_macro_operand();
                 return std::ops::ControlFlow::Break(());
@@ -484,8 +470,7 @@ impl AiOwnerCtx<'_> {
                     );
                 }
                 self.engine.initialize_ai_friend_check(
-                    sim,
-                    self.assets,
+                    TickCtx::new(sim, self.assets),
                     self.owner,
                     friend_id,
                     frames,
@@ -516,8 +501,7 @@ impl AiOwnerCtx<'_> {
                     );
                 }
                 self.engine.initialize_ai_friend_check(
-                    sim,
-                    self.assets,
+                    TickCtx::new(sim, self.assets),
                     self.owner,
                     friend_id,
                     frames,
@@ -547,8 +531,7 @@ impl AiOwnerCtx<'_> {
                 // second cancellation and actor-specific duty call.
                 self.engine.execute_ai_break_macro(self.owner);
                 self.engine.execute_ai_return_to_duty(
-                    sim,
-                    self.assets,
+                    TickCtx::new(sim, self.assets),
                     self.owner,
                     DutyFlags::empty(),
                 );
@@ -668,9 +651,8 @@ impl AiOwnerCtx<'_> {
                     );
                 }
                 self.engine.instruct_patrol_direction_to_patrol_members(
-                    sim,
+                    TickCtx::new(sim, self.assets),
                     self.owner,
-                    self.assets,
                     direction,
                 );
                 self.consume_macro_operand();
@@ -762,7 +744,10 @@ mod tests {
     fn goto_point_keeps_the_unconsumed_operand_cursor() {
         let (mut engine, assets, owner) =
             macro_owner(vec![MacroOpcode::GotoPoint as u8, 2, 0], GotoFlags::empty());
-        engine.run_ai_macro(&crate::sim_rng::test_context(), &assets, owner);
+        engine.run_ai_macro(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
         let ai = engine
             .world
             .entities
@@ -775,7 +760,10 @@ mod tests {
     fn civilian_run_sanitizes_flags_after_nested_path_completion() {
         let (mut engine, assets, owner) =
             macro_owner(vec![MacroOpcode::Run as u8], GotoFlags::BACK);
-        engine.run_ai_macro(&crate::sim_rng::test_context(), &assets, owner);
+        engine.run_ai_macro(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
         let ai = engine
             .world
             .entities

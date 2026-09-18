@@ -3,6 +3,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, Decision, Position, Substate};
 use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{Command, Posture};
+use crate::engine::TickCtx;
 use crate::engine::test_support::{
     actors::{make_test_ai_soldier, make_test_pc},
     square_sector,
@@ -152,8 +153,7 @@ fn observe_movement_is_registered_before_the_state_callback() {
             stop_on_state(&mut engine, &assets, owner);
         }
         let decision = engine.execute_live_battle_decision(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Decision::Observe,
             Substate::AttackingReactiontimeRunning,
@@ -221,8 +221,7 @@ fn failed_fight_executes_observe_on_the_same_think_stack() {
         Some(AiEntityHandle::new(target.index()))
     );
     let decision = engine.execute_live_battle_decision(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         Decision::Fight,
         Substate::AttackingReactiontimeRunning,

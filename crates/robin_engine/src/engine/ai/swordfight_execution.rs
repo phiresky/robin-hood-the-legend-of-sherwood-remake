@@ -4,6 +4,7 @@ use super::swordfight_candidates::LiveCombatFighters;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, GotoFlags, Stimulus, Substate};
 use crate::ai_enemy::{AiMapVec, CombatFighterAccess, SwordfightLists};
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -180,8 +181,7 @@ mod tests {
             .element_data_mut()
             .set_direction_instantly(12);
         engine.execute_reconsider_swordfight(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             false,
         );
@@ -314,8 +314,7 @@ mod tests {
             let expected_center = engine.live_ai_position(target);
             engine.enter_ai_think_frame(owner);
             engine.execute_reconsider_swordfight(
-                &SimulationContext::with_seed(0),
-                &assets,
+                TickCtx::new(&SimulationContext::with_seed(0), &assets),
                 owner,
                 false,
             );
@@ -371,8 +370,7 @@ mod tests {
         let target_position = engine.live_ai_position(target);
         engine.enter_ai_think_frame(owner);
         engine.reconsider_live_swordfight_tactics(
-            &sober_combat_context(),
-            &assets,
+            TickCtx::new(&sober_combat_context(), &assets),
             owner,
             false,
             SwordfightLists {
@@ -397,12 +395,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_reconsider_swordfight(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         enemy_weak: bool,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_reconsider_swordfight(enemy_weak)
+        AiOwnerCtx::new(self, tcx, owner).execute_reconsider_swordfight(enemy_weak)
     }
 
     fn nearest_live_opponent(&self, maurice: EntityId, rene: EntityId) -> Option<EntityId> {
@@ -429,14 +426,12 @@ impl EngineInner {
     #[cfg(test)]
     fn reconsider_live_swordfight_tactics(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         enemy_weak: bool,
         lists: SwordfightLists,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner)
-            .reconsider_live_swordfight_tactics(enemy_weak, lists)
+        AiOwnerCtx::new(self, tcx, owner).reconsider_live_swordfight_tactics(enemy_weak, lists)
     }
 
     fn fighter_max_norm_distance(&self, owner: EntityId, target: EntityId) -> f32 {
@@ -838,8 +833,7 @@ impl AiOwnerCtx<'_> {
                 .expect("solo fighter requires an opponent");
             if self.engine.nearest_live_opponent(primary_id, nearest) == Some(self.owner) {
                 self.engine.execute_ai_rebalance_swordfight(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
                     nearest,
                 );
@@ -950,8 +944,7 @@ impl AiOwnerCtx<'_> {
                             .engine
                             .expect_human_id_for_ai_handle(target.get(), "combat new principal");
                         self.engine.set_as_new_principal_opponent(
-                            self.sim,
-                            self.assets,
+                            TickCtx::new(self.sim, self.assets),
                             self.owner,
                             target,
                         );
@@ -1026,7 +1019,7 @@ impl AiOwnerCtx<'_> {
                 .is_sword()
         {
             self.engine
-                .execute_ai_sword_strike_proposal(self.sim, self.assets, self.owner);
+                .execute_ai_sword_strike_proposal(TickCtx::new(self.sim, self.assets), self.owner);
         }
     }
 
@@ -1060,7 +1053,7 @@ impl AiOwnerCtx<'_> {
         }
         if self
             .engine
-            .execute_ai_make_battle_predecisions(self.sim, self.assets, self.owner)
+            .execute_ai_make_battle_predecisions(TickCtx::new(self.sim, self.assets), self.owner)
             == crate::ai::Decision::PredecisionDefensive
         {
             let target = self
@@ -1087,8 +1080,7 @@ impl AiOwnerCtx<'_> {
                 self.duty_go_to(goal, GotoFlags::RUN);
             } else {
                 self.engine.execute_ai_panic(
-                    self.sim,
-                    self.assets,
+                    TickCtx::new(self.sim, self.assets),
                     self.owner,
                     Some(enemy_position),
                     crate::parameters_ai::AI_STANDARD_PANIC_RUNS as u8,

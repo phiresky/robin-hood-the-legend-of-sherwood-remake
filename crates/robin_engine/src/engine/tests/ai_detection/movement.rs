@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
@@ -32,7 +33,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
 
     let (_, trace) = capture_actor_owner_envelope(|| {
         crate::sim_rng::with_seed(0xA013_6A7E, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets)
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets))
         })
     });
 
@@ -119,7 +120,7 @@ fn patrol_refresh_uses_owner_relative_member_positions_and_spawn_fallback() {
         chief_ai.theoretical_patrol = vec![member];
 
         crate::sim_rng::with_seed(0x0A01_3705, |sim| {
-            engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
+            engine.tick_patrol_coordination_for_npc(TickCtx::new(sim, &assets), chief)
         });
         engine.ai_ctrl(chief).patrol.contains(&member)
     }
@@ -168,7 +169,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
 
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_10CC, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(TickCtx::new(sim, &assets))
         })
     });
     let locked_trace: Vec<_> = trace
@@ -224,10 +225,10 @@ fn sampled_open_gate_does_not_recheck_lock_or_global_freeze_inside_suffix() {
     ai.current_substate = Substate::DefaultOnPost;
     ai.set_transient_emoticon(EmoticonType::QuestionMark, 1, 99);
 
-    engine.tick_ai_normal_timer_for_npc(sim, npc_id, &assets);
-    engine.tick_ai_macro_timer_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_normal_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
+    engine.tick_ai_macro_timer_for_npc(TickCtx::new(sim, &assets), npc_id);
     engine.tick_npc_emoticon_expiration_for_npc(npc_id);
-    engine.tick_ai_queued_stimuli_for_npc(sim, npc_id, &assets);
+    engine.tick_ai_queued_stimuli_for_npc(TickCtx::new(sim, &assets), npc_id);
 
     let ai = engine.ai_ctrl(npc_id);
     assert!(!ai.timer_is_running, "due normal timer is consumed");
@@ -399,8 +400,9 @@ fn owner_tail_and_empty_common_drain_do_not_draw_unrelated_building_exit_gate() 
         "the fixture must exercise BuildingExitGate when its prepared forecast is resolved"
     );
 
-    let (_, tail_trace) =
-        with_draw_trace(|| engine.tick_npc_post_detection_tail_for_npc(sim, quiet_owner, &assets));
+    let (_, tail_trace) = with_draw_trace(|| {
+        engine.tick_npc_post_detection_tail_for_npc(TickCtx::new(sim, &assets), quiet_owner)
+    });
     assert!(
         !tail_trace.contains(&RngSite::BuildingExitGate),
         "due macro and retained Think work must not forecast an unrelated door-passing actor"
@@ -556,7 +558,7 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
 
         let sim = crate::sim_rng::test_context();
         engine.prepare_npc_owner_pass();
-        engine.tick_npc_owner_pass(&sim, &assets, observer_id);
+        engine.tick_npc_owner_pass(TickCtx::new(&sim, &assets), observer_id);
 
         engine.npc(observer_id).detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame
     }
@@ -720,7 +722,9 @@ fn inactive_building_viewer_runs_hearing_then_optics_while_outdoor_viewer_is_a_n
         observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
         observer.npc.maximal_detection_suspect = 777;
 
-        crate::sim_rng::with_seed(0xA013_1A51, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_1A51, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         let observer = engine.npc(observer_id);
         let ai = observer
@@ -823,7 +827,9 @@ fn inactive_npc_blip_detection_requires_door_or_building_eligibility() {
         let assets = engine.test_runtime_assets();
         engine.set_active(observer_id, false);
 
-        crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
+        crate::sim_rng::with_seed(0xA013_B11F, |sim| {
+            engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+        });
 
         assert_eq!(
             engine.elem(observer_id).blipped,
@@ -926,7 +932,9 @@ fn inactive_door_transit_viewer_runs_blip_and_hearing_then_skips_optics() {
     ai.base.locks_flag_field = AiLockFlags::BUSY;
     ai.base.max_visibility = 15;
 
-    crate::sim_rng::with_seed(0xA013_D00F, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_D00F, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let Entity::Soldier(observer) = engine.ent(observer_id) else {
         panic!("door-transit observer changed kind during tick")
@@ -972,7 +980,9 @@ fn mixed_enemy_walk_rejects_missing_detectable_target_with_context() {
     observer.detectable_lists[DetectableType::Enemy as usize][0].element =
         Some(EntityId::Soldier(crate::entity_id::SoldierId(999_999)));
 
-    crate::sim_rng::with_seed(0xA013_BAD1, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_BAD1, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 }
 
 #[test]
@@ -1006,7 +1016,9 @@ fn mixed_enemy_walk_rejects_missing_observer_ai_with_context() {
         panic!("missing-AI observer changed kind after fixture completion")
     };
     civilian.npc.ai_brain = crate::element::AiBrain::None;
-    crate::sim_rng::with_seed(0xA013_BAD2, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_BAD2, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 }
 
 #[test]
@@ -1045,7 +1057,9 @@ fn mixed_enemy_cleanup_removes_negative_life_targets() {
     };
     royalist.npc.life_points = -7;
 
-    crate::sim_rng::with_seed(0xA013_DEAD, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let observer = engine.npc(observer_id);
     assert!(
@@ -1091,7 +1105,9 @@ fn blipped_lacklandist_in_door_transit_is_inside_for_the_pre_cadence_gate() {
             .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
         "fixture must keep NPC blip auto-reveal closed"
     );
-    crate::sim_rng::with_seed(0xA013_D016, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_D016, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let observer = engine.npc(observer_id);
     let view_targets = observer
@@ -1175,7 +1191,9 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
     }];
     civilian.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
 
-    crate::sim_rng::with_seed(0xA013_C1A0, |sim| engine.tick_enemy_ai(sim, &assets));
+    crate::sim_rng::with_seed(0xA013_C1A0, |sim| {
+        engine.tick_enemy_ai(TickCtx::new(sim, &assets))
+    });
 
     let ai = engine.ai_ctrl(civilian_id);
     assert_eq!(ai.stimulus_queue.len(), 1);

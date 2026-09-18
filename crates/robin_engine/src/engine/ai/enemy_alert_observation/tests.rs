@@ -1,6 +1,7 @@
 use super::*;
 use crate::ai::{AiState, Hint, Noise, NoiseOrigin, NoiseType, Position, ReportType, Substate};
 use crate::coordinates::{MapPoint, WorldPoint3D};
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 
 fn fixture(state: AiState, substate: Substate) -> (EngineInner, LevelAssets, EntityId, EntityId) {
@@ -66,8 +67,7 @@ fn hearing_projects_origin_instead_of_using_recorded_noise_elevation() {
         level: 0,
     };
     engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &noise(NoiseType::ZingZing, position),
     );
@@ -99,7 +99,11 @@ fn zonk_keeps_absent_sector_and_layer_impact() {
     };
     let mut noise = noise(NoiseType::Zonk, position);
     noise.elevation = 480;
-    engine.execute_ai_heard_noise(&crate::sim_rng::test_context(), &assets, owner, &noise);
+    engine.execute_ai_heard_noise(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        owner,
+        &noise,
+    );
     let ai = engine
         .world
         .entities
@@ -119,8 +123,7 @@ fn distraction_noise_records_impact_before_investigation() {
         ..engine.live_ai_position(owner)
     };
     engine.execute_ai_heard_noise(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &noise(NoiseType::Distraction, position),
     );
@@ -154,8 +157,7 @@ fn logs_and_drawbridge_draw_cooldown_only_from_default_state() {
             };
             let (_, draws) = crate::sim_rng::with_draw_trace(|| {
                 engine.execute_ai_heard_noise(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &noise(kind, position),
                 )
@@ -197,15 +199,13 @@ fn look_there_and_combat_alert_keep_distinct_macro_behavior() {
             .macro_in_progress = true;
         if combat {
             engine.execute_ai_combat_alert_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 position,
             );
         } else {
             engine.execute_ai_look_there_reaction(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 position,
             );
@@ -253,8 +253,7 @@ fn tower_alert_selects_rank_branch_and_preserves_running_macro() {
         });
         ai.base.macro_in_progress = true;
         engine.execute_ai_tower_alert_reaction(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Hint {
                 seek_point: position,
@@ -336,8 +335,7 @@ fn tower_alert_faces_caller_moved_by_state_callback() {
         ..engine.live_ai_position(owner)
     };
     engine.execute_ai_tower_alert_reaction(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Hint {
             seek_point: position,

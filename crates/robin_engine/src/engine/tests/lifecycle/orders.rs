@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[test]
 fn zoom_dispatch_uses_supplied_camera_display_not_owned_placeholder() {
@@ -373,10 +374,9 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     let mut display = crate::engine::HostDisplayState::default();
     let mut input = InputState::default();
     engine.apply_command(
-        &sim,
+        TickCtx::new(&sim, &assets),
         &mut display,
         &mut input,
-        &assets,
         &PlayerCommand::SelectResolvedAction {
             pc_id: carrier,
             action: crate::profiles::Action::HelpToClimb,
@@ -397,7 +397,7 @@ fn selected_action_stop_drops_mid_grab_before_the_body_actor_slot() {
     assert_eq!(selected.command, Command::Wait);
     let expected_order_id = selected.current_order().map(|order| order.order_id);
 
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     let body_entity = engine.ent(body);
     assert_eq!(body_entity.sprite().last_action, OrderType::BeingTied);
     assert_eq!(
@@ -430,7 +430,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
 
     let sim = crate::sim_rng::test_context();
     let mut assets = engine.test_runtime_assets();
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
 
     let entity = engine.ent(owner);
     assert!(!entity.is_active());
@@ -481,7 +481,7 @@ fn inactive_actor_hourglass_installs_and_advances_idle_wait() {
     let mut executed_idle = false;
     let mut forwarded_termination = false;
     for _ in 0..16 {
-        let executed = engine.tick_actor_animation_for(&sim, &assets, animated);
+        let executed = engine.tick_actor_animation_for(TickCtx::new(&sim, &assets), animated);
         executed_idle |= executed.is_some();
         forwarded_termination |= executed == Some(MotionState::Terminated);
         if forwarded_termination {
@@ -544,8 +544,7 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
     entity.element_data_mut().sprite.last_processed_order_id = order_id.get();
 
     let executed = engine.tick_actor_animation_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 
@@ -562,7 +561,10 @@ fn unconscious_tied_wait_keeps_advancing_its_hold_animation() {
         0,
         "the tied hold must advance by one action step on its first tick"
     );
-    engine.tick_actor_animation_for(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
+    engine.tick_actor_animation_for(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
     assert_eq!(
         engine.ent(owner).sprite().frame_count,
         1,
@@ -608,8 +610,11 @@ fn face_to_waits_for_manager_after_live_halt() {
             .position_iface_mut()
             .set_map_goal(MapPoint::new(70.0, 80.0));
     }
-    engine.halt_actor(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
-    engine.duty_face_direction(&sim, &assets, owner, 9);
+    engine.halt_actor(
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
+        owner,
+    );
+    engine.duty_face_direction(TickCtx::new(&sim, &assets), owner, 9);
 
     let turn_sequence = engine
         .orders
@@ -633,7 +638,7 @@ fn face_to_waits_for_manager_after_live_halt() {
     );
     let turn_sequence_id = turn_sequence.id;
 
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let instructed = engine
         .orders
@@ -696,7 +701,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
     }
 
     let assets = LevelAssets::new();
-    engine.tick_selected_ability(sim, &assets, first, engine.actors_frozen());
+    engine.tick_selected_ability(TickCtx::new(sim, &assets), first, engine.actors_frozen());
 
     assert_ne!(
         engine.elem(first).sprite.last_processed_order_id,
@@ -773,8 +778,7 @@ fn invalid_eat_initialization_short_circuits_the_full_execute_owner_slot() {
     };
     let mut selected_ability = None;
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         |engine, selected_owner| {
             let ability = crate::abilities::selected_ability(
                 &engine.world.entities,
@@ -847,7 +851,7 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
         &assets,
         SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     let first_element = engine
         .orders
@@ -872,7 +876,7 @@ fn instant_shield_raise_remains_selected_until_redundant_current_owner_raise_rep
         &assets,
         SequenceElement::new_generic(1, Command::RaiseShieldInstantly, Some(owner)),
     );
-    engine.hourglass_phase_sequences(&sim, &mut display, &assets);
+    engine.hourglass_phase_sequences(TickCtx::new(&sim, &assets), &mut display);
 
     assert_eq!(
         engine
@@ -975,8 +979,7 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
     for _ in 0..10 {
         let (_, tick_reveals) = crate::engine::archery::capture_receive_purse_reveals(|| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 |_, _| {},
             );
         });
@@ -1022,7 +1025,7 @@ fn selected_beggar_exit_preserves_action_that_replaced_beggar() {
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
+    engine.execute_beggar_wait_handoffs(TickCtx::new(&sim, &assets), (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::Net);
     assert_eq!(
@@ -1046,7 +1049,7 @@ fn selected_beggar_exit_clears_action_while_beggar_is_still_selected() {
     let mut assets = assets_with_test_pc_profile();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.execute_beggar_wait_handoffs(&sim, &assets, (pc, false));
+    engine.execute_beggar_wait_handoffs(TickCtx::new(&sim, &assets), (pc, false));
 
     assert_eq!(engine.players.seats[0].selected_action, Action::NoAction);
     assert_eq!(engine.pc(pc).current_action, Action::NoAction);
@@ -1129,7 +1132,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     engine.t_element_in_progress(&LevelAssets::new(), seq, 0);
 
     for _ in 0..10 {
-        engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+        engine.tick_selected_ability(
+            TickCtx::new(&sim, &assets),
+            attacker,
+            engine.actors_frozen(),
+        );
         if engine.ent(attacker).sprite().last_motion_state == Some(crate::sprite::MotionState::Done)
         {
             break;
@@ -1159,7 +1166,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         victim_sprite.current_frame = 0;
         victim_sprite.frame_count = 0;
     }
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+    engine.tick_selected_ability(
+        TickCtx::new(&sim, &assets),
+        attacker,
+        engine.actors_frozen(),
+    );
     let victim_sprite = &engine.elem(victim).sprite;
     assert_eq!(
         (victim_sprite.current_frame, victim_sprite.frame_count),
@@ -1170,7 +1181,7 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
     let (_, condolation_order) =
         crate::engine::soldier_helpers::capture_strangle_condolation_order(|| {
             for _ in 0..10 {
-                engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+                engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
                 if !crate::abilities::selected_ability(
                     &engine.world.entities,
                     &engine.orders.sequence_manager,
@@ -1246,7 +1257,11 @@ fn non_stranglable_terminal_retaliation_falls_through_to_cleanup_and_victim_star
         "the direct retaliation and condolation EventGotHit handlers must both execute synchronously"
     );
     let sequence_count = engine.orders.sequence_manager.sequences_iter().count();
-    engine.tick_selected_ability(&sim, &assets, attacker, engine.actors_frozen());
+    engine.tick_selected_ability(
+        TickCtx::new(&sim, &assets),
+        attacker,
+        engine.actors_frozen(),
+    );
     assert_eq!(
         engine.orders.sequence_manager.sequences_iter().count(),
         sequence_count,
@@ -1388,7 +1403,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
 
     let mut done_count = 0;
     for _ in 0..10 {
-        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
         done_count += usize::from(
             engine.ent(owner).sprite().last_motion_state == Some(crate::sprite::MotionState::Done),
         );
@@ -1423,7 +1438,7 @@ fn ability_done_applies_once_retains_owner_and_only_terminated_releases() {
     );
 
     for _ in 0..10 {
-        engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
         if !crate::abilities::selected_ability(
             &engine.world.entities,
             &engine.orders.sequence_manager,
@@ -1469,8 +1484,7 @@ fn unselected_listen_done_clears_action_without_dispatching_leave_listen() {
     }
 
     engine.apply_listen_done_action_handoff(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 
@@ -1496,8 +1510,7 @@ fn listen_done_rejects_non_pc_owner() {
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
 
     engine.apply_listen_done_action_handoff(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 }
@@ -1721,7 +1734,13 @@ fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
         &assets,
         SequenceElement::new(1, Command::QuitSwordfight, Some(owner)),
     );
-    assert!(engine.instruct_owner(&sim, &assets, &mut Vec::new(), owner, sequence, 0));
+    assert!(engine.instruct_owner(
+        TickCtx::new(&sim, &assets),
+        &mut Vec::new(),
+        owner,
+        sequence,
+        0
+    ));
 
     assert!(engine.human(owner).opponents.is_empty());
     assert_eq!(

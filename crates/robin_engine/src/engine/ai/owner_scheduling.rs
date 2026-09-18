@@ -1,16 +1,16 @@
 use super::*;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     /// Run the waypoint VM inside the caller's existing decision frame.
     pub(in crate::engine) fn execute_ai_waypoint_script(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
         path_idx: crate::ai::PathId,
         wp_idx: u8,
     ) {
-        if !sim.config().script_enabled {
+        if !tcx.sim.config().script_enabled {
             return;
         }
         let actor_handle = crate::natives::ScriptHandleCodec::actor_handle(npc_id);
@@ -22,8 +22,7 @@ impl EngineInner {
             "waypoint ReachPoint dispatch"
         );
         if let Err(error) = self.call_script_vm(
-            sim,
-            assets,
+            tcx,
             ScriptVmKey::Waypoint(path_idx, wp_idx),
             "ReachPoint",
             &[actor_handle],
@@ -48,7 +47,7 @@ impl EngineInner {
             return;
         }
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
-        self.dispatch_think_with_drain(sim, npc_id, &stimulus, assets);
+        self.dispatch_think_with_drain(tcx, npc_id, &stimulus);
     }
 
     /// Execute Original's route-arrival call stack without detaching the handler.
@@ -56,8 +55,7 @@ impl EngineInner {
     /// authoritative actor. Actual Turn execution remains owned by SequenceManager.
     pub(in crate::engine) fn think_patrol_arrival(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
@@ -66,12 +64,12 @@ impl EngineInner {
             .enemy_ai()
             .is_some()
         {
-            self.begin_enemy_think(sim, assets, owner, stimulus)
+            self.begin_enemy_think(tcx, owner, stimulus)
         } else {
-            self.begin_friendly_think(sim, assets, owner, stimulus)
+            self.begin_friendly_think(tcx, owner, stimulus)
         };
         if !admitted {
-            self.execute_ai_end_think(sim, assets, owner);
+            self.execute_ai_end_think(tcx, owner);
             return true;
         }
 
@@ -86,8 +84,7 @@ impl EngineInner {
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
         // State-change notifications ignore the callback's return value.
         self.call_ai_event_filter(
-            sim,
-            assets,
+            tcx,
             handle,
             handle,
             crate::ai::AiState::Default.state_change_event_code(),
@@ -97,11 +94,11 @@ impl EngineInner {
             ai.set_ai_state(crate::ai::AiState::Default);
             ai.current_substate = crate::ai::Substate::DefaultGotoRouteTurn;
         }
-        self.initialize_patrol_for_npc(assets, owner);
+        self.initialize_patrol_for_npc(tcx.assets, owner);
         let position = self.live_ai_position(owner);
         let direction = self
             .ai_mut(owner, "patrol path")
-            .route_arrival_turn_direction(position, &assets.navigation.hiking_paths);
+            .route_arrival_turn_direction(position, &tcx.assets.navigation.hiking_paths);
         if let Some(direction) = direction {
             let mut turn = crate::sequence::SequenceElement::new_generic(
                 1,
@@ -112,16 +109,15 @@ impl EngineInner {
                 crate::sequence::Field::Direction,
                 crate::sequence::FieldValue::Integer(u32::from(direction)),
             );
-            self.launch_element(sim, assets, turn);
+            self.launch_element(tcx, turn);
         } else {
             self.dispatch_filtered_stimulus_inner(
-                sim,
-                assets,
+                tcx,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
             );
         }
-        self.execute_ai_end_think(sim, assets, owner);
+        self.execute_ai_end_think(tcx, owner);
         false
     }
 
@@ -256,9 +252,8 @@ impl EngineInner {
 
     pub(in crate::engine) fn tick_periodic_ai_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         let current_frame = self.control.frame_counter;
 
@@ -284,36 +279,30 @@ impl EngineInner {
 
         let civilian = entity.is_civilian();
         if !civilian {
-            self.run_enemy_periodic_prefix(sim, npc_id, assets);
-            self.refresh_ai_arrow_protection(sim, assets, npc_id, true);
+            self.run_enemy_periodic_prefix(tcx, npc_id);
+            self.refresh_ai_arrow_protection(tcx, npc_id, true);
         }
         if frame_phase & 63 == 0 {
-            self.finish_enemy_periodic_stuck_suffix_after_refresh(sim, npc_id, assets, frame_phase);
+            self.finish_enemy_periodic_stuck_suffix_after_refresh(tcx, npc_id, frame_phase);
         }
     }
 
-    fn run_enemy_periodic_prefix(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
+    fn run_enemy_periodic_prefix(&mut self, tcx: TickCtx<'_>, npc_id: EntityId) {
         if self.ai(npc_id, "periodic wasp owner").current_substate
             == crate::ai::Substate::WonderingWaspInArmour
             && self.actor_command(npc_id) != crate::element::Command::ReceiveWaspSting
         {
             self.dispatch_think_with_drain(
-                sim,
+                tcx,
                 npc_id,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventWaspAway),
-                assets,
             );
         }
         if self.ai(npc_id, "periodic retreat owner").current_substate
             == crate::ai::Substate::FleeingMerryManRunToLeaveMap
             && self.actor_command(npc_id) == crate::element::Command::Wait
         {
-            self.execute_ai_merry_man_forest_cassos(sim, assets, npc_id);
+            self.execute_ai_merry_man_forest_cassos(tcx, npc_id);
         }
         let frame = self.control.frame_counter;
         let ai = self
@@ -331,21 +320,21 @@ impl EngineInner {
         }
         if self.live_actor_animation(npc_id) == Some(crate::order::OrderType::WaitingUprightBored)
             && self.ai(npc_id, "periodic remark owner").current_state == crate::ai::AiState::Default
-            && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
+            && crate::sim_rng::u32(tcx.sim, crate::sim_rng::RngSite::VipIdleRemark, 0..12) == 0
         {
             let ai = self.enemy_ai(npc_id, "periodic remark owner");
-            let remark =
-                if ai.get_rank(&assets.profile_manager) == crate::profiles::ProfileRank::Officer {
-                    Some(crate::ai::Remark::OfficerComplains)
-                } else if ai.is_vip {
-                    Some(crate::ai::Remark::VipSpeaksToHimself)
-                } else {
-                    None
-                };
+            let remark = if ai.get_rank(&tcx.assets.profile_manager)
+                == crate::profiles::ProfileRank::Officer
+            {
+                Some(crate::ai::Remark::OfficerComplains)
+            } else if ai.is_vip {
+                Some(crate::ai::Remark::VipSpeaksToHimself)
+            } else {
+                None
+            };
             if let Some(remark) = remark {
                 self.execute_ai_speech(
-                    sim,
-                    assets,
+                    tcx,
                     npc_id,
                     crate::ai::AiSpeechAttempt { remark, flags: 0 },
                 );
@@ -356,9 +345,8 @@ impl EngineInner {
     /// Resume the watchdog after protection's synchronous movement and callbacks.
     pub(in crate::engine) fn finish_enemy_periodic_stuck_suffix_after_refresh(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
         frame_phase: u8,
     ) {
         use crate::ai::{AiState, AlertLevel, Remark, Stimulus, StimulusType, Substate};
@@ -476,13 +464,12 @@ impl EngineInner {
                 let destination = ai.last_goto_destination;
                 let flags = ai.last_goto_flags;
                 if destination.sector.is_some() {
-                    self.duty_go_to(sim, assets, npc_id, destination, flags);
+                    self.duty_go_to(tcx, npc_id, destination, flags);
                 } else {
                     self.dispatch_think_with_drain(
-                        sim,
+                        tcx,
                         npc_id,
                         &Stimulus::new(StimulusType::EventCouldntReachPoint),
-                        assets,
                     );
                 }
                 self.ai_mut(npc_id, "periodic watchdog callback return")
@@ -497,8 +484,7 @@ impl EngineInner {
                     && ai.blood_alcohol > 20
                 {
                     self.execute_ai_speech(
-                        sim,
-                        assets,
+                        tcx,
                         npc_id,
                         crate::ai::AiSpeechAttempt {
                             remark: Remark::Drunken,
@@ -515,9 +501,8 @@ impl EngineInner {
     /// It sits before the lock gate and only acts at exact phase zero.
     pub(in crate::engine) fn tick_civilian_random_speech_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         let current_frame = self.control.frame_counter;
         let entity = self.expect_entity(npc_id, "random-speech NPC");
@@ -572,11 +557,14 @@ impl EngineInner {
             if ai.beggar_dont_talk_counter > 0 {
                 ai.beggar_dont_talk_counter -= 1;
             } else if ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence
-                && crate::sim_rng::u32(sim, crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3)
-                    == 0
+                && crate::sim_rng::u32(
+                    tcx.sim,
+                    crate::sim_rng::RngSite::CivilianBeggarSpeechGate,
+                    0..3,
+                ) == 0
             {
                 let remark = match crate::sim_rng::u32(
-                    sim,
+                    tcx.sim,
                     crate::sim_rng::RngSite::CivilianBeggarSpeechChoice,
                     0..5,
                 ) {
@@ -586,8 +574,7 @@ impl EngineInner {
                     _ => unreachable!(),
                 };
                 self.execute_ai_speech(
-                    sim,
-                    assets,
+                    tcx,
                     npc_id,
                     crate::ai::AiSpeechAttempt { remark, flags: 0 },
                 );
@@ -595,8 +582,7 @@ impl EngineInner {
         }
         if self.live_actor_animation(npc_id) == Some(crate::order::OrderType::Weeping) {
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 npc_id,
                 crate::ai::AiSpeechAttempt {
                     remark: crate::ai::Remark::CivCries,
@@ -741,9 +727,8 @@ impl EngineInner {
 
     pub(in crate::engine) fn tick_refresh_ambush_points_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         use crate::ai::{AiState, LookDirection, Substate};
         use crate::ai_enemy::AmbushPointStatus;
@@ -756,7 +741,7 @@ impl EngineInner {
         }
         let ai = owner.enemy_ai().expect("ambush refresh requires enemy AI");
         let iq = ai.iq_for_difficulty(
-            &assets.profile_manager,
+            &tcx.assets.profile_manager,
             self.control.sim_config.difficulty,
             self.mission_domain
                 .diplomacy
@@ -817,7 +802,7 @@ impl EngineInner {
             let anchor = self.ai.global.ambush_points[idx].position_3d;
             let reachable = crate::sight_obstacle::is_reachable_3d(
                 crate::sight_obstacle::ObstacleList {
-                    static_obstacles: &assets.environment.static_sight_obstacles,
+                    static_obstacles: &tcx.assets.environment.static_sight_obstacles,
                     dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                     static_active: &self.world.static_sight_obstacle_active,
                 },
@@ -866,9 +851,9 @@ impl EngineInner {
                 } else {
                     Substate::SeekingSeekpointPassedAmbushPointLeft
                 };
-                self.duty_set_state(sim, assets, npc_id, AiState::Seeking, next);
+                self.duty_set_state(tcx, npc_id, AiState::Seeking, next);
                 if let Some(look) = look {
-                    self.execute_ai_look_sidewards(sim, assets, npc_id, look);
+                    self.execute_ai_look_sidewards(tcx, npc_id, look);
                 } else {
                     let frame = self.control.frame_counter;
                     self.observation_ai_mut(npc_id).base.launch_timer(3, frame);
@@ -892,9 +877,8 @@ impl EngineInner {
     // FACE_TO, ...).
     pub(in crate::engine) fn tick_ai_macro_timer_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         let current_frame = self.control.frame_counter;
 
@@ -916,7 +900,7 @@ impl EngineInner {
         self.ai_mut(npc_id, "macro-timer NPC")
             .macro_timer_is_running = false;
         if execute {
-            self.run_ai_macro(sim, assets, npc_id);
+            self.run_ai_macro(tcx, npc_id);
         }
     }
 
@@ -1003,9 +987,8 @@ impl EngineInner {
     // exactly what we want to escape from).
     pub(in crate::engine) fn tick_npc_stuck_on_ladder_for_npc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         npc_id: EntityId,
-        assets: &LevelAssets,
     ) {
         // Snapshot the gating predicates without holding a borrow.
         let entity = self.expect_entity(npc_id, "ladder-tail NPC");
@@ -1043,6 +1026,6 @@ impl EngineInner {
             return;
         }
 
-        self.execute_ai_return_to_duty(sim, assets, npc_id, crate::ai::DutyFlags::empty());
+        self.execute_ai_return_to_duty(tcx, npc_id, crate::ai::DutyFlags::empty());
     }
 }

@@ -6,6 +6,7 @@ use crate::ai::{
     StimulusInfo, Substate,
 };
 use crate::ai_enemy::{SeekFlags, task_priority};
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::profiles::ProfileRank;
 use crate::sim_rng::SimulationContext;
@@ -35,8 +36,7 @@ mod tests {
         member.base.current_state = AiState::Seeking;
         member.base.current_substate = Substate::SeekingGroupGoToOfficer;
         let result = engine.execute_ai_officer_rendezvous_event(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             &Stimulus::new(StimulusType::EventTimer),
         );
@@ -68,8 +68,7 @@ mod tests {
         ] {
             assert_eq!(
                 engine.execute_ai_officer_rendezvous_event(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     &Stimulus::new(event)
                 ),
@@ -108,8 +107,7 @@ mod tests {
         ai.base.seek_position = report;
         assert_eq!(
             engine.execute_ai_officer_rendezvous_event(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &Stimulus::new(StimulusType::EventTimer),
             ),
@@ -126,8 +124,7 @@ mod tests {
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_officer_rendezvous_event(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> Option<bool> {
@@ -180,7 +177,7 @@ impl EngineInner {
         {
             return Option::None;
         }
-        Some(AiOwnerCtx::new(self, sim, assets, owner).rendezvous_event(substate, stimulus))
+        Some(AiOwnerCtx::new(self, tcx, owner).rendezvous_event(substate, stimulus))
     }
 }
 
@@ -196,7 +193,7 @@ impl AiOwnerCtx<'_> {
             stimulus.info = StimulusInfo::Human(AiEntityHandle::new(self.owner.index()));
         }
         self.engine
-            .execute_ai_callback(self.sim, self.assets, target, &stimulus);
+            .execute_ai_callback(TickCtx::new(self.sim, self.assets), target, &stimulus);
     }
     fn face_target(&mut self) {
         let target = self.target();
@@ -239,10 +236,11 @@ impl AiOwnerCtx<'_> {
                         .is_some(),
                     "officer call requires enemy-soldier target {target:?}"
                 );
-                if self
-                    .engine
-                    .execute_ai_callback(self.sim, self.assets, target, &call)
-                {
+                if self.engine.execute_ai_callback(
+                    TickCtx::new(self.sim, self.assets),
+                    target,
+                    &call,
+                ) {
                     self.seek_state(SeekingOfficerWaitForSoldier);
                     let frame = self.engine.control.frame_counter;
                     self.enemy_mut().base.set_transient_emoticon(
@@ -535,7 +533,7 @@ impl AiOwnerCtx<'_> {
             }
             SeekingOfficerInstructGroupPointing if event == EventDone => self
                 .engine
-                .execute_ai_officer_instruct_group(self.sim, self.assets, self.owner),
+                .execute_ai_officer_instruct_group(TickCtx::new(self.sim, self.assets), self.owner),
             SeekingOfficerWaitForInstructedGroup if event == EventTimer => {
                 self.wait_for_instructed_group()
             }
@@ -685,7 +683,7 @@ impl AiOwnerCtx<'_> {
                     }
                 } else if !self
                     .engine
-                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
+                    .execute_ai_alert_officer(TickCtx::new(self.sim, self.assets), self.owner)
                 {
                     self.duty();
                 }
@@ -735,7 +733,7 @@ impl AiOwnerCtx<'_> {
                     );
                 } else if !self
                     .engine
-                    .execute_ai_alert_officer(self.sim, self.assets, self.owner)
+                    .execute_ai_alert_officer(TickCtx::new(self.sim, self.assets), self.owner)
                 {
                     self.seek(
                         self.enemy().base.seek_position,

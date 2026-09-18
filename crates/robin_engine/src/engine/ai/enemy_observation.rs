@@ -4,6 +4,7 @@ use crate::ai::{
     AiEntityHandle, AiState, EmoticonType, GotoFlags, Position, Remark, ReportType, Substate,
 };
 use crate::ai_enemy::{EnemyAi, ProfileRank, task_priority};
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -40,23 +41,16 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_ai_react_live(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         maximum: u16,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_react_live(maximum)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_react_live(maximum)
     }
 
     #[cfg(test)]
-    pub(super) fn execute_ai_seen_enemy(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-        target: u32,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_enemy(target)
+    pub(super) fn execute_ai_seen_enemy(&mut self, tcx: TickCtx<'_>, owner: EntityId, target: u32) {
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_enemy(target)
     }
 
     fn observation_enemy_below(&self, owner: EntityId, target: EntityId) -> bool {
@@ -83,34 +77,31 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_ai_seen_shadow(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         position: Position,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_shadow(position)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_shadow(position)
     }
 
     #[cfg(test)]
     pub(super) fn execute_ai_received_arrow(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         origin: Position,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_received_arrow(origin)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_received_arrow(origin)
     }
 
     #[cfg(test)]
     pub(super) fn execute_ai_seen_object(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         object: u32,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_object(object)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_object(object)
     }
 
     fn unavailable_ale_position(
@@ -174,22 +165,16 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_ai_ale_approach(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         arrived: bool,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_ale_approach(arrived)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_ale_approach(arrived)
     }
 
     #[cfg(test)]
-    pub(super) fn execute_ai_ale_reaction(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_ale_reaction()
+    pub(super) fn execute_ai_ale_reaction(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_ale_reaction()
     }
 
     pub(in crate::engine) fn reliable_ale_for_actor(
@@ -360,7 +345,7 @@ impl AiOwnerCtx<'_> {
                 .element_data(),
         ) {
             self.engine
-                .dispatch_enemy_in_house_alert(self.sim, self.owner, self.assets);
+                .dispatch_enemy_in_house_alert(TickCtx::new(self.sim, self.assets), self.owner);
             return;
         }
         self.engine.reinitialize_live_ai_enemies(self.owner);
@@ -369,8 +354,12 @@ impl AiOwnerCtx<'_> {
             ai.pc_missed = false;
         }
         let hint = self.engine.live_ai_position(enemy);
-        self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, hint, 100);
+        self.engine.execute_ai_look_there(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            hint,
+            100,
+        );
         if self
             .engine
             .expect_entity(self.owner, "post-sighting action")
@@ -530,8 +519,12 @@ impl AiOwnerCtx<'_> {
             .base
             .interesting_object;
         self.engine.observation_focus(self.owner, object);
-        self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, origin, 200);
+        self.engine.execute_ai_look_there(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            origin,
+            200,
+        );
         if rank == ProfileRank::Officer {
             self.engine
                 .observation_timer(self.owner, crate::parameters_ai::AI_FIRST_LOOK_TIME as u32);
@@ -653,7 +646,8 @@ impl AiOwnerCtx<'_> {
                 Some(self.owner),
                 Some(object),
             ));
-            self.engine.launch_sequence(self.sim, self.assets, sequence);
+            self.engine
+                .launch_sequence(TickCtx::new(self.sim, self.assets), sequence);
 
             self.duty_set_state(AiState::Wondering, Substate::WonderingDrinkingAle);
         } else {

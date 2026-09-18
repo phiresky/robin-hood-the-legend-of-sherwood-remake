@@ -3,6 +3,7 @@
 use super::*;
 use crate::ai::{AiController, AiState, DutyFlags, Remark, SpeechFlags, Substate};
 use crate::ai_enemy::EnemyAi;
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 /// The engine plus the immutable tick inputs and the actor whose AI is
@@ -17,14 +18,13 @@ pub(in crate::engine) struct AiOwnerCtx<'a> {
 impl<'a> AiOwnerCtx<'a> {
     pub(in crate::engine) fn new(
         engine: &'a mut EngineInner,
-        sim: &'a SimulationContext,
-        assets: &'a LevelAssets,
+        tcx: TickCtx<'a>,
         owner: EntityId,
     ) -> Self {
         Self {
             engine,
-            sim,
-            assets,
+            sim: tcx.sim,
+            assets: tcx.assets,
             owner,
         }
     }
@@ -46,8 +46,12 @@ impl<'a> AiOwnerCtx<'a> {
     }
 
     pub(super) fn state(&mut self, state: AiState, substate: Substate) {
-        self.engine
-            .duty_set_state(self.sim, self.assets, self.owner, state, substate);
+        self.engine.duty_set_state(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            state,
+            substate,
+        );
     }
 
     pub(super) fn seek_state(&mut self, substate: Substate) {
@@ -61,8 +65,7 @@ impl<'a> AiOwnerCtx<'a> {
 
     pub(super) fn duty(&mut self) {
         self.engine.execute_ai_return_to_duty(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             self.owner,
             DutyFlags::empty(),
         );
@@ -81,8 +84,7 @@ impl<'a> AiOwnerCtx<'a> {
 
     pub(super) fn say(&mut self, remark: Remark, flags: SpeechFlags) {
         self.engine.execute_ai_speech(
-            self.sim,
-            self.assets,
+            TickCtx::new(self.sim, self.assets),
             self.owner,
             crate::ai::AiSpeechAttempt {
                 remark,

@@ -31,6 +31,7 @@
 //!    `GoalShape::Line` / line-movement sequence equivalents.
 
 use crate::element::{ActionState, Command, EntityId, Posture};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceId, SequenceState};
 
@@ -122,12 +123,7 @@ impl EngineInner {
     /// Only when the active element is itself a movement do we skip
     /// the `CROUCH_UP` fallback and run the path-rewrite tail
     /// (`after_make_rewrite`) instead.
-    pub(crate) fn actor_make_upright(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        entity: EntityId,
-    ) {
+    pub(crate) fn actor_make_upright(&mut self, tcx: TickCtx<'_>, entity: EntityId) {
         if self.selected_element(entity).is_some() {
             let selected_movement = self.selected_movement_element(entity);
 
@@ -144,7 +140,7 @@ impl EngineInner {
                         .make_upright(entity, pathfinder_index);
                     return;
                 }
-                self.after_make_rewrite(sim, entity, selected_movement);
+                self.after_make_rewrite(tcx.sim, entity, selected_movement);
 
                 return;
             }
@@ -155,16 +151,11 @@ impl EngineInner {
         let elem = SequenceElement::new(1, Command::CrouchUp, Some(entity));
         let mut sequence = crate::sequence::Sequence::new();
         sequence.append_element(elem);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 
     /// Crouch the actor down.
-    pub(crate) fn actor_make_crouched(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        entity: EntityId,
-    ) {
+    pub(crate) fn actor_make_crouched(&mut self, tcx: TickCtx<'_>, entity: EntityId) {
         if let Some(selected_movement) = self.selected_movement_element(entity) {
             self.orders
                 .sequence_manager
@@ -177,7 +168,7 @@ impl EngineInner {
                     .make_crouched(entity, pathfinder_index);
                 return;
             }
-            self.after_make_rewrite(sim, entity, selected_movement);
+            self.after_make_rewrite(tcx.sim, entity, selected_movement);
         } else {
             if self.selected_element(entity).is_some() {
                 // As in crouched-movement conversion, recurse into its linked
@@ -189,7 +180,7 @@ impl EngineInner {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(elem);
-            self.launch_sequence(sim, assets, sequence);
+            self.launch_sequence(tcx, sequence);
         }
     }
 
@@ -1012,8 +1003,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             sequence,
             0,
@@ -1179,8 +1169,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             sequence,
             0,
@@ -1197,7 +1186,10 @@ mod tests {
         );
         engine.publish_selected_order_as_installed(owner);
 
-        engine.actor_make_crouched(&crate::sim_rng::test_context(), &assets, owner);
+        engine.actor_make_crouched(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
 
         let selected = engine
             .orders
@@ -1311,8 +1303,7 @@ mod tests {
             .sequence_manager
             .start_sequence_level(sequence);
         engine.element_in_progress(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             &mut Vec::new(),
             sequence,
             0,

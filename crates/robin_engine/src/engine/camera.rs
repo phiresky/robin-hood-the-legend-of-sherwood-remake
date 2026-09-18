@@ -3,6 +3,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint, ScreenSize};
 use crate::element_kinds::Command;
+use crate::engine::TickCtx;
 use crate::sequence::SequenceState;
 
 impl EngineInner {
@@ -119,8 +120,7 @@ impl EngineInner {
         self.feedback.cutscene_camera.sequence_element = None;
         let sim = self.control.simulation_context();
         self.element_terminated(
-            &sim,
-            assets,
+            TickCtx::new(&sim, assets),
             &mut Vec::new(),
             sequence_ref.sequence_id,
             sequence_ref.element_index,
@@ -132,16 +132,12 @@ impl EngineInner {
         Ok(())
     }
 
-    fn release_director_sequence_autonomously(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    fn release_director_sequence_autonomously(&mut self, tcx: TickCtx<'_>) {
         if self.feedback.cutscene_camera.external_completion_replay {
             return;
         }
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.element_terminated(sim, assets, &mut Vec::new(), r.sequence_id, r.element_index);
+            self.element_terminated(tcx, &mut Vec::new(), r.sequence_id, r.element_index);
         }
     }
 
@@ -150,8 +146,7 @@ impl EngineInner {
     /// Called at the start of each `draw()` frame.
     pub(super) fn perform_director_work(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
     ) {
         // ── Locker follow-cam ────────────────────────────────────
@@ -282,7 +277,7 @@ impl EngineInner {
             self.feedback.cutscene_camera.desired_zoom_factor = -1.0;
             // Zoom reached target, release the latched ZoomLevel
             // sequence element.
-            self.release_director_sequence_autonomously(sim, assets);
+            self.release_director_sequence_autonomously(tcx);
         }
 
         if self.feedback.cutscene_camera.desired_zoom_factor > 0.0
@@ -375,7 +370,7 @@ impl EngineInner {
                     display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
-                    self.release_director_sequence_autonomously(sim, assets);
+                    self.release_director_sequence_autonomously(tcx);
                 } else {
                     // Accelerate slide speed
                     if self.control.speed == 1.0 {
@@ -400,7 +395,7 @@ impl EngineInner {
                 display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
-                self.release_director_sequence_autonomously(sim, assets);
+                self.release_director_sequence_autonomously(tcx);
             }
         }
     }

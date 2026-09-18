@@ -202,8 +202,7 @@ fn rejected_cover_keeps_computed_goal_and_clears_both_protection_links() {
     engine.ai.standard_view_polygon_radius = 0;
     assert_eq!(
         engine.execute_ai_battle_cover(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             bearer.index()
         ),
@@ -243,13 +242,16 @@ fn lost_execution_target_falls_back_to_the_source_decision() {
     let (mut engine, assets, ids) = fixture(&[(100.0, 100.0)]);
     let sim = crate::sim_rng::test_context();
     assert_eq!(
-        engine.execute_ai_battle_too_proud(&sim, &assets, ids[0], Substate::AttackingReactiontime),
+        engine.execute_ai_battle_too_proud(
+            TickCtx::new(&sim, &assets),
+            ids[0],
+            Substate::AttackingReactiontime
+        ),
         ControlFlow::Continue(Decision::Reserve)
     );
     assert_eq!(
         engine.execute_ai_battle_archer_step_back(
-            &sim,
-            &assets,
+            TickCtx::new(&sim, &assets),
             ids[0],
             Substate::AttackingReactiontime
         ),

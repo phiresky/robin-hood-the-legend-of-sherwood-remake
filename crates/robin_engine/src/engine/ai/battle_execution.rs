@@ -7,16 +7,16 @@ use crate::ai_enemy::{
     BattleDecisionInputs, battle_friend_is_nearer, battle_owner_target_square_distance,
 };
 use crate::element::Human;
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_merry_man_forest_cassos(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_merry_man_forest_cassos()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_merry_man_forest_cassos()
     }
 
     pub(in crate::engine) fn reinitialize_live_ai_enemies(&mut self, owner: EntityId) {
@@ -108,18 +108,16 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_get_battle_overview(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         flags: u16,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_get_battle_overview(flags)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_get_battle_overview(flags)
     }
 
     pub(in crate::engine) fn execute_ai_make_battle_predecisions(
         &self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> crate::ai::Decision {
         use crate::ai::Decision;
@@ -150,16 +148,16 @@ impl EngineInner {
                 Entity::Soldier(_) => {
                     let ally = self.enemy_ai(friend, "battle predecision soldier");
                     officer |= friend != owner
-                        && ally.get_rank(&assets.profile_manager) == ProfileRank::Officer;
-                    100_u16.wrapping_add(ally.profile(&assets.profile_manager).pride)
+                        && ally.get_rank(&tcx.assets.profile_manager) == ProfileRank::Officer;
+                    100_u16.wrapping_add(ally.profile(&tcx.assets.profile_manager).pride)
                 }
                 _ => panic!("battle ally must be a PC or soldier"),
             };
             points = points.wrapping_add(value);
         }
         ai.battle_predecision_from_points(
-            &assets.profile_manager,
-            sim,
+            &tcx.assets.profile_manager,
+            tcx.sim,
             points,
             ai.list_them.len() as u16,
             officer,
@@ -220,11 +218,10 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_battle_decisions(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_battle_decisions()
+        AiOwnerCtx::new(self, tcx, owner).execute_battle_decisions()
     }
 
     fn prepare_live_battle_decisions(
@@ -544,9 +541,11 @@ impl AiOwnerCtx<'_> {
             self.execute_live_battle_without_visible_enemies(unconscious);
             return;
         }
-        let (decision, cover) =
-            self.engine
-                .choose_live_battle_decision(self.sim, self.assets, self.owner, inputs);
+        let (decision, cover) = self.engine.choose_live_battle_decision(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            inputs,
+        );
         if let Some(decision) = self.execute_live_battle_decision(
             decision,
             old_substate,
@@ -657,7 +656,8 @@ mod tests {
             );
             let sim = crate::sim_rng::SimulationContext::with_seed(19);
             let expected = crate::sim_rng::SimulationContext::with_seed(19);
-            let decision = engine.execute_ai_make_battle_predecisions(&sim, &assets, owner);
+            let decision =
+                engine.execute_ai_make_battle_predecisions(TickCtx::new(&sim, &assets), owner);
             let expected_decision = if draws
                 && crate::sim_rng::u16(&expected, crate::sim_rng::RngSite::BattleCourage, 0..100)
                     > 0
@@ -682,7 +682,7 @@ mod tests {
         let sim = crate::sim_rng::SimulationContext::with_seed(19);
         let seed = sim.seed();
         assert_eq!(
-            engine.execute_ai_make_battle_predecisions(&sim, &assets, owner),
+            engine.execute_ai_make_battle_predecisions(TickCtx::new(&sim, &assets), owner),
             crate::ai::Decision::PredecisionDefensive
         );
         assert_eq!(sim.seed(), seed);
@@ -720,8 +720,7 @@ mod tests {
             ai.previous_substate = StoredEnumWord::new(previous);
             ai.is_vip = false;
             let result = engine.execute_live_battle_decision(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 Decision::TooProudToAttack,
                 entry,
@@ -783,8 +782,7 @@ mod tests {
                 ..anchor
             };
             let outcome = engine.execute_ai_battle_cover(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 bearer.index(),
             );
@@ -827,8 +825,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         for (friends, expected) in [(3, Decision::Fight), (4, Decision::Observe)] {
             let (decision, _) = engine.choose_live_battle_decision(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 owner,
                 BattleDecisionInputs {
                     friends_lower_company: 0,
@@ -898,7 +895,10 @@ mod tests {
             .primary_target_multiplicity_scratch
             .insert(contributed.index(), 3);
         let sim = crate::sim_rng::test_context();
-        assert_eq!(engine.propose_live_shot_target(&sim, &assets, owner), None);
+        assert_eq!(
+            engine.propose_live_shot_target(TickCtx::new(&sim, &assets), owner),
+            None
+        );
         assert_eq!(
             engine.ai.global.primary_target_multiplicity_scratch[&personal.index()],
             0
@@ -908,7 +908,10 @@ mod tests {
             0
         );
         engine.enemy_mut(ally).base.current_substate = Substate::AttackingBowAiming;
-        assert_eq!(engine.propose_live_shot_target(&sim, &assets, owner), None);
+        assert_eq!(
+            engine.propose_live_shot_target(TickCtx::new(&sim, &assets), owner),
+            None
+        );
         assert_eq!(
             engine.ai.global.primary_target_multiplicity_scratch[&contributed.index()],
             1
@@ -1130,7 +1133,10 @@ mod tests {
             .entities
             .expect_enemy_ai_mut(owner, format_args!("stale friend"))
             .list_them = vec![ally.index()];
-        engine.execute_battle_decisions(&crate::sim_rng::test_context(), &assets, owner);
+        engine.execute_battle_decisions(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+        );
         let ai = engine
             .world
             .entities

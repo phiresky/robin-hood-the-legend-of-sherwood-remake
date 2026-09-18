@@ -7,6 +7,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiState, Stimulus, StimulusInfo, Substate};
 use crate::ai_enemy::AiMapVec;
 use crate::ai_enemy::{SeekFlags, UNDEFINED_DIRECTION};
+use crate::engine::TickCtx;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
 
@@ -14,12 +15,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_out_of_view(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_out_of_view(stimulus)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_out_of_view(stimulus)
     }
 
     fn live_enemy_is_behind_me(&self, owner: EntityId) -> bool {

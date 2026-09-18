@@ -2,6 +2,7 @@
 
 use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
 use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
@@ -37,8 +38,7 @@ impl EngineInner {
     /// original-game rolling action.
     pub(super) fn tick_rolling_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) -> Option<MotionState> {
         let Some((seq_id, elem_idx, order, next_order)) = self
@@ -101,7 +101,7 @@ impl EngineInner {
                 target_element: order.antagonist,
             };
             let (sprite_motion, frame_distance) = entity.sprite_mut().perform_motion(
-                sim,
+                tcx.sim,
                 Some(context),
                 OrderType::Rolling,
                 direction,
@@ -154,7 +154,7 @@ impl EngineInner {
                 &mover,
                 super::anti_collision::CollisionWorld {
                     neighbours,
-                    profiles: &assets.profile_manager,
+                    profiles: &tcx.assets.profile_manager,
                 },
                 &self.ai.global.repulsive_points,
                 Some(&self.world.fast_grid),

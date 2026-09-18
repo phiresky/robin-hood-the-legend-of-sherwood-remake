@@ -1,5 +1,6 @@
 //! Sequence manager callbacks responsibilities.
 use super::*;
+use crate::engine::TickCtx;
 
 impl SequenceManager {
     // ─── State change callbacks ─────────────────────────────────
@@ -350,8 +351,7 @@ impl SequenceManager {
 impl crate::engine::EngineInner {
     pub(crate) fn set_sequence_element_state(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -418,8 +418,7 @@ impl crate::engine::EngineInner {
                     "linked Seek is not movement"
                 );
                 self.element_interrupted(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     linked.sequence_id,
                     linked.element_index,
@@ -476,13 +475,7 @@ impl crate::engine::EngineInner {
             }
             SequenceState::Impossible | SequenceState::Interrupted => {
                 if state == SequenceState::Impossible {
-                    self.start_postponed_sequence_element(
-                        sim,
-                        assets,
-                        active_scripts,
-                        seq_id,
-                        elem_idx,
-                    );
+                    self.start_postponed_sequence_element(tcx, active_scripts, seq_id, elem_idx);
                 }
                 self.orders
                     .sequence_manager
@@ -490,14 +483,7 @@ impl crate::engine::EngineInner {
                     .expect("terminal element disappeared")
                     .orders
                     .clear();
-                self.notify_sequence_element_owner(
-                    sim,
-                    assets,
-                    seq_id,
-                    elem_idx,
-                    state,
-                    terminal_site,
-                );
+                self.notify_sequence_element_owner(tcx, seq_id, elem_idx, state, terminal_site);
                 // Owner callbacks can replace the following edge and its command level.
                 if let Some(target) = self
                     .orders
@@ -505,8 +491,7 @@ impl crate::engine::EngineInner {
                     .live_cascade_target(seq_id, elem_idx, flags)
                 {
                     self.set_sequence_element_state(
-                        sim,
-                        assets,
+                        tcx,
                         active_scripts,
                         target.sequence_id,
                         target.element_index,
@@ -521,22 +506,9 @@ impl crate::engine::EngineInner {
                     old_state,
                     SequenceState::Todo | SequenceState::InProgress | SequenceState::Postponed
                 ) {
-                    self.notify_sequence_element_owner(
-                        sim,
-                        assets,
-                        seq_id,
-                        elem_idx,
-                        state,
-                        terminal_site,
-                    );
-                    self.sequence_element_ready(sim, assets, active_scripts, seq_id);
-                    self.start_postponed_sequence_element(
-                        sim,
-                        assets,
-                        active_scripts,
-                        seq_id,
-                        elem_idx,
-                    );
+                    self.notify_sequence_element_owner(tcx, seq_id, elem_idx, state, terminal_site);
+                    self.sequence_element_ready(tcx, active_scripts, seq_id);
+                    self.start_postponed_sequence_element(tcx, active_scripts, seq_id, elem_idx);
                 } else {
                     tracing::warn!(
                         sequence_id = seq_id.0,
@@ -556,8 +528,7 @@ impl crate::engine::EngineInner {
     #[track_caller]
     pub(crate) fn element_terminated(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -574,8 +545,7 @@ impl crate::engine::EngineInner {
         }
 
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -594,8 +564,7 @@ impl crate::engine::EngineInner {
     /// finishes normally.
     pub(crate) fn element_impossible(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -622,8 +591,7 @@ impl crate::engine::EngineInner {
         }
 
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -644,8 +612,7 @@ impl crate::engine::EngineInner {
     /// by Original itself.
     pub(crate) fn element_impossible_from_execute(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -655,8 +622,7 @@ impl crate::engine::EngineInner {
         }
 
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -669,8 +635,7 @@ impl crate::engine::EngineInner {
     /// Called when an element starts executing (enters InProgress).
     pub(crate) fn element_in_progress(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -680,8 +645,7 @@ impl crate::engine::EngineInner {
         }
 
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -694,8 +658,7 @@ impl crate::engine::EngineInner {
     /// Called when an element is interrupted.
     pub(crate) fn element_interrupted(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -706,8 +669,7 @@ impl crate::engine::EngineInner {
         }
 
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -737,8 +699,7 @@ impl crate::engine::EngineInner {
     /// cleanup explicitly here.
     pub(crate) fn kill_owner_sequences(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         actor: EntityId,
         exempt_seq: Option<SequenceId>,
@@ -780,8 +741,7 @@ impl crate::engine::EngineInner {
                 continue;
             }
             self.set_sequence_element_state(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 seq_id,
                 elem_idx,
@@ -796,8 +756,7 @@ impl crate::engine::EngineInner {
     /// and progress accounting happen synchronously without notifying the owner.
     pub(crate) fn postpone_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -806,8 +765,7 @@ impl crate::engine::EngineInner {
             return;
         }
         self.set_sequence_element_state(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             seq_id,
             elem_idx,
@@ -832,8 +790,7 @@ impl crate::engine::EngineInner {
 
     fn notify_sequence_element_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         seq_id: SequenceId,
         elem_idx: usize,
         terminal_state: SequenceState,
@@ -872,13 +829,12 @@ impl crate::engine::EngineInner {
             selected = ?self.world.entities.current_element_for_actor(owner),
             "removal notification capturing selection at state change"
         );
-        self.send_condolation_card(sim, card, assets);
+        self.send_condolation_card(tcx, card);
     }
 
     fn sequence_element_ready(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
     ) {
@@ -914,14 +870,13 @@ impl crate::engine::EngineInner {
                 Vec::new()
             }
         };
-        self.register_sequence_level(sim, assets, active_scripts, seq_id, to_go)
+        self.register_sequence_level(tcx, active_scripts, seq_id, to_go)
             .unwrap_or_else(|error| panic!("sequence Ready failed: {error:?}"));
     }
 
     fn start_postponed_sequence_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         seq_id: SequenceId,
         anchor: usize,
@@ -972,8 +927,7 @@ impl crate::engine::EngineInner {
             }
         }
         self.register_sequence_element(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             target.sequence_id,
             target.element_index,

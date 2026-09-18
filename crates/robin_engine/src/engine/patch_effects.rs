@@ -2,6 +2,7 @@
 
 use super::movement::MovePathOutcome;
 use super::*;
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 
 fn initialize_patch_animation(
@@ -54,17 +55,12 @@ impl EngineInner {
             .collect()
     }
 
-    pub(crate) fn apply_patch(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        index: crate::patch::PatchIndex,
-    ) {
+    pub(crate) fn apply_patch(&mut self, tcx: TickCtx<'_>, index: crate::patch::PatchIndex) {
         let i = usize::from(index);
         let patch = &self.script_domains.interactables.patches[i];
         if patch.animated && patch.in_transition {
             self.execute_deactivate_animation(index);
-            self.apply_patch_final(sim, assets, index, false);
+            self.apply_patch_final(tcx, index, false);
         }
         let patch = &self.script_domains.interactables.patches[i];
         if patch.applied {
@@ -80,14 +76,13 @@ impl EngineInner {
             self.script_domains.interactables.patches[i].in_transition = true;
         } else {
             self.execute_deactivate_animation(index);
-            self.apply_patch_final(sim, assets, index, false);
+            self.apply_patch_final(tcx, index, false);
         }
     }
 
     pub(crate) fn apply_patch_final(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         index: crate::patch::PatchIndex,
         forced_reset: bool,
     ) {
@@ -108,12 +103,12 @@ impl EngineInner {
                 } else {
                     self.execute_deactivate_animation(index);
                 }
-                self.execute_swap_objects(sim, assets, index, false, forced_reset);
+                self.execute_swap_objects(tcx, index, false, forced_reset);
             }
         } else {
             self.script_domains.interactables.patches[i].applied = true;
             self.swap_patch_background(index, true);
-            self.execute_swap_objects(sim, assets, index, true, forced_reset);
+            self.execute_swap_objects(tcx, index, true, forced_reset);
             if self.script_domains.interactables.patches[i]
                 .animation_flags
                 .end_valid
@@ -125,12 +120,7 @@ impl EngineInner {
         }
     }
 
-    pub(crate) fn reset_patch(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        index: crate::patch::PatchIndex,
-    ) {
+    pub(crate) fn reset_patch(&mut self, tcx: TickCtx<'_>, index: crate::patch::PatchIndex) {
         let i = usize::from(index);
         if self.script_domains.interactables.patches[i].applied {
             self.swap_patch_background(index, false);
@@ -153,7 +143,7 @@ impl EngineInner {
             }
             self.script_domains.interactables.patches[i].in_transition = false;
         }
-        self.execute_swap_objects(sim, assets, index, false, true);
+        self.execute_swap_objects(tcx, index, false, true);
     }
 
     fn patch_animation_handle(&self, index: crate::patch::PatchIndex) -> Option<i32> {
@@ -204,8 +194,7 @@ impl EngineInner {
     /// and pathfinder state.
     fn execute_swap_objects(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         index: crate::patch::PatchIndex,
         applied: bool,
         forced_reset: bool,
@@ -303,7 +292,7 @@ impl EngineInner {
                 .world
                 .pathfinder
                 .try_convert_sector(
-                    assets.navigation.pathfinder_graph.as_ref(),
+                    tcx.assets.navigation.pathfinder_graph.as_ref(),
                     pathfinder_sector,
                 )
                 .unwrap_or_else(|| {
@@ -314,7 +303,7 @@ impl EngineInner {
                     )
                 });
             let appeared = self.world.pathfinder.toggle_obstacle_state(
-                assets.navigation.pathfinder_graph.as_ref(),
+                tcx.assets.navigation.pathfinder_graph.as_ref(),
                 std::sync::Arc::make_mut(&mut self.world.fast_grid),
                 pathfinder_layer as usize,
                 area as usize,
@@ -323,8 +312,7 @@ impl EngineInner {
 
             if !forced_reset {
                 self.invalidate_paths_and_kill_crushed(
-                    sim,
-                    assets,
+                    tcx,
                     pathfinder_layer,
                     pathfinder_sector,
                     &appeared,
@@ -361,8 +349,7 @@ impl EngineInner {
     /// retained across movement retranslation and damage callbacks.
     fn invalidate_paths_and_kill_crushed(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         layer: u16,
         sector: u16,
         appeared: &[crate::fast_find_grid::SectorIndex],
@@ -437,11 +424,9 @@ impl EngineInner {
                 // differs observably: the actor is not moved, the corrected
                 // source is different, and first-point selection becomes enabled.
                 if !self.extract_move_instruction_owner(id) {
-                    self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                    self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
                 } else {
-                    match self
-                        .try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action)
-                    {
+                    match self.try_dispatch_move_path(tcx, id, seq_id, elem_idx, dest, action) {
                         MovePathOutcome::Success | MovePathOutcome::Pending => {
                             // Retranslation replaces order storage. Install the
                             // new current order only if this element still owns
@@ -465,7 +450,7 @@ impl EngineInner {
                             self.install_actor_order(id, installed_order);
                         }
                         MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
                         }
                         MovePathOutcome::Failed => {
                             // Source extraction failure already performed the
@@ -490,7 +475,7 @@ impl EngineInner {
                     if let Some(entity) = self.get_entity_mut(id) {
                         entity.element_data_mut().unreachable = true;
                     }
-                    self.launch_damage(sim, assets, id, 1000, 1000);
+                    self.launch_damage(tcx, id, 1000, 1000);
                 }
             }
         }
@@ -719,24 +704,24 @@ mod tests {
         for animated in [false, true] {
             for definitive in [false, true] {
                 let (mut engine, index) = patch_fixture(animated, definitive);
-                engine.apply_patch(&sim, &assets, index);
+                engine.apply_patch(TickCtx::new(&sim, &assets), index);
                 if animated {
                     assert_patch_terrain(&engine, false);
                     assert!(engine.script_domains.interactables.patches[0].in_transition);
-                    engine.finish_patch_transition_for(&sim, &assets, index);
+                    engine.finish_patch_transition_for(TickCtx::new(&sim, &assets), index);
                 }
                 assert_patch_terrain(&engine, true);
                 assert_eq!(
                     engine.script_domains.interactables.patches[0].active,
                     !definitive
                 );
-                engine.apply_patch(&sim, &assets, index);
+                engine.apply_patch(TickCtx::new(&sim, &assets), index);
                 if animated && !definitive {
                     assert_patch_terrain(&engine, true);
-                    engine.finish_patch_transition_for(&sim, &assets, index);
+                    engine.finish_patch_transition_for(TickCtx::new(&sim, &assets), index);
                 }
                 assert_patch_terrain(&engine, definitive);
-                engine.reset_patch(&sim, &assets, index);
+                engine.reset_patch(TickCtx::new(&sim, &assets), index);
                 assert_patch_terrain(&engine, false);
                 assert!(engine.script_domains.interactables.patches[0].active);
                 assert!(!engine.script_domains.interactables.patches[0].in_transition);
@@ -749,11 +734,11 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let (mut engine, index) = patch_fixture(true, false);
-        engine.apply_patch(&sim, &assets, index);
-        engine.apply_patch(&sim, &assets, index);
+        engine.apply_patch(TickCtx::new(&sim, &assets), index);
+        engine.apply_patch(TickCtx::new(&sim, &assets), index);
         assert_patch_terrain(&engine, true);
         assert!(engine.script_domains.interactables.patches[0].in_transition);
-        engine.finish_patch_transition_for(&sim, &assets, index);
+        engine.finish_patch_transition_for(TickCtx::new(&sim, &assets), index);
         assert_patch_terrain(&engine, false);
     }
 
@@ -762,8 +747,8 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::default();
         let (mut engine, index) = patch_fixture(true, false);
-        engine.apply_patch(&sim, &assets, index);
-        engine.reset_patch(&sim, &assets, index);
+        engine.apply_patch(TickCtx::new(&sim, &assets), index);
+        engine.reset_patch(TickCtx::new(&sim, &assets), index);
         assert_patch_terrain(&engine, false);
         assert!(!engine.script_domains.interactables.patches[0].in_transition);
     }
@@ -777,8 +762,8 @@ mod tests {
         patch.configure_background_reversal(true);
         patch.repeat_activation = Some((123, "ActivatedBySword".into()));
         for _ in 0..2 {
-            engine.apply_patch(&sim, &assets, index);
-            engine.finish_patch_transition_for(&sim, &assets, index);
+            engine.apply_patch(TickCtx::new(&sim, &assets), index);
+            engine.finish_patch_transition_for(TickCtx::new(&sim, &assets), index);
             assert_patch_terrain(&engine, true);
             let patch = &mut engine.script_domains.interactables.patches[0];
             *patch = serde_json::from_str(&serde_json::to_string(patch).unwrap()).unwrap();
@@ -786,8 +771,8 @@ mod tests {
                 patch.repeat_activation,
                 Some((123, "ActivatedBySword".into()))
             );
-            engine.apply_patch(&sim, &assets, index);
-            engine.finish_patch_transition_for(&sim, &assets, index);
+            engine.apply_patch(TickCtx::new(&sim, &assets), index);
+            engine.finish_patch_transition_for(TickCtx::new(&sim, &assets), index);
             assert_patch_terrain(&engine, false);
             assert!(engine.script_domains.interactables.patches[0].active);
         }
@@ -881,7 +866,10 @@ mod tests {
             });
         let initial = engine.clone();
         let index = crate::patch::PatchIndex::new(0).unwrap();
-        engine.apply_patch(&crate::sim_rng::test_context(), &assets, index);
+        engine.apply_patch(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            index,
+        );
         let applied = engine.clone();
         let blits = applied.background_patch_blits(&assets);
         assert_eq!(blits.len(), 1);
@@ -896,7 +884,10 @@ mod tests {
             engine.background_patch_blits(&assets).is_empty(),
             "reverse transition has restored the base map"
         );
-        engine.reset_patch(&crate::sim_rng::test_context(), &assets, index);
+        engine.reset_patch(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            index,
+        );
         assert!(engine.background_patch_blits(&assets).is_empty());
     }
 
@@ -1072,8 +1063,7 @@ mod tests {
         assert!(!obstacle.bounding_box.intersects_bbox(&expected_box));
         let obstacle_index = engine.world.fast_grid_mut().add_sector(obstacle, 0);
         engine.invalidate_paths_and_kill_crushed(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             0,
             1,
             &[crate::fast_find_grid::SectorIndex::new(obstacle_index).unwrap()],

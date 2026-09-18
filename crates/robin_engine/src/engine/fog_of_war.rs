@@ -3,6 +3,7 @@
 use super::*;
 use crate::coordinates::{GroundBBox, GroundPoint, MapPoint, WorldPoint3D};
 use crate::element::{Camp, Entity, Posture};
+use crate::engine::TickCtx;
 use crate::fog_of_war::{
     FogCellState, FogOfWarState, LISTEN_REVEAL_FRAMES, SPOTTED_HYSTERESIS_FRAMES,
 };
@@ -2143,10 +2144,9 @@ mod tests {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
         engine.apply_commands(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &[crate::player_command::PlayerInput::new(
                 crate::player_command::PlayerId(1),
                 crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
@@ -2155,10 +2155,9 @@ mod tests {
         assert!(!engine.control.sim_config.fog_of_war);
 
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
         );
         assert!(engine.control.sim_config.fog_of_war);
@@ -2166,10 +2165,9 @@ mod tests {
         engine.control.sim_config.fog_of_war = false;
         engine.control.rng = SimulationRng::with_original_replay(Vec::new());
         engine.apply_command(
-            &sim,
+            TickCtx::new(&sim, &assets),
             &mut display,
             &mut input,
-            &assets,
             &crate::player_command::PlayerCommand::SetFogOfWar { enabled: true },
         );
         assert!(!engine.control.sim_config.fog_of_war);

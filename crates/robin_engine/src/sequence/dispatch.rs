@@ -1,5 +1,6 @@
 //! Registration dispatch and the live manager FIFO.
 use super::*;
+use crate::engine::TickCtx;
 
 impl SequenceManager {
     pub(crate) fn start_sequence_level(&mut self, id: SequenceId) -> Vec<usize> {
@@ -115,67 +116,55 @@ impl SequenceManager {
 impl crate::engine::EngineInner {
     pub(crate) fn launch_sequence_inline(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         sequence: Sequence,
     ) -> Result<SequenceId, crate::engine::script::ScriptDriverError> {
         let id = self.orders.sequence_manager.insert_sequence(sequence);
-        self.start_sequence_inline(sim, assets, active_scripts, id)?;
+        self.start_sequence_inline(tcx, active_scripts, id)?;
         Ok(id)
     }
 
     pub(crate) fn start_sequence_inline(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         id: SequenceId,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
         let level = self.orders.sequence_manager.start_sequence_level(id);
-        self.register_sequence_level(sim, assets, active_scripts, id, level)
+        self.register_sequence_level(tcx, active_scripts, id, level)
     }
 
     pub(crate) fn launch_element_inline(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         mut element: SequenceElement,
     ) -> Result<SequenceId, crate::engine::script::ScriptDriverError> {
         element.command_level = 1;
         let mut sequence = Sequence::new();
         sequence.append_element(element);
-        self.launch_sequence_inline(sim, assets, active_scripts, sequence)
+        self.launch_sequence_inline(tcx, active_scripts, sequence)
     }
 
     /// The level boundary stays fixed across callbacks; each sibling is read
     /// again only after the preceding sibling has completed its registration.
     pub(crate) fn register_sequence_level(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         sequence_id: SequenceId,
         level: Vec<usize>,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
         for element_index in level {
-            self.register_sequence_element(
-                sim,
-                assets,
-                active_scripts,
-                sequence_id,
-                element_index,
-                true,
-            )?;
+            self.register_sequence_element(tcx, active_scripts, sequence_id, element_index, true)?;
         }
         Ok(())
     }
 
     pub(crate) fn register_sequence_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         sequence_id: SequenceId,
         element_index: usize,
@@ -221,11 +210,10 @@ impl crate::engine::EngineInner {
                 .push_back((sequence_id, element_index));
             return Ok(());
         };
-        if let Err(mut error) =
-            self.dispatch_script_synchronous_action(sim, assets, action, active_scripts)
+        if let Err(mut error) = self.dispatch_script_synchronous_action(tcx, action, active_scripts)
         {
             if !error.sequence_element_failed {
-                self.element_impossible(sim, assets, active_scripts, sequence_id, element_index);
+                self.element_impossible(tcx, active_scripts, sequence_id, element_index);
                 error.sequence_element_failed = true;
             }
             return Err(error);

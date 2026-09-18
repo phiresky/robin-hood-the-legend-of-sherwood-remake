@@ -11,6 +11,7 @@ use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{
     CondolationCard, SequenceElement, SequenceId, take_goal_owner_terminal_provenance,
@@ -173,15 +174,13 @@ impl EngineInner {
     #[cfg(test)]
     pub(crate) fn set_soldier_attentive_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         target: bool,
         fast_variant: bool,
     ) {
         self.set_soldier_attentive_mode_from(
-            sim,
-            assets,
+            tcx,
             entity_id,
             target,
             fast_variant,
@@ -191,8 +190,7 @@ impl EngineInner {
 
     pub(crate) fn set_soldier_attentive_mode_from(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
         target: bool,
         fast_variant: bool,
@@ -276,11 +274,8 @@ impl EngineInner {
             Command::LeaveAttentiveMode
         };
 
-        let launched_sequence = self.launch_element(
-            sim,
-            assets,
-            SequenceElement::new(1, command, Some(entity_id)),
-        );
+        let launched_sequence =
+            self.launch_element(tcx, SequenceElement::new(1, command, Some(entity_id)));
 
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
@@ -317,25 +312,27 @@ impl EngineInner {
     /// last cycle finishes.
     pub(super) fn dispatch_receive_wasp_sting(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
             return;
         };
         if !entity.is_soldier() {
-            self.element_impossible(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+            self.element_impossible(tcx, &mut Vec::new(), seq_id, elem_idx);
             return;
         }
 
         // Random rotation offset, applied to direction_goal so the
         // soldier rotates during the animation.  Range is `rand(0..17) - 8`.
-        let rotation =
-            crate::sim_rng::i32(sim, crate::sim_rng::RngSite::SoldierFreedRotation, 0..17) - 8;
+        let rotation = crate::sim_rng::i32(
+            tcx.sim,
+            crate::sim_rng::RngSite::SoldierFreedRotation,
+            0..17,
+        ) - 8;
         let new_goal = {
             let current_goal = i16::from(entity.position_iface().get_direction_goal());
             (current_goal + rotation as i16).rem_euclid(16)
@@ -349,7 +346,11 @@ impl EngineInner {
         // element stays in-progress until the last one finishes.
         let bee_time = entity
             .soldier_data()
-            .and_then(|s| assets.profile_manager.get_soldier(s.soldier_profile_index))
+            .and_then(|s| {
+                tcx.assets
+                    .profile_manager
+                    .get_soldier(s.soldier_profile_index)
+            })
             .map(|p| {
                 let base = p.bee_time.max(1) as u32;
                 if entity
@@ -369,7 +370,7 @@ impl EngineInner {
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
         if on_ladder {
-            self.translate_ladder_wall_fall(sim, assets, owner, (seq_id, elem_idx));
+            self.translate_ladder_wall_fall(tcx, owner, (seq_id, elem_idx));
         }
 
         // Book the first struggle animation onto the wasp-sting
@@ -386,7 +387,7 @@ impl EngineInner {
                 npc.wasp_victim = true;
             }
         }
-        self.execute_ai_callback(sim, assets, owner, &Stimulus::new(StimulusType::EventWasp));
+        self.execute_ai_callback(tcx, owner, &Stimulus::new(StimulusType::EventWasp));
 
         let order = crate::order::Order::new(
             OrderType::GettingFreeFromWasp,
@@ -401,7 +402,7 @@ impl EngineInner {
             .sequence_manager
             .push_order_on(seq_id, elem_idx, order);
 
-        self.element_in_progress(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+        self.element_in_progress(tcx, &mut Vec::new(), seq_id, elem_idx);
     }
 
     /// Dispatch a single removal notification to the owner entity.
@@ -414,12 +415,7 @@ impl EngineInner {
     /// substates like `DefaultOnPostLookingSidewards`, whose only exit
     /// is an `EventDone` stimulus after the `LookLeft` / `LookRight`
     /// sequence completes.
-    pub(crate) fn send_condolation_card(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        card: CondolationCard,
-        assets: &LevelAssets,
-    ) {
+    pub(crate) fn send_condolation_card(&mut self, tcx: TickCtx<'_>, card: CondolationCard) {
         use crate::sequence::SequenceState;
         #[cfg(test)]
         run_condolation_callback(self, &card);
@@ -454,7 +450,7 @@ impl EngineInner {
         // NPC-only — the PC has no `ai_controller` for
         // `fire_self_stimulus` to land on).
         if self.world.entities.get(owner).is_some_and(|e| e.is_pc()) {
-            self.send_condolation_card_pc(sim, owner, command, seq_id, elem_idx, assets);
+            self.send_condolation_card_pc(tcx, owner, command, seq_id, elem_idx);
         }
 
         // The human actor's completion callback always completes an
@@ -482,14 +478,19 @@ impl EngineInner {
                     .expect("validated Take condolation net disappeared")
                     .element_data_mut()
                     .active = false;
-                self.unapply_net_effect(sim, assets, net_id);
+                self.unapply_net_effect(tcx, net_id);
                 if self
                     .world
                     .entities
                     .get(owner)
                     .is_some_and(|entity| entity.is_pc())
                 {
-                    self.increase_ammo_and_enable(assets, owner, crate::profiles::Action::Net, 1);
+                    self.increase_ammo_and_enable(
+                        tcx.assets,
+                        owner,
+                        crate::profiles::Action::Net,
+                        1,
+                    );
                 }
             }
         }
@@ -777,7 +778,7 @@ impl EngineInner {
         if let Some(st) = stimulus {
             observe_condolation_stimulus(owner, st);
             if let Some((seq_id, elem_idx)) = take_condolation_nested_termination(owner, st) {
-                self.element_terminated(sim, assets, &mut Vec::new(), seq_id, elem_idx);
+                self.element_terminated(tcx, &mut Vec::new(), seq_id, elem_idx);
             }
         }
 
@@ -794,7 +795,7 @@ impl EngineInner {
                 "send_condolation_card: fire EventDone/EventReachPoint to owner"
             );
             let stimulus = crate::ai::Stimulus::new(st);
-            self.execute_ai_callback(sim, assets, owner, &stimulus);
+            self.execute_ai_callback(tcx, owner, &stimulus);
         }
     }
 
@@ -815,12 +816,11 @@ impl EngineInner {
     ///   `begin_carry` at TakeCorpse init.
     fn send_condolation_card_pc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         command: Command,
         seq_id: SequenceId,
         elem_idx: u16,
-        assets: &LevelAssets,
     ) {
         match command {
             Command::StrangleCmd => {
@@ -871,7 +871,7 @@ impl EngineInner {
 
                 // Low-priority Wait element to re-park the victim's AI
                 // in the default loop.
-                self.actor_wait(sim, assets, victim_id);
+                self.actor_wait(tcx, victim_id);
                 #[cfg(test)]
                 observe_strangle_condolation_step("Wait");
 
@@ -889,7 +889,7 @@ impl EngineInner {
                     crate::ai::StimulusType::EventGotHit,
                     owner.index(),
                 );
-                self.execute_ai_callback(sim, assets, victim_id, &stim);
+                self.execute_ai_callback(tcx, victim_id, &stim);
                 // The callback commits unconscious view status before the gaze
                 // reset below chooses its next transition.
                 #[cfg(test)]
@@ -955,7 +955,7 @@ impl EngineInner {
                 // either here erases the pre-drop old position and makes a
                 // body whose slot already passed start its new sprite one
                 // frame early.
-                self.force_drop_carried_corpse_instant(sim, assets, owner);
+                self.force_drop_carried_corpse_instant(tcx, owner);
 
                 tracing::debug!(
                     pc = owner.index(),
@@ -979,8 +979,7 @@ impl EngineInner {
     /// enforced by the caller.
     pub(crate) fn init_battle_before_door(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         fleeing: &[EntityId],
         pursuing: &[EntityId],
     ) {
@@ -1093,13 +1092,18 @@ impl EngineInner {
             let mut defender = center;
             let mut attacker = center;
             for _ in 0..10 {
-                let jitter =
-                    crate::sim_rng::i32(sim, crate::sim_rng::RngSite::DoorFightDispersion, 0..7)
-                        - 3;
+                let jitter = crate::sim_rng::i32(
+                    tcx.sim,
+                    crate::sim_rng::RngSite::DoorFightDispersion,
+                    0..7,
+                ) - 3;
                 let dd = (base_direction + jitter as i16).rem_euclid(16);
                 let magnitude = 30.0
-                    + crate::sim_rng::u32(sim, crate::sim_rng::RngSite::DoorFightDispersion, 0..64)
-                        as f32;
+                    + crate::sim_rng::u32(
+                        tcx.sim,
+                        crate::sim_rng::RngSite::DoorFightDispersion,
+                        0..64,
+                    ) as f32;
                 // Apply the isometric aspect ratio to the Y component
                 // — `direction_vector_16` returns a pure unit vector,
                 // but the door-battle dispersion expects an
@@ -1146,8 +1150,7 @@ impl EngineInner {
                 // (`dispersed_direction ^ 8`).  Pursuer follows and
                 // provokes.
                 self.send_before_door_to_fight(
-                    sim,
-                    assets,
+                    tcx,
                     fleeing[i],
                     defender_pos,
                     (dispersed_direction ^ 8) as u16,
@@ -1155,8 +1158,7 @@ impl EngineInner {
                     None,
                 );
                 self.send_before_door_to_fight(
-                    sim,
-                    assets,
+                    tcx,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -1167,13 +1169,12 @@ impl EngineInner {
                 // Extra pursuers pick a random fleeing guy as their
                 // duel target.
                 let target_idx = crate::sim_rng::u32(
-                    sim,
+                    tcx.sim,
                     crate::sim_rng::RngSite::DoorFightTarget,
                     0..num_fleeing as u32,
                 ) as usize;
                 self.send_before_door_to_fight(
-                    sim,
-                    assets,
+                    tcx,
                     pursuing[i],
                     attacker_pos,
                     dispersed_direction as u16,
@@ -1198,8 +1199,7 @@ impl EngineInner {
     /// Any other entity kind reaching this helper is a wiring bug.
     pub(crate) fn send_before_door_to_fight(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         actor_id: EntityId,
         goal: Position,
         direction: u16,
@@ -1213,9 +1213,7 @@ impl EngineInner {
             .map(|e| (e.is_pc(), e.is_soldier()));
         match kind {
             Some((true, _)) => {
-                self.send_before_door_to_fight_pc(
-                    sim, assets, actor_id, goal, direction, delay, adversary,
-                );
+                self.send_before_door_to_fight_pc(tcx, actor_id, goal, direction, delay, adversary);
             }
             Some((_, true)) => {
                 let info = DoorCombatInfo {
@@ -1229,8 +1227,7 @@ impl EngineInner {
                 // update must settle before later same-frame callbacks (such
                 // as the completed PassDoor's EventReachPoint) are delivered.
                 self.execute_ai_callback(
-                    sim,
-                    assets,
+                    tcx,
                     actor_id,
                     &Stimulus::with_door_combat(StimulusType::EventDoorCombat, info),
                 );
@@ -1258,8 +1255,7 @@ impl EngineInner {
     /// cached enemy-AI VIP flag; civilians use the cached civilian type.
     fn send_before_door_to_fight_pc(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc_id: EntityId,
         goal: Position,
         direction: u16,
@@ -1385,8 +1381,7 @@ impl EngineInner {
                     // gate builder, where RuntimeBuildingExitWait can be drawn.
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
                     self.launch_gate_movement_order(
-                        sim,
-                        assets,
+                        tcx,
                         &mut Vec::new(),
                         crate::engine::movement::GateRouteRequest {
                             entity_id: pc_id,
@@ -1453,7 +1448,7 @@ impl EngineInner {
             level += 1;
         }
 
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 }
 
@@ -1530,7 +1525,10 @@ mod tests {
             34.0,
             engine.orders.allocate_order_id(),
         ));
-        let sequence_id = engine.launch_element(&crate::sim_rng::test_context(), &assets, movement);
+        let sequence_id = engine.launch_element(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            movement,
+        );
 
         assert!(
             engine
@@ -1678,8 +1676,7 @@ mod tests {
         let (mut crossing, pc, goal) = door_fight_route_fixture(false);
         let (_, crossing_draws) = with_draw_trace(|| {
             crossing.send_before_door_to_fight_pc(
-                &sim,
-                &LevelAssets::default(),
+                TickCtx::new(&sim, &LevelAssets::default()),
                 pc,
                 goal,
                 4,
@@ -1715,8 +1712,7 @@ mod tests {
         let (mut callback_complete, pc, goal) = door_fight_route_fixture(true);
         let (_, callback_complete_draws) = with_draw_trace(|| {
             callback_complete.send_before_door_to_fight_pc(
-                &sim,
-                &LevelAssets::default(),
+                TickCtx::new(&sim, &LevelAssets::default()),
                 pc,
                 goal,
                 4,
@@ -1757,8 +1753,7 @@ mod tests {
 
         let (_, draws) = with_draw_trace(|| {
             engine.send_before_door_to_fight_pc(
-                &sim,
-                &LevelAssets::default(),
+                TickCtx::new(&sim, &LevelAssets::default()),
                 pc,
                 goal,
                 4,
@@ -1822,8 +1817,7 @@ mod tests {
 
         let (_, draws) = with_draw_trace(|| {
             engine.send_before_door_to_fight_pc(
-                &sim,
-                &LevelAssets::default(),
+                TickCtx::new(&sim, &LevelAssets::default()),
                 pc,
                 goal,
                 4,

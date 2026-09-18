@@ -1,5 +1,6 @@
 //! Sequence manager movement responsibilities.
 use super::*;
+use crate::engine::TickCtx;
 
 impl SequenceManager {
     // ─── Termination ────────────────────────────────────────────
@@ -378,8 +379,7 @@ impl crate::engine::EngineInner {
 
     fn stop_live_sequence_element(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         reference: SequenceElementRef,
         priority: SequencePriority,
@@ -412,8 +412,7 @@ impl crate::engine::EngineInner {
                     frames.push(Frame::Postponed(reference));
                     match action {
                         StopElementAction::InterruptSelf => self.element_interrupted(
-                            sim,
-                            assets,
+                            tcx,
                             active_scripts,
                             reference.sequence_id,
                             reference.element_index,
@@ -425,8 +424,7 @@ impl crate::engine::EngineInner {
                             {
                                 if action == StopElementAction::InterruptFollowing {
                                     self.element_interrupted(
-                                        sim,
-                                        assets,
+                                        tcx,
                                         active_scripts,
                                         next.sequence_id,
                                         next.element_index,
@@ -516,23 +514,14 @@ impl crate::engine::EngineInner {
     /// Rust representation of that same pointer and is stopped explicitly.
     pub(crate) fn stop_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) {
         let root = self.world.entities.current_element_for_actor(owner);
-        self.stop_owner_from_root(
-            sim,
-            assets,
-            active_scripts,
-            owner,
-            root,
-            stop_priority,
-            resolver,
-        );
+        self.stop_owner_from_root(tcx, active_scripts, owner, root, stop_priority, resolver);
     }
 
     /// Stop an actor from an explicit root instead of the actor's
@@ -542,23 +531,15 @@ impl crate::engine::EngineInner {
     /// preserving the actor's current selection.
     pub(crate) fn stop_owner_from_root(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         root: Option<(SequenceId, usize)>,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) {
-        self.stop_owner_current_from_root(
-            sim,
-            assets,
-            active_scripts,
-            root,
-            stop_priority,
-            resolver,
-        );
-        self.stop_pending_elements(sim, assets, active_scripts, owner, stop_priority, resolver);
+        self.stop_owner_current_from_root(tcx, active_scripts, root, stop_priority, resolver);
+        self.stop_pending_elements(tcx, active_scripts, owner, stop_priority, resolver);
     }
 
     /// Stop only the actor-selected element and its postponed graph.
@@ -571,8 +552,7 @@ impl crate::engine::EngineInner {
     /// [`SequenceManager::stop_pending_elements`] after the callback has completed.
     pub(crate) fn stop_owner_current_from_root(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         root: Option<(SequenceId, usize)>,
         stop_priority: SequencePriority,
@@ -592,8 +572,7 @@ impl crate::engine::EngineInner {
             return;
         }
         self.stop_live_sequence_element(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             SequenceElementRef::new(sequence, index),
             stop_priority,
@@ -605,8 +584,7 @@ impl crate::engine::EngineInner {
     /// Stop not-yet-launched elements for a specific actor up to a priority.
     pub(crate) fn stop_pending_elements(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         owner: EntityId,
         stop_priority: SequencePriority,
@@ -628,8 +606,7 @@ impl crate::engine::EngineInner {
                 == Some(owner)
             {
                 self.stop_live_sequence_element(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     SequenceElementRef::new(sequence, index),
                     stop_priority,
@@ -671,8 +648,7 @@ impl crate::engine::EngineInner {
     /// `Sequence::stop_element`).
     pub(crate) fn stop_movement_for_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity: EntityId,
         owner_pos: crate::coordinates::MapPoint,
@@ -680,8 +656,7 @@ impl crate::engine::EngineInner {
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) -> bool {
         self.stop_movement_for_owner_from_root(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             entity,
             None,
@@ -698,8 +673,7 @@ impl crate::engine::EngineInner {
     /// movements owned by the same actor.
     pub(crate) fn stop_movement_from_root(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity: EntityId,
         root: (SequenceId, usize),
@@ -708,8 +682,7 @@ impl crate::engine::EngineInner {
         resolver: &dyn Fn(&crate::engine::EngineInner, &SequenceElement) -> SequencePriority,
     ) -> bool {
         self.stop_movement_for_owner_from_root(
-            sim,
-            assets,
+            tcx,
             active_scripts,
             entity,
             Some(root),
@@ -721,8 +694,7 @@ impl crate::engine::EngineInner {
 
     pub(crate) fn stop_movement_for_owner_from_root(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
         entity: EntityId,
         root: Option<(SequenceId, usize)>,
@@ -858,8 +830,7 @@ impl crate::engine::EngineInner {
         // the element in INPROGRESS and keeps the path request alive.
         for (seq_id, elem_idx) in to_interrupt {
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 seq_id,
                 elem_idx,

@@ -5,6 +5,7 @@ use crate::ai::{
     AiEntityHandle, AiState, Decision, GotoFlags, HumanHandle, Position, Remark, Substate,
 };
 use crate::ai_enemy::{PrimaryTargetFlags, archer};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 use std::ops::ControlFlow;
 
@@ -166,18 +167,16 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_battle_too_proud(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         old_substate: Substate,
     ) -> ControlFlow<bool, Decision> {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_battle_too_proud(old_substate)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_battle_too_proud(old_substate)
     }
 
     pub(in crate::engine) fn execute_ai_battle_archer_step_back(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         _old_substate: Substate,
     ) -> ControlFlow<bool, Decision> {
@@ -201,13 +200,12 @@ impl EngineInner {
             return ControlFlow::Continue(Decision::Shoot);
         };
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             owner,
             AiState::Attacking,
             Substate::AttackingArcherRetireFromCombat,
         );
-        self.duty_go_to(sim, assets, owner, goal, GotoFlags::RUN);
+        self.duty_go_to(tcx, owner, goal, GotoFlags::RUN);
         ControlFlow::Break(true)
     }
 
@@ -235,8 +233,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_battle_cover(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         bearer: HumanHandle,
     ) -> ControlFlow<bool, Decision> {
@@ -278,14 +275,13 @@ impl EngineInner {
             return ControlFlow::Continue(Decision::Shoot);
         }
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             owner,
             AiState::Attacking,
             Substate::AttackingBowRunningBehindShieldBearer,
         );
         let position = self.ai(owner, "cover movement position").seek_position;
-        self.duty_go_to(sim, assets, owner, position, GotoFlags::RUN);
+        self.duty_go_to(tcx, owner, position, GotoFlags::RUN);
         if self.ai(owner, "cover completion").already_on_point {
             let target = self.live_ai_position(self.cover_primary(owner));
             let position = self.live_ai_position(owner);
@@ -305,8 +301,7 @@ impl EngineInner {
             }
         }
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             bearer,
             crate::ai::AiSpeechAttempt {
                 remark: Remark::ArchersBehindShieldBearers,
@@ -450,8 +445,7 @@ impl AiOwnerCtx<'_> {
                 crate::element::Command::EquipBow
             };
             self.engine.launch_element(
-                self.sim,
-                self.assets,
+                TickCtx::new(self.sim, self.assets),
                 crate::sequence::SequenceElement::new(1, command, Some(self.owner)),
             );
 

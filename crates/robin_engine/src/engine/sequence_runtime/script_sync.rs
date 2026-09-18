@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 #[cfg(test)]
 mod resumed_instruction_tests {
@@ -59,13 +60,12 @@ mod resumed_instruction_tests {
         *destination = MapPoint::new(120.0, 100.0);
         flags.insert(MoveFlags::NO_TRANSITIONS);
         let sim = crate::sim_rng::test_context();
-        let sequence = engine.t_launch_element_with(&sim, &assets, movement);
-        engine.t_postpone_element_with(&sim, &assets, sequence, 0);
+        let sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), movement);
+        engine.t_postpone_element_with(TickCtx::new(&sim, &assets), sequence, 0);
 
         engine
             .dispatch_script_synchronous_action(
-                &sim,
-                &assets,
+                TickCtx::new(&sim, &assets),
                 SequenceAction::InstructOwner {
                     owner,
                     sequence_id: sequence,
@@ -98,8 +98,7 @@ mod resumed_instruction_tests {
 impl EngineInner {
     pub(crate) fn dispatch_script_synchronous_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         action: crate::sequence::SequenceAction,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
     ) -> Result<(), crate::engine::script::ScriptDriverError> {
@@ -111,14 +110,7 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => {
-                self.instruct_owner(
-                    sim,
-                    assets,
-                    active_scripts,
-                    owner,
-                    sequence_id,
-                    element_index,
-                );
+                self.instruct_owner(tcx, active_scripts, owner, sequence_id, element_index);
             }
             SequenceAction::EngineCommand {
                 sequence_id,
@@ -161,21 +153,14 @@ impl EngineInner {
                         .map_or_else(crate::natives::ScriptCallFrame::default, |call| call.frame)
                         .with_script_this(handle);
                     let result = self.call_script_vm_inner(
-                        sim,
-                        assets,
+                        tcx,
                         crate::engine::ScriptVmKey::Actor(handle),
                         "ProcessMessage",
                         &[message, arg1, arg2],
                         frame,
                         active_scripts,
                     );
-                    self.element_terminated(
-                        sim,
-                        assets,
-                        active_scripts,
-                        sequence_id,
-                        element_index,
-                    );
+                    self.element_terminated(tcx, active_scripts, sequence_id, element_index);
                     // Immediate original-game actor execution returns from
                     // message processing and immediately enters state change, whose
                     // owner card and Ready() complete before the parent VM
@@ -184,8 +169,7 @@ impl EngineInner {
                     result?;
                 } else {
                     self.dispatch_execute_immediate_owner(
-                        sim,
-                        assets,
+                        tcx,
                         active_scripts,
                         owner,
                         sequence_id,
@@ -197,8 +181,7 @@ impl EngineInner {
                 sequence_id,
                 element_index,
             } => self.dispatch_script_immediate_engine(
-                sim,
-                assets,
+                tcx,
                 sequence_id,
                 element_index,
                 active_scripts,
@@ -209,12 +192,7 @@ impl EngineInner {
 
     /// Apply lock-user selection and action dispatch. Selection and current actions are part of
     /// simulation state; only physical input cleanup remains a host effect.
-    pub(super) fn apply_script_user_lock(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        command: Command,
-    ) {
+    pub(super) fn apply_script_user_lock(&mut self, tcx: TickCtx<'_>, command: Command) {
         match command {
             Command::LockUser => {
                 self.players.user_locked = true;
@@ -224,8 +202,7 @@ impl EngineInner {
                 self.players.selection_before_user_lock = self.players.seats[0].selection.clone();
                 if let Some(pc_id) = self.players.seats[0].selection.first().copied() {
                     self.set_pc_action_from_message(
-                        sim,
-                        assets,
+                        tcx,
                         0,
                         pc_id,
                         crate::profiles::Action::NoAction,
@@ -238,7 +215,7 @@ impl EngineInner {
                 let selected_count = self.players.selection_before_user_lock.len();
                 for index in 0..selected_count {
                     let pc_id = self.players.selection_before_user_lock[index];
-                    self.select_pc(sim, assets, 0, pc_id, true, false);
+                    self.select_pc(tcx, 0, pc_id, true, false);
                 }
                 self.feedback
                     .pending_side_effects
@@ -250,8 +227,7 @@ impl EngineInner {
 
     fn dispatch_script_immediate_engine(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
         active_scripts: &mut Vec<crate::engine::script::ActiveScriptCall>,
@@ -272,27 +248,26 @@ impl EngineInner {
                     .last()
                     .map_or_else(crate::natives::ScriptCallFrame::default, |call| call.frame);
                 let result = self.call_script_vm_inner(
-                    sim,
-                    assets,
+                    tcx,
                     crate::engine::ScriptVmKey::Global,
                     "ProcessMessage",
                     &[message, arg1, arg2],
                     frame,
                     active_scripts,
                 );
-                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
+                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
                 result?;
             }
             command @ (Command::LockUser | Command::UnlockUser) => {
-                self.apply_script_user_lock(sim, assets, command);
-                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
+                self.apply_script_user_lock(tcx, command);
+                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
             }
             Command::Timer => {
                 let timer = self.timer_immediate_entry(sequence_id, element_index);
                 self.add_timer(timer.remaining, timer.element_ref);
             }
             Command::CameraJumpTo => {
-                self.terminate_prev_camera_sequence_element(sim, assets);
+                self.terminate_prev_camera_sequence_element(tcx);
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let point = self
@@ -309,12 +284,11 @@ impl EngineInner {
                     self.feedback.cutscene_camera.view_position =
                         self.check_location_is_valid_for_camera(position);
                 }
-                self.element_terminated(sim, assets, active_scripts, sequence_id, element_index);
+                self.element_terminated(tcx, active_scripts, sequence_id, element_index);
             }
             command @ (Command::CharacterAvailable | Command::ActionAvailable) => {
                 self.dispatch_availability_immediate(
-                    sim,
-                    assets,
+                    tcx,
                     active_scripts,
                     command,
                     sequence_id,
@@ -344,18 +318,12 @@ impl EngineInner {
                     (scroll, reader)
                 };
                 if let (Some(scroll), Some(reader)) = (scroll, reader) {
-                    let result = self.scroll_is_taken_in_script_driver(
-                        sim,
-                        assets,
-                        scroll,
-                        reader,
-                        active_scripts,
-                    );
+                    let result =
+                        self.scroll_is_taken_in_script_driver(tcx, scroll, reader, active_scripts);
                     match result {
                         Ok(_) => {
                             self.element_terminated(
-                                sim,
-                                assets,
+                                tcx,
                                 active_scripts,
                                 sequence_id,
                                 element_index,
@@ -368,8 +336,7 @@ impl EngineInner {
                             // propagating so only the actual child is
                             // Impossible.
                             self.element_terminated(
-                                sim,
-                                assets,
+                                tcx,
                                 active_scripts,
                                 sequence_id,
                                 element_index,
@@ -386,13 +353,7 @@ impl EngineInner {
                     }
                 } else {
                     tracing::warn!(?scroll, ?reader, "OpenScroll missing properties");
-                    self.element_terminated(
-                        sim,
-                        assets,
-                        active_scripts,
-                        sequence_id,
-                        element_index,
-                    );
+                    self.element_terminated(tcx, active_scripts, sequence_id, element_index);
                 }
             }
             other => {
@@ -438,8 +399,7 @@ mod tests {
         engine.players.qa_recording_for.push(owner);
 
         engine.apply_script_user_lock(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             Command::LockUser,
         );
 

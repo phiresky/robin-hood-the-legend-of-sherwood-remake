@@ -7,6 +7,7 @@ use super::object_use::determine_use_command;
 use super::{recorded_ground_target_titbit_layer, recorded_interaction_quick_phase};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 use crate::engine::movement::PlannedRecordedGroupMoveOutcome;
 use crate::engine::{CameraDisplayState, EngineInner, LevelAssets};
 use crate::player_command::PlayerCommand;
@@ -806,9 +807,8 @@ impl EngineInner {
     /// equipping weapons or interrupting an actor that is still moving.
     pub(super) fn apply_queue_quick_action(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         seat: usize,
         action: crate::profiles::Action,
         command: &PlayerCommand,
@@ -828,7 +828,7 @@ impl EngineInner {
                 .filter(|soldier| self.is_tactically_controllable(*soldier))
                 .collect();
             let slots = self.tactical_formation_slots(
-                assets,
+                tcx.assets,
                 &valid,
                 &self.players.seats[seat].selection,
                 *destination,
@@ -837,7 +837,7 @@ impl EngineInner {
             );
             for (actor, slot) in slots {
                 let outcome = self
-                    .plan_recorded_group_move(assets, &[actor], slot, None, None, None)
+                    .plan_recorded_group_move(tcx.assets, &[actor], slot, None, None, None)
                     .into_iter()
                     .next()
                     .unwrap_or_else(|| {
@@ -861,7 +861,7 @@ impl EngineInner {
                     plan.destination,
                     *running,
                     plan.route,
-                    assets,
+                    tcx.assets,
                     QuickActionRecordingStore::Automatic,
                 );
                 let step = self
@@ -876,7 +876,7 @@ impl EngineInner {
                     formation: *formation,
                 };
                 self.finish_automatic_quick_action_capture(
-                    sim, display, assets, actor, before_len, command,
+                    tcx, display, actor, before_len, command,
                 );
             }
             return;
@@ -893,7 +893,7 @@ impl EngineInner {
         } = command
         {
             let plans = self.plan_recorded_group_move(
-                assets,
+                tcx.assets,
                 actors,
                 *destination,
                 *goal_override,
@@ -918,11 +918,11 @@ impl EngineInner {
                     plan.destination,
                     *running,
                     plan.route,
-                    assets,
+                    tcx.assets,
                     QuickActionRecordingStore::Automatic,
                 );
                 self.finish_automatic_quick_action_capture(
-                    sim, display, assets, plan.actor, before_len, command,
+                    tcx, display, plan.actor, before_len, command,
                 );
             }
             return;
@@ -951,12 +951,10 @@ impl EngineInner {
                 command,
                 actor,
                 Some(action),
-                assets,
+                tcx.assets,
                 QuickActionRecordingStore::Automatic,
             );
-            self.finish_automatic_quick_action_capture(
-                sim, display, assets, actor, before_len, command,
-            );
+            self.finish_automatic_quick_action_capture(tcx, display, actor, before_len, command);
         }
         if matches!(command, RaiseShieldWithDanger { .. }) {
             self.players.seats[seat].planned_shield_target = None;
@@ -965,9 +963,8 @@ impl EngineInner {
 
     pub(super) fn finish_automatic_quick_action_capture(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         actor: EntityId,
         before_len: usize,
         command: &PlayerCommand,
@@ -986,7 +983,7 @@ impl EngineInner {
             .sequence_manager
             .has_unpostponed_element_for_actor_matching(actor, |command| command != Command::Wait);
         if !was_active && !actor_busy {
-            self.start_auto_queue_front(sim, display, assets, actor);
+            self.start_auto_queue_front(tcx, display, actor);
         }
     }
 
@@ -1017,9 +1014,8 @@ impl EngineInner {
     /// the visible slots contain only work still waiting behind it.
     pub(super) fn start_auto_queue_front(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         pc: EntityId,
     ) {
         let Some(entry) = self
@@ -1031,8 +1027,8 @@ impl EngineInner {
         else {
             return;
         };
-        let launched = self.check_auto_queue_step_validity(assets, pc, &entry.step)
-            && self.replay_auto_queue_step(sim, display, assets, pc, entry.step.clone());
+        let launched = self.check_auto_queue_step_validity(tcx.assets, pc, &entry.step)
+            && self.replay_auto_queue_step(tcx, display, pc, entry.step.clone());
         if !launched {
             // Automatic queues cannot wait for a user to click a failed QA
             // item. Fizzle once, discard the invalid front item, and leave
@@ -1069,9 +1065,8 @@ impl EngineInner {
     /// rollback observe identical launch frames.
     pub(in crate::engine) fn advance_auto_quick_action_queues(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
     ) {
         let active = self.players.auto_queue_active.clone();
         for pc in active {
@@ -1083,7 +1078,7 @@ impl EngineInner {
                 continue;
             }
             if !self.players.auto_queues.is_empty(pc) {
-                self.start_auto_queue_front(sim, display, assets, pc);
+                self.start_auto_queue_front(tcx, display, pc);
             } else {
                 self.players
                     .auto_queue_active
@@ -1106,9 +1101,8 @@ impl EngineInner {
     /// Recording is stopped first.
     pub(super) fn apply_start_macro(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         pc: Option<EntityId>,
         slot: u8,
     ) {
@@ -1158,7 +1152,7 @@ impl EngineInner {
             self.mission_domain
                 .achievements
                 .clear_quick_action_actor(*pc_id);
-            self.replay_macro_slot(sim, display, assets, *pc_id, slot);
+            self.replay_macro_slot(tcx, display, *pc_id, slot);
             if !self.has_quick_action(*pc_id, slot)
                 && let Some(target) = intended_target
             {
@@ -1212,8 +1206,7 @@ impl EngineInner {
     /// Extracted so the iteration above can re-borrow `self` between steps.
     pub(super) fn launch_recorded_group_move_qa(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         pc: EntityId,
         destination: MapPoint,
         running: bool,
@@ -1222,7 +1215,7 @@ impl EngineInner {
     ) {
         let sequence =
             self.recorded_group_move_sequence(pc, destination, running, route, append_recovery);
-        self.launch_sequence(sim, assets, sequence);
+        self.launch_sequence(tcx, sequence);
     }
 
     fn recorded_group_move_sequence(
@@ -1297,23 +1290,21 @@ impl EngineInner {
 
     pub(super) fn replay_macro_slot(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         _display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         pc: EntityId,
         slot: u8,
     ) {
-        if self.replay_quickito(sim, assets, pc, slot).is_none() {
-            self.replay_sequence_macro(sim, assets, pc, slot);
+        if self.replay_quickito(tcx, pc, slot).is_none() {
+            self.replay_sequence_macro(tcx, pc, slot);
         }
     }
 
     /// Execute one automatic queue item, retaining its operands across callbacks.
     pub(super) fn replay_auto_queue_step(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         pc: EntityId,
         step: crate::macro_store::QuickActionStep,
     ) -> bool {
@@ -1328,15 +1319,7 @@ impl EngineInner {
                     // movement with recording enabled retained this exact
                     // SEEK/post-seek shape. Launch it directly rather than
                     // re-entering formation placement with a one-PC group.
-                    self.launch_recorded_group_move_qa(
-                        sim,
-                        assets,
-                        pc,
-                        destination,
-                        running,
-                        route,
-                        true,
-                    );
+                    self.launch_recorded_group_move_qa(tcx, pc, destination, running, route, true);
                     posture_recovery_embedded = true;
                     break 'action;
                 }
@@ -1346,18 +1329,10 @@ impl EngineInner {
                     route,
                     formation,
                 } => {
-                    if !self.prepare_queued_tactical_move(sim, assets, pc, destination, formation) {
+                    if !self.prepare_queued_tactical_move(tcx, pc, destination, formation) {
                         return false;
                     }
-                    self.launch_recorded_group_move_qa(
-                        sim,
-                        assets,
-                        pc,
-                        destination,
-                        running,
-                        route,
-                        true,
-                    );
+                    self.launch_recorded_group_move_qa(tcx, pc, destination, running, route, true);
                     posture_recovery_embedded = true;
                     break 'action;
                 }
@@ -1388,8 +1363,7 @@ impl EngineInner {
                     let command = quick_action_tail_command(command, true, was_aiming);
                     let append_recovery = command == Command::TakeCorpse;
                     self.apply_recorded_interaction_with_seek(
-                        sim,
-                        assets,
+                        tcx,
                         pc,
                         target,
                         command,
@@ -1412,8 +1386,7 @@ impl EngineInner {
                         return false;
                     }
                     self.replay_recorded_target_interaction(
-                        sim,
-                        assets,
+                        tcx,
                         pc,
                         target,
                         command,
@@ -1434,7 +1407,7 @@ impl EngineInner {
                     // Original stores the already-resolved scroll sequence.
                     // Rebuild that sequence with its recorded gait instead
                     // of taking the live double-click fast-movement shortcut.
-                    self.apply_scroll_read_with_seek_inner(sim, assets, pc, target, running, true);
+                    self.apply_scroll_read_with_seek_inner(tcx, pc, target, running, true);
                     break 'action;
                 }
                 crate::macro_store::QaReplayCommand::GroundTarget {
@@ -1475,7 +1448,7 @@ impl EngineInner {
                         return false;
                     }
                     if !self.get_entity(pc).is_some_and(Entity::is_pc)
-                        && !self.prepare_queued_tactical_combat_command(sim, assets, pc)
+                        && !self.prepare_queued_tactical_combat_command(tcx, pc)
                     {
                         return false;
                     }
@@ -1499,7 +1472,7 @@ impl EngineInner {
                         return false;
                     }
                     if !self.get_entity(pc).is_some_and(Entity::is_pc)
-                        && !self.prepare_queued_tactical_combat_command(sim, assets, pc)
+                        && !self.prepare_queued_tactical_combat_command(tcx, pc)
                     {
                         return false;
                     }
@@ -1536,7 +1509,7 @@ impl EngineInner {
                     // actor helpers instead to keep the replay scoped
                     // to a single PC.
                     if to_crouch {
-                        self.actor_make_crouched(sim, assets, pc);
+                        self.actor_make_crouched(tcx, pc);
                     } else {
                         let posture = self
                             .get_entity(pc)
@@ -1544,13 +1517,13 @@ impl EngineInner {
                             .unwrap_or(crate::element::Posture::Upright);
                         match posture {
                             crate::element::Posture::Crouched => {
-                                self.actor_make_upright(sim, assets, pc);
+                                self.actor_make_upright(tcx, pc);
                             }
                             crate::element::Posture::SimulatingBeggar => {
                                 let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sim, assets, sequence);
+                                self.launch_sequence(tcx, sequence);
                             }
                             crate::element::Posture::Spy
                             | crate::element::Posture::Cloaked
@@ -1558,13 +1531,13 @@ impl EngineInner {
                                 let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sim, assets, sequence);
+                                self.launch_sequence(tcx, sequence);
                             }
                             crate::element::Posture::Tree => {
                                 let elem = SequenceElement::new(1, Command::LeaveTree, Some(pc));
                                 let mut sequence = Sequence::new();
                                 sequence.append_element(elem);
-                                self.launch_sequence(sim, assets, sequence);
+                                self.launch_sequence(tcx, sequence);
                             }
                             _ => {}
                         }
@@ -1584,8 +1557,7 @@ impl EngineInner {
             } = &cmd
             {
                 self.apply_drop_ale_at_with_recovery(
-                    sim,
-                    assets,
+                    tcx,
                     *actor,
                     *target_pos,
                     *running,
@@ -1597,7 +1569,7 @@ impl EngineInner {
                 );
                 posture_recovery_embedded = true;
             } else {
-                self.apply_replayed_quick_action_command(sim, display, assets, &cmd);
+                self.apply_replayed_quick_action_command(tcx, display, &cmd);
             }
         }
 
@@ -1606,7 +1578,7 @@ impl EngineInner {
             let mut recovery = crate::sequence::Sequence::default();
             self.append_posture_recovery(pc, &mut recovery);
             if !recovery.elements.is_empty() {
-                self.launch_sequence(sim, assets, recovery);
+                self.launch_sequence(tcx, recovery);
             }
         }
 
@@ -1625,13 +1597,12 @@ impl EngineInner {
     /// before the automatic entry is retired.
     pub(super) fn apply_replayed_quick_action_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
+        tcx: TickCtx<'_>,
         display: &mut CameraDisplayState,
-        assets: &LevelAssets,
         command: &PlayerCommand,
     ) {
         let armed_manual_recorders = std::mem::take(&mut self.players.qa_recording_for);
-        self.apply_command_authoritative(sim, display, assets, 0, command);
+        self.apply_command_authoritative(tcx, display, 0, command);
         assert!(
             self.players.qa_recording_for.is_empty(),
             "automatic quick-action replay unexpectedly changed manual recording targets"
@@ -1645,8 +1616,7 @@ impl EngineInner {
     /// the saved target kind.
     pub(super) fn replay_quickito(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc: EntityId,
         slot: u8,
     ) -> Option<bool> {
@@ -1661,26 +1631,26 @@ impl EngineInner {
                 panic!("Quickito slot contains QuickAction::None")
             }
             crate::element_kinds::QuickAction::GoDown => {
-                self.actor_make_crouched(sim, assets, pc);
+                self.actor_make_crouched(tcx, pc);
                 true
             }
             crate::element_kinds::QuickAction::GoUp => {
-                self.actor_make_upright(sim, assets, pc);
+                self.actor_make_upright(tcx, pc);
                 true
             }
             crate::element_kinds::QuickAction::Interact => {
                 let target = quickito
                     .interactor
                     .unwrap_or_else(|| panic!("legacy Interact Quickito has no interactor"));
-                let succeeded = self.quickito_human_mouse_clicked(sim, assets, pc, target, false);
+                let succeeded = self.quickito_human_mouse_clicked(tcx, pc, target, false);
                 if succeeded && quickito.button == 0x0008 {
                     // The original game inserts a literal per-frame sequence update
                     // between the synthetic leading single-click and the
                     // saved double-click. At this input boundary no entity
                     // phase work remains; the normal sequence phase drains
                     // precisely the newly registered click sequence.
-                    self.hourglass_phase_sequences_authoritative(sim, assets);
-                    self.actor_make_fast(sim, pc);
+                    self.hourglass_phase_sequences_authoritative(tcx);
+                    self.actor_make_fast(tcx.sim, pc);
                 }
                 succeeded
             }
@@ -1701,8 +1671,7 @@ impl EngineInner {
     /// Execute a retained interaction Quickito as a live human-target click.
     pub(super) fn quickito_human_mouse_clicked(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc: EntityId,
         target: EntityId,
         running: bool,
@@ -1720,13 +1689,13 @@ impl EngineInner {
             _ => false,
         };
         if has_scroll {
-            self.apply_scroll_read_with_seek(sim, assets, pc, target, running);
+            self.apply_scroll_read_with_seek(tcx, pc, target, running);
             return true;
         }
-        let Some(command) = determine_use_command(self, assets, pc, target) else {
+        let Some(command) = determine_use_command(self, tcx.assets, pc, target) else {
             return false;
         };
-        self.apply_interaction_with_seek(sim, assets, pc, target, command, running);
+        self.apply_interaction_with_seek(tcx, pc, target, command, running);
         true
     }
 
@@ -1734,8 +1703,7 @@ impl EngineInner {
     /// Failure preserves the slot; successful launch consumes its commands.
     pub(super) fn replay_sequence_macro(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         pc: EntityId,
         slot: u8,
     ) -> Option<bool> {
@@ -1751,7 +1719,7 @@ impl EngineInner {
             .find(|element| element.command == Command::EnterCloak)
             .map(|element| element.owner.expect("recorded cloak entry has no owner"));
         if let Some(owner) = cloak_owner
-            && !self.can_enter_reusable_cloak(assets, owner)
+            && !self.can_enter_reusable_cloak(tcx.assets, owner)
         {
             return Some(false);
         }
@@ -1766,8 +1734,8 @@ impl EngineInner {
             .and_then(|entity| entity.human_data())
             .is_some_and(|human| !human.opponents.is_empty());
         if seek.as_ref().is_some_and(|sequence| {
-            !quick_action_sequence_is_valid(self, assets, sequence, swordfighting, true)
-        }) || !quick_action_sequence_is_valid(self, assets, action, swordfighting, false)
+            !quick_action_sequence_is_valid(self, tcx.assets, sequence, swordfighting, true)
+        }) || !quick_action_sequence_is_valid(self, tcx.assets, action, swordfighting, false)
         {
             return Some(false);
         }
@@ -1805,7 +1773,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("quick-action owner {pc:?} is not an actor"))
             .post_seek_sequence = seek.map(crate::sequence::Sequence::into_post_seek);
         self.remove_quick_action_titbits_for(pc, slot);
-        self.launch_sequence(sim, assets, action);
+        self.launch_sequence(tcx, action);
         let state = self
             .players
             .macro_store

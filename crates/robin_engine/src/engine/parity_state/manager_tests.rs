@@ -1,5 +1,6 @@
 //! Frozen pre-refactor encoders: intentionally independent of the typed manager schemas.
 use super::*;
+use crate::engine::TickCtx;
 
 impl Engine {
     fn original_sequence_manager_state(&self) -> serde_json::Value {
@@ -413,8 +414,7 @@ fn populated_manager_schemas_match_original_encoders() {
     let sequence_id = inner.orders.sequence_manager.insert_sequence(sequence);
     inner
         .start_sequence_inline(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
             &mut Vec::new(),
             sequence_id,
         )

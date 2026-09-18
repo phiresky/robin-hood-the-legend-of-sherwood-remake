@@ -1,5 +1,6 @@
 use super::battle_decision_observation_tests::fixture;
 use crate::ai::{AiEntityHandle, AiState, Position, SeekPoint, Stimulus, StimulusType, Substate};
+use crate::engine::TickCtx;
 
 #[test]
 fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
@@ -21,8 +22,7 @@ fn failed_combat_routes_execute_overview_without_rebuilding_friends() {
             });
             let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
             engine.execute_ai_handler_body(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 &stimulus,
             );
@@ -46,8 +46,7 @@ fn failed_body_route_examines_queued_body_before_searching() {
     ai.base.current_substate = Substate::SeekingBody;
     ai.other_bodies_to_examine.push(body.index());
     engine.execute_ai_handler_body(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         &Stimulus::new(StimulusType::EventCouldntReachPoint),
     );
@@ -104,7 +103,11 @@ fn body_route_failure_and_lost_roof_target_search_from_live_owner() {
         } else {
             Stimulus::with_human(StimulusType::EventOutOfView, target.index())
         };
-        engine.execute_ai_handler_body(&crate::sim_rng::test_context(), &assets, owner, &stimulus);
+        engine.execute_ai_handler_body(
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
+            owner,
+            &stimulus,
+        );
         let ai = engine.enemy(owner);
         assert_eq!(ai.seek_center, live_position);
         assert_eq!(ai.actual_seek_point, Some(0));

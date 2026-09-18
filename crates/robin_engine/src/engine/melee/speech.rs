@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::element::{Command, Entity, EntityId};
+use crate::engine::TickCtx;
 
 #[test]
 fn extracting_arrow_speaks_on_done_while_order_remains_installed() {
@@ -17,8 +18,7 @@ fn extracting_arrow_speaks_on_done_while_order_remains_installed() {
     engine.control.sim_config.amount_of_speaking = 100;
     let sim = crate::sim_rng::test_context();
     engine.tick_pc_combat_anim_speech_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         Some(OrderType::ExtractingArrowSword),
         Some(Command::Generic),
@@ -26,8 +26,7 @@ fn extracting_arrow_speaks_on_done_while_order_remains_installed() {
     );
     assert!(engine.feedback.sound_sim.pending_exclamations.is_empty());
     engine.tick_pc_combat_anim_speech_for_owner(
-        &sim,
-        &assets,
+        TickCtx::new(&sim, &assets),
         owner,
         Some(OrderType::ExtractingArrowSword),
         Some(Command::Generic),
@@ -54,8 +53,7 @@ fn extracting_arrow_speaks_on_done_while_order_remains_installed() {
 impl EngineInner {
     pub(in crate::engine) fn combat_insult_after_reconsider(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
         let ai = self
@@ -66,8 +64,7 @@ impl EngineInner {
             return;
         }
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             owner,
             crate::ai::AiSpeechAttempt {
                 remark: crate::ai::Remark::CombatInsult,
@@ -120,13 +117,7 @@ impl EngineInner {
     /// `None` when the caller doesn't have it on hand (push /
     /// shoulder paths), in which case the HERO_HURT gate defaults to
     /// "fire" to match the previous behaviour.
-    pub(crate) fn say_ouch(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-        damage: Option<u16>,
-    ) {
+    pub(crate) fn say_ouch(&mut self, tcx: TickCtx<'_>, entity_id: EntityId, damage: Option<u16>) {
         #[derive(Clone, Copy)]
         enum OuchOwner {
             Pc,
@@ -227,10 +218,10 @@ impl EngineInner {
                     .map(|d| d.status.in_coma)
                     .unwrap_or(false);
                 if !in_coma {
-                    self.hero_speaking_ex(assets, entity_id, HERO_DIE, SPEECH_EMERGENCY);
+                    self.hero_speaking_ex(tcx.assets, entity_id, HERO_DIE, SPEECH_EMERGENCY);
                 }
             } else if damage.map(|d| d > 20).unwrap_or(true) {
-                self.hero_speaking_ex(assets, entity_id, HERO_HURT, SPEECH_EMERGENCY);
+                self.hero_speaking_ex(tcx.assets, entity_id, HERO_HURT, SPEECH_EMERGENCY);
             }
             return;
         }
@@ -240,7 +231,7 @@ impl EngineInner {
         // after the money-fight and unconscious skip gates above.
         let (is_vip, is_civilian) = match owner {
             OuchOwner::Soldier(profile_index) => (
-                assets
+                tcx.assets
                     .profile_manager
                     .get_soldier(profile_index)
                     .unwrap_or_else(|| {
@@ -254,7 +245,7 @@ impl EngineInner {
                 false,
             ),
             OuchOwner::Civilian(profile_index) => (
-                assets
+                tcx.assets
                     .profile_manager
                     .get_civilian(profile_index)
                     .unwrap_or_else(|| {
@@ -288,8 +279,7 @@ impl EngineInner {
             crate::ai::Remark::Wounded
         };
         self.execute_ai_speech(
-            sim,
-            assets,
+            tcx,
             entity_id,
             crate::ai::AiSpeechAttempt {
                 remark,
@@ -308,8 +298,7 @@ impl EngineInner {
             })
             .unwrap_or_else(|| panic!("speech noise owner {entity_id:?} disappeared"));
         self.broadcast_noise_synchronously(
-            sim,
-            assets,
+            tcx,
             crate::ai::NoiseType::Aaargh,
             position,
             crate::position_interface::Layer::new(layer),
@@ -493,8 +482,7 @@ impl EngineInner {
     /// Emit the remark at the executing PC's motion boundary.
     pub(crate) fn tick_pc_combat_anim_speech_for_owner(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         action: Option<OrderType>,
         command: Option<Command>,
@@ -532,42 +520,38 @@ impl EngineInner {
             _ => return,
         };
         if !eventual
-            || crate::sim_rng::u32(sim, crate::sim_rng::RngSite::HeroSpeech, 0..=2_147_483_647)
-                > 2_147_483_647 / 2
+            || crate::sim_rng::u32(
+                tcx.sim,
+                crate::sim_rng::RngSite::HeroSpeech,
+                0..=2_147_483_647,
+            ) > 2_147_483_647 / 2
         {
-            self.hero_speaking(assets, owner, expression);
+            self.hero_speaking(tcx.assets, owner, expression);
         }
     }
 
     /// Launch a provoke (taunt) sequence element on an entity.  The
     /// dispatcher in `tick.rs` wires the Provoking animation through
     /// `active_ai_anim` + `do_next_order`.
-    pub(super) fn launch_provoke(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: EntityId,
-    ) {
+    pub(super) fn launch_provoke(&mut self, tcx: TickCtx<'_>, entity_id: EntityId) {
         let elem = crate::sequence::SequenceElement::new(
             1,
             crate::element::Command::Provoke,
             Some(entity_id),
         );
-        self.launch_element(sim, assets, elem);
+        self.launch_element(tcx, elem);
     }
 
     pub(crate) fn dispatch_provoke(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         sequence_id: crate::sequence::SequenceId,
         element_index: usize,
     ) {
         if self.expect_entity(owner, "provoke owner").is_soldier() {
             self.execute_ai_speech(
-                sim,
-                assets,
+                tcx,
                 owner,
                 crate::ai::AiSpeechAttempt {
                     remark: crate::ai::Remark::ProvokesCombat,

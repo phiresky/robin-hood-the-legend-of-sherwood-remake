@@ -4,6 +4,7 @@ use super::*;
 use crate::ai::{AiEntityHandle, AiLockFlags, AiState, DutyFlags, GotoFlags, Stimulus, Substate};
 use crate::ai_enemy::{SeekFlags, task_priority};
 use crate::element::Human as _;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 
 impl AiOwnerCtx<'_> {
@@ -15,7 +16,8 @@ impl AiOwnerCtx<'_> {
             .enemy_ai()
             .is_some()
         {
-            AiOwnerCtx::new(self.engine, self.sim, self.assets, self.owner).enemy_duty(flags);
+            AiOwnerCtx::new(self.engine, TickCtx::new(self.sim, self.assets), self.owner)
+                .enemy_duty(flags);
             return;
         }
         self.engine

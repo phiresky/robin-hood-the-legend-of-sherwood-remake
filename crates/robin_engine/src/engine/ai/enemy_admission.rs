@@ -3,6 +3,7 @@ use crate::ai::{
     AiState, AlertFlags, AlertLevel, EmoticonType, LogLineType, Stimulus, StimulusType, Substate,
 };
 use crate::element::{EyeStatus, Posture};
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 #[cfg(test)]
@@ -114,16 +115,10 @@ impl EngineInner {
         true
     }
 
-    pub(in crate::engine) fn begin_ai_special_strike(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
+    pub(in crate::engine) fn begin_ai_special_strike(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
         self.observation_ai_mut(owner).pending_special_strike = true;
         self.duty_set_state(
-            sim,
-            assets,
+            tcx,
             owner,
             AiState::Attacking,
             Substate::AttackingSwordfightSpecialStrike,
@@ -132,8 +127,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn reconcile_ai_special_strike(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         has_active: bool,
     ) {
@@ -154,8 +148,7 @@ impl EngineInner {
         ai.pending_special_strike = false;
         if ai.base.current_substate == Substate::AttackingSwordfightSpecialStrike {
             self.duty_set_state(
-                sim,
-                assets,
+                tcx,
                 owner,
                 AiState::Attacking,
                 Substate::AttackingSwordfight,
@@ -169,8 +162,7 @@ impl EngineInner {
 
     pub(in crate::engine) fn begin_enemy_think(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         stimulus: &Stimulus,
     ) -> bool {
@@ -228,12 +220,12 @@ impl EngineInner {
                 .set_emoticon(EmoticonType::Thunderstorm);
         }
 
-        self.duty_set_state(sim, assets, owner, state, substate);
+        self.duty_set_state(tcx, owner, state, substate);
         let actor = self.ai_actor_mut(owner, "enemy admission eyes");
         crate::ai_vision::set_view_status(actor, eyes);
         if stimulus.stimulus_type == StimulusType::EventLoseConsciousness {
             self.execute_ai_set_alert_status(
-                assets,
+                tcx.assets,
                 owner,
                 AlertLevel::Green,
                 AlertFlags::INSTANT_MUSIC_CHANGE,

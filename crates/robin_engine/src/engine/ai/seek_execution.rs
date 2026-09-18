@@ -4,6 +4,7 @@ use crate::ai::{
     AiEntityHandle, AiState, DutyFlags, EmoticonType, GotoFlags, Position, SeekPoint, Substate,
 };
 use crate::ai_enemy::{EnemyAi, SeekAreaSpec, SeekFlags, task_priority};
+use crate::engine::TickCtx;
 use crate::parameters_ai;
 use crate::sim_rng::SimulationContext;
 
@@ -58,15 +59,14 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_seek_area(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         center: Position,
         standard_radius: u16,
         flags: SeekFlags,
         seek_direction: u16,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seek_area(
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seek_area(
             center,
             standard_radius,
             flags,
@@ -142,11 +142,10 @@ impl EngineInner {
     #[cfg(test)]
     pub(in crate::engine) fn execute_ai_seek_next_point(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seek_next_point()
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seek_next_point()
     }
 }
 
@@ -766,8 +765,7 @@ mod tests {
                 level: 0,
             };
             engine.execute_ai_seek_area(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 owner,
                 center,
                 0,
@@ -809,8 +807,7 @@ mod tests {
         ai.base.number_of_remaining_macro_bytes = 0;
         let (mut engine, assets, owner) = search_fixture(ai, Default::default(), true);
         engine.execute_ai_seek_area(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             owner,
             Position {
                 x: 100.0,
@@ -932,8 +929,7 @@ mod tests {
 
             let (_, draws) = with_draw_trace(|| {
                 engine.execute_ai_seek_area(
-                    &crate::sim_rng::test_context(),
-                    &assets,
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
                     owner,
                     center,
                     100,
@@ -995,7 +991,14 @@ mod tests {
         };
 
         let (mut engine, assets, owner) = search_fixture(ai, global, true);
-        engine.execute_ai_seek_area(&sim, &assets, owner, center, 300, SeekFlags::empty(), 8);
+        engine.execute_ai_seek_area(
+            TickCtx::new(&sim, &assets),
+            owner,
+            center,
+            300,
+            SeekFlags::empty(),
+            8,
+        );
         let ai = engine.seek_enemy(owner);
 
         assert_eq!(ai.my_seek_points.first(), Some(&212));
@@ -1031,7 +1034,7 @@ mod tests {
         });
 
         let (mut engine, assets, owner) = search_fixture(ai, Default::default(), false);
-        engine.execute_ai_seek_next_point(&sim, &assets, owner);
+        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
 
         assert_eq!(
             engine.seek_enemy(owner).base.last_goto_destination,
@@ -1083,7 +1086,7 @@ mod tests {
         let (mut engine, assets, owner) = search_fixture(ai, global, false);
 
         let (_, draws) = with_draw_trace(|| {
-            engine.execute_ai_seek_next_point(&sim, &assets, owner);
+            engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
         });
 
         assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -1126,7 +1129,7 @@ mod tests {
         let (mut engine, assets, owner) = search_fixture(ai, global, false);
 
         let (_, draws) = with_draw_trace(|| {
-            engine.execute_ai_seek_next_point(&sim, &assets, owner);
+            engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
         });
 
         assert_eq!(draws, [RngSite::SeekPointAcceptance]);
@@ -1201,7 +1204,7 @@ mod tests {
             .seek_enemy_mut(owner)
             .beggars_to_control
             .push(beggar.index());
-        engine.execute_ai_seek_next_point(&sim, &assets, owner);
+        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
 
         assert_eq!(engine.seek_enemy(owner).actual_seek_point, Some(0));
         assert!(!engine.ai.global.seek_points[0].locked);
@@ -1217,7 +1220,7 @@ mod tests {
         engine.seek_enemy_mut(owner).beggar_to_examine = None;
         engine.seek_enemy_mut(owner).my_seek_points.push(1);
 
-        engine.execute_ai_seek_next_point(&sim, &assets, owner);
+        engine.execute_ai_seek_next_point(TickCtx::new(&sim, &assets), owner);
 
         assert!(!engine.ai.global.seek_points[0].locked);
         assert_eq!(engine.seek_enemy(owner).actual_seek_point, Some(1));

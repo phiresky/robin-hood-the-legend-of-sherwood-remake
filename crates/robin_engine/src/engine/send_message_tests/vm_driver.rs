@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::TickCtx;
 
 fn animated_sprite() -> crate::sprite::Sprite {
     let script = crate::sprite_script::SpriteScript {
@@ -100,9 +101,8 @@ fn reversible_patch_target_keeps_clickable_visual_through_queued_spent_animation
             sequence.append_element(timer);
             engine.t_launch_sequence(&LevelAssets::new(), sequence);
             engine.hourglass_phase_sequences(
-                &crate::sim_rng::test_context(),
+                TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
                 &mut crate::engine::HostDisplayState::default(),
-                &LevelAssets::new(),
             );
             let Entity::Target(target) = engine.ent(owner) else {
                 unreachable!()
@@ -272,8 +272,7 @@ fn resolved_static_owner_must_still_exist_at_dispatch() {
     let owner = engine.add_test_entity(animated_target(crate::sprite::FrameProgression::Default));
     engine.remove_entity(owner);
     engine.tick_static_entity_hourglass_for(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::new(),
+        TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::new()),
         owner,
     );
 }
@@ -298,7 +297,7 @@ fn target_bored_rng_draws_follow_live_slot_order_exactly_once() {
 
         let assets = LevelAssets::new();
         crate::sim_rng::with_seed(seed, |sim| {
-            engine.tick_actor_owner_envelopes(sim, &assets);
+            engine.tick_actor_owner_envelopes(TickCtx::new(sim, &assets));
         });
         (
             engine.elem(a).sprite.current_frame,
@@ -368,7 +367,7 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let projectile_frame = engine.elem(projectile).sprite.current_frame;
     let net_frame = engine.elem(net).sprite.current_frame;
 
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
 
     // An inactive ale reports false from its update, but the engine's
     // default removal only deactivates: the slot stays occupied because
@@ -398,8 +397,8 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
             ..Default::default()
         },
     }));
-    engine.tick_static_entity_hourglass_for(&sim, &assets, mobile_child);
-    engine.tick_static_entity_hourglass_for(&sim, &assets, projectile);
+    engine.tick_static_entity_hourglass_for(TickCtx::new(&sim, &assets), mobile_child);
+    engine.tick_static_entity_hourglass_for(TickCtx::new(&sim, &assets), projectile);
     assert_eq!(engine.elem(mobile_child).sprite.current_frame, 0);
     assert_eq!(
         engine.elem(projectile).sprite.current_frame,
@@ -444,12 +443,15 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
     let mut later_observed_final = false;
     let sim = crate::sim_rng::test_context();
 
-    engine.tick_actor_owner_envelopes_with_test_owner_hook(&sim, &assets, |engine, owner| {
-        if owner == later {
-            let patch = &engine.script_domains.interactables.patches[0];
-            later_observed_final = patch.applied && !patch.in_transition;
-        }
-    });
+    engine.tick_actor_owner_envelopes_with_test_owner_hook(
+        TickCtx::new(&sim, &assets),
+        |engine, owner| {
+            if owner == later {
+                let patch = &engine.script_domains.interactables.patches[0];
+                later_observed_final = patch.applied && !patch.in_transition;
+            }
+        },
+    );
     assert!(
         later_observed_final,
         "later slot sees synchronous transition clearing and final-state application"
@@ -463,8 +465,7 @@ fn ownerless_send_message_routes_to_global_process_message() {
 
     engine
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "SendMessage",
             &[0, 2718],
         )
@@ -549,8 +550,7 @@ fn every_script_vm_flavor_drives_yields_through_the_shared_engine_boundary() {
         engine.scripts.globals[902] = 0;
         engine
             .call_script_vm(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 key,
                 function,
                 &params,
@@ -572,8 +572,7 @@ fn shared_driver_preserves_same_actor_outer_activation() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerSelf",
             &[],
@@ -599,8 +598,7 @@ fn self_reentrant_driver_preserves_and_shares_the_instance_member_heap() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerSelf",
             &[],
@@ -625,8 +623,7 @@ fn completed_reentrant_continuation_round_trips_as_an_idle_snapshot() {
     let assets = LevelAssets::new();
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerSelf",
             &[],
@@ -654,8 +651,7 @@ fn completed_reentrant_continuation_round_trips_as_an_idle_snapshot() {
 
     restored
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "TriggerSelf",
             &[],
@@ -674,8 +670,7 @@ fn real_active_driver_rejects_snapshot_and_idle_driver_serializes() {
 
     let (result, errors) = super::script::capture_active_driver_snapshot_errors(|| {
         engine.call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(handle),
             "EmitEffect",
             &[],
@@ -707,8 +702,7 @@ fn shared_driver_preserves_a_b_a_activation_stack() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(a_handle),
             "TriggerRelay",
             &[b_handle],
@@ -732,8 +726,7 @@ fn a_b_a_driver_preserves_each_instances_member_heap() {
 
     engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(a_handle),
             "TriggerRelay",
             &[b_handle],
@@ -761,8 +754,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
     assert_eq!(
         engine
             .call_script_vm(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 super::ScriptVmKey::Actor(handle),
                 "OptionalMissingMethod",
                 &[],
@@ -775,8 +767,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
     assert!(
         engine
             .call_script_vm(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 super::ScriptVmKey::Actor(missing),
                 "ProcessMessage",
                 &[],
@@ -790,8 +781,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
     let recursive_handle = bind_script_actor(&mut engine, recursive_id, "RecursiveReceiver");
     let error = engine
         .call_script_vm(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             super::ScriptVmKey::Actor(recursive_handle),
             "ProcessMessage",
             &[1, 0, 0],
@@ -829,8 +819,7 @@ fn shared_driver_reports_missing_vm_and_depth_overflow_as_errors() {
     let recursive_handle = bind_script_actor(&mut external, recursive_id, "RecursiveReceiver");
     let error = external
         .call_external_native(
-            &crate::sim_rng::test_context(),
-            &assets,
+            TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "SendMessage",
             &[recursive_handle, 1],
         )

@@ -1,6 +1,7 @@
 use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
+use crate::engine::TickCtx;
 use crate::engine::test_support::actors::TestActor;
 
 /// Ground-level (`z == 0`) test position.
@@ -528,8 +529,7 @@ fn dispatch_crowded_cross_sector_swordfight(
     engine.orders.sequence_manager.start_sequence_level(seq_id);
 
     engine.instruct_owner(
-        &sim,
-        &LevelAssets::default(),
+        TickCtx::new(&sim, &LevelAssets::default()),
         &mut Vec::new(),
         owner,
         seq_id,

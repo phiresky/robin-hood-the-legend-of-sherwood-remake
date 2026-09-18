@@ -1,5 +1,6 @@
 use super::*;
 use crate::ai::Stimulus;
+use crate::engine::TickCtx;
 
 impl EngineInner {
     pub(in crate::engine) fn execute_ai_set_alert_status(
@@ -137,8 +138,7 @@ impl EngineInner {
     /// if it's close enough to begin the actual charge pass.
     pub(in crate::engine) fn dispatch_galopp_loop_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         entity_id: EntityId,
     ) {
         // Panic text is asserted by `galopp_execute_callback_rejects_missing_selected_owner`.
@@ -157,7 +157,7 @@ impl EngineInner {
         // primary target. Think and every order/script callback it creates
         // close here, before the actor update can complete this movement or
         // the mutable legacy walk can advance to the next owner.
-        self.dispatch_think_with_drain(sim, entity_id, &stimulus, assets);
+        self.dispatch_think_with_drain(tcx, entity_id, &stimulus);
         self.observe_galopp_dispatch(entity_id);
     }
 
@@ -469,7 +469,7 @@ impl EngineInner {
                     continue;
                 };
                 let stimulus = crate::ai::Stimulus::new(stimulus_type);
-                engine.dispatch_think_with_drain(sim, owner, &stimulus, assets);
+                engine.dispatch_think_with_drain(TickCtx::new(sim, assets), owner, &stimulus);
             }
         });
     }
@@ -1016,12 +1016,11 @@ impl EngineInner {
 
     pub(in crate::engine) fn execute_ai_speech(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         attempt: crate::ai::AiSpeechAttempt,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_speech(attempt)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_speech(attempt)
     }
 
     /// Deliver deterministic SoundIsFinished callbacks at the first mutation
@@ -1033,11 +1032,7 @@ impl EngineInner {
     /// currently active remark through the owner's category and clears it only
     /// when the callback's exact exclamation ID matches. A stale/mismatched
     /// completion is logged and deliberately retains the active line.
-    pub(in crate::engine) fn settle_npc_speech_completions(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    pub(in crate::engine) fn settle_npc_speech_completions(&mut self, tcx: TickCtx<'_>) {
         use crate::ai::{Remark, SpeechFlags};
 
         let completions = std::mem::take(&mut self.feedback.sound_sim.finished_exclamations);
@@ -1068,7 +1063,7 @@ impl EngineInner {
                 let raw = active as u32;
                 let expected = match entity {
                     Entity::Pc(pc) => {
-                        assets
+                        tcx.assets
                                 .profile_manager
                                 .get_character(pc.pc.profile_index)
                                 .unwrap_or_else(|| {
@@ -1081,7 +1076,7 @@ impl EngineInner {
                         raw
                     }
                     Entity::Soldier(s) => {
-                        let profile = assets
+                        let profile = tcx.assets
                                 .profile_manager
                                 .get_soldier(s.soldier.soldier_profile_index)
                                 .unwrap_or_else(|| {
@@ -1098,7 +1093,7 @@ impl EngineInner {
                         }
                     }
                     Entity::Civilian(c) => {
-                        let profile = assets
+                        let profile = tcx.assets
                                 .profile_manager
                                 .civilians
                                 .get(usize::from(c.civilian.civilian_profile_index))
@@ -1141,7 +1136,7 @@ impl EngineInner {
             if let Some(stimulus) =
                 Self::speech_finished_stimulus(SpeechFlags::from_bits_truncate(flags))
             {
-                self.execute_ai_callback(sim, assets, actor_id, &Stimulus::new(stimulus));
+                self.execute_ai_callback(tcx, actor_id, &Stimulus::new(stimulus));
             }
         }
     }

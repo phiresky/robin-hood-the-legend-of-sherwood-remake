@@ -15,6 +15,7 @@
 use super::EngineInner;
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
 
@@ -29,8 +30,7 @@ impl EngineInner {
     /// `Command::Teleport` branch in `engine::tick`.
     pub(crate) fn manage_input_process_teleport(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         dest: MapPoint,
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
@@ -91,7 +91,7 @@ impl EngineInner {
                 linked_seek: None,
                 post_seek_sequence: None,
             };
-            self.launch_element(sim, assets, elem);
+            self.launch_element(tcx, elem);
         }
     }
 

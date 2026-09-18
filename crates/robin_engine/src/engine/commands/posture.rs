@@ -3,13 +3,13 @@
 
 use crate::element::{Command, EntityId};
 use crate::engine::EngineInner;
+use crate::engine::TickCtx;
 use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceElementData};
 
 impl EngineInner {
     pub(super) fn dispatch_player_raise_shield(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: &EntityId,
         protected_pc: &EntityId,
         danger_point: &crate::coordinates::WorldPoint3D,
@@ -17,8 +17,7 @@ impl EngineInner {
     ) {
         let recording = self.players.qa_recording_for.contains(actor);
         self.apply_raise_shield_with_danger(
-            sim,
-            assets,
+            tcx,
             *actor,
             *protected_pc,
             *danger_point,
@@ -44,8 +43,7 @@ impl EngineInner {
     ///    the new value on the actor is enough.
     pub(super) fn apply_raise_shield_with_danger(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
+        tcx: TickCtx<'_>,
         actor: EntityId,
         protected_pc: EntityId,
         danger_point: crate::coordinates::WorldPoint3D,
@@ -109,7 +107,7 @@ impl EngineInner {
 
         let mut sequence = Sequence::new();
         sequence.append_element(seek_elem);
-        self.launch_or_record_quick_action_sequence(sim, assets, actor, sequence);
+        self.launch_or_record_quick_action_sequence(tcx, actor, sequence);
     }
 
     /// Set the protector's `shield_protected` forward pointer.
@@ -140,12 +138,7 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn apply_crouch_down(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        seat: usize,
-    ) {
+    pub(super) fn apply_crouch_down(&mut self, tcx: TickCtx<'_>, seat: usize) {
         // Route through actor-level crouched-posture conversion so a PC
         // already walking/running gets its queued orders rewritten to
         // crouched variants instead of always launching a fresh
@@ -162,19 +155,14 @@ impl EngineInner {
                 recorded_here = true;
                 continue;
             }
-            self.actor_make_crouched(sim, assets, pc_id);
+            self.actor_make_crouched(tcx, pc_id);
         }
         if recorded_here {
             self.stop_recording_macro();
         }
     }
 
-    pub(super) fn apply_stand_up(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &crate::engine::LevelAssets,
-        seat: usize,
-    ) {
+    pub(super) fn apply_stand_up(&mut self, tcx: TickCtx<'_>, seat: usize) {
         let mut recorded_here = false;
         for &pc_id in &self.players.seats[seat].selection.clone() {
             if self.players.qa_recording_for.contains(&pc_id) {
@@ -191,13 +179,13 @@ impl EngineInner {
                     // Try rewriting the active movement sequence
                     // first, falling back to a fresh CrouchUp launch
                     // only when no active sequence is present.
-                    self.actor_make_upright(sim, assets, pc_id);
+                    self.actor_make_upright(tcx, pc_id);
                 }
                 crate::element::Posture::SimulatingBeggar => {
                     let elem = SequenceElement::new(1, Command::LeaveBeggar, Some(pc_id));
                     let mut sequence = Sequence::new();
                     sequence.append_element(elem);
-                    self.launch_sequence(sim, assets, sequence);
+                    self.launch_sequence(tcx, sequence);
                 }
                 crate::element::Posture::Spy
                 | crate::element::Posture::Cloaked
@@ -205,13 +193,13 @@ impl EngineInner {
                     let elem = SequenceElement::new(1, Command::LeaveSpy, Some(pc_id));
                     let mut sequence = Sequence::new();
                     sequence.append_element(elem);
-                    self.launch_sequence(sim, assets, sequence);
+                    self.launch_sequence(tcx, sequence);
                 }
                 crate::element::Posture::Tree => {
                     let elem = SequenceElement::new(1, Command::LeaveTree, Some(pc_id));
                     let mut sequence = Sequence::new();
                     sequence.append_element(elem);
-                    self.launch_sequence(sim, assets, sequence);
+                    self.launch_sequence(tcx, sequence);
                 }
                 _ => continue,
             };

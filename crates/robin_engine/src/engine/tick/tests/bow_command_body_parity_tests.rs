@@ -3,6 +3,7 @@ use crate::element::{
     ActionState, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData,
     NpcData, PcData, Posture,
 };
+use crate::engine::TickCtx;
 use crate::order::OrderType;
 use crate::sequence::{SequenceElement, SequenceId, SequenceState};
 
@@ -677,8 +678,7 @@ fn wait_context_rejects_stale_owner_contextually() {
     engine.remove_entity(owner);
 
     engine.dispatch_wait_command(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
         owner,
         Command::Wait,
@@ -1016,7 +1016,11 @@ fn lift_wait_context_reserves_direction_before_terminating() {
     let authorized = engine.authorize_and_reserve_lift_wait(owner, seq_id, 0);
 
     assert!(authorized);
-    engine.do_next_order(&crate::sim_rng::test_context(), &assets, seq_id, 0);
+    engine.do_next_order(
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
+        seq_id,
+        0,
+    );
     assert_eq!(
         engine
             .orders
@@ -1091,16 +1095,14 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
 
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         true,
     );
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).occupants, 1);
     engine.execute_pass_door(
-        &crate::sim_rng::test_context(),
-        &assets,
+        TickCtx::new(&crate::sim_rng::test_context(), &assets),
         owner,
         crate::gate::DoorIndex::new(0).expect("valid door index"),
         false,
@@ -1161,7 +1163,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     engine.t_instruct_owner(&assets, owner, seq_id, 0);
     engine.set_actors_frozen(true);
 
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 1);
     assert_eq!(
         engine
@@ -1173,7 +1175,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         SequenceState::InProgress
     );
 
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     assert_eq!(engine.world.fast_grid_mut().lift_state_mut(0).wait_time, 0);
     assert_eq!(
         engine
@@ -1186,7 +1188,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         "authorization returns false on the frame that decrements the cooldown to zero"
     );
 
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     assert_eq!(
         engine
             .orders
@@ -1202,7 +1204,7 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     // The fallback idle Wait is no longer installed inside the
     // terminating owner slot: the null-order guard books it at the start
     // of the owner's next actor frame.
-    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
+    engine.t_tick_actor_owner_envelopes_with(TickCtx::new(&sim, &assets));
     assert_eq!(
         engine
             .world

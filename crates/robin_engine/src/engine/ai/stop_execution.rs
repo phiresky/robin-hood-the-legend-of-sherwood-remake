@@ -1,15 +1,11 @@
 use super::*;
 use crate::ai::Substate;
+use crate::engine::TickCtx;
 use crate::sim_rng::SimulationContext;
 
 impl EngineInner {
-    pub(in crate::engine) fn stop_ai_owner(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).stop_ai_owner()
+    pub(in crate::engine) fn stop_ai_owner(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
+        AiOwnerCtx::new(self, tcx, owner).stop_ai_owner()
     }
 }
 
@@ -29,7 +25,8 @@ impl AiOwnerCtx<'_> {
                 .execute_ai_set_checkpoint_charly(self.owner, None);
         }
 
-        self.engine.halt_actor(self.sim, self.assets, self.owner);
+        self.engine
+            .halt_actor(TickCtx::new(self.sim, self.assets), self.owner);
 
         let ai = self.engine.ai_mut(self.owner, "stop owner after halt");
         if !matches!(

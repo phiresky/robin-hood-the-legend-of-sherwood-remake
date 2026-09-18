@@ -11,6 +11,7 @@ mod instruct_commands;
 mod instruction_tests;
 mod owner_dispatch;
 mod owner_preflight;
+use crate::engine::TickCtx;
 use owner_preflight::PreparedOwnerInstruction;
 mod phase;
 mod script_sync;
@@ -62,8 +63,7 @@ impl EngineInner {
     /// owner-local native barrier use this same outcome handling.
     fn dispatch_prepared_move_instruction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -71,10 +71,10 @@ impl EngineInner {
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
     ) {
-        match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
+        match self.try_dispatch_move_path(tcx, owner, seq_id, elem_idx, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => (),
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
             }
             MovePathOutcome::Failed => {
                 // Path request insertion calls Stop + Wait when it
@@ -148,8 +148,7 @@ fn read_sequence_map_point_property(
 impl EngineInner {
     pub(in crate::engine) fn dispatch_position_assertion(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
@@ -177,8 +176,7 @@ impl EngineInner {
                 "interrupting AssertPosition because its owner no longer exists"
             );
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 seq_id,
                 elem_idx,
@@ -206,15 +204,14 @@ impl EngineInner {
 
         if mismatches {
             self.element_interrupted(
-                sim,
-                assets,
+                tcx,
                 active_scripts,
                 seq_id,
                 elem_idx,
                 crate::sequence::CascadeFlags::NEXT_LEVEL,
             );
         } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
         }
         // Position assertion changes state directly during translation. That
         // synchronous condolence clears the actor's selected sequence element, so
@@ -359,8 +356,7 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_smalltalk_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -423,7 +419,7 @@ impl EngineInner {
                 super::melee::sword_strike_from_animation(order.order_type).is_some()
             });
         if blocked {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
 
@@ -454,8 +450,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_bow_transition(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -480,7 +475,7 @@ impl EngineInner {
             // transitions-only mode disabled) command body afterward. That body
             // terminates redundant equip commands whenever the actor is
             // already aiming.
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
 
@@ -746,8 +741,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_play_animation(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -762,12 +756,12 @@ impl EngineInner {
                 cmd = ?command,
                 "PlayAnim*: missing/invalid AnimationId — terminating",
             );
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         };
 
         let Some(owner_entity) = self.world.entities.get(owner) else {
-            self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
             return;
         };
         if owner_entity.is_human() {
@@ -794,7 +788,7 @@ impl EngineInner {
         }
 
         if !owner_entity.kind().is_fx_target() {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
 
@@ -806,7 +800,7 @@ impl EngineInner {
             // control visible and pixel-pickable. This queued command executes
             // after ActivatedBy* returns and captures its reversible patches.
             // Complete normally so following mission messages still run once.
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
 
@@ -838,7 +832,7 @@ impl EngineInner {
                 "PlayAnim*: animation unmapped for this sprite profile — skipping",
             );
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -848,8 +842,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_sequence_target_interaction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         owner_command: Command,
@@ -886,7 +879,7 @@ impl EngineInner {
             return;
         }
         let Some(target) = target else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         };
         if !self
@@ -895,7 +888,7 @@ impl EngineInner {
             .get(target)
             .is_some_and(|entity| entity.kind().is_fx_target())
         {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         }
         let order_types: &[crate::order::OrderType] = match owner_command {
@@ -1087,8 +1080,7 @@ fn base_wait_animation(
 impl EngineInner {
     pub(in crate::engine) fn dispatch_wait_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -1140,7 +1132,7 @@ impl EngineInner {
                             "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
                         ),
                     );
-                    self.sequence_wait_is_entity_vip(assets, carrier)
+                    self.sequence_wait_is_entity_vip(tcx.assets, carrier)
                 }),
             )
         };
@@ -1450,7 +1442,7 @@ impl EngineInner {
                 .sequence_manager
                 .push_order_on(seq_id, elem_idx, order);
         } else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
         }
     }
 
@@ -1589,8 +1581,7 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_npc_attention_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -1626,7 +1617,7 @@ impl EngineInner {
                         false,
                     );
                 } else {
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
                 }
             }
             Command::EnterAttentiveMode
@@ -1649,7 +1640,7 @@ impl EngineInner {
                     // branch. That can replace the selected sequence element while
                     // Translation is still active, so actor instruction handling
                     // returns before publishing the actor order or IN_PROGRESS.
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 }
             }
@@ -1749,8 +1740,7 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_stealth_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -1758,7 +1748,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         };
         let live_posture = entity.element_data().posture();
@@ -1776,7 +1766,7 @@ impl EngineInner {
         // the actor upright before the body executes.
 
         let Some(transition) = crate::stealth::stealth_transition(command) else {
-            self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+            self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             return;
         };
 
@@ -1829,10 +1819,11 @@ impl EngineInner {
 
         let hidden_phase = if transition.result_posture.is_hidden() {
             let Some(Entity::Pc(pc)) = self.world.entities.get(owner) else {
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
                 return;
             };
-            let profile = assets
+            let profile = tcx
+                .assets
                 .profile_manager
                 .get_character(pc.pc.profile_index)
                 .unwrap_or_else(|| {
@@ -1916,7 +1907,7 @@ impl EngineInner {
             );
         }
 
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -1928,8 +1919,7 @@ impl EngineInner {
 impl EngineInner {
     pub(in crate::engine) fn dispatch_direct_ability_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -1975,11 +1965,11 @@ impl EngineInner {
             | Command::StrangleCmd => {
                 let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                 else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 };
                 if command == Command::HealCmd && !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 }
                 let begin: TargetedBegin = match command {
@@ -2002,7 +1992,7 @@ impl EngineInner {
             }
             Command::WhistleCmd | Command::EatCmd | Command::ReceivePurse => {
                 if command == Command::EatCmd && !ammo_available {
-                    self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 }
                 let begin: UntargetedBegin = match command {
@@ -2022,7 +2012,7 @@ impl EngineInner {
             }
             Command::EnterListen => abilities::begin_listen(
                 &mut self.world.entities,
-                &assets.profile_manager,
+                &tcx.assets.profile_manager,
                 &mut self.orders.sequence_manager,
                 owner,
                 seq_id,
@@ -2034,7 +2024,7 @@ impl EngineInner {
                 // arbitration postpones LeaveListen until the complete
                 // entry/listening/exit chain has restored Waiting. Re-dispatch
                 // then fails MUST_BE_LISTENING and is Impossible.
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                 return;
             }
             Command::ThrowNet | Command::ThrowPurse | Command::ThrowWaspNest => {
@@ -2059,11 +2049,11 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .and_then(|element| read_sequence_map_point_property(element, field))
                 else {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 };
                 if !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 }
                 begin(
@@ -2078,7 +2068,7 @@ impl EngineInner {
             }
             Command::ThrowApple | Command::ThrowStone => {
                 if !ammo_available {
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 }
                 let ground_target = if command == Command::ThrowStone {
@@ -2114,7 +2104,7 @@ impl EngineInner {
                 } else {
                     let Some(target) = self.sequence_ability_interaction_target(seq_id, elem_idx)
                     else {
-                        self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                        self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                         return;
                     };
                     let begin: TargetedBegin = match command {
@@ -2135,7 +2125,7 @@ impl EngineInner {
             }
             _ => unreachable!("non-direct ability passed to direct ability context"),
         };
-        self.sequence_ability_finish_begin(sim, assets, active_scripts, result, seq_id, elem_idx)
+        self.sequence_ability_finish_begin(tcx, active_scripts, result, seq_id, elem_idx)
     }
 
     fn sequence_ability_interaction_target(
@@ -2154,8 +2144,7 @@ impl EngineInner {
 
     fn sequence_ability_finish_begin(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         result: AbilityBeginResult,
         seq_id: crate::sequence::SequenceId,
@@ -2164,7 +2153,7 @@ impl EngineInner {
         match result {
             AbilityBeginResult::Started => {}
             AbilityBeginResult::Impossible => {
-                self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx)
+                self.element_impossible(tcx, active_scripts, seq_id, elem_idx)
             }
         }
     }
@@ -2176,8 +2165,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_recovery_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -2196,7 +2184,7 @@ impl EngineInner {
                     (0.0, 0.0),
                     true,
                 );
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             }
             Command::Recover | Command::StandUp => {
                 let already_queued = self
@@ -2254,7 +2242,7 @@ impl EngineInner {
                     });
                 let Some(target) = target else {
                     tracing::warn!(?owner, ?seq_id, elem_idx, "WakeUp element has no target");
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 };
                 let Some(target_position) = self
@@ -2270,7 +2258,7 @@ impl EngineInner {
                         elem_idx,
                         "WakeUp target is missing"
                     );
-                    self.element_impossible(sim, assets, active_scripts, seq_id, elem_idx);
+                    self.element_impossible(tcx, active_scripts, seq_id, elem_idx);
                     return;
                 };
                 let owner_position = self
@@ -2321,7 +2309,7 @@ impl EngineInner {
                     (0.0, 0.0),
                     true,
                 );
-                self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+                self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
             }
             _ => unreachable!("non-recovery command passed to recovery context"),
         }
@@ -2419,8 +2407,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_mobile_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -2459,7 +2446,7 @@ impl EngineInner {
                 .element_data_mut()
                 .active = active;
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -2469,8 +2456,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_sprite_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         owner: EntityId,
         command: Command,
@@ -2514,7 +2500,7 @@ impl EngineInner {
             }
             _ => unreachable!("non-sprite command passed to sprite context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 
     fn sequence_sprite_animation_property(
@@ -2567,8 +2553,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_presentation_command(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -2603,7 +2588,7 @@ impl EngineInner {
                     );
                     self.feedback.pending_side_effects.extend_dialogues([id]);
                 }
-                self.sequence_presentation_reset_input(sim, assets);
+                self.sequence_presentation_reset_input(tcx);
             }
             Command::DisplayPopupText => {
                 if !self.control.fast_forward {
@@ -2614,11 +2599,11 @@ impl EngineInner {
                     );
                     self.feedback.pending_side_effects.extend_popup_texts([id]);
                 }
-                self.sequence_presentation_reset_input(sim, assets);
+                self.sequence_presentation_reset_input(tcx);
             }
             _ => unreachable!("non-presentation command passed to presentation context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 
     fn sequence_presentation_integer_property(
@@ -2638,14 +2623,9 @@ impl EngineInner {
             .unwrap_or(0)
     }
 
-    fn sequence_presentation_reset_input(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-    ) {
+    fn sequence_presentation_reset_input(&mut self, tcx: TickCtx<'_>) {
         self.forward_message(
-            sim,
-            assets,
+            tcx,
             Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
         );
     }
@@ -2654,8 +2634,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_freeze_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -2671,7 +2650,7 @@ impl EngineInner {
             })
             .unwrap_or(false);
         self.control.set_actors_frozen(frozen);
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -2680,8 +2659,7 @@ impl EngineInner {
 impl EngineInner {
     fn dispatch_availability_immediate(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         active_scripts: &mut Vec<super::script::ActiveScriptCall>,
         command: Command,
         seq_id: crate::sequence::SequenceId,
@@ -2713,7 +2691,7 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableCharacter
                     };
-                    self.forward_message(sim, assets, Message::pc(message, Some(owner)));
+                    self.forward_message(tcx, Message::pc(message, Some(owner)));
                 }
             }
             Command::ActionAvailable => {
@@ -2740,15 +2718,14 @@ impl EngineInner {
                         crate::messenger::PcMessage::DisableAction
                     };
                     self.forward_message(
-                        sim,
-                        assets,
+                        tcx,
                         Message::pc_with_value(message, Some(owner), action_id),
                     );
                 }
             }
             _ => unreachable!("non-availability command passed to availability context"),
         }
-        self.element_terminated(sim, assets, active_scripts, seq_id, elem_idx);
+        self.element_terminated(tcx, active_scripts, seq_id, elem_idx);
     }
 }
 
@@ -2806,12 +2783,11 @@ mod sequence_phase_context_tests {
             .execution_frozen = true;
         let owner = engine.add_test_entity(soldier);
         let sequence = engine.t_launch_element_with(
-            &sim,
-            &LevelAssets::default(),
+            TickCtx::new(&sim, &LevelAssets::default()),
             SequenceElement::new(1, Command::LookRight, Some(owner)),
         );
 
-        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
+        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &LevelAssets::default()));
 
         let element = engine
             .orders
@@ -2844,8 +2820,7 @@ mod sequence_phase_context_tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(unconscious_lying_soldier());
         let sequence = engine.t_launch_element_with(
-            &sim,
-            &LevelAssets::default(),
+            TickCtx::new(&sim, &LevelAssets::default()),
             SequenceElement::new(1, Command::Wait, Some(owner)),
         );
         engine
@@ -2855,7 +2830,7 @@ mod sequence_phase_context_tests {
             .expect("queued wait")
             .state = SequenceState::Postponed;
 
-        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
+        engine.t_hourglass_phase_sequences_with(TickCtx::new(&sim, &LevelAssets::default()));
 
         assert!(
             !engine.human_instruct_rejects_command(owner, Command::Wait),
@@ -2908,8 +2883,7 @@ mod sequence_phase_context_tests {
         engine.orders.sequence_manager.start_sequence_level(seq_id);
 
         engine.dispatch_bow_transition(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::EquipBow,
@@ -3043,8 +3017,7 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
@@ -3087,8 +3060,7 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
@@ -3145,8 +3117,7 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_wait_command(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             owner,
             Command::Wait,
@@ -3181,12 +3152,12 @@ mod sequence_phase_context_tests {
             Some(owner),
         );
         damage.priority = crate::sequence::SequencePriority::Injury;
-        let damage_sequence = engine.t_launch_element_with(&sim, &assets, damage);
+        let damage_sequence = engine.t_launch_element_with(TickCtx::new(&sim, &assets), damage);
 
         let mut enter =
             crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        engine.t_launch_element_with(&sim, &assets, enter);
+        engine.t_launch_element_with(TickCtx::new(&sim, &assets), enter);
         assert!(matches!(
             engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
@@ -3242,8 +3213,7 @@ mod sequence_phase_context_tests {
             .start_sequence_level(sequence);
 
         engine.dispatch_availability_immediate(
-            &crate::sim_rng::test_context(),
-            &LevelAssets::default(),
+            TickCtx::new(&crate::sim_rng::test_context(), &LevelAssets::default()),
             &mut Vec::new(),
             Command::CharacterAvailable,
             sequence,
@@ -3573,8 +3543,7 @@ mod sequence_phase_context_tests {
 
         let follow_up = engine
             .dispatch_shield_command(
-                &crate::sim_rng::test_context(),
-                &assets,
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
                 &mut Vec::new(),
                 owner,
                 Command::RaiseShield,

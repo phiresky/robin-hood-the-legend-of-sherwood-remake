@@ -6,6 +6,7 @@ mod tests;
 use super::*;
 use crate::ai::{AiEntityHandle, AiState, EmoticonType, HumanHandle, Remark, ReportType, Substate};
 use crate::element::Human as _;
+use crate::engine::TickCtx;
 use crate::profiles::ProfileRank;
 #[cfg(test)]
 use crate::sim_rng::SimulationContext;
@@ -14,12 +15,11 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn execute_ai_seen_body(
         &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
+        tcx: TickCtx<'_>,
         owner: EntityId,
         body: HumanHandle,
     ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_seen_body(body)
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_seen_body(body)
     }
 
     fn near_officer_informed_about_body(
@@ -84,13 +84,8 @@ impl EngineInner {
     }
 
     #[cfg(test)]
-    pub(super) fn execute_ai_body_reaction_timer(
-        &mut self,
-        sim: &SimulationContext,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) {
-        AiOwnerCtx::new(self, sim, assets, owner).execute_ai_body_reaction_timer()
+    pub(super) fn execute_ai_body_reaction_timer(&mut self, tcx: TickCtx<'_>, owner: EntityId) {
+        AiOwnerCtx::new(self, tcx, owner).execute_ai_body_reaction_timer()
     }
 }
 
@@ -164,8 +159,12 @@ impl AiOwnerCtx<'_> {
             flags: 0,
         });
         let hint = self.engine.live_ai_position(body_id);
-        self.engine
-            .execute_ai_look_there(self.sim, self.assets, self.owner, hint, 100);
+        self.engine.execute_ai_look_there(
+            TickCtx::new(self.sim, self.assets),
+            self.owner,
+            hint,
+            100,
+        );
         self.engine.seek_enemy_mut(self.owner).seen_dead_body = false;
         self.stop_ai_owner();
         let body_position = self.engine.live_ai_position(body_id);
