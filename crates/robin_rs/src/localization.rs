@@ -1473,8 +1473,11 @@ mod tests {
     }
 
     #[test]
-    fn every_supported_shipping_locale_has_a_complete_feature40_catalogue() {
-        for definition in LANGUAGE_DEFINITIONS {
+    fn every_shipped_language_has_a_complete_feature40_catalogue() {
+        for definition in LANGUAGE_DEFINITIONS
+            .iter()
+            .filter(|definition| has_feature40_catalogue(definition.locale))
+        {
             for &key in FEATURE40_PORT_TEXT_KEYS {
                 let translated =
                     feature40_text::text(definition.locale, key).unwrap_or_else(|| {
@@ -1487,11 +1490,34 @@ mod tests {
                 assert_eq!(port_text(Some(definition.locale), key), translated);
             }
         }
-        assert_ne!(
-            port_text(Some("zh-CN"), PortTextKey::SpellforgeExecutableWarning),
-            port_text(Some("zh-TW"), PortTextKey::SpellforgeExecutableWarning),
-            "Simplified and Traditional Chinese must retain regional catalogues"
+        let catalogued = LANGUAGE_DEFINITIONS
+            .iter()
+            .filter(|definition| has_feature40_catalogue(definition.locale))
+            .map(|definition| definition.locale)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            catalogued,
+            [
+                "en-US", "de-DE", "und", "fr-FR", "it-IT", "es-ES", "ru-RU", "ja-JP", "cs-CZ",
+                "pl-PL"
+            ]
         );
+    }
+
+    /// Locales without a verified retail edition keep their game data but read
+    /// port-owned text in English.
+    #[test]
+    fn unshipped_locales_fall_back_to_english_feature40_text() {
+        for locale in ["pt-PT", "pt-BR", "zh-TW", "zh-CN", "ko-KR", "th-TH"] {
+            for &key in FEATURE40_PORT_TEXT_KEYS {
+                assert_eq!(feature40_text::text(locale, key), None);
+                assert_eq!(port_text(Some(locale), key), port_text(Some("en-US"), key));
+            }
+        }
+    }
+
+    fn has_feature40_catalogue(locale: &str) -> bool {
+        feature40_text::text(locale, FEATURE40_PORT_TEXT_KEYS[0]).is_some()
     }
 
     #[test]
@@ -1555,10 +1581,10 @@ mod tests {
             PortTextKey::SpellforgeMpJoinCancelled,
             PortTextKey::SpellforgeMpPreflightTimeout,
         ];
-        for definition in LANGUAGE_DEFINITIONS
-            .iter()
-            .filter(|definition| !matches!(definition.locale, "en-US" | "und"))
-        {
+        for definition in LANGUAGE_DEFINITIONS.iter().filter(|definition| {
+            !matches!(definition.locale, "en-US" | "und")
+                && has_feature40_catalogue(definition.locale)
+        }) {
             for key in safety_surface {
                 assert_ne!(
                     port_text(Some(definition.locale), key),
