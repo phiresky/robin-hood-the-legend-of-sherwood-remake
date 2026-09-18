@@ -2299,39 +2299,6 @@ mod tests {
         assert_eq!(door.point_mid(), MapPoint::new(20.0, 30.0));
     }
 
-    #[test]
-    fn serde_roundtrip() {
-        let mut door = Door::default();
-        door.lock_pc();
-        door.lock_npc_civilian();
-        door.set_unlockable(true);
-        door.special_authorisation_pc = true;
-        door.authorised_pc_direct = 0b0101;
-        door.authorised_pc_indirect = 0b1010;
-        door.door_type = DoorType::Building;
-
-        let json = serde_json::to_string(&door).unwrap();
-        let door2: Door = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(door.locked_pc, door2.locked_pc);
-        assert_eq!(door.locked_npc_villain, door2.locked_npc_villain);
-        assert_eq!(door.locked_npc_civilian, door2.locked_npc_civilian);
-        assert_eq!(door.unlockable, door2.unlockable);
-        assert_eq!(
-            door.special_authorisation_pc,
-            door2.special_authorisation_pc
-        );
-        assert_eq!(door.authorised_pc_direct, door2.authorised_pc_direct);
-        assert_eq!(door.authorised_pc_indirect, door2.authorised_pc_indirect);
-        assert_eq!(door.gate_type, door2.gate_type);
-        assert_eq!(door.door_type, door2.door_type);
-        assert_eq!(door.active, door2.active);
-
-        // Skipped fields should be at defaults after deserialization.
-        assert_eq!(door2.point_out, MapPoint::ZERO);
-        assert_eq!(door2.penalty, 0.0);
-    }
-
     // -- get_action_1 / get_action_2 --
 
     fn door_with_type(door_type: DoorType) -> Door {

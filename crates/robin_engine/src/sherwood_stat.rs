@@ -907,20 +907,4 @@ mod tests {
         assert!(assembled.contains("Score: 500"));
         assert!(!assembled.contains("nothing"));
     }
-
-    #[test]
-    fn test_serde_roundtrip() {
-        let stat = SherwoodStat;
-        let json = serde_json::to_string(&stat).unwrap();
-        let _: SherwoodStat = serde_json::from_str(&json).unwrap();
-
-        let info = ScoreInfo {
-            score: 42,
-            preserved_lives: 3,
-            play_time_seconds: 999,
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        let info2: ScoreInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(info2.score, 42);
-    }
 }

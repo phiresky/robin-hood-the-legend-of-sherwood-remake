@@ -310,17 +310,7 @@ fn position_to_point_3d_recovers_number_only_sector_by_position() {
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer: 2,
         sector_number,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     // A public number is not an exact identity. Put a second authored sector
     // behind the lossy map entry so the number-only compatibility position
@@ -341,17 +331,7 @@ fn position_to_point_3d_recovers_number_only_sector_by_position() {
         sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
         layer: 2,
         sector_number,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        gate_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     level.sector_number_map.insert(sector_number, 1);
 
@@ -435,16 +415,7 @@ fn position_to_point_3d_uses_building_door_outside_projection() {
         points: Vec::new(),
         bounding_box: crate::coordinates::MapBBox::new(),
         layer: 0,
-        door_index: None,
-        lift_type: None,
-        lift_direction: 0,
-        force_crouched: false,
-        building_index: None,
-        low_exit_point: None,
-        high_exit_point: None,
-        lowest_door_index: None,
-        jump_line_indices: Vec::new(),
-        underlying_sector: None,
+        ..Default::default()
     });
     level.door_projection_infos.push(DoorProjectionInfo {
         point_in: MapPoint::new(50.0, 50.0),

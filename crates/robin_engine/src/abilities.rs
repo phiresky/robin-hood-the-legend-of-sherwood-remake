@@ -2450,8 +2450,7 @@ mod tests {
         std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
             crate::profiles::Action::Tie;
         engine.control.sim_config.enable_unbinding = true;
-        let sim = crate::sim_rng::test_context();
-        engine.tick_actor_owner_envelopes(&sim, &assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
         assert_eq!(
             engine.get_entity(owner).unwrap().sprite().current_frame,
             3,
@@ -2459,18 +2458,11 @@ mod tests {
         );
 
         let released = (0..8).any(|_| {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
-            engine.get_entity(target).unwrap().posture() != Posture::Tied
+            engine.t_tick_actor_owner_envelopes(&assets);
+            engine.posture_of(target) != Posture::Tied
         });
         assert!(released, "reversed Tying must release the target at DONE");
-        assert!(
-            engine
-                .get_entity(target)
-                .unwrap()
-                .human_data()
-                .unwrap()
-                .unconscious
-        );
+        assert!(engine.human(target).unconscious);
         assert!(
             selected_ability(
                 &engine.world.entities,
@@ -2494,7 +2486,7 @@ mod tests {
         );
         let mut tail_frames = Vec::new();
         let terminated = (0..8).any(|_| {
-            engine.tick_actor_owner_envelopes(&sim, &assets);
+            engine.t_tick_actor_owner_envelopes(&assets);
             tail_frames.push(engine.get_entity(owner).unwrap().sprite().current_frame);
             selected_ability(
                 &engine.world.entities,
@@ -2511,17 +2503,7 @@ mod tests {
             tail_frames.contains(&1),
             "reverse tail must advance past DONE: {tail_frames:?}"
         );
-        assert_eq!(
-            engine
-                .world
-                .entities
-                .get(owner)
-                .unwrap()
-                .element_data()
-                .sprite
-                .current_frame,
-            0
-        );
+        assert_eq!(engine.elem(owner).sprite.current_frame, 0);
     }
 
     #[test]
@@ -2919,48 +2901,12 @@ mod tests {
 
         for expected_attacker in [2, 4] {
             engine.tick_selected_ability(&sim, &assets, attacker, false);
-            assert_eq!(
-                engine
-                    .world
-                    .entities
-                    .get(attacker)
-                    .unwrap()
-                    .element_data()
-                    .direction(),
-                expected_attacker
-            );
-            assert_eq!(
-                engine
-                    .world
-                    .entities
-                    .get(victim)
-                    .unwrap()
-                    .element_data()
-                    .direction(),
-                8
-            );
+            assert_eq!(engine.direction_of(attacker), expected_attacker);
+            assert_eq!(engine.direction_of(victim), 8);
         }
         engine.tick_selected_ability(&sim, &assets, attacker, false);
-        assert_eq!(
-            engine
-                .world
-                .entities
-                .get(attacker)
-                .unwrap()
-                .element_data()
-                .direction(),
-            4
-        );
-        assert_eq!(
-            engine
-                .world
-                .entities
-                .get(victim)
-                .unwrap()
-                .element_data()
-                .direction(),
-            6
-        );
+        assert_eq!(engine.direction_of(attacker), 4);
+        assert_eq!(engine.direction_of(victim), 6);
         assert_eq!(
             selected_ability(
                 &engine.world.entities,
@@ -3111,13 +3057,7 @@ mod tests {
             true,
         );
 
-        let sprite = &engine
-            .world
-            .entities
-            .get(owner)
-            .unwrap()
-            .element_data()
-            .sprite;
+        let sprite = &engine.elem(owner).sprite;
         assert_eq!(
             (
                 sprite.current_row,
@@ -3261,17 +3201,7 @@ mod tests {
         );
 
         let target_entity = engine.world.entities.get(target).unwrap();
-        assert_eq!(
-            engine
-                .world
-                .entities
-                .get(carrier)
-                .unwrap()
-                .pc_data()
-                .unwrap()
-                .carried,
-            Some(target)
-        );
+        assert_eq!(engine.pc(carrier).carried, Some(target));
         assert_eq!(target_entity.human_data().unwrap().carrier, Some(carrier));
         assert_eq!(
             target_entity.element_data().position_map(),

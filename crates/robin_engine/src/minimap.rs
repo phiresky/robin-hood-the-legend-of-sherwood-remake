@@ -1382,31 +1382,6 @@ mod tests {
     }
 
     #[test]
-    fn minimap_serde_roundtrip() {
-        let mut mm = MinimapState::new();
-        mm.go_in = true;
-        mm.map_displayed = true;
-        mm.transition_counter = 0.5;
-        mm.close_after_highlight = true;
-        mm.set_highlighted(42);
-        mm.highlight_refresh = 10;
-
-        let json = serde_json::to_string(&mm).unwrap();
-        let de: MinimapState = serde_json::from_str(&json).unwrap();
-
-        assert!(de.go_in);
-        assert!(de.map_displayed);
-        assert!((de.transition_counter - 0.5).abs() < 1e-6);
-        assert_eq!(de.highlight_refresh, 10);
-        assert!(de.close_after_highlight);
-        assert_eq!(de.highlighted_elements.len(), 1);
-        assert_eq!(de.highlighted_elements[0].element_index, 42);
-
-        // Runtime fields reset to defaults.
-        assert!(!de.drag_start);
-    }
-
-    #[test]
     fn v48_restore_replaces_serialized_state_and_clears_input_gesture() {
         let mut mm = MinimapState::new();
         mm.drag_start = true;

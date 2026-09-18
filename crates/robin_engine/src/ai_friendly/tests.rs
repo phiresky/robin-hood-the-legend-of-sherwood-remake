@@ -108,10 +108,7 @@ fn after_script_queue_rebuilds_retained_view_antagonist() {
     let target = engine.add_test_entity(target);
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .ai_controller_mut()
-        .unwrap()
+        .ai_ctrl_mut(owner)
         .stimulus_queue
         .push(Stimulus::with_human(
             StimulusType::EventView,
@@ -142,12 +139,7 @@ fn think_unexpected_fit_again_returns_to_duty() {
     ai.base.current_substate = Substate::SleepingUnconscious;
     ai.fleeing_seen_enemy_counter = 5;
     let (mut engine, assets, owner) = duty_fixture(ai);
-    engine
-        .get_entity_mut(owner)
-        .unwrap()
-        .npc_data_mut()
-        .unwrap()
-        .eye_status = crate::element::EyeStatus::Stare;
+    engine.npc_mut(owner).eye_status = crate::element::EyeStatus::Stare;
     engine.execute_ai_callback(
         &sim,
         &assets,
@@ -159,12 +151,7 @@ fn think_unexpected_fit_again_returns_to_duty() {
     assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
     assert_eq!(ai.fleeing_seen_enemy_counter, 0);
     assert_eq!(
-        engine
-            .get_entity(owner)
-            .unwrap()
-            .npc_data()
-            .unwrap()
-            .eye_status,
+        engine.npc(owner).eye_status,
         crate::element::EyeStatus::LookForward,
     );
 }

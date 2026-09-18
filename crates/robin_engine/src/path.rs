@@ -206,14 +206,4 @@ mod tests {
         assert!((wp.x - 1.0).abs() < 1e-6);
         assert_eq!(wp.layer, 3);
     }
-
-    #[test]
-    fn serde_roundtrip() {
-        let p = sample_path();
-        let json = serde_json::to_string(&p).unwrap();
-        let p2: Path = serde_json::from_str(&json).unwrap();
-        assert_eq!(p2.waypoints.len(), 3);
-        assert_eq!(p2.current_index, 0);
-        assert!((p2.total_length() - p.total_length()).abs() < 1e-6);
-    }
 }

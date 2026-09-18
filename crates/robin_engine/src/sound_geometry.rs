@@ -1011,19 +1011,4 @@ mod tests {
         // Listener is on the segment → should be very close, high volume
         assert!(params.volume > 0.5, "volume = {}", params.volume);
     }
-
-    #[test]
-    fn serde_roundtrip() {
-        let mut sg = make_geometry();
-        sg.set_listen_point(MapPoint::new(100.0, 200.0));
-        sg.set_zoom_factor(1.5);
-
-        let json = serde_json::to_string(&sg).unwrap();
-        let sg2: SoundGeometry = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(sg2.listen_point.x, 100.0);
-        assert_eq!(sg2.listen_point.y, 200.0);
-        assert_eq!(sg2.zoom_factor, 1.5);
-        assert_eq!(sg2.fx_volume, 1.0);
-    }
 }

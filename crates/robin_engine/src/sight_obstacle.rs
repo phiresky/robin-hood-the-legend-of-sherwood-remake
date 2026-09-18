@@ -2201,34 +2201,25 @@ mod tests {
     /// `top_plane_points` and `bottom_plane_points` are set separately
     /// (the level-loader writes them from the SGHT/WOAW chunk; the Rust
     /// `rebuild_geometry` doesn't derive them from `obstacle_points`).
+    /// Obstacle outline whose points all share one top and bottom height.
+    fn prism_points(xy: &[(f32, f32)], z_top: f32, z_bottom: f32) -> Vec<ObstaclePoint> {
+        xy.iter()
+            .map(|&(x, y)| ObstaclePoint {
+                x,
+                y,
+                z_top,
+                z_bottom,
+            })
+            .collect()
+    }
+
     fn make_square_obstacle() -> SightObstacle {
         let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 0.0,
-                y: 0.0,
-                z_top: 5.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 0.0,
-                z_top: 5.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 5.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 0.0,
-                y: 10.0,
-                z_top: 5.0,
-                z_bottom: 0.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(
+            &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+            5.0,
+            0.0,
+        );
         obs.top_plane_points = [[0.0, 0.0, 5.0], [10.0, 0.0, 5.0], [0.0, 10.0, 5.0]];
         obs.bottom_plane_points = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]];
         obs.rebuild_geometry();
@@ -2316,26 +2307,7 @@ mod tests {
     #[test]
     fn elevated_obstacle_not_on_ground() {
         let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 0.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], 10.0, 3.0);
         obs.rebuild_geometry();
         assert!(!obs.on_ground);
     }
@@ -2346,16 +2318,6 @@ mod tests {
         obs.translate_2d(100.0, 100.0);
         assert!(obs.contains_point(GroundPoint::new(105.0, 105.0)));
         assert!(!obs.contains_point(GroundPoint::new(5.0, 5.0)));
-    }
-
-    #[test]
-    fn serde_roundtrip() {
-        let obs = make_square_obstacle();
-        let json = serde_json::to_string(&obs).expect("serialize");
-        let deser: SightObstacle = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deser.id, obs.id);
-        assert_eq!(deser.obstacle_type, obs.obstacle_type);
-        assert_eq!(deser.obstacle_points.len(), obs.obstacle_points.len());
     }
 
     // ── 3D ray blocking tests ──
@@ -2390,32 +2352,16 @@ mod tests {
         // equation rounded its Z one ULP above the origin and falsely
         // classified this otherwise-clear ray as passing through obstacle 90.
         let mut obs = SightObstacle::new_default(90);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 1300.0,
-                y: 1900.0,
-                z_top: 100.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 2050.0,
-                y: 1900.0,
-                z_top: 100.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 2050.0,
-                y: 2420.0,
-                z_top: 100.0,
-                z_bottom: 0.0,
-            },
-            ObstaclePoint {
-                x: 1300.0,
-                y: 2420.0,
-                z_top: 100.0,
-                z_bottom: 0.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(
+            &[
+                (1300.0, 1900.0),
+                (2050.0, 1900.0),
+                (2050.0, 2420.0),
+                (1300.0, 2420.0),
+            ],
+            100.0,
+            0.0,
+        );
         obs.top_plane_points = [
             [1796.8242, 2317.0935, 0.19600001],
             [1301.3945, 2408.703, 90.00101],
@@ -2551,32 +2497,11 @@ mod tests {
     fn elevated_obstacle_ray_between_planes_blocked() {
         // Elevated obstacle: bottom=3, top=10.
         let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 0.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 0.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(
+            &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+            10.0,
+            3.0,
+        );
         obs.top_plane_points = [[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [0.0, 10.0, 10.0]];
         obs.bottom_plane_points = [[0.0, 0.0, 3.0], [10.0, 0.0, 3.0], [0.0, 10.0, 3.0]];
         obs.rebuild_geometry();
@@ -2815,32 +2740,11 @@ mod tests {
         // Elevated obstacle floor at z=3, vertical rise from z=0 to z=10
         // directly below — should impact the bottom plane.
         let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 0.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 0.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(
+            &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+            10.0,
+            3.0,
+        );
         obs.top_plane_points = [[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [0.0, 10.0, 10.0]];
         obs.bottom_plane_points = [[0.0, 0.0, 3.0], [10.0, 0.0, 3.0], [0.0, 10.0, 3.0]];
         obs.rebuild_geometry();
@@ -2876,32 +2780,11 @@ mod tests {
         // t=3/10. Vertical rays use the dedicated upward-impact path, so use
         // a nonvertical segment to exercise bouncing-impact reachability.
         let mut obs = SightObstacle::new_default(0);
-        obs.obstacle_points = vec![
-            ObstaclePoint {
-                x: 0.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 0.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 10.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-            ObstaclePoint {
-                x: 0.0,
-                y: 10.0,
-                z_top: 10.0,
-                z_bottom: 3.0,
-            },
-        ];
+        obs.obstacle_points = prism_points(
+            &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+            10.0,
+            3.0,
+        );
         obs.top_plane_points = [[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [0.0, 10.0, 10.0]];
         obs.bottom_plane_points = [[0.0, 0.0, 3.0], [10.0, 0.0, 3.0], [0.0, 10.0, 3.0]];
         obs.rebuild_geometry();

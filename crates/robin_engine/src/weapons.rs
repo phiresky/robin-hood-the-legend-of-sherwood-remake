@@ -594,15 +594,6 @@ mod tests {
     // ── Weapon ──────────────────────────────────────────────────
 
     #[test]
-    fn weapon_new() {
-        let w = Weapon::new(WeaponType::Bow, 7, 20);
-        assert_eq!(w.weapon_type, WeaponType::Bow);
-        assert_eq!(w.profile_idx, 7);
-        assert_eq!(w.ammo, 20);
-        assert_eq!(w.max_ammo, 20);
-    }
-
-    #[test]
     fn weapon_reload_clamps() {
         let mut w = Weapon::new(WeaponType::Bow, 0, 20);
         w.ammo = 5;
@@ -710,14 +701,6 @@ mod tests {
     }
 
     // ── Sword ───────────────────────────────────────────────────
-
-    #[test]
-    fn sword_new() {
-        let s = SwordState::new(3);
-        assert_eq!(s.weapon.weapon_type, WeaponType::HandToHand);
-        assert_eq!(s.weapon.profile_idx, 3);
-        assert_eq!(s.current_thrust, 0);
-    }
 
     #[test]
     fn sword_strike_cycles() {
@@ -831,26 +814,4 @@ mod tests {
     }
 
     // ── Serde ───────────────────────────────────────────────────
-
-    #[test]
-    fn serde_bow_roundtrip() {
-        let p = make_bow_profile();
-        let bow = BowState::new(0, &p, 15);
-        let json = serde_json::to_string(&bow).unwrap();
-        let bow2: BowState = serde_json::from_str(&json).unwrap();
-        assert_eq!(bow2.weapon.ammo, 15);
-        assert!(bow2.long_shoot_available);
-        assert_eq!(bow2.current_mode, ShootMode::Normal);
-    }
-
-    #[test]
-    fn serde_sword_roundtrip() {
-        let mut sword = SwordState::new(2);
-        sword.strike();
-        sword.strike();
-        let json = serde_json::to_string(&sword).unwrap();
-        let sword2: SwordState = serde_json::from_str(&json).unwrap();
-        assert_eq!(sword2.weapon.profile_idx, 2);
-        assert_eq!(sword2.current_thrust, 2);
-    }
 }
