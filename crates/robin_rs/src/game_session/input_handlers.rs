@@ -279,8 +279,7 @@ mod gamepad_admission_tests {
         host.frontend.viewport.view_position = engine_coordinates::MapPoint::new(400.0, 300.0);
         let position = host.frontend.viewport.view_position;
         let zoom = host.frontend.viewport.zoom_factor;
-        let mut assets = engine_api::LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let manager = engine_manager_api::EngineManager::new(engine);
         let mut input = ThreadedInput::new();
         let mut commands = FrameCommands::new();

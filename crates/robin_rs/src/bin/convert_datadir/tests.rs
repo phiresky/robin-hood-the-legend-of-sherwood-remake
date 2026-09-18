@@ -456,6 +456,18 @@ fn opus_membership_only_dependency_is_written_and_decodes() {
     assert_eq!(decoded.audio_durations_ms["sounds/arrow.opus"], 100);
 }
 
+/// RGB565 little-endian picture over `source` pixels.
+fn rgb565_picture(width: u16, height: u16, source: &[u16]) -> Picture {
+    Picture {
+        width,
+        height,
+        pitch: width * 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
+        palette: None,
+    }
+}
+
 #[test]
 #[ignore = "requires cjxl on PATH"]
 fn tiny_keyed_interface_picture_falls_back_to_exact_lossless_jxl() {
@@ -477,14 +489,7 @@ fn tiny_keyed_interface_picture_falls_back_to_exact_lossless_jxl() {
             _ => FILL,
         })
         .collect();
-    let picture = Picture {
-        width,
-        height,
-        pitch: width * 2,
-        pixel_format: PixelFormat::Rgb16,
-        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
-        palette: None,
-    };
+    let picture = rgb565_picture(width, height, &source);
 
     // Premise: plain lossy q80 of this picture is below the floor, so the
     // gate below is actually exercised.
@@ -540,14 +545,7 @@ fn lossy_minimap_jxl_keeps_the_exact_transparent_key() {
             }
         })
         .collect();
-    let picture = Picture {
-        width,
-        height,
-        pitch: width * 2,
-        pixel_format: PixelFormat::Rgb16,
-        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
-        palette: None,
-    };
+    let picture = rgb565_picture(width, height, &source);
 
     let encoded = super::encode_minimap_picture_to_jxl(&picture, Some(80)).unwrap();
     let decoded = Picture::load_minimap_from_bytes(&encoded).unwrap();
@@ -668,14 +666,7 @@ fn tiny_keyed_interface_picture_ships_exact_raw_rgb565_for_avif() {
             _ => FILL,
         })
         .collect();
-    let picture = Picture {
-        width,
-        height,
-        pitch: width * 2,
-        pixel_format: PixelFormat::Rgb16,
-        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
-        palette: None,
-    };
+    let picture = rgb565_picture(width, height, &source);
 
     let encoded = super::encode_keyed_picture_avif(&picture, 60).unwrap();
     assert_eq!(encoded.codec, EncodedPictureCodec::Rgb565Raw);
@@ -714,14 +705,7 @@ fn lossy_minimap_avif_keeps_the_exact_transparent_key() {
             }
         })
         .collect();
-    let picture = Picture {
-        width,
-        height,
-        pitch: width * 2,
-        pixel_format: PixelFormat::Rgb16,
-        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
-        palette: None,
-    };
+    let picture = rgb565_picture(width, height, &source);
 
     let encoded = super::encode_minimap_picture_to_avif(&picture, 60).unwrap();
     assert!(browser_images::is_avif(&encoded));
@@ -768,14 +752,7 @@ fn opaque_keyed_picture_avif_without_alpha_item_decodes_all_opaque() {
     // both report alpha 255), so no pixel may come back as a key.
     let (width, height) = (64u16, 64u16);
     let source: Vec<u16> = (0..width * height).map(|i| (i % 0xF000) | 0x0800).collect();
-    let picture = Picture {
-        width,
-        height,
-        pitch: width * 2,
-        pixel_format: PixelFormat::Rgb16,
-        data: source.iter().copied().flat_map(u16::to_le_bytes).collect(),
-        palette: None,
-    };
+    let picture = rgb565_picture(width, height, &source);
     let rgba = robin_assets::rle_jxl::canvas_to_rgba(&source).unwrap();
     let encoded = super::encode_pixels_to_avif(
         width.into(),

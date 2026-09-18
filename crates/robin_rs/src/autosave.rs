@@ -807,15 +807,12 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn populated_diplomacy_autosave_commits_payload_before_publishing_manifest() {
-        use robin_engine::campaign::Campaign;
         use robin_engine::diplomacy::{DiplomacyDefinition, DiplomacyRule, Relationship};
         use robin_engine::element::Camp;
 
         let directory = tempfile::tempdir().unwrap();
         let save_directory = directory.path().to_string_lossy().into_owned();
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let mut engine =
-            Engine::new_for_test(1280.0, 720.0, Campaign::default(), &mut assets).unwrap();
+        let (mut engine, _assets) = robin_engine::test_support::fresh_engine_sized(1280.0, 720.0);
         engine.test_set_diplomacy(
             true,
             false,
@@ -887,12 +884,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn shutdown_drains_accepted_jobs_and_cleans_the_rotated_payload() {
-        use robin_engine::campaign::Campaign;
-
         let directory = tempfile::tempdir().unwrap();
         let save_directory = directory.path().to_string_lossy().into_owned();
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
+        let (engine, _assets) = robin_engine::test_support::fresh_engine();
         let host = Host::scratch(800.0, 600.0);
         let mut coordinator = AutosaveCoordinator::default();
         for ordinal in 0..4 {

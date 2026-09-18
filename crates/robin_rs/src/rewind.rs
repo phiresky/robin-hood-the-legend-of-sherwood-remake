@@ -335,9 +335,7 @@ mod tests {
 
     #[test]
     fn checkpoints_keep_ten_second_cadence_and_the_mission_start() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
-            .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut buffer = RewindBuffer::new();
         assert_eq!(SNAPSHOT_INTERVAL, 250);
         for frame in 0..=1000 {
@@ -369,9 +367,7 @@ mod tests {
 
     #[test]
     fn seek_journal_reconstructs_intermediate_frames_without_recent_copies() {
-        let mut assets = LevelAssets::default();
-        let mut engine =
-            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut buffer = RewindBuffer::new();
         let mut hashes = Vec::new();
         for frame in 0..=SNAPSHOT_INTERVAL + 3 {
@@ -399,9 +395,7 @@ mod tests {
 
     #[test]
     fn session_pruning_keeps_the_target_and_handles_the_maximum_frame() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets)
-            .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let frames = [0, 4, u32::MAX];
         for target in frames {
             let mut buffer = RewindBuffer::new();
@@ -436,14 +430,7 @@ mod tests {
 
     #[test]
     fn adopted_state_between_sparse_boundaries_journals_immediately() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let frame = SNAPSHOT_INTERVAL + 7;
         let mut buffer = RewindBuffer::new();
 
@@ -567,14 +554,7 @@ mod tests {
         use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 
         let mut buf = RewindBuffer::new();
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         for frame in 0..3 {
             buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
@@ -598,14 +578,7 @@ mod tests {
         use robin_engine::sim_timeline::{RestoreError, RestorePolicy};
 
         let mut buf = RewindBuffer::new();
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         for frame in 0..=SNAPSHOT_INTERVAL {
             buf.begin_frame(frame, &engine);
             buf.end_frame_input(robin_engine::engine::SimulationFrameInput::default());

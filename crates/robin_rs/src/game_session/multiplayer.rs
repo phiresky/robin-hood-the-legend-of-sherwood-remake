@@ -1393,9 +1393,7 @@ mod tests {
         std::sync::mpsc::Sender<NetEvent>,
         std::sync::mpsc::Receiver<NetOutbound>,
     ) {
-        let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
-            .expect("fixture engine");
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         let manager = EngineManager::new(engine);
         let (channels, incoming, outgoing, _, _) = NetChannels::new();
         let mut host = Host::default();

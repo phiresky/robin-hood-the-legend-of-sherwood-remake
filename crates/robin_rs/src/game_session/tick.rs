@@ -1336,6 +1336,18 @@ fn resolve_http_step_modals(
 
 #[cfg(test)]
 mod tests {
+    /// Borrow the test's mission locals as one [`StepWorld`].
+    macro_rules! step_world {
+        ($manager:ident, $host:ident, $assets:ident, $dev:ident, $game:ident) => {
+            StepWorld {
+                manager: &mut $manager,
+                host: &mut $host,
+                assets: &$assets,
+                dev: &mut $dev,
+                game: &mut $game,
+            }
+        };
+    }
     use super::*;
     use crate::rewind::RewindBuffer;
     use robin_engine::campaign::Campaign;
@@ -1570,13 +1582,7 @@ mod tests {
                 .collect(),
         );
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             4,
             &mut Default::default(),
@@ -1609,13 +1615,7 @@ mod tests {
         // A zero-tick request can dismiss UI while scrubbing, but cannot
         // append a backwards stationary record into the live stream.
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             0,
             &mut Default::default(),
@@ -1623,13 +1623,7 @@ mod tests {
         .unwrap();
         assert_eq!(host.effects.dialogue_count(), 0);
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut Default::default(),
@@ -1737,13 +1731,7 @@ mod tests {
         }
         rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 4).unwrap();
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut Default::default(),
@@ -1783,13 +1771,7 @@ mod tests {
             ..Default::default()
         };
         let error = run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             4,
             &mut policy,
@@ -1800,13 +1782,7 @@ mod tests {
         assert_eq!(host.effects.dialogue_count(), 1);
         policy.auto_dismiss = true;
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut policy,
@@ -1869,13 +1845,7 @@ mod tests {
             ..Default::default()
         };
         let stationary = run_forward_ticks_with_session_modals(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut strict,
@@ -1888,13 +1858,7 @@ mod tests {
         assert_eq!(timeline.frame_number(), 0);
         assert!(!scheduler.is_active());
         let forward = run_forward_ticks_with_session_modals(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut strict,
@@ -1945,13 +1909,7 @@ mod tests {
         assert!(scheduler.is_active());
         assert!(host.effects.pending_modal_kinds().is_empty());
         let repeated = run_forward_ticks_with_session_modals(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             2,
             &mut strict,
@@ -1991,13 +1949,7 @@ mod tests {
         let (assets, mut manager, mut host, mut dev, mut game, mut timeline) =
             stepping_fixture(Some(player));
         let result = run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             2,
             &mut Default::default(),
@@ -2024,13 +1976,7 @@ mod tests {
         let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, dismissed) = run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut modal_policy,
@@ -2058,13 +2004,7 @@ mod tests {
         let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut modal_policy,
@@ -2304,13 +2244,7 @@ mod tests {
         let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, _) = run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut modal_policy,
@@ -2328,13 +2262,7 @@ mod tests {
         );
 
         let error = run_forward_ticks_with_session_modals(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut modal_policy,
@@ -2405,13 +2333,7 @@ mod tests {
         let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         let (advanced, _) = run_forward_ticks(
-            StepWorld {
-                manager: &mut manager,
-                host: &mut host,
-                assets: &assets,
-                dev: &mut dev,
-                game: &mut game,
-            },
+            step_world!(manager, host, assets, dev, game),
             &mut timeline,
             1,
             &mut modal_policy,
