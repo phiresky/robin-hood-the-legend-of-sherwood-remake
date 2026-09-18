@@ -59,8 +59,8 @@ mod resumed_instruction_tests {
         *destination = MapPoint::new(120.0, 100.0);
         flags.insert(MoveFlags::NO_TRANSITIONS);
         let sim = crate::sim_rng::test_context();
-        let sequence = engine.t_launch_element(&assets, movement);
-        engine.t_postpone_element(&assets, sequence, 0);
+        let sequence = engine.t_launch_element_with(&sim, &assets, movement);
+        engine.t_postpone_element_with(&sim, &assets, sequence, 0);
 
         engine
             .dispatch_script_synchronous_action(

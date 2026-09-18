@@ -428,7 +428,8 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
     engine.face(victim, 8);
     engine.set_action_state_of(victim, ActionState::Moving);
 
-    let seq = engine.t_launch_element(
+    let seq = engine.t_launch_element_with(
+        &sim,
         &assets,
         SequenceElement::new_interaction(1, Command::StrangleCmd, Some(attacker), Some(victim)),
     );
@@ -503,7 +504,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 
     let mut invalid = engine.clone();
     invalid.place_map(victim, crate::coordinates::MapPoint::new(100.0, 100.0));
-    invalid.t_tick_actor_owner_envelopes(&assets);
+    invalid.t_tick_actor_owner_envelopes_with(&sim, &assets);
     assert_eq!(
         invalid
             .orders
@@ -553,6 +554,7 @@ fn moving_strangle_victim_event_stop_precedes_next_owner_live_initialization() {
 
 #[test]
 fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
+    let sim = crate::sim_rng::test_context();
     use crate::element::{ActionState, Command, Detectable, DetectableType, Posture};
     use crate::sequence::{SequenceElement, SequenceState};
 
@@ -573,11 +575,12 @@ fn moving_hit_victim_receives_synchronous_event_stop_and_blinks_enemy() {
     });
 
     let assets = engine.test_runtime_assets();
-    let seq = engine.t_launch_element(
+    let seq = engine.t_launch_element_with(
+        &sim,
         &assets,
         SequenceElement::new_interaction(1, Command::HitCmd, Some(attacker), Some(victim)),
     );
-    engine.t_hourglass_phase_sequences(&assets);
+    engine.t_hourglass_phase_sequences_with(&sim, &assets);
 
     let hit = engine
         .orders
@@ -779,7 +782,8 @@ fn interrupted_strangle_instructs_victim_wait_before_unlock_and_preserves_outer_
         .ai_ctrl_mut(victim)
         .non_script_lock(AiLockFlags::FREEZE);
     let unrelated = engine.entity_id_for_index(0).unwrap();
-    let outer_wait = engine.t_launch_element(
+    let outer_wait = engine.t_launch_element_with(
+        &sim,
         &assets,
         crate::sequence::SequenceElement::new(1, crate::element::Command::Wait, Some(unrelated)),
     );

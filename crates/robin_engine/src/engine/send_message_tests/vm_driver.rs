@@ -368,7 +368,7 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     let projectile_frame = engine.elem(projectile).sprite.current_frame;
     let net_frame = engine.elem(net).sprite.current_frame;
 
-    engine.t_tick_actor_owner_envelopes(&assets);
+    engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     // An inactive ale reports false from its update, but the engine's
     // default removal only deactivates: the slot stays occupied because

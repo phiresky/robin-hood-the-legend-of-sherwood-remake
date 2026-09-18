@@ -332,6 +332,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 
 #[test]
 fn terminal_callbacks_finish_in_call_order_across_owners() {
+    let sim = crate::sim_rng::test_context();
     use crate::element::Command;
     use crate::sequence::SequenceElement;
     let mut engine = EngineInner::new();
@@ -349,8 +350,8 @@ fn terminal_callbacks_finish_in_call_order_across_owners() {
                 .orders
                 .sequence_manager
                 .start_sequence_level(sequence);
-            engine.t_element_in_progress(&assets, sequence, 0);
-            engine.t_element_terminated(&assets, sequence, 0);
+            engine.t_element_in_progress_with(&sim, &assets, sequence, 0);
+            engine.t_element_terminated_with(&sim, &assets, sequence, 0);
             assert_eq!(
                 engine
                     .orders
