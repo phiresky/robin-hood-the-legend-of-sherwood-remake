@@ -131,11 +131,7 @@ fn give_flight(
                 flyer_pos.y + inc_y * frames as f32,
                 flyer_pos.z,
             ),
-            crate::coordinates::WorldVec3D {
-                x: inc_x,
-                y: inc_y,
-                z: 0.0,
-            },
+            crate::coordinates::WorldVec3D::new(inc_x, inc_y, 0.0),
             None,
             None,
         );

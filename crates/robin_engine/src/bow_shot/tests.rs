@@ -1550,19 +1550,11 @@ fn projectile_near_impact_still_uses_one_frame_minimum() {
 fn spawn_arrow_creates_flying_projectile_with_trajectory() {
     let traj = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 25.0,
-                y: 0.0,
-                z: 45.0,
-            },
+            position: WorldPoint3D::new(25.0, 0.0, 45.0),
             time: 4,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 40.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 40.0),
             time: 4,
         },
     ];
@@ -1612,11 +1604,7 @@ fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory_origin: MapPoint::new(100.0, 0.0),
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 40.0,
-                z: 40.0,
-            },
+            position: WorldPoint3D::new(50.0, 40.0, 40.0),
             time: 2,
         }],
         ..SpawnArrowParams::test_flat(
@@ -1643,27 +1631,15 @@ fn tick_arrows_follows_trajectory_and_hits() {
     // soldier up on the final waypoint.
     let traj = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 20.0,
-                y: 0.0,
-                z: 35.0,
-            },
+            position: WorldPoint3D::new(20.0, 0.0, 35.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 40.0,
-                y: 0.0,
-                z: 30.0,
-            },
+            position: WorldPoint3D::new(40.0, 0.0, 30.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 25.0),
             time: 2,
         },
     ];
@@ -1679,12 +1655,8 @@ fn tick_arrows_follows_trajectory_and_hits() {
             ..SpawnArrowParams::test_flat(
                 EntityId::Pc(crate::entity_id::PcId(0)),
                 EntityId::Pc(crate::entity_id::PcId(1)),
-                WorldPoint3D {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 40.0,
-                },
-                MapPoint { x: 50.0, y: 0.0 },
+                WorldPoint3D::new(0.0, 0.0, 40.0),
+                MapPoint::new(50.0, 0.0),
             )
         })),
     ]);
@@ -1718,27 +1690,15 @@ fn tick_arrows_follows_trajectory_and_hits() {
 fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
     let traj = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 20.0,
-                y: 0.0,
-                z: 35.0,
-            },
+            position: WorldPoint3D::new(20.0, 0.0, 35.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 40.0,
-                y: 0.0,
-                z: 30.0,
-            },
+            position: WorldPoint3D::new(40.0, 0.0, 30.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 25.0),
             time: 2,
         },
     ];
@@ -1805,11 +1765,7 @@ fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
 fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 0.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 0.0),
             time: 1,
         }],
         initial_velocity: WorldVec3D::new(1.0, 0.0, -0.25),
@@ -1823,11 +1779,7 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
     let mut other_arrow = spawn_arrow(SpawnArrowParams {
         trajectory_origin: MapPoint::new(0.0, 0.0),
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 1010.0,
-                y: 0.0,
-                z: 40.0,
-            },
+            position: WorldPoint3D::new(1010.0, 0.0, 40.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -1878,11 +1830,7 @@ fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
 fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(100.0, 0.0, 25.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -1945,11 +1893,7 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
     let victim_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(100.0, 0.0, 25.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -2003,11 +1947,7 @@ fn enabled_diplomacy_protects_neutral_soldiers_from_pc_arrows() {
 fn tick_arrows_selects_last_eligible_human_in_actor_order() {
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(100.0, 0.0, 25.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -2059,11 +1999,7 @@ fn ordered_projectile_scan_uses_actor_registry_not_entity_slots() {
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(3));
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 100.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(100.0, 0.0, 25.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -2262,11 +2198,7 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
             shooter: Some(EntityId::Pc(crate::entity_id::PcId(0))),
             flying: true,
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 50.0,
-                    y: 0.0,
-                    z: 25.0,
-                },
+                position: WorldPoint3D::new(50.0, 0.0, 25.0),
                 time: 1,
             }],
             damage: 30,
@@ -2314,11 +2246,7 @@ fn tick_arrows_stationary_projectile_does_not_hit_human() {
 fn tick_arrows_without_shooter_does_not_hit_human() {
     let mut arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 25.0),
             time: 1,
         }],
         ..SpawnArrowParams::test_flat(
@@ -2375,11 +2303,7 @@ fn tick_arrows_dead_shooter_still_hits_human() {
 
     let arrow = spawn_arrow(SpawnArrowParams {
         trajectory: vec![TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 25.0),
             time: 2,
         }],
         ..SpawnArrowParams::test_flat(
@@ -2397,34 +2321,7 @@ fn tick_arrows_dead_shooter_still_hits_human() {
     ]);
 
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
-    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
-    let mut hit = None;
-    for _ in 0..10 {
-        let old_position = {
-            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
-                unreachable!()
-            };
-            if let Some(old) = arrow.projectile.launch_segment_start.take() {
-                old
-            } else {
-                let old = arrow.element.position();
-                if arrow.advance_projectile_hourglass() {
-                    break;
-                }
-                old
-            }
-        };
-        hit = projectile_human_victim(
-            &entities,
-            &actor_order,
-            &crate::diplomacy::DiplomacyState::default(),
-            arrow_id,
-            old_position,
-        );
-        if hit.is_some() {
-            break;
-        }
-    }
+    let hit = first_projectile_victim(&mut entities, arrow_id, 10);
     assert_eq!(hit, Some(EntityId::Soldier(crate::entity_id::SoldierId(1))));
 }
 
@@ -2453,19 +2350,11 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
 
     let trajectory = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 25.0,
-                y: 0.0,
-                z: 10.0,
-            },
+            position: WorldPoint3D::new(25.0, 0.0, 10.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 0.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 0.0),
             time: 2,
         },
     ];
@@ -2572,11 +2461,7 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
             shooter: Some(EntityId::Pc(crate::entity_id::PcId(2))),
             flying: true,
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 25.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
+                position: WorldPoint3D::new(25.0, 0.0, 0.0),
                 time: 1,
             }],
             damage: 30,
@@ -2643,11 +2528,7 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
             shooter: Some(EntityId::Pc(crate::entity_id::PcId(2))),
             flying: true,
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
+                position: WorldPoint3D::new(0.0, 0.0, 0.0),
                 time: 1,
             }],
             damage: 30,
@@ -2814,11 +2695,7 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
     });
 
     let trajectory = vec![TrajectoryPoint {
-        position: WorldPoint3D {
-            x: 50.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        position: WorldPoint3D::new(50.0, 0.0, 0.0),
         time: 2,
     }];
     let apple = Entity::Projectile(ElementProjectile {
@@ -2885,11 +2762,7 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
             shooter: Some(EntityId::Pc(crate::entity_id::PcId(2))),
             flying: true,
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 10.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
+                position: WorldPoint3D::new(10.0, 0.0, 0.0),
                 time: 1,
             }],
             ..ProjectileData::default()
@@ -3144,39 +3017,36 @@ fn aim_transitions_use_anonymous_raise_lower_orders() {
     assert_eq!(long, vec![OrderType::TransitionRaisingBowAnonymous]);
 }
 
-#[test]
-fn unequip_bow_sets_waiting_on_animation_start() {
+#[rstest::rstest]
+#[case::unequip_sets_waiting(
+    ActionState::AimingWithBow,
+    OrderType::TransitionUnequipBow,
+    ActionState::Waiting
+)]
+#[case::equip_sets_aiming(
+    ActionState::Waiting,
+    OrderType::TransitionEquipBow,
+    ActionState::AimingWithBow
+)]
+#[case::unload_sets_waiting(
+    ActionState::AimingWithBowDown,
+    OrderType::TransitionUnloadBow,
+    ActionState::Waiting
+)]
+fn bow_transition_sets_action_state_on_animation_start(
+    #[case] initial: ActionState,
+    #[case] transition: OrderType,
+    #[case] expected: ActionState,
+) {
     let mut pc = make_pc(0.0, 0.0);
-    pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+    pc.actor_data_mut().unwrap().action_state = initial;
 
-    apply_bow_transition_state_side_effect(
-        &mut pc,
-        OrderType::TransitionUnequipBow,
-        SpriteMotionState::Start,
-    );
+    apply_bow_transition_state_side_effect(&mut pc, transition, SpriteMotionState::Start);
 
     assert_eq!(
         pc.actor_data().unwrap().action_state,
-        ActionState::Waiting,
-        "the unequip-bow transition sets Waiting when motion starts"
-    );
-}
-
-#[test]
-fn equip_bow_sets_aiming_on_animation_start() {
-    let mut pc = make_pc(0.0, 0.0);
-    pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;
-
-    apply_bow_transition_state_side_effect(
-        &mut pc,
-        OrderType::TransitionEquipBow,
-        SpriteMotionState::Start,
-    );
-
-    assert_eq!(
-        pc.actor_data().unwrap().action_state,
-        ActionState::AimingWithBow,
-        "the equip-bow transition sets AimingWithBow when motion starts"
+        expected,
+        "the bow transition sets its action state when motion starts"
     );
 }
 
@@ -3249,24 +3119,6 @@ fn equip_and_unload_are_active_bow_transition_orders() {
     assert!(is_bow_transition_order(
         OrderType::TransitionUnloadBowAnonymous
     ));
-}
-
-#[test]
-fn unload_bow_sets_waiting_on_animation_start() {
-    let mut pc = make_pc(0.0, 0.0);
-    pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
-
-    apply_bow_transition_state_side_effect(
-        &mut pc,
-        OrderType::TransitionUnloadBow,
-        SpriteMotionState::Start,
-    );
-
-    assert_eq!(
-        pc.actor_data().unwrap().action_state,
-        ActionState::Waiting,
-        "the unload-bow transition sets Waiting when motion starts"
-    );
 }
 
 #[test]
@@ -3814,39 +3666,16 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
 /// "untargetable" postures.  Spot-check one of them
 /// (`Posture::Lying`) to confirm the filter actually prunes the
 /// snapshot.
-#[test]
-fn tick_arrows_skips_lying_victim() {
-    use crate::element::Posture;
-
-    let mut soldier = make_soldier(50.0, 0.0);
-    soldier.set_posture(Posture::Lying);
-
-    // Arrow trajectory aimed directly at where the belt would be
-    // if the soldier were upright — but since it's lying, no hit.
-    let trajectory = vec![TrajectoryPoint {
-        position: WorldPoint3D {
-            x: 50.0,
-            y: 0.0,
-            z: 25.0,
-        },
-        time: 2,
-    }];
-    let arrow = spawn_arrow(SpawnArrowParams {
-        trajectory,
-        ..SpawnArrowParams::test_flat(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-            WorldPoint3D::new(0.0, 0.0, 25.0),
-            MapPoint::new(50.0, 0.0),
-        )
-    });
-
-    let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)]);
-
-    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+/// Advance `arrow_id` for up to `frames` frames and return the first human
+/// victim its swept segment reports.
+fn first_projectile_victim(
+    entities: &mut Entities,
+    arrow_id: EntityId,
+    frames: usize,
+) -> Option<EntityId> {
     let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
     let mut hit = None;
-    for _ in 0..10 {
+    for _ in 0..frames {
         let old_position = {
             let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
                 unreachable!()
@@ -3862,7 +3691,7 @@ fn tick_arrows_skips_lying_victim() {
             }
         };
         hit = projectile_human_victim(
-            &entities,
+            entities,
             &actor_order,
             &crate::diplomacy::DiplomacyState::default(),
             arrow_id,
@@ -3872,6 +3701,36 @@ fn tick_arrows_skips_lying_victim() {
             break;
         }
     }
+    hit
+}
+
+#[test]
+fn tick_arrows_skips_lying_victim() {
+    use crate::element::Posture;
+
+    let mut soldier = make_soldier(50.0, 0.0);
+    soldier.set_posture(Posture::Lying);
+
+    // Arrow trajectory aimed directly at where the belt would be
+    // if the soldier were upright — but since it's lying, no hit.
+    let trajectory = vec![TrajectoryPoint {
+        position: WorldPoint3D::new(50.0, 0.0, 25.0),
+        time: 2,
+    }];
+    let arrow = spawn_arrow(SpawnArrowParams {
+        trajectory,
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Pc(crate::entity_id::PcId(1)),
+            WorldPoint3D::new(0.0, 0.0, 25.0),
+            MapPoint::new(50.0, 0.0),
+        )
+    });
+
+    let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)]);
+
+    let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
+    let hit = first_projectile_victim(&mut entities, arrow_id, 10);
     assert_eq!(hit, None);
 }
 
@@ -3885,27 +3744,15 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
     // Arrow stays well above the soldier's belt (Z=25).
     let trajectory = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 30.0,
-                y: 0.0,
-                z: 80.0,
-            },
+            position: WorldPoint3D::new(30.0, 0.0, 80.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 60.0,
-                y: 0.0,
-                z: 78.0,
-            },
+            position: WorldPoint3D::new(60.0, 0.0, 78.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 90.0,
-                y: 0.0,
-                z: 76.0,
-            },
+            position: WorldPoint3D::new(90.0, 0.0, 76.0),
             time: 2,
         },
     ];
@@ -3926,34 +3773,7 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
     ]);
 
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
-    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
-    let mut hit = None;
-    for _ in 0..20 {
-        let old_position = {
-            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
-                unreachable!()
-            };
-            if let Some(old) = arrow.projectile.launch_segment_start.take() {
-                old
-            } else {
-                let old = arrow.element.position();
-                if arrow.advance_projectile_hourglass() {
-                    break;
-                }
-                old
-            }
-        };
-        hit = projectile_human_victim(
-            &entities,
-            &actor_order,
-            &crate::diplomacy::DiplomacyState::default(),
-            arrow_id,
-            old_position,
-        );
-        if hit.is_some() {
-            break;
-        }
-    }
+    let hit = first_projectile_victim(&mut entities, arrow_id, 20);
     assert_eq!(hit, None);
 }
 
@@ -3964,19 +3784,11 @@ fn tick_arrows_does_not_hit_when_arcing_overhead() {
 fn tick_arrows_hits_through_belt_column() {
     let trajectory = vec![
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 50.0,
-                y: 0.0,
-                z: 25.0,
-            },
+            position: WorldPoint3D::new(50.0, 0.0, 25.0),
             time: 2,
         },
         TrajectoryPoint {
-            position: WorldPoint3D {
-                x: 80.0,
-                y: 0.0,
-                z: 20.0,
-            },
+            position: WorldPoint3D::new(80.0, 0.0, 20.0),
             time: 2,
         },
     ];
@@ -3995,34 +3807,7 @@ fn tick_arrows_hits_through_belt_column() {
         Some(arrow),
     ]);
     let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(2));
-    let actor_order: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
-    let mut hit = None;
-    for _ in 0..20 {
-        let old_position = {
-            let Entity::Projectile(arrow) = entities.get_mut(arrow_id).unwrap() else {
-                unreachable!()
-            };
-            if let Some(old) = arrow.projectile.launch_segment_start.take() {
-                old
-            } else {
-                let old = arrow.element.position();
-                if arrow.advance_projectile_hourglass() {
-                    break;
-                }
-                old
-            }
-        };
-        hit = projectile_human_victim(
-            &entities,
-            &actor_order,
-            &crate::diplomacy::DiplomacyState::default(),
-            arrow_id,
-            old_position,
-        );
-        if hit.is_some() {
-            break;
-        }
-    }
+    let hit = first_projectile_victim(&mut entities, arrow_id, 20);
     assert_eq!(hit, Some(EntityId::Soldier(crate::entity_id::SoldierId(1))));
 }
 
@@ -4058,11 +3843,7 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
     // stands at ground Y=0, so the arrow shares that ground Y and
     // clears the quad only on height, which the Z extent decides.
     let trajectory = vec![TrajectoryPoint {
-        position: WorldPoint3D {
-            x: 50.0,
-            y: 0.0,
-            z: 40.0,
-        },
+        position: WorldPoint3D::new(50.0, 0.0, 40.0),
         time: 2,
     }];
     let arrow = spawn_arrow(SpawnArrowParams {
@@ -4126,11 +3907,7 @@ fn tick_arrows_inactive_shield_hit_deflects_and_keeps_flying() {
             );
             assert_ne!(
                 p.element.position(),
-                (WorldPoint3D {
-                    x: 50.0,
-                    y: 40.0,
-                    z: 40.0
-                }),
+                (WorldPoint3D::new(50.0, 40.0, 40.0)),
                 "falling advances the trajectory immediately"
             );
         }
@@ -4215,11 +3992,7 @@ fn projectile_uses_stale_shield_until_explicit_refresh() {
         let before = (before_obstacle.box_3d_min, before_obstacle.box_3d_max);
         let arrow = spawn_arrow(SpawnArrowParams {
             trajectory: vec![TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 50.0,
-                    y: 0.0,
-                    z: 40.0,
-                },
+                position: WorldPoint3D::new(50.0, 0.0, 40.0),
                 time: 2,
             }],
             initial_velocity: WorldVec3D::new(-1.0, 0.0, 0.0),
@@ -4301,19 +4074,11 @@ fn non_shield_arrow_ricochet_advances_immediately() {
         // sector from live flight rather than the orientation cache.
         let trajectory = vec![
             TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 25.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
+                position: WorldPoint3D::new(25.0, 0.0, 0.0),
                 time: 1,
             },
             TrajectoryPoint {
-                position: WorldPoint3D {
-                    x: 50.0,
-                    y: 0.0,
-                    z: 0.0,
-                },
+                position: WorldPoint3D::new(50.0, 0.0, 0.0),
                 time: 2,
             },
         ];
@@ -4481,11 +4246,7 @@ fn ground_crossing_is_attributed_to_first_front_facing_shield() {
 #[test]
 fn tick_arrows_miss_and_land_despawns() {
     let trajectory = vec![TrajectoryPoint {
-        position: WorldPoint3D {
-            x: 10.0,
-            y: 0.0,
-            z: 0.0,
-        },
+        position: WorldPoint3D::new(10.0, 0.0, 0.0),
         time: 1,
     }];
     let arrow = spawn_arrow(SpawnArrowParams {

@@ -2340,11 +2340,7 @@ fn parried_true_circle_still_queues_push_fall() {
         .position_iface_mut()
         .set_flight_goal_and_increment(
             wp(victim_position_before.x + 8.0, victim_position_before.y),
-            crate::coordinates::WorldVec3D {
-                x: accepted_increment,
-                y: 0.0,
-                z: 0.0,
-            },
+            crate::coordinates::WorldVec3D::new(accepted_increment, 0.0, 0.0),
             None,
             None,
         );
@@ -2805,11 +2801,7 @@ fn elevated_domino_uses_world_ground_xy_not_projected_map_y() {
         .position_iface_mut()
         .set_flight_goal_and_increment(
             WorldPoint3D::new(0.0, 95.0, 15.0),
-            crate::coordinates::WorldVec3D {
-                x: 0.0,
-                y: -1.0,
-                z: 1.0,
-            },
+            crate::coordinates::WorldVec3D::new(0.0, -1.0, 1.0),
             None,
             None,
         );
