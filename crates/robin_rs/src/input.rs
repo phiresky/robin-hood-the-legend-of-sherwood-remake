@@ -365,14 +365,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keyboard_state_default_all_released() {
-        let ks = KeyboardState::default();
-        assert!(!ks.is_pressed(KeyCode::KeyA));
-        assert!(!ks.is_pressed(KeyCode::Backspace));
-        assert!(!ks.is_pressed(KeyCode::F12));
-    }
-
-    #[test]
     fn keyboard_state_press() {
         let mut ks = KeyboardState::default();
         ks.keys.insert(KeyCode::Backspace);

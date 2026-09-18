@@ -1,7 +1,6 @@
 //! Shared host/input fixtures built through the explicit engine test API.
 use super::Host;
 use robin_engine::{
-    campaign::Campaign,
     coordinates::MapPoint,
     element::{
         self as engine_element, ActorData, ActorPc, ElementData, ElementKind, EntityId, HumanData,
@@ -12,9 +11,7 @@ use robin_engine::{
 };
 
 pub(crate) fn fixture() -> (Engine, LevelAssets, Host) {
-    let mut assets = LevelAssets::new();
-    let engine =
-        Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("test engine");
+    let (engine, assets) = robin_engine::test_support::fresh_engine();
     let host = Host::scratch(800.0, 600.0);
     (engine, assets, host)
 }

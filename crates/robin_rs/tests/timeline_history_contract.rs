@@ -1,19 +1,14 @@
 //! Black-box contracts for checkpoint/journal lifecycle boundaries.
 
-use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
-    Engine, ExternalAction, ExternalFacts, LevelAssets, SimCommand, SimulationFrameInput,
-    SoundBoundary, SoundBoundaryPolicy,
+    ExternalAction, ExternalFacts, SimCommand, SimulationFrameInput, SoundBoundary,
+    SoundBoundaryPolicy,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::sim_timeline::{
     CheckpointPolicy, CommandJournal, RestoreError, RestorePolicy, RetentionPolicy, TimelineHistory,
 };
-
-fn fixture_engine(assets: &mut LevelAssets) -> Engine {
-    Engine::new_for_test(640.0, 480.0, Campaign::default(), assets)
-        .expect("construct timeline-history fixture")
-}
+use robin_engine::test_support::fresh_engine_sized;
 
 fn commands(label: &str) -> SimulationFrameInput {
     SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
@@ -25,8 +20,7 @@ fn commands(label: &str) -> SimulationFrameInput {
 
 #[test]
 fn journal_retains_the_complete_authoritative_frame() {
-    let mut assets = LevelAssets::new();
-    let engine = fixture_engine(&mut assets);
+    let (engine, _assets) = fresh_engine_sized(640.0, 480.0);
     let mut history = TimelineHistory::new(
         CheckpointPolicy::EveryFrame,
         RetentionPolicy::Latest { capacity: 2 },
@@ -74,8 +68,7 @@ fn journal_retains_the_complete_authoritative_frame() {
 
 #[test]
 fn retention_prunes_commands_to_the_oldest_replayable_checkpoint() {
-    let mut assets = LevelAssets::new();
-    let mut engine = fixture_engine(&mut assets);
+    let (mut engine, assets) = fresh_engine_sized(640.0, 480.0);
     let mut history = TimelineHistory::new(
         CheckpointPolicy::EveryFrame,
         RetentionPolicy::Latest { capacity: 2 },
@@ -114,8 +107,7 @@ fn retention_prunes_commands_to_the_oldest_replayable_checkpoint() {
 
 #[test]
 fn truncating_at_the_command_horizon_preserves_the_branch_checkpoint() {
-    let mut assets = LevelAssets::new();
-    let mut engine = fixture_engine(&mut assets);
+    let (mut engine, assets) = fresh_engine_sized(640.0, 480.0);
     let mut history = TimelineHistory::new(
         CheckpointPolicy::EveryFrame,
         RetentionPolicy::Latest { capacity: 2 },
@@ -154,8 +146,7 @@ fn truncating_at_the_command_horizon_preserves_the_branch_checkpoint() {
 
 #[test]
 fn truncating_before_the_retained_horizon_is_a_no_op() {
-    let mut assets = LevelAssets::new();
-    let mut engine = fixture_engine(&mut assets);
+    let (mut engine, assets) = fresh_engine_sized(640.0, 480.0);
     let mut history = TimelineHistory::new(
         CheckpointPolicy::EveryFrame,
         RetentionPolicy::Latest { capacity: 2 },
@@ -178,8 +169,7 @@ fn truncating_before_the_retained_horizon_is_a_no_op() {
 
 #[test]
 fn periodic_history_starts_journaling_only_when_a_checkpoint_can_anchor_replay() {
-    let mut assets = LevelAssets::new();
-    let mut engine = fixture_engine(&mut assets);
+    let (mut engine, _assets) = fresh_engine_sized(640.0, 480.0);
     let mut history = TimelineHistory::new(
         CheckpointPolicy::EveryNthFrame { interval: 5 },
         RetentionPolicy::Latest { capacity: 2 },

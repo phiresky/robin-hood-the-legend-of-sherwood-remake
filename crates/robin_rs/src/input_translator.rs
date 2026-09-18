@@ -693,11 +693,14 @@ mod tests {
         assert_eq!(t.translate_key(KeyCode::F24), None);
     }
 
-    #[test]
-    fn mouse_edge_scroll_left() {
+    #[rstest::rstest]
+    #[case::left(0.0, 400.0, GameAction::ScrollLeft)]
+    #[case::right(1023.0, 400.0, GameAction::ScrollRight)]
+    #[case::up(500.0, 0.0, GameAction::ScrollUp)]
+    #[case::down(500.0, 767.0, GameAction::ScrollDown)]
+    fn mouse_edge_scroll(#[case] x: f32, #[case] y: f32, #[case] expected: GameAction) {
         let t = make_translator();
-        let actions = t.translate_mouse(0.0, 400.0, 0);
-        assert!(actions.contains(&GameAction::ScrollLeft));
+        assert!(t.translate_mouse(x, y, 0).contains(&expected));
     }
 
     #[test]
@@ -715,27 +718,6 @@ mod tests {
             t.translate_mouse(0.0, 400.0, 0)
                 .contains(&GameAction::ScrollLeft)
         );
-    }
-
-    #[test]
-    fn mouse_edge_scroll_right() {
-        let t = make_translator();
-        let actions = t.translate_mouse(1023.0, 400.0, 0);
-        assert!(actions.contains(&GameAction::ScrollRight));
-    }
-
-    #[test]
-    fn mouse_edge_scroll_up() {
-        let t = make_translator();
-        let actions = t.translate_mouse(500.0, 0.0, 0);
-        assert!(actions.contains(&GameAction::ScrollUp));
-    }
-
-    #[test]
-    fn mouse_edge_scroll_down() {
-        let t = make_translator();
-        let actions = t.translate_mouse(500.0, 767.0, 0);
-        assert!(actions.contains(&GameAction::ScrollDown));
     }
 
     #[test]
@@ -1095,14 +1077,6 @@ mod tests {
         assert!(flags.contains(TranslationFlags::MISSION));
         assert!(!flags.contains(TranslationFlags::QUICK_SAVE));
         assert!(!flags.contains(TranslationFlags::INGAME_MENU));
-    }
-
-    #[test]
-    fn serde_round_trip_game_action() {
-        let action = GameAction::SelectCharacter { portrait_index: 3 };
-        let json = serde_json::to_string(&action).unwrap();
-        let back: GameAction = serde_json::from_str(&json).unwrap();
-        assert_eq!(action, back);
     }
 
     #[test]

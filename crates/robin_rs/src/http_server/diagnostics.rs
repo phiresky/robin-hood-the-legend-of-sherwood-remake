@@ -714,9 +714,7 @@ mod tests {
 
     #[test]
     fn state_and_script_diagnostics_preserve_wire_shapes_without_mutation() {
-        let mut assets = LevelAssets::new();
-        let mut engine =
-            Engine::new_for_test(800.0, 600.0, Default::default(), &mut assets).unwrap();
+        let (mut engine, _assets) = robin_engine::test_support::fresh_engine();
         engine.test_set_frame_counter(42);
         let before = engine.encode_native_snapshot();
         assert_eq!(

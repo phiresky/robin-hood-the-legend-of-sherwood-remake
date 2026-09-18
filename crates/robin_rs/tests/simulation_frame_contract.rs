@@ -12,8 +12,8 @@
 
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
-    DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostEvent,
-    LevelAssets, SimConfig, SimulationFrameInput,
+    DevState, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostEvent, LevelAssets,
+    SimulationFrameInput,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::replay::state_hash;
@@ -21,6 +21,7 @@ use robin_engine::sim_timeline::{
     ReplayError, ReplayFrameResult, SimSnapshot, replay_authoritative_frame,
     replay_authoritative_frame_profiled, replay_frames_to_frame,
 };
+use robin_engine::test_support::seeded_engine;
 use robin_rs::Host;
 use robin_rs::sim_timeline::run_engine_frame_core;
 
@@ -40,22 +41,7 @@ fn production_input_and_presentation_views_only_borrow_engine_queries() {
     phase_capabilities::assert_production_views_are_readonly();
 }
 
-fn fixture_engine(assets: &mut LevelAssets) -> Engine {
-    Engine::new_for_test_with_simulation(
-        800.0,
-        600.0,
-        Campaign::default(),
-        assets,
-        0xD3E7_3A11_5EED_0042,
-        SimConfig {
-            // Empty LevelAssets deliberately has no mission program. This
-            // fixture tests frame admission/reconstruction, not script loading.
-            script_enabled: false,
-            ..SimConfig::default()
-        },
-    )
-    .expect("construct deterministic frame-contract fixture")
-}
+const FIXTURE_SEED: u64 = 0xD3E7_3A11_5EED_0042;
 
 #[test]
 fn replay_boundary_is_callable_with_only_authoritative_capabilities() {
@@ -68,8 +54,7 @@ fn replay_boundary_is_callable_with_only_authoritative_capabilities() {
         replay_authoritative_frame,
         replay_authoritative_frame_profiled,
     ];
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let frames = [
         SimulationFrameInput::no_hourglass()
             .with_external_actions(vec![ExternalAction::SimpleMessage {
@@ -124,8 +109,7 @@ fn replay_boundary_is_callable_with_only_authoritative_capabilities() {
 
 #[test]
 fn replay_missing_record_and_backward_target_fail_instead_of_fabricating_input() {
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let stationary = SimulationFrameInput::no_hourglass();
     let error = replay_frames_to_frame(SimSnapshot::new(0, &initial), &assets, 2, |frame| {
         (frame == 0).then_some(&stationary)
@@ -149,8 +133,7 @@ fn replay_missing_record_and_backward_target_fail_instead_of_fabricating_input()
 
 #[test]
 fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() {
-    let mut assets = LevelAssets::new();
-    let mut engine = fixture_engine(&mut assets);
+    let (mut engine, assets) = seeded_engine(FIXTURE_SEED);
     let before = engine.frame_counter();
 
     let output = engine
@@ -169,8 +152,7 @@ fn no_hourglass_admission_applies_commands_without_advancing_the_engine_clock() 
 
 #[test]
 fn reconstruction_surfaces_host_events_as_typed_output() {
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let mut snapshot = SimSnapshot::new(0, &initial);
     let frame = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
         PlayerCommand::MouseRightDown,
@@ -191,8 +173,7 @@ fn reconstruction_surfaces_host_events_as_typed_output() {
 
 #[test]
 fn admitted_host_action_is_replayable() {
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let mut replacement_campaign = Campaign::default();
     replacement_campaign.set_ares(2);
     let frame = SimulationFrameInput::no_hourglass().with_external_actions(vec![
@@ -295,8 +276,7 @@ fn advance_authoritative_frame(
 
 #[test]
 fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let frames = command_frames()
         .into_iter()
         .map(|commands| {
@@ -394,8 +374,7 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
 
 #[test]
 fn post_hourglass_quit_command_cannot_be_replayed_as_a_pre_hourglass_command() {
-    let mut assets = LevelAssets::new();
-    let initial = fixture_engine(&mut assets);
+    let (initial, assets) = seeded_engine(FIXTURE_SEED);
     let quit = PlayerInput::host(PlayerCommand::QuitMissionRequested);
 
     let mut before_hourglass = SimSnapshot::new(0, &initial);

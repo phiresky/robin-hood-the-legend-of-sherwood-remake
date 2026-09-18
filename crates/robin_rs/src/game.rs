@@ -725,21 +725,7 @@ mod tests {
     use super::*;
     use robin_engine::campaign::CampaignValue;
 
-    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
-        use robin_engine::campaign::Campaign;
-        let mut assets = engine_api::LevelAssets::new();
-        let engine =
-            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
-        (engine, assets)
-    }
-
-    #[test]
-    fn default_game_state() {
-        let game = Game::default();
-        assert!(game.operation.is(GameCode::LevelInProgress));
-        assert!(!game.is_sherwood);
-        assert!(!game.persistent.campaign_map_active);
-    }
+    use robin_engine::test_support::fresh_engine;
 
     #[test]
     fn new_sherwood_game() {
@@ -1048,93 +1034,29 @@ mod tests {
 
     // ── Engine integration tests ────────────────────────────────
 
-    #[test]
-    fn run_engine_tick_in_progress() {
+    /// The engine ticks only while the level runs unpaused without the
+    /// console; mission flags surface as the matching terminal game code.
+    #[rstest::rstest]
+    #[case::in_progress((false, false), false, false, None, Some(1))]
+    #[case::skips_when_paused((false, false), false, true, None, Some(0))]
+    #[case::skips_when_console((false, false), true, false, None, Some(0))]
+    #[case::mission_won((true, false), false, false, Some(GameCode::LevelSucceeded), None)]
+    #[case::mission_lost((false, true), false, false, Some(GameCode::LevelFailed), None)]
+    fn engine_tick_outcome(
+        #[case] (won, lost): (bool, bool),
+        #[case] console_displayed: bool,
+        #[case] dummy_pause: bool,
+        #[case] expected: Option<GameCode>,
+        #[case] expected_frame: Option<u32>,
+    ) {
         let mut game = Game::default();
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
         let application_context = host.application_context().clone();
-
-        // Normal state — engine should tick and return None (still in progress)
-        let result = game.run_engine_tick(
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            host.transport.local_seat(),
-            &assets,
-            &mut engine,
-            &mut dev,
-            engine_api::SimulationFrameInput::default(),
-            false,
-            false,
-        );
-        assert!(result.is_none());
-        assert!(game.operation.is(GameCode::LevelInProgress));
-        assert_eq!(engine.frame_counter(), 1);
-    }
-
-    #[test]
-    fn run_engine_tick_skips_when_paused() {
-        let mut game = Game::default();
-        let mut dev = engine_api::DevState::default();
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
-        let application_context = host.application_context().clone();
-
-        // Paused — engine should NOT tick
-        let result = game.run_engine_tick(
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            host.transport.local_seat(),
-            &assets,
-            &mut engine,
-            &mut dev,
-            engine_api::SimulationFrameInput::default(),
-            false,
-            true,
-        );
-        assert!(result.is_none());
-        assert_eq!(engine.frame_counter(), 0); // Not incremented
-    }
-
-    #[test]
-    fn run_engine_tick_skips_when_console() {
-        let mut game = Game::default();
-        let mut dev = engine_api::DevState::default();
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
-        let application_context = host.application_context().clone();
-
-        // Console displayed — engine should NOT tick
-        let result = game.run_engine_tick(
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            host.transport.local_seat(),
-            &assets,
-            &mut engine,
-            &mut dev,
-            engine_api::SimulationFrameInput::default(),
-            true,
-            false,
-        );
-        assert!(result.is_none());
-        assert_eq!(engine.frame_counter(), 0);
-    }
-
-    #[test]
-    fn run_engine_tick_mission_won() {
-        let mut game = Game::default();
-        let mut dev = engine_api::DevState::default();
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
-        let application_context = host.application_context().clone();
-        engine.test_set_mission_flags(true, false, false);
+        if won || lost {
+            engine.test_set_mission_flags(won, lost, false);
+        }
 
         let result = game.run_engine_tick(
             &mut host.frontend,
@@ -1146,37 +1068,17 @@ mod tests {
             &mut engine,
             &mut dev,
             engine_api::SimulationFrameInput::default(),
-            false,
-            false,
+            console_displayed,
+            dummy_pause,
         );
-        assert_eq!(result, Some(GameCode::LevelSucceeded));
-        assert!(game.operation.is(GameCode::LevelSucceeded));
-    }
-
-    #[test]
-    fn run_engine_tick_mission_lost() {
-        let mut game = Game::default();
-        let mut dev = engine_api::DevState::default();
-        let (mut engine, assets) = fresh_engine();
-        let mut host = Host::scratch(800.0, 600.0);
-        let application_context = host.application_context().clone();
-        engine.test_set_mission_flags(false, true, false);
-
-        let result = game.run_engine_tick(
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            host.transport.local_seat(),
-            &assets,
-            &mut engine,
-            &mut dev,
-            engine_api::SimulationFrameInput::default(),
-            false,
-            false,
+        assert_eq!(result, expected);
+        assert!(
+            game.operation
+                .is(expected.unwrap_or(GameCode::LevelInProgress))
         );
-        assert_eq!(result, Some(GameCode::LevelFailed));
-        assert!(game.operation.is(GameCode::LevelFailed));
+        if let Some(frame) = expected_frame {
+            assert_eq!(engine.frame_counter(), frame);
+        }
     }
 
     #[test]

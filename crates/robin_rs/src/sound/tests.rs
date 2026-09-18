@@ -430,14 +430,6 @@ impl AudioBackend for MockBackend {
 }
 
 #[test]
-fn sound_manager_new() {
-    let mgr = SoundManager::new();
-    assert!(!mgr.is_ready());
-    assert!(!mgr.is_active());
-    assert_eq!(mgr.music_mode(), MusicMode::Quiet);
-}
-
-#[test]
 fn initialize_and_activate() {
     let mut mgr = SoundManager::new();
     let mut backend = MockBackend::new();

@@ -449,8 +449,7 @@ mod tests {
     use crate::host::Host;
     use crate::multiplayer::{NetChannels, NetEvent};
     use crate::rewind::RewindBuffer;
-    use robin_engine::campaign::Campaign;
-    use robin_engine::engine::{DevState, Engine, LevelAssets};
+    use robin_engine::engine::DevState;
     use robin_engine::engine_manager::EngineManager;
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use std::sync::Arc;
@@ -471,8 +470,7 @@ mod tests {
             REPLAY_SCHEMA_VERSION, ReplayFile, ReplayFrame, ReplayHeader, ReplayLoadBack,
             ReplayPlayer, ReplaySaveMarker, state_hash,
         };
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets).unwrap();
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let hash = state_hash(&engine);
         let stationary = SimulationFrameInput::no_hourglass().with_simulation_body_allowed(false);
         let mut terminal = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
@@ -616,9 +614,7 @@ mod tests {
 
     #[test]
     fn due_network_commands_are_applied_after_the_headless_checkpoint() {
-        let mut level_assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut level_assets)
-            .expect("fixture engine");
+        let (engine, level_assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let initial_hash = robin_engine::replay::state_hash(&engine);
         let assets = Arc::new(level_assets);
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
@@ -708,9 +704,7 @@ mod tests {
 
     #[test]
     fn headless_outer_frame_commits_before_forward_step_reuses_timeline_lifecycle() {
-        let mut level_assets = LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut level_assets)
-            .expect("fixture engine");
+        let (engine, level_assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let assets = Arc::new(level_assets);
         let host = Host::scratch(640.0, 480.0);
         let manager = EngineManager::new(engine);

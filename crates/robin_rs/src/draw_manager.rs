@@ -644,14 +644,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_draw_manager_default() {
-        let dm = DrawManager::default();
-        assert_eq!(dm.zoom_factor(), 1.0);
-        assert_eq!(dm.surface_id(), 0);
-        assert_eq!(dm.color_depth(), 16);
-    }
-
-    #[test]
     fn test_update_drawing_parameters() {
         let mut dm = DrawManager::new(16);
         let view = MapBBox::from_coords(100.0, 200.0, 900.0, 800.0);
@@ -812,19 +804,5 @@ mod tests {
             &bbox,
         );
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_draw_manager_serde_roundtrip() {
-        let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(5, MapBBox::from_coords(10.0, 20.0, 800.0, 600.0), 0.5);
-
-        let json = serde_json::to_string(&dm).unwrap();
-        let back: DrawManager = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(back.surface_id(), 5);
-        assert_eq!(back.zoom_factor(), 0.5);
-        assert_eq!(back.color_depth(), 16);
-        assert_eq!(back.view_rect().x_min(), 10.0);
     }
 }

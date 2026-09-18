@@ -2051,14 +2051,7 @@ mod tests {
     #[test]
     fn bootstrap_marker_requires_a_completed_restart_save() {
         let directory = tempfile::tempdir().unwrap();
-        let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(
-            1024.0,
-            768.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .unwrap();
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         let host = Host::scratch(1024.0, 768.0);
         let game = Game::default();
         for restart_save_started in [false, true] {
@@ -2364,9 +2357,7 @@ mod tests {
     fn session_restart_records_load_back_to_its_bootstrap_marker() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("session-restart.rhrec.jsonl");
-        let mut assets = LevelAssets::new();
-        let mut engine =
-            Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+        let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(1024.0, 768.0);
         let mut host = Host::scratch(1024.0, 768.0);
         let mut game = Game::default();
         let header = crate::save_file::SaveHeader::new(
@@ -3434,14 +3425,7 @@ mod tests {
 
     #[test]
     fn whole_state_discontinuity_reopens_the_current_frame_before_commit() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut manager = EngineManager::new(engine);
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
         timeline.adopt_frame(TimelineFrame::from_wire(crate::rewind::SNAPSHOT_INTERVAL));
@@ -3476,14 +3460,7 @@ mod tests {
 
     #[test]
     fn lockstep_frame_and_engine_simulation_tick_are_independent_clocks() {
-        let mut assets = LevelAssets::default();
-        let engine = Engine::new_for_test(
-            640.0,
-            480.0,
-            robin_engine::campaign::Campaign::default(),
-            &mut assets,
-        )
-        .expect("fixture engine");
+        let (engine, _assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
 
         assert_eq!(timeline.frame_number(), 0);

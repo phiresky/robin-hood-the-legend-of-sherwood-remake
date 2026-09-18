@@ -1109,14 +1109,7 @@ mod required_state_tests {
         };
         use robin_engine::element_kinds::ElementKind;
 
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test(
-            800.0,
-            600.0,
-            Campaign::default(),
-            &mut assets,
-        )
-        .expect("test engine");
+        let (mut engine, _assets) = robin_engine::test_support::fresh_engine();
         let mut add_member = |point: MapPoint| {
             let mut element = {
                 let mut initial_element = ElementData::default();

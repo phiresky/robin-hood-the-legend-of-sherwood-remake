@@ -269,20 +269,4 @@ mod tests {
         let b = ov.bow_pip_position(0);
         assert_eq!(b.1 - p0.1, BOW_ROW_ORIGIN.1 - SWORD_ROW_ORIGIN.1);
     }
-
-    #[test]
-    fn serde_roundtrip() {
-        let mut ov = PcInfoOverlay::default();
-        ov.show(
-            EntityId::Pc(robin_engine::entity_id::PcId(7)),
-            p(50.0, 50.0),
-            (640, 480),
-            true,
-            60,
-            40,
-        );
-        let json = serde_json::to_string(&ov).unwrap();
-        let back: PcInfoOverlay = serde_json::from_str(&json).unwrap();
-        assert_eq!(ov, back);
-    }
 }

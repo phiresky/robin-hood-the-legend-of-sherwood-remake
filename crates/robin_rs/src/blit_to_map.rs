@@ -166,14 +166,7 @@ mod tests {
 
     #[test]
     fn timeline_restore_discards_future_decals_and_queued_updates() {
-        let mut assets = robin_engine::engine::LevelAssets::default();
-        let engine = robin_engine::engine::Engine::new_for_test(
-            640.0,
-            480.0,
-            Default::default(),
-            &mut assets,
-        )
-        .unwrap();
+        let (engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let mut frontend = HostFrontend::default();
         let mut effects = HostEffectBatches::default();
         let entity_id = engine_element::EntityId::Fx(engine_element::FxId(7));

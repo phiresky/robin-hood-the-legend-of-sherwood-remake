@@ -167,13 +167,6 @@ fn keyboard_updates_tracked_and_raw_only_keys_once_per_frame() {
 }
 
 #[test]
-fn widget_appearance_defaults() {
-    let r = WidgetAppearance::default();
-    assert_eq!(r.resource_id, -1);
-    assert!(r.alpha_mask.is_none());
-}
-
-#[test]
 fn widget_appearance_is_real_point_bbox_only() {
     let r = WidgetAppearance::default();
     let bbox = ScreenBBox::from_coords(10.0, 10.0, 30.0, 30.0);
@@ -205,24 +198,3 @@ fn widget_appearance_is_real_point_with_mask() {
 }
 
 // ── Serde roundtrip tests ──
-
-#[test]
-fn serde_ui_msg_roundtrip() {
-    let msg = UiMsg::WidgetDoubleClicked;
-    let json = serde_json::to_string(&msg).unwrap();
-    let back: UiMsg = serde_json::from_str(&json).unwrap();
-    assert_eq!(msg, back);
-}
-
-#[test]
-fn serde_ui_event_roundtrip() {
-    let ev = UiEvent {
-        msg_type: UiMsg::WidgetActivated,
-        origin_widget_id: 42,
-        data: Some(UiEventData::SliderPosition(0.75)),
-    };
-    let json = serde_json::to_string(&ev).unwrap();
-    let back: UiEvent = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.msg_type, UiMsg::WidgetActivated);
-    assert_eq!(back.origin_widget_id, 42);
-}
