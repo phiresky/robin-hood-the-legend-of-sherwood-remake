@@ -352,27 +352,20 @@ impl EngineInner {
 mod tests {
     use super::*;
     use crate::ai::{AiEntityHandle, SeekPoint};
-    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ElementData, ElementKind, ElementNet, NetData, ObjectData, Posture, ProjectileData,
     };
-    use crate::engine::test_support::{
-        actors::{make_test_ai_soldier, make_test_civilian},
-        square_sector,
-    };
+    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_civilian};
 
     fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let mut engine = EngineInner::new();
         engine.control.frame_counter = 100;
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::ai::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner =
             engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         let body = engine.add_test_entity(make_test_civilian(Posture::Leisure));

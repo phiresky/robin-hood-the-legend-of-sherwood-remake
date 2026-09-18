@@ -1360,15 +1360,11 @@ mod tests {
 
     fn actors() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(256, 256);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(5000.0, 5000.0)),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (256, 256),
+            (5000.0, 5000.0),
         );
-        let sector = crate::position_interface::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let friend = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let target = engine.add_test_entity(make_test_pc(Posture::Upright));

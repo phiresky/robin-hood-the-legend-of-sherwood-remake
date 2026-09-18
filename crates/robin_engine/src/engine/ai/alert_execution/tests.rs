@@ -1,8 +1,8 @@
 use super::*;
 use crate::ai::{PathId, PatrolPath, ReportType};
 use crate::ai_enemy::SeekFlags;
-use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+use crate::coordinates::WorldPoint3D;
+use crate::engine::test_support::actors::make_test_ai_soldier;
 
 #[test]
 fn alert_camp_roster_preserves_load_order_and_reads_live_membership() {
@@ -65,15 +65,11 @@ fn alert_camp_roster_preserves_load_order_and_reads_live_membership() {
 
 fn group_fixture() -> (EngineInner, LevelAssets, [EntityId; 4]) {
     let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
+    let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+        &mut engine,
+        (256, 256),
+        (4000.0, 4000.0),
     );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
     let ids = std::array::from_fn(|index| {
         let mut actor = make_test_ai_soldier(crate::element::Camp::Lacklandists);
         actor.element_data_mut().set_position(WorldPoint3D::new(

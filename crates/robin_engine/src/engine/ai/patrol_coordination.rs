@@ -4,7 +4,7 @@ use super::*;
 mod tests {
     use super::*;
     use crate::ai::{AiState, AlertLevel, Position, StimulusInfo, Substate};
-    use crate::engine::test_support::{actors::make_test_ai_soldier, square_sector};
+    use crate::engine::test_support::actors::make_test_ai_soldier;
 
     fn assembly_fixture(points: &[(f32, f32, f32)]) -> (EngineInner, LevelAssets, Vec<EntityId>) {
         let mut engine = EngineInner::new();
@@ -225,15 +225,11 @@ mod tests {
             ),
         ] {
             let mut engine = EngineInner::new();
-            engine.world.fast_grid_mut().size_map(128, 128);
-            engine.world.fast_grid_mut().allocate_layers(1);
-            let index = engine.world.fast_grid_mut().add_sector(
-                square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(2000.0, 2000.0)),
-                0,
+            let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+                &mut engine,
+                (128, 128),
+                (2000.0, 2000.0),
             );
-            let sector = crate::ai::SectorHandle::new(1)
-                .unwrap()
-                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
             let mut ids = Vec::new();
             for x in [100.0, 200.0] {
                 let mut entity = make_test_ai_soldier(crate::element::Camp::Lacklandists);

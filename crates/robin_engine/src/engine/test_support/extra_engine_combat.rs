@@ -87,3 +87,28 @@ pub(crate) fn enter_test_door(
     engine.select_sequence_element(actor, Some((sequence, 0)));
     engine.t_element_in_progress(&crate::engine::LevelAssets::new(), sequence, 0);
 }
+
+/// Size a one-layer map of `grid` cells and add walkable square sector 1
+/// spanning the origin to `extent`. Returns the sector handle and the raw
+/// arena index `add_sector` assigned.
+pub(crate) fn square_sector_map(
+    engine: &mut crate::engine::EngineInner,
+    grid: (u16, u16),
+    extent: (f32, f32),
+) -> (crate::position_interface::SectorHandle, u32) {
+    engine.world.fast_grid_mut().size_map(grid.0, grid.1);
+    engine.world.fast_grid_mut().allocate_layers(1);
+    let index = engine.world.fast_grid_mut().add_sector(
+        super::square_sector(
+            1,
+            0,
+            crate::coordinates::MapPoint::new(0.0, 0.0),
+            crate::coordinates::MapPoint::new(extent.0, extent.1),
+        ),
+        0,
+    );
+    let sector = crate::position_interface::SectorHandle::new(1)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
+    (sector, index)
+}

@@ -12,20 +12,11 @@ mod tests {
 
     fn beggar_fixture(civilian: bool) -> (EngineInner, LevelAssets, EntityId, EntityId) {
         let mut engine = EngineInner::new();
-        engine.world.fast_grid_mut().size_map(128, 128);
-        engine.world.fast_grid_mut().allocate_layers(1);
-        let index = engine.world.fast_grid_mut().add_sector(
-            crate::engine::test_support::square_sector(
-                1,
-                0,
-                crate::coordinates::MapPoint::new(0.0, 0.0),
-                crate::coordinates::MapPoint::new(2000.0, 2000.0),
-            ),
-            0,
+        let (sector, _) = crate::engine::test_support::extra_engine_combat::square_sector_map(
+            &mut engine,
+            (128, 128),
+            (2000.0, 2000.0),
         );
-        let sector = crate::ai::SectorHandle::new(1)
-            .unwrap()
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
         let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
         let beggar = engine.add_test_entity(if civilian {
             crate::engine::test_support::actors::make_test_civilian(
