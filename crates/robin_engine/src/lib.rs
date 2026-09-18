@@ -114,6 +114,8 @@ pub mod sprite_variant;
 pub use robin_engine_types::static_arc;
 pub mod stealth;
 pub mod tactical_control;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod titbit;
 pub mod trading;
 pub mod vm;

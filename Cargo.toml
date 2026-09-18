@@ -84,6 +84,7 @@ robin_spellforge = { path = "crates/robin_spellforge" }
 robin_script_types = { path = "crates/robin_script_types" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
 robin_test_support = { path = "crates/robin_test_support" }
+rstest = { version = "0.26", default-features = false }
 robin_util = { path = "crates/robin_util" }
 
 # Dependencies shared by multiple workspace crates. Keep crate-specific feature

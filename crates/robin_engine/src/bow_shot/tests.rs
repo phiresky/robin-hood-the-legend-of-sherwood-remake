@@ -1599,24 +1599,14 @@ fn spawn_arrow_creates_flying_projectile_with_trajectory() {
         },
     ];
     let arrow = spawn_arrow(SpawnArrowParams {
-        shooter: EntityId::Pc(crate::entity_id::PcId(0)),
-        bow_point: WorldPoint3D {
-            x: 0.0,
-            y: 0.0,
-            z: 40.0,
-        },
-        trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-        target: EntityId::Soldier(crate::entity_id::SoldierId(1)),
-        target_pos: MapPoint { x: 50.0, y: 0.0 },
         trajectory: traj,
-        damage: 30,
-        layer: 0,
-        lands_in_hole: false,
-        initial_velocity: WorldVec3D {
-            x: 0.0,
-            y: 1.0,
-            z: 0.0,
-        },
+        initial_velocity: WorldVec3D::new(0.0, 1.0, 0.0),
+        ..SpawnArrowParams::test_flat(
+            EntityId::Pc(crate::entity_id::PcId(0)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            WorldPoint3D::new(0.0, 0.0, 40.0),
+            MapPoint::new(50.0, 0.0),
+        )
     });
     match arrow {
         Entity::Projectile(p) => {

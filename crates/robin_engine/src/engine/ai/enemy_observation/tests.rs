@@ -5,10 +5,7 @@ use crate::element::{
     ActionState, Camp, ElementBonus, ElementData, ElementKind, Entity, ObjectData, Posture,
 };
 use crate::element_kinds::ObjectType;
-use crate::engine::test_support::{
-    actors::{make_test_ai_soldier, make_test_pc},
-    square_sector,
-};
+use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
 use crate::order::OrderType;
 
 fn add_ale(engine: &mut EngineInner, owner: EntityId, x: f32, y: f32) -> EntityId {
@@ -241,46 +238,20 @@ fn ale_timer_reads_retained_inactive_bottle_instead_of_cached_seek_position() {
 }
 
 fn fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
-    let mut engine = EngineInner::new();
-    engine.world.fast_grid_mut().size_map(256, 256);
-    engine.world.fast_grid_mut().allocate_layers(1);
-    let index = engine.world.fast_grid_mut().add_sector(
-        square_sector(1, 0, MapPoint::new(0.0, 0.0), MapPoint::new(4000.0, 4000.0)),
-        0,
-    );
-    let sector = crate::ai::SectorHandle::new(1)
-        .unwrap()
-        .with_arena_index(crate::fast_find_grid::SectorIndex::new(index).unwrap());
-    let owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let target = engine.add_test_entity(make_test_pc(Posture::Upright));
-    for (id, x) in [(owner, 100.0), (target, 200.0)] {
-        let actor = engine.get_entity_mut(id).unwrap();
-        actor
-            .element_data_mut()
-            .set_position(WorldPoint3D::new(x, 100.0, 0.0));
-        actor.element_data_mut().set_sector(Some(sector));
-        actor.actor_data_mut().unwrap().action_state = ActionState::Waiting;
-        actor
-            .position_iface_mut()
-            .set_move_box(crate::coordinates::MoveBox::from_coords(
-                -4.0, -4.0, 4.0, 4.0,
-            ));
-    }
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-    for actor in [owner, target] {
-        engine
-            .get_entity_mut(actor)
-            .unwrap()
-            .element_data_mut()
-            .set_sector_topology(Some(sector), crate::fast_find_grid::SectorIndex::new(index));
-    }
-    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
-        "observation.scs",
-    ));
-    engine.control.frame_counter = 100;
-    engine.enter_ai_think_frame(owner);
-    (engine, assets, owner, target)
+    crate::engine::test_support::pair_fixture::PairFixture::new(
+        make_test_ai_soldier(Camp::Lacklandists),
+        make_test_pc(Posture::Upright),
+    )
+    .grid(256, 256)
+    .extent(4000.0)
+    .action_state(ActionState::Waiting)
+    .move_box(crate::coordinates::MoveBox::from_coords(
+        -4.0, -4.0, 4.0, 4.0,
+    ))
+    .mission_script("observation.scs")
+    .think_first()
+    .build()
+    .into_tuple()
 }
 
 fn place(engine: &mut EngineInner, id: EntityId, point: WorldPoint3D) {

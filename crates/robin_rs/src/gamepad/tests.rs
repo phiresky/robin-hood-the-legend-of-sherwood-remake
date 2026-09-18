@@ -52,13 +52,7 @@ fn client_gamepad_reads_its_own_selection_not_the_host_selection() {
     assert_eq!(engine.hero_selection(PlayerId::HOST), &[host_pc]);
 }
 
-fn fresh_engine() -> (engine_api::Engine, engine_api::LevelAssets) {
-    use robin_engine::campaign::Campaign;
-    let mut assets = engine_api::LevelAssets::new();
-    let engine = engine_api::Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
-        .expect("engine");
-    (engine, assets)
-}
+use robin_engine::test_support::fresh_engine;
 
 #[test]
 fn button_indices_match_original_defines() {

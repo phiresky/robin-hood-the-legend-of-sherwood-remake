@@ -492,6 +492,7 @@ impl GridLine {
 /// filtering, and references to related objects (doors, lifts).
 #[derive(
     Debug,
+    Default,
     Clone,
     Serialize,
     Deserialize,
