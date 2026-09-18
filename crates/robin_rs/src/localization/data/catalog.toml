@@ -1,0 +1,464 @@
+[basic.SaveNewSaveLabel]
+en = "< New Save >"
+
+[basic.SaveNewSaveHint]
+en = "Name optional - creates a new save slot"
+
+[basic.SaveMission]
+en = "Mission: {value}"
+
+[basic.SavePlayer]
+en = "Player: {value}"
+
+[basic.SaveSaved]
+en = "Saved: {value}"
+
+[basic.SaveExactDate]
+en = "Date: {value}"
+
+[basic.SaveCampaignProgress]
+en = "Campaign: {progress}%"
+
+[basic.SaveMissions]
+en = "Missions: {done}/{total}"
+
+[basic.SaveGangSize]
+en = "Gang: {size}"
+
+[basic.SaveRansom]
+en = "Ransom: {value}"
+
+[basic.SaveBlazons]
+en = "Blazons: {value}"
+
+[basic.SaveAmulets]
+en = "Amulets: {value}"
+
+[basic.SaveLegacyValueUnavailable]
+en = "unavailable (legacy save)"
+
+[basic.SaveInvalidTimestamp]
+en = "invalid timestamp"
+
+[basic.SaveRelativeTimeUnavailable]
+en = "relative time unavailable"
+
+[basic.SaveLocalTimeUnavailable]
+en = "local time unavailable"
+
+[basic.SaveJustNow]
+en = "just now"
+
+[basic.SaveCompactSaved]
+en = "Saved {value}"
+
+[basic.SaveCompactCampaignProgress]
+en = "{progress}% campaign"
+
+[basic.SaveCompactMissions]
+en = "{done}/{total} missions"
+
+[basic.SaveCompactGangSize]
+en = "Gang {size}"
+
+[basic.SaveCompactRansom]
+en = "Ransom {value}"
+
+[basic.SaveCompactBlazons]
+en = "Blazons {value}"
+
+[basic.SaveCompactAmulets]
+en = "Amulets {value}"
+
+[basic.CampaignClassicMap]
+de = "Klassische Karte"
+en = "Classic map"
+
+[basic.CampaignProgressTree]
+de = "Fortschrittsbaum"
+en = "Progress tree"
+
+[basic.CampaignSherwoodMuseum]
+de = "Sherwood-Museum"
+en = "Sherwood museum"
+
+[basic.GameAutosaved]
+de = "Spiel automatisch gespeichert."
+en = "Game autosaved."
+
+[basic.AutosaveFailed]
+de = "Automatisches Speichern fehlgeschlagen – siehe Protokoll."
+en = "Autosave failed - check the log."
+
+[basic.SaveFailed]
+de = "Speichern fehlgeschlagen – vor erneutem Versuch das Protokoll prüfen."
+en = "Save failed - check the log before retrying."
+
+[basic.Language]
+de = "Sprache"
+fr = "Langue"
+it = "Lingua"
+pt = "Idioma"
+es = "Idioma"
+ru = "Язык"
+ja = "言語"
+cs = "Jazyk"
+pl = "Język"
+zh = "語言"
+ko = "언어"
+th = "ภาษา"
+en = "Language"
+
+[basic.Automatic]
+de = "Automatisch"
+fr = "Automatique"
+it = "Automatico"
+pt = "Automático"
+es = "Automático"
+ru = "Автоматически"
+ja = "自動"
+cs = "Automaticky"
+pl = "Automatycznie"
+zh = "自動"
+ko = "자동"
+th = "อัตโนมัติ"
+en = "Automatic"
+
+[basic.Apply]
+de = "Anwenden"
+fr = "Appliquer"
+it = "Applica"
+pt = "Aplicar"
+es = "Aplicar"
+ru = "Применить"
+ja = "適用"
+cs = "Použít"
+pl = "Zastosuj"
+zh = "套用"
+ko = "적용"
+th = "ใช้"
+en = "Apply"
+
+[basic.InstalledLanguages]
+en = "Installed languages"
+
+[basic.OptionalEnglishFallback]
+en = "Missing optional voice or cinematics use the installed English pack"
+
+[gameplay.FixHardReactionTimes]
+en_label = "Fix Hard Reaction Times"
+en_tooltip = "Use the intended Hard reaction-time multiplier."
+de_label = "Reaktionszeiten auf Schwer korrigieren"
+de_tooltip = "Den vorgesehenen Reaktionszeitfaktor für Schwer verwenden."
+
+[gameplay.ControlTacticalUnits]
+en_label = "Control Tactical Units"
+en_tooltip = "Allow high-level commands for actors authored with the tactical command interface."
+de_label = "Taktische Einheiten steuern"
+de_tooltip = "Übergeordnete Befehle für Figuren mit taktischer Befehlsschnittstelle erlauben."
+
+[gameplay.EnableUnbinding]
+en_label = "Allow Untying NPCs"
+en_tooltip = "Allow a hero with Tie to release a tied NPC."
+de_label = "Gefesselte Personen befreien"
+de_tooltip = "Helden mit Fesseln dürfen gefesselte Personen befreien."
+
+[gameplay.ShowProductionForecast]
+en_label = "Sherwood Production Forecast"
+en_tooltip = "Show live item-production forecasts in Sherwood."
+de_label = "Produktionsvorschau in Sherwood"
+de_tooltip = "Die laufende Gegenstandsproduktion in Sherwood anzeigen."
+
+[gameplay.ReusableCloaks]
+en_label = "Reusable Cloaks"
+en_tooltip = "Allow heroes with shipped cape art to put their cloaks back on."
+de_label = "Umhänge wiederverwenden"
+de_tooltip = "Helden mit vorhandenen Umhanggrafiken dürfen ihren Umhang wieder anlegen."
+
+[gameplay.CampaignPresentation]
+en_label = "Campaign Presentation"
+en_tooltip = "Cycle the campaign-map presentation."
+de_label = "Kampagnendarstellung"
+de_tooltip = "Die Darstellung der Kampagnenkarte wechseln."
+
+[gameplay.CleanHandsNpcKillsInvalidate]
+en_label = "NPC Kills Break Clean Hands"
+en_tooltip = "Count hostile deaths caused by other NPCs against Clean Hands."
+de_label = "NPC-Tötungen verhindern Saubere Hände"
+de_tooltip = "Auch von anderen NPCs getötete Feinde für Saubere Hände zählen."
+
+[gameplay.ShowDetailedXp]
+en_label = "Detailed Sword/Bow XP"
+en_tooltip = "Show detailed sword and bow experience progress."
+de_label = "Detaillierte Schwert-/Bogen-Erfahrung"
+de_tooltip = "Den genauen Erfahrungsfortschritt mit Schwert und Bogen anzeigen."
+
+[gameplay.ShowSpeedrunTracker]
+en_label = "Speedrun Clock"
+en_tooltip = "Show the current mission speedrun clock."
+de_label = "Speedrun-Uhr"
+de_tooltip = "Die Speedrun-Zeit der aktuellen Mission anzeigen."
+
+[gameplay.ShowCleanHandsTracker]
+en_label = "Clean Hands Tracker"
+en_tooltip = "Show live Clean Hands achievement progress."
+de_label = "Fortschritt: Saubere Hände"
+de_tooltip = "Den aktuellen Fortschritt für Saubere Hände anzeigen."
+
+[gameplay.ShowGhostTracker]
+en_label = "Ghost Tracker"
+en_tooltip = "Show live Ghost achievement progress."
+de_label = "Fortschritt: Geist"
+de_tooltip = "Den aktuellen Fortschritt für Geist anzeigen."
+
+[gameplay.ShowPileOfBonesTracker]
+en_label = "Pile-o-Bones Tracker"
+en_tooltip = "Show live Pile-o-Bones achievement progress."
+de_label = "Fortschritt: Knochenhaufen"
+de_tooltip = "Den aktuellen Fortschritt für Knochenhaufen anzeigen."
+
+[gameplay.ShowNewAchievementTrackers]
+en_label = "Additional Achievement Trackers"
+en_tooltip = "Show live progress for the additional mission achievements."
+de_label = "Weitere Erfolgsanzeigen"
+de_tooltip = "Den aktuellen Fortschritt weiterer Missionserfolge anzeigen."
+
+[gameplay.ShowAchievementBadges]
+en_label = "Campaign Achievement Badges"
+en_tooltip = "Show achievement badges in campaign presentations."
+de_label = "Erfolgsabzeichen der Kampagne"
+de_tooltip = "Erfolgsabzeichen in den Kampagnendarstellungen anzeigen."
+
+[gameplay.ShowAchievementDebrief]
+en_label = "Achievement Debrief Details"
+en_tooltip = "Include achievement details in mission debriefs."
+de_label = "Erfolge im Missionsbericht"
+de_tooltip = "Erfolgsdetails im Missionsbericht anzeigen."
+
+[gameplay.TouchCameraGestures]
+en_label = "Touch Camera Gestures"
+en_tooltip = "Enable one-finger camera panning, anchored pinch zoom, and touch inertia."
+de_label = "Touch-Kameragesten"
+de_tooltip = "Kameraschwenken mit einem Finger, verankerten Pinch-Zoom und Nachlauf aktivieren."
+
+[gameplay.SherwoodTrading]
+en_label = "Sherwood Item Trading"
+en_tooltip = "Allow the host to sell Sherwood production inventory for campaign ransom."
+de_label = "Handel in Sherwood"
+de_tooltip = "Der Host darf Sherwood-Produkte für das Lösegeld der Kampagne verkaufen."
+
+[gameplay.AutosaveEnabled]
+en_label = "Rotating Autosaves"
+en_tooltip = "Keep rotating campaign and mission autosaves according to the autosave policy."
+de_label = "Rotierende automatische Spielstände"
+de_tooltip = "Kampagnen- und Missionsspielstände gemäß den automatischen Speicherregeln rotieren."
+
+[gameplay.AppleCombatInterrupt]
+en_label = "Apple Combat Interrupt"
+en_tooltip = "Let direct apple hits interrupt active swordfights."
+de_label = "Äpfel unterbrechen Kämpfe"
+de_tooltip = "Direkte Apfeltreffer dürfen laufende Schwertkämpfe unterbrechen."
+
+[gameplay.WaspReliableAcquisition]
+en_label = "Reliable Wasp Acquisition"
+en_tooltip = "Increase initial wasp acquisition from 50 to 75 world units."
+de_label = "Zuverlässigere Wespensuche"
+de_tooltip = "Die anfängliche Suchreichweite der Wespen von 50 auf 75 Welteinheiten erhöhen."
+
+[gameplay.StoneGroundDistraction]
+en_label = "Stone Ground Distraction"
+en_tooltip = "Allow ground-thrown stones to attract eligible hostiles within 240 world units."
+de_label = "Ablenkung durch Bodensteine"
+de_tooltip = "Auf den Boden geworfene Steine dürfen geeignete Feinde innerhalb von 240 Welteinheiten anlocken."
+
+[gameplay.StoneLongerRange]
+en_label = "Longer Stone Range"
+en_tooltip = "Use base range 300 for stones instead of the shipped 200."
+de_label = "Größere Steinreichweite"
+de_tooltip = "Die Grundreichweite für Steine von 200 auf 300 erhöhen."
+
+[gameplay.NetSelectiveImmunity]
+en_label = "Selective Net Immunity"
+en_tooltip = "Skip VIPs, riders, and Stuteley while catching other people in the net circle."
+de_label = "Gezielte Netz-Ausnahmen"
+de_tooltip = "VIPs, Reiter und Stuteley beim Einfangen anderer Personen im Netzbereich überspringen."
+
+[gameplay.AleReliableDistraction]
+en_label = "Reliable Ale Distraction"
+en_tooltip = "Let outdoor non-VIP soldiers with no beer interest accept ale at potency 20."
+de_label = "Zuverlässigere Bierablenkung"
+de_tooltip = "Soldaten im Freien, die keine VIPs sind, dürfen bei Stärke 20 auch ohne Bierinteresse Bier annehmen."
+
+[gameplay.NoiseDistractionFeedback]
+en_label = "Stone Distraction Feedback"
+en_tooltip = "Play the optional impact cue for a ground-thrown stone distraction."
+de_label = "Rückmeldung bei Steinablenkung"
+de_tooltip = "Das optionale Aufprallgeräusch für einen zur Ablenkung geworfenen Bodenstein abspielen."
+
+[gameplay.PreviewAppleEffect]
+en_label = "Preview Apple Effect"
+en_tooltip = "Explain apple daze, scent, and combat-interrupt eligibility while aiming."
+de_label = "Apfelwirkung vorhersagen"
+de_tooltip = "Beim Zielen Benommenheit, Geruch und mögliche Kampfunterbrechung erklären."
+
+[gameplay.PreviewStoneDirectEffect]
+en_label = "Preview Stone Direct Hit"
+en_tooltip = "Explain stone direct-hit damage and concussion while aiming."
+de_label = "Direkten Steintreffer vorhersagen"
+de_tooltip = "Beim Zielen Schaden und Benommenheit durch direkte Steintreffer erklären."
+
+[gameplay.PreviewStoneDistractionArea]
+en_label = "Preview Stone Noise Area"
+en_tooltip = "Show the 240-unit ground-stone distraction area."
+de_label = "Stein-Lärmbereich anzeigen"
+de_tooltip = "Den Ablenkungsbereich von 240 Welteinheiten für Bodensteine anzeigen."
+
+[gameplay.PreviewNetCaptureArea]
+en_label = "Preview Net Capture Area"
+en_tooltip = "Show the original 40-unit net capture area and friendly-capture behavior."
+de_label = "Netzfangbereich anzeigen"
+de_tooltip = "Den ursprünglichen Netzfangbereich von 40 Welteinheiten und das Einfangen von Verbündeten anzeigen."
+
+[gameplay.PreviewNetCrumplePrediction]
+en_label = "Predict Net Crumpling"
+en_tooltip = "Predict victim and terrain conditions that crumple a net."
+de_label = "Zusammenfallendes Netz vorhersagen"
+de_tooltip = "Opfer- und Geländebedingungen vorhersagen, die ein Netz zusammenfallen lassen."
+
+[gameplay.PreviewAleEffect]
+en_label = "Preview Ale Effect"
+en_tooltip = "Explain visibility, outdoor, drunkenness, and beer-interest conditions."
+de_label = "Bierwirkung vorhersagen"
+de_tooltip = "Bedingungen für Sichtbarkeit, Aufenthalt im Freien, Trunkenheit und Bierinteresse erklären."
+
+[gameplay.PreviewPurseEffect]
+en_label = "Preview Purse Effect"
+en_tooltip = "Explain purse value and money-interest conditions."
+de_label = "Geldbeutelwirkung vorhersagen"
+de_tooltip = "Geldbeutelwert und Bedingungen für Geldinteresse erklären."
+
+[gameplay.PreviewWaspArea]
+en_label = "Preview Wasp Area"
+en_tooltip = "Show wasp acquisition range and target eligibility."
+de_label = "Wespenbereich anzeigen"
+de_tooltip = "Suchreichweite und geeignete Ziele der Wespen anzeigen."
+
+[gameplay.DetailedSaveMetadata]
+en_label = "Detailed Save Metadata"
+en_tooltip = "Show mission and player provenance, relative age, and expanded save details."
+de_label = "Detaillierte Spielstanddaten"
+de_tooltip = "Mission, Spieler, relatives Alter und weitere Spielstanddetails anzeigen."
+
+[gameplay.EnableTimedMissions]
+en_label = "Authored Mission Timers"
+en_tooltip = "Enforce time limits authored by Rust JSON missions."
+de_label = "Vorgegebene Missionszeitlimits"
+de_tooltip = "Zeitlimits aus Rust-JSON-Missionen durchsetzen."
+
+[gameplay.EnableDynamicAmbience]
+en_label = "Dynamic Ambience Gameplay"
+en_tooltip = "Advance authored day, night, and fog gameplay schedules."
+de_label = "Dynamische Umgebungsabläufe"
+de_tooltip = "Vorgegebene Tag-, Nacht- und Nebelabläufe im Spiel fortschreiten lassen."
+
+[gameplay.Diplomacy]
+en_label = "Mission Diplomacy"
+en_tooltip = "Enable mission-authored and runtime faction relationships."
+de_label = "Missionsdiplomatie"
+de_tooltip = "Vorgegebene und während des Spiels geänderte Fraktionsbeziehungen aktivieren."
+
+[gameplay.NpcFactionWars]
+en_label = "NPC Faction Wars"
+en_tooltip = "Allow hostile non-player factions to perceive and fight one another."
+de_label = "Kriege zwischen NPC-Fraktionen"
+de_tooltip = "Feindliche Nichtspielerfraktionen dürfen einander wahrnehmen und bekämpfen."
+
+[gameplay.MoreCombatGestures]
+en_label = "More Combat Gestures"
+en_tooltip = "Recognize nine additional sword gestures as composite two-strike techniques."
+de_label = "Weitere Kampfgesten"
+de_tooltip = "Neun zusätzliche Schwertgesten als kombinierte Zweischlagtechniken erkennen."
+
+[gameplay.GestureQualityDamage]
+en_label = "Gesture Quality Damage"
+en_tooltip = "Scale sword damage to the recognized gesture's deterministic quality tier."
+de_label = "Gestenqualität beeinflusst Schaden"
+de_tooltip = "Schwertschaden gemäß der deterministischen Qualitätsstufe der erkannten Geste skalieren."
+
+[gameplay.ShowCombatGestureGuide]
+en_label = "Show Combat Gesture Guide"
+en_tooltip = "Show reference paths for the additional combat gestures while swordfighting."
+de_label = "Kampfgesten-Vorlagen anzeigen"
+de_tooltip = "Im Schwertkampf Vorlagen für die zusätzlichen Kampfgesten anzeigen."
+
+[gameplay.CombatGestureCoach]
+en_label = "Combat Gesture Coach"
+en_tooltip = "Briefly show the recognized or nearest gesture and its quality after drawing."
+de_label = "Kampfgesten-Trainer"
+de_tooltip = "Nach dem Zeichnen kurz die erkannte oder ähnlichste Geste und ihre Qualität anzeigen."
+
+[gameplay.PlanQuickActions]
+en_label = "Plan Quick Actions"
+en_tooltip = "Allow the rebindable Plan modifier and touch HUD to queue quick actions."
+de_label = "Schnellaktionen planen"
+de_tooltip = "Mit der frei belegbaren Planen-Taste und dem Touch-HUD Schnellaktionen einreihen."
+
+[gameplay.FogOfWar]
+en_label = "Fog of War"
+en_tooltip = "Enable shared allied sight, explored terrain, and temporary hostile intelligence."
+de_label = "Nebel des Krieges"
+de_tooltip = "Gemeinsame Sicht von Verbündeten, erkundetes Gelände und vorübergehende Feindinformationen aktivieren."
+
+[gameplay.EnableSpellforgeMissions]
+en_label = "Allow Spellforge Missions (Next Launch)"
+en_tooltip = "Allow executable Spellforge custom missions. This takes effect on the next mission launch."
+de_label = "Spellforge-Missionen erlauben (nächster Start)"
+de_tooltip = "Ausführbare Spellforge-Missionen beim nächsten Missionsstart erlauben."
+
+[gameplay.ReversibleBackgroundPatches]
+en_label = "Reversible Background Patches (Next Launch)"
+en_tooltip = "Repeat animated terrain triggers to reverse their animation, obstacles and doors. Applies to newly launched missions; off preserves original one-shot patches."
+de_label = "Umkehrbare Hintergrundänderungen (nächster Start)"
+de_tooltip = "Animierte Geländeauslöser wiederholen, um Animation, Hindernisse und Türen umzukehren. Gilt für neu gestartete Missionen; ausgeschaltet bleibt das ursprüngliche einmalige Verhalten."
+
+[save_relative_time.Second]
+past_singular = "{value} second ago"
+past_plural = "{value} seconds ago"
+future_singular = "in {value} second"
+future_plural = "in {value} seconds"
+
+[save_relative_time.Minute]
+past_singular = "{value} minute ago"
+past_plural = "{value} minutes ago"
+future_singular = "in {value} minute"
+future_plural = "in {value} minutes"
+
+[save_relative_time.Hour]
+past_singular = "{value} hour ago"
+past_plural = "{value} hours ago"
+future_singular = "in {value} hour"
+future_plural = "in {value} hours"
+
+[save_relative_time.Day]
+past_singular = "{value} day ago"
+past_plural = "{value} days ago"
+future_singular = "in {value} day"
+future_plural = "in {value} days"
+
+[save_relative_time.Week]
+past_singular = "{value} week ago"
+past_plural = "{value} weeks ago"
+future_singular = "in {value} week"
+future_plural = "in {value} weeks"
+
+[save_relative_time.Month]
+past_singular = "{value} month ago"
+past_plural = "{value} months ago"
+future_singular = "in {value} month"
+future_plural = "in {value} months"
+
+[save_relative_time.Year]
+past_singular = "{value} year ago"
+past_plural = "{value} years ago"
+future_singular = "in {value} year"
+future_plural = "in {value} years"

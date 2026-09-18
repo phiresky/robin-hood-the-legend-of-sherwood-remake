@@ -32,6 +32,7 @@ lru = { version = "0.18.4", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 serde_urlencoded = "0.7"
+toml.workspace = true
 percent-encoding = "2.3"
 url.workspace = true
 tracing.workspace = true
