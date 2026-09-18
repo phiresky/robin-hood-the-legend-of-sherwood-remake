@@ -3,7 +3,7 @@
 // ─── Level assets (immutable after load) ────────────────────────────
 
 /// Host opacity contract, attached through [`LevelRuntimeAttachments::pixel_opacity`].
-pub use robin_content::PixelOpacityLookup;
+pub use robin_engine_types::PixelOpacityLookup;
 
 /// Immutable level assets loaded once per mission.
 ///

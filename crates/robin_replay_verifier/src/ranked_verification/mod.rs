@@ -1,6 +1,6 @@
 //! Dependency-minimal deterministic ranked replay preparation.
 //!
-//! This crate provides preparation authority for the isolated production
+//! This module provides preparation authority for the isolated production
 //! verifier. It deliberately owns no renderer, window,
 //! audio device, video decoder, gamepad, or multiplayer transport.
 

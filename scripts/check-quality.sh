@@ -29,14 +29,12 @@ case "$1" in
         ;;
     engine) cargo test --locked -p robin_engine_types -p robin_legacy_save -p robin_level_data -p robin_engine ;;
     assets)
-        cargo test --locked -p robin_content
-        cargo test --locked -p robin_content --features simulation-codecs
         cargo test --locked -p robin_asset_codecs -p robin_assets -p robin_data_io
         cargo test --locked -p robin_assets --no-default-features
         python3 scripts/check_asset_boundary.py
         ;;
     protocols)
-        cargo test --locked -p robin_run_types -p robin_run_protocol -p robin_replay_format -p robin_ranked_verification -p robin_identity_signer
+        cargo test --locked -p robin_run_types -p robin_run_protocol -p robin_replay_format -p robin_identity_signer
         cargo test --locked -p robin_replay_format --features native-admission
         ;;
     services)

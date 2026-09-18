@@ -52,10 +52,10 @@ pub use query::{
     ViewerAvailabilityV2, ViewerLaunchV2,
 };
 pub use robin_run_types::{
-    ArtifactRefV1, BoardSimulationPolicyV1, MAX_PARTICIPANT_INSTANCES_V1, MAX_REPLAY_SEATS_V1,
-    OfficialContentEditionV1, RANKED_SIMULATION_POLICY_VERSION_V1, RankedSimulationDifficultyV1,
-    RankedSimulationPolicyV1, RankedSimulationPresetV1, SCHEMA_VERSION_V1, SCHEMA_VERSION_V2,
-    SCHEMA_VERSION_V3,
+    ArtifactRefV1, BoardSimulationPolicyV1, FRAME_TIME_MS, MAX_PARTICIPANT_INSTANCES_V1,
+    MAX_REPLAY_SEATS_V1, OfficialContentEditionV1, RANKED_SIMULATION_POLICY_VERSION_V1,
+    RankedSimulationDifficultyV1, RankedSimulationPolicyV1, RankedSimulationPresetV1,
+    SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3,
 };
 #[cfg(feature = "authentication")]
 pub use signed_request::SignedRequestError;

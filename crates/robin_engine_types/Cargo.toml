@@ -13,6 +13,7 @@ geo = { workspace = true, features = ["serde"] }
 robin_util.workspace = true
 robin_data_io.workspace = true
 robin_state_hash_derive.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

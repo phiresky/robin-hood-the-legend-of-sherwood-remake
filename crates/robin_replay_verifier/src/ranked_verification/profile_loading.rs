@@ -142,7 +142,8 @@ mod tests {
             .unwrap();
         let files = SbFileSystem::new(vfs);
         let error = load_profiles(&GlobalOptions::default(), &files).unwrap_err();
-        let error = crate::ranked_verifier::RankedVerifierLoadError::Profiles(error);
+        let error =
+            crate::ranked_verification::ranked_verifier::RankedVerifierLoadError::Profiles(error);
         let catalog = error.source().unwrap();
         assert!(catalog.is::<ProfileLoadError>());
         let json = catalog.source().unwrap();

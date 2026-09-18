@@ -171,8 +171,7 @@ pub const GROUP_LIMIT_MIN: u16 = 10;
 /// Camera slide speed in frames.
 pub const CAMERA_COUNTER: u16 = 15;
 
-/// Frame timing target: 40ms = 25fps.
-pub const FRAME_TIME_MS: u32 = 40;
+pub use robin_run_types::FRAME_TIME_MS;
 /// Slow-motion multiplier.
 pub const SLOW_MOTION_FRAME_TIME_MS: u32 = 400;
 

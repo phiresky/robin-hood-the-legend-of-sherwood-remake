@@ -22,5 +22,7 @@ pub mod resource_ids;
 mod serde_defaults;
 pub mod sound_config;
 pub mod sprite_ambiance;
+pub mod sprite_content;
 pub mod static_arc;
 pub use robin_data_io::legacy_io;
+pub use sprite_content::{PixelOpacityLookup, SpriteVariant};

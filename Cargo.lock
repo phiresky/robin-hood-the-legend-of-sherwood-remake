@@ -5918,9 +5918,9 @@ dependencies = [
  "rav1d",
  "rayon",
  "robin_asset_codecs",
- "robin_content",
  "robin_data_io",
  "robin_engine",
+ "robin_engine_types",
  "robin_test_support",
  "robin_util",
  "serde",
@@ -5934,18 +5934,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-rayon",
  "zstd",
-]
-
-[[package]]
-name = "robin_content"
-version = "0.0.0"
-dependencies = [
- "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
- "robin_state_hash_derive",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
 ]
 
 [[package]]
@@ -5984,7 +5972,6 @@ dependencies = [
  "nonmax",
  "num_enum",
  "rayon",
- "robin_content",
  "robin_data_io",
  "robin_engine_types",
  "robin_legacy_save",
@@ -6023,6 +6010,7 @@ dependencies = [
  "robin_util",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -6178,23 +6166,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "robin_ranked_verification"
-version = "0.0.0"
-dependencies = [
- "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
- "bytemuck",
- "robin_assets",
- "robin_engine",
- "robin_replay_format",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "tracing",
-]
-
-[[package]]
 name = "robin_replay_admission_wasm"
 version = "0.0.0"
 dependencies = [
@@ -6225,13 +6196,15 @@ name = "robin_replay_verifier"
 version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/phiresky/bitcode.git?rev=59051e886ff8cd24bfc63ef0cef6321372829604)",
+ "bytemuck",
  "clap",
  "mimalloc",
  "nix",
+ "robin_assets",
  "robin_engine",
- "robin_ranked_verification",
  "robin_replay_format",
  "robin_run_protocol",
+ "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",

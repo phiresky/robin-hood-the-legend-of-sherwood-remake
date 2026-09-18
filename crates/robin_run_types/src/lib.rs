@@ -16,6 +16,10 @@ pub mod ruleset;
 pub mod session;
 pub mod validation;
 
+/// Simulation frame timing target: 40ms = 25fps. Shared by the engine and the
+/// leaderboard service, which reports the exact tick duration to clients.
+pub const FRAME_TIME_MS: u32 = 40;
+
 pub use artifact::ArtifactRefV1;
 pub use canonical::{
     CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, DomainSignedClaim,

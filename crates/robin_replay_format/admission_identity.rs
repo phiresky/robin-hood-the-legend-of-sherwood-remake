@@ -10,7 +10,7 @@ pub const SOURCES: &[&str] = &[
     "build-support",
     "crates/robin_replay_format",
     "crates/robin_engine",
-    "crates/robin_content",
+    "crates/robin_engine_types",
     "crates/robin_data_io",
     "crates/robin_util",
     "crates/robin_state_hash_derive",

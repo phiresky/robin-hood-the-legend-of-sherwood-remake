@@ -153,7 +153,7 @@ impl Default for ServerConfig {
 /// Exact duration of one simulation tick, taken from the compiled engine.
 pub fn simulation_tick_duration() -> TickDurationV1 {
     TickDurationV1 {
-        numerator_micros: u64::from(robin_engine::engine::FRAME_TIME_MS) * 1_000,
+        numerator_micros: u64::from(robin_run_protocol::FRAME_TIME_MS) * 1_000,
         denominator: 1,
     }
 }
