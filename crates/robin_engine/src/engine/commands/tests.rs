@@ -4055,7 +4055,7 @@ fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
         });
 
     engine.apply_enter_swordfight(&sim, &assets, pc_id, target_id, false);
-    engine.t_hourglass_phase_sequences(&assets);
+    engine.t_hourglass_phase_sequences_with(&sim, &assets);
 
     let route = engine
         .orders
@@ -4992,7 +4992,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
         assert_eq!(*tolerance, 0.0, "command {command:?}");
         assert!(!flags.contains(MoveFlags::SEEK), "command {command:?}");
 
-        engine.t_hourglass_phase_sequences(&assets);
+        engine.t_hourglass_phase_sequences_with(&sim, &assets);
         assert_eq!(
             engine.actor(pc_id).wait_time,
             0xffff_ff3e,
@@ -5211,7 +5211,7 @@ fn same_command_against_human_keeps_generic_entity_seek() {
     assert_eq!(*tolerance, 13.0);
     assert!(flags.contains(MoveFlags::SEEK));
 
-    engine.t_hourglass_phase_sequences(&assets);
+    engine.t_hourglass_phase_sequences_with(&sim, &assets);
     assert_eq!(engine.actor(pc_id).wait_time, 25);
 }
 

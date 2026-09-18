@@ -33,7 +33,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         Command::UnlockAi,
         Some(receiver),
     ));
-    let old_id = engine.t_launch_sequence(&assets, old_sequence);
+    let old_id = engine.t_launch_sequence_with(&sim, &assets, old_sequence);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     assert_eq!(
@@ -54,7 +54,7 @@ fn recorded_lock_ai_stops_old_animation_before_its_unlock_and_starts_new_animati
         FieldValue::Animation(OrderType::RaisingShield),
     );
     replacement.append_element(new_animation);
-    let replacement_id = engine.t_launch_sequence(&assets, replacement);
+    let replacement_id = engine.t_launch_sequence_with(&sim, &assets, replacement);
     engine.hourglass_phase_sequences(&sim, &mut display, &assets);
 
     let manager = &engine.orders.sequence_manager;

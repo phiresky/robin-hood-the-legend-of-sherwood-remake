@@ -1258,7 +1258,7 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             "swordfight evaluation must register, not eagerly instruct, its smalltalk strike"
         );
 
-        engine.t_hourglass_phase_sequences(&assets);
+        engine.t_hourglass_phase_sequences_with(&sim, &assets);
         (engine, attacker, wait_sequence)
     }
 

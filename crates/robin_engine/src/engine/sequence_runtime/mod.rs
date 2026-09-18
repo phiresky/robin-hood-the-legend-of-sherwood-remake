@@ -2795,6 +2795,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn unconscious_human_rejection_precedes_transition_order_allocation() {
+        let sim = crate::sim_rng::test_context();
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
@@ -2804,12 +2805,13 @@ mod sequence_phase_context_tests {
             .expect("test soldier is an actor")
             .execution_frozen = true;
         let owner = engine.add_test_entity(soldier);
-        let sequence = engine.t_launch_element(
+        let sequence = engine.t_launch_element_with(
+            &sim,
             &LevelAssets::default(),
             SequenceElement::new(1, Command::LookRight, Some(owner)),
         );
 
-        engine.t_hourglass_phase_sequences(&LevelAssets::default());
+        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
 
         let element = engine
             .orders
@@ -2836,11 +2838,13 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn postponed_wait_remains_admissible_for_unconscious_human() {
+        let sim = crate::sim_rng::test_context();
         use crate::sequence::{SequenceElement, SequenceState};
 
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(unconscious_lying_soldier());
-        let sequence = engine.t_launch_element(
+        let sequence = engine.t_launch_element_with(
+            &sim,
             &LevelAssets::default(),
             SequenceElement::new(1, Command::Wait, Some(owner)),
         );
@@ -2851,7 +2855,7 @@ mod sequence_phase_context_tests {
             .expect("queued wait")
             .state = SequenceState::Postponed;
 
-        engine.t_hourglass_phase_sequences(&LevelAssets::default());
+        engine.t_hourglass_phase_sequences_with(&sim, &LevelAssets::default());
 
         assert!(
             !engine.human_instruct_rejects_command(owner, Command::Wait),
@@ -3167,6 +3171,7 @@ mod sequence_phase_context_tests {
 
     #[test]
     fn live_hourglass_keeps_later_actor_work_observable() {
+        let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let owner = engine.add_test_entity(object_interaction_soldier(0));
         let assets = LevelAssets::new();
@@ -3176,12 +3181,12 @@ mod sequence_phase_context_tests {
             Some(owner),
         );
         damage.priority = crate::sequence::SequencePriority::Injury;
-        let damage_sequence = engine.t_launch_element(&assets, damage);
+        let damage_sequence = engine.t_launch_element_with(&sim, &assets, damage);
 
         let mut enter =
             crate::sequence::SequenceElement::new_generic(1, Command::EnterSwordfight, Some(owner));
         enter.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
-        engine.t_launch_element(&assets, enter);
+        engine.t_launch_element_with(&sim, &assets, enter);
         assert!(matches!(
             engine.orders.sequence_manager.pop_next_hourglass_action(),
             Some(crate::sequence::SequenceAction::InstructOwner {
