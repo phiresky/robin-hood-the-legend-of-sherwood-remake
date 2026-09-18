@@ -78,7 +78,7 @@ fn fighters(last: u32) -> EngineInner {
             Camp::Lacklandists,
         ));
         assert_eq!(id.index(), handle);
-        let ai = engine.get_entity_mut(id).unwrap().enemy_ai_mut().unwrap();
+        let ai = engine.enemy_mut(id);
         ai.hth_weapon_id = 1;
         ai.sword_range = 100;
         ai.behavior_profile = crate::profiles::SoldierProfileIdx(0);

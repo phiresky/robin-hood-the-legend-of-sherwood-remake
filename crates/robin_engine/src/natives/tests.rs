@@ -1573,7 +1573,7 @@ fn activating_a_rescue_pc_makes_it_player_controllable() {
             &[ScriptHandleCodec::actor_handle(owner)],
         )
         .unwrap();
-    let pc = engine.world.entities.get(owner).unwrap().pc_data().unwrap();
+    let pc = engine.pc(owner);
     assert!(pc.playable);
     assert_eq!(pc.command_interface, CommandInterface::HeroActions);
     assert_eq!(pc.mission_role, MissionRole::PlayerParty);
@@ -2518,15 +2518,7 @@ fn selection_native_completes_portrait_cleanup_before_later_queries() {
     let target = engine.add_test_entity(native_test_pc(Vec::new(), Vec::new()));
     let previous = engine.add_test_entity(native_test_pc(Vec::new(), Vec::new()));
     engine.players.seats[0].selection = vec![previous];
-    engine
-        .world
-        .entities
-        .get_mut(previous)
-        .unwrap()
-        .pc_data_mut()
-        .unwrap()
-        .portrait
-        .open = true;
+    engine.pc_mut(previous).portrait.open = true;
     let mut assets = crate::engine::LevelAssets::new();
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     engine
@@ -2541,17 +2533,7 @@ fn selection_native_completes_portrait_cleanup_before_later_queries() {
         .call_external_native(&sim, &assets, "SelectActorPC", &[target_handle, 1])
         .unwrap();
     assert_eq!(engine.players.seats[0].selection, [target]);
-    assert!(
-        !engine
-            .world
-            .entities
-            .get(previous)
-            .unwrap()
-            .pc_data()
-            .unwrap()
-            .portrait
-            .open
-    );
+    assert!(!engine.pc(previous).portrait.open);
     assert_eq!(
         engine
             .call_external_native(&sim, &assets, "IsPCSelected", &[target_handle])
@@ -3745,13 +3727,7 @@ fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
         0
     );
 
-    let enemy = engine
-        .world
-        .entities
-        .get(owner)
-        .expect("native retains owner")
-        .enemy_ai()
-        .expect("native must retain the soldier's enemy AI");
+    let enemy = engine.enemy(owner);
     assert!(enemy.forced_attentive);
     assert!(enemy.will_be_attentive);
     assert_eq!(
@@ -3869,13 +3845,7 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
             case.name
         );
 
-        let enemy = engine
-            .world
-            .entities
-            .get(owner)
-            .expect("native retains owner")
-            .enemy_ai()
-            .expect("native must retain the soldier's enemy AI");
+        let enemy = engine.enemy(owner);
         assert_eq!(enemy.forced_attentive, case.target, "{}", case.name);
         assert_eq!(
             enemy.base.current_music_alert_status, case.expected_music,
